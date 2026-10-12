@@ -333,6 +333,10 @@ class Module_ThreatIntelligence extends BaseModule
     {
         Csrf::validateOrFail();
         $tenantId = (int)($params['tenantId'] ?? 0);
+        $missing = $this->missingPermissions($tenantId);
+        if (!empty($missing)) {
+            json_response(['success' => false, 'skipped' => true, 'error' => 'El tenant no tiene los permisos: ' . implode(', ', $missing)]);
+        }
         json_response($this->sync($tenantId));
     }
 }

@@ -287,6 +287,11 @@ class Module_Incidents extends BaseModule
     public function triggerSync(array $params = []): void
     {
         Csrf::validateOrFail();
-        json_response($this->sync((int)($params['tenantId'] ?? 0)));
+        $tenantId = (int)($params['tenantId'] ?? 0);
+        $missing = $this->missingPermissions($tenantId);
+        if (!empty($missing)) {
+            json_response(['success' => false, 'skipped' => true, 'error' => 'El tenant no tiene los permisos: ' . implode(', ', $missing)]);
+        }
+        json_response($this->sync($tenantId));
     }
 }

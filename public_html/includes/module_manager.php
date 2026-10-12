@@ -158,6 +158,7 @@ class ModuleManager
 
     /**
      * Ejecuta la sincronización de un módulo específico para un tenant.
+     * Respeta los permisos declarados del tenant (Admin → Tenants).
      */
     public static function syncModule(string $moduleKey, int $tenantId): array
     {
@@ -165,19 +166,43 @@ class ModuleManager
         if (!$module) {
             return ['success' => false, 'error' => "Módulo $moduleKey no disponible"];
         }
+        $missing = array_values(array_diff($module->requiredPermissions(), TenantManager::getPermissions($tenantId)));
+        if (!empty($missing)) {
+            return [
+                'success' => false,
+                'skipped' => true,
+                'error'   => 'El tenant no tiene los permisos: ' . implode(', ', $missing),
+            ];
+        }
         return $module->sync($tenantId);
     }
 
     /**
      * Ejecuta la sincronización de todos los módulos activos para un tenant.
+     * Por defecto solo sincroniza los módulos cuyos permisos requeridos tiene
+     * declarados el tenant; el resto se devuelve como "omitidos".
      */
-    public static function syncAll(int $tenantId): array
+    public static function syncAll(int $tenantId, bool $onlyPermitted = true): array
     {
+        $granted = $onlyPermitted ? TenantManager::getPermissions($tenantId) : [];
         $results = [];
         foreach (self::$instances as $key => $instance) {
-            if ($instance->isSyncable()) {
-                $results[$key] = $instance->sync($tenantId);
+            if (!$instance->isSyncable()) {
+                continue;
             }
+            if ($onlyPermitted) {
+                $missing = array_values(array_diff($instance->requiredPermissions(), $granted));
+                if (!empty($missing)) {
+                    $results[$key] = [
+                        'success' => true,
+                        'skipped' => true,
+                        'records' => 0,
+                        'reason'  => 'Faltan permisos: ' . implode(', ', $missing),
+                    ];
+                    continue;
+                }
+            }
+            $results[$key] = $instance->sync($tenantId);
         }
         return $results;
     }

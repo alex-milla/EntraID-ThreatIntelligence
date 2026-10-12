@@ -40,6 +40,19 @@ class TenantManager
     }
 
     /**
+     * Permisos declarados del tenant (los marcados en Admin → Tenants).
+     */
+    public static function getPermissions(int $id): array
+    {
+        $tenant = self::getById($id);
+        if (!$tenant) {
+            return [];
+        }
+        $perms = safe_json_decode($tenant['permissions'] ?? '[]', []);
+        return is_array($perms) ? $perms : [];
+    }
+
+    /**
      * Obtiene un tenant por slug.
      */
     public static function getBySlug(string $slug): ?array

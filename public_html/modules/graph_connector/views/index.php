@@ -80,19 +80,21 @@ function syncAll(id) {
     api('POST', '<?= base_url('modules/graph_connector/sync-all') ?>/' + id, {})
         .then(function(res) {
             var results = res.results || {};
-            var ok = 0, err = 0, rec = 0, msgs = [];
+            var ok = 0, err = 0, skip = 0, rec = 0, msgs = [], skips = [];
             Object.keys(results).forEach(function(k) {
                 var r = results[k] || {};
+                if (r.skipped) { skip++; skips.push(k + ' (' + (r.reason || 'sin permisos') + ')'); return; }
                 if (r.success) ok++; else err++;
                 rec += (r.records || 0);
                 if (r.error) msgs.push(k + ': ' + r.error);
                 if (r.errors && r.errors.length) msgs.push(k + ': ' + r.errors.join('; '));
             });
-            var msg = ok + ' módulos OK, ' + err + ' con errores, ' + rec + ' registros.';
-            if (msgs.length) msg += ' ' + msgs.join(' | ');
+            var msg = ok + ' sincronizados, ' + err + ' con errores, ' + skip + ' omitidos por permisos, ' + rec + ' registros.';
+            if (skips.length) msg += ' Omitidos: ' + skips.join(' | ');
+            if (msgs.length) msg += ' Errores: ' + msgs.join(' | ');
             el.className = 'mt-3 text-xs px-3 py-2 rounded-lg ' + (err === 0 ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300' : 'bg-yellow-50 dark:bg-yellow-900/20 text-yellow-700');
             el.textContent = msg;
-            if (err === 0) setTimeout(function() { location.reload(); }, 2500);
+            if (rec > 0) setTimeout(function() { location.reload(); }, 2500);
         })
         .catch(function() { el.textContent = 'Error de conexión'; el.className = 'mt-3 text-xs px-3 py-2 rounded-lg bg-red-50 dark:bg-red-900/20 text-red-700'; });
 }

@@ -224,6 +224,14 @@ abstract class BaseModule implements ModuleInterface
         return true;
     }
 
+    /**
+     * Permisos que le faltan al tenant para poder sincronizar este módulo.
+     */
+    public function missingPermissions(int $tenantId): array
+    {
+        return array_values(array_diff($this->requiredPermissions(), TenantManager::getPermissions($tenantId)));
+    }
+
     public function getNavItem(): ?array
     {
         return [
