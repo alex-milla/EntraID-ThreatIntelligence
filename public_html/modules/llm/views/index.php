@@ -1,7 +1,15 @@
 <?php
 /**
- * Vista índice del módulo LLM.
+ * Vista índice del módulo LLM — Análisis IA centrado en los datos del tenant.
  */
+$anTasks = [
+    'summary'         => 'Resumen ejecutivo',
+    'incidents'       => 'Incidentes y alertas',
+    'vulnerabilities' => 'Vulnerabilidades',
+    'secure_score'    => 'Secure Score',
+    'iocs'            => 'IOCs',
+    'risks'           => 'Riesgos',
+];
 ?>
 <?php if (!$configured): ?>
 <div class="bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 rounded-xl p-6 mb-6">
@@ -10,9 +18,7 @@
         <div>
             <p class="text-sm font-medium text-amber-800 dark:text-amber-200">LLM no configurado</p>
             <p class="text-sm text-amber-700 dark:text-amber-300 mt-1">
-                Configura <code class="font-mono bg-amber-100 dark:bg-amber-900 px-1 rounded">LLM_PROVIDER</code>,
-                <code class="font-mono bg-amber-100 dark:bg-amber-900 px-1 rounded">LLM_API_KEY</code> y
-                <code class="font-mono bg-amber-100 dark:bg-amber-900 px-1 rounded">LLM_MODEL</code> en el archivo <code class="font-mono bg-amber-100 dark:bg-amber-900 px-1 rounded">.env</code>
+                Configura un proveedor en <strong>Admin → APIs</strong> (perfiles de IA).
             </p>
             <p class="text-xs text-amber-600 dark:text-amber-400 mt-2">Proveedores soportados: openai, anthropic, azure, ollama, ollama_cloud, gemini, mistral</p>
             <a href="<?= base_url('admin/apis') ?>" class="mt-3 inline-flex items-center gap-2 px-3 py-1.5 bg-brand-500 hover:bg-brand-600 text-white text-xs font-medium rounded-lg transition-colors">
@@ -36,79 +42,88 @@
     <?php endif; ?>
 </div>
 
-<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-    <!-- Chat libre -->
-    <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-5">
-        <h2 class="text-sm font-semibold mb-4">Consulta al modelo</h2>
-        <div class="space-y-3">
-            <div>
-                <label class="block text-xs text-gray-500 mb-1">Prompt del sistema</label>
-                <textarea id="system-prompt" rows="2" class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm focus:ring-2 focus:ring-brand-500 outline-none">Eres un analista de ciberseguridad senior.</textarea>
-            </div>
-            <div>
-                <label class="block text-xs text-gray-500 mb-1">Mensaje</label>
-                <textarea id="user-prompt" rows="4" class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm focus:ring-2 focus:ring-brand-500 outline-none" placeholder="Pregunta sobre seguridad, IOCs, incidentes..."></textarea>
-            </div>
-            <button onclick="sendChat()" class="w-full px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors">Enviar</button>
+<?php if (empty($tenants)): ?>
+<div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-8 text-center">
+    <p class="text-sm text-gray-500">No hay tenants configurados.</p>
+    <a href="<?= base_url('admin/tenant/edit') ?>" class="inline-block mt-3 text-sm text-brand-500 hover:underline">Añadir tenant</a>
+</div>
+<?php else: ?>
+
+<!-- Configuración del análisis -->
+<div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-5 mb-6">
+    <h2 class="text-sm font-semibold mb-3">Análisis del tenant</h2>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+            <label class="block text-xs text-gray-500 mb-1">Tenant</label>
+            <select id="an-tenant" class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+                <?php foreach ($tenants as $t): ?>
+                    <option value="<?= (int)$t['id'] ?>"><?= e($t['name']) ?></option>
+                <?php endforeach; ?>
+            </select>
+        </div>
+        <div>
+            <label class="block text-xs text-gray-500 mb-1">Pregunta libre <span class="text-gray-400">(opcional)</span></label>
+            <input type="text" id="an-question" placeholder="p. ej. ¿cuáles son los riesgos más urgentes?" class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm focus:ring-2 focus:ring-brand-500 outline-none">
         </div>
     </div>
-
-    <!-- Respuesta -->
-    <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-5">
-        <h2 class="text-sm font-semibold mb-4">Respuesta</h2>
-        <div id="llm-response" class="md-body min-h-[200px]">
-            <p class="text-gray-400">La respuesta aparecerá aquí...</p>
-        </div>
+    <p class="text-xs text-gray-400 mt-3">
+        El análisis usa los <strong>datos locales</strong> del tenant seleccionado (incidentes, alertas, IOCs, vulnerabilidades, Secure Score…).
+        Esos datos se envían al proveedor de IA configurado.
+    </p>
+    <div class="flex flex-wrap gap-2 mt-4">
+        <?php foreach ($anTasks as $key => $label): ?>
+            <button type="button" onclick="analyzeTenant('<?= e($key) ?>')" class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-brand-500 hover:bg-brand-600 text-white text-xs font-medium rounded-lg transition-colors">
+                <?= e($label) ?>
+            </button>
+        <?php endforeach; ?>
+        <button type="button" onclick="analyzeTenant('question')" class="inline-flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-muted-dark text-xs font-medium rounded-lg transition-colors">
+            Responder a la pregunta
+        </button>
     </div>
 </div>
 
-<!-- Análisis de datos -->
-<div class="mt-6 grid grid-cols-1 sm:grid-cols-3 gap-4">
-    <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-4">
-        <h3 class="text-sm font-semibold mb-2">Clasificar IOCs</h3>
-        <p class="text-xs text-gray-500 mb-3">Clasifica los últimos IOCs del tenant seleccionado con IA.</p>
-        <select id="ioc-tenant" class="w-full px-3 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm mb-2">
-            <?php foreach ($tenants as $t): ?>
-                <option value="<?= $t['id'] ?>"><?= e($t['name']) ?></option>
-            <?php endforeach; ?>
-        </select>
-        <button onclick="classifyIocs()" class="w-full px-3 py-1.5 bg-brand-500 hover:bg-brand-600 text-white text-xs font-medium rounded-lg transition-colors">Clasificar</button>
+<!-- Respuesta -->
+<div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-5">
+    <h2 class="text-sm font-semibold mb-4">Análisis</h2>
+    <div id="llm-response" class="md-body min-h-[200px]">
+        <p class="text-gray-400">Elige un tenant y pulsa una acción de análisis (o formula una pregunta).</p>
     </div>
 </div>
 
 <script>
 function getProfile() { var s = document.getElementById('llm-profile'); return s ? parseInt(s.value, 10) : 0; }
 
-function sendChat() {
-    var sys = document.getElementById('system-prompt').value;
-    var usr = document.getElementById('user-prompt').value;
-    if (!usr.trim()) { toast('Escribe un mensaje', 'warning'); return; }
-    document.getElementById('llm-response').innerHTML = '<div class="spinner mx-auto"></div>';
-    api('POST', '<?= base_url('modules/llm/chat') ?>', { system: sys, prompt: usr, profile_id: getProfile() })
-        .then(function(res) {
-            if (res.success) {
-                document.getElementById('llm-response').innerHTML = res.content_html || esc(res.content);
-            } else {
-                document.getElementById('llm-response').innerHTML = '<p class="text-red-500">' + esc(res.error || 'Error') + '</p>';
-            }
-        })
-        .catch(function() { document.getElementById('llm-response').innerHTML = '<p class="text-red-500">Error de conexión</p>'; });
-}
+function analyzeTenant(task) {
+    var sel = document.getElementById('an-tenant');
+    var tid = sel ? sel.value : '';
+    if (!tid) { toast('Selecciona un tenant', 'warning'); return; }
 
-function classifyIocs() {
-    var tid = document.getElementById('ioc-tenant').value;
-    toast('Clasificando IOCs...', 'info');
-    api('POST', '<?= base_url('modules/llm/classify-iocs') ?>', { tenant_id: parseInt(tid), limit: 30, profile_id: getProfile() })
+    var q = document.getElementById('an-question');
+    var question = q ? q.value : '';
+    if (task === 'question' && !question.trim()) { toast('Escribe una pregunta', 'warning'); return; }
+
+    var out = document.getElementById('llm-response');
+    out.innerHTML = '<div class="spinner mx-auto"></div>';
+
+    api('POST', '<?= base_url('modules/llm/analyze-tenant') ?>', {
+        tenant_id: parseInt(tid, 10),
+        task: task,
+        question: question,
+        profile_id: getProfile()
+    })
         .then(function(res) {
             if (res.success) {
-                document.getElementById('llm-response').innerHTML = res.content_html || esc(res.content);
-                toast('Clasificación completada', 'success');
+                out.innerHTML = res.content_html || esc(res.content);
             } else {
+                out.innerHTML = '<p class="text-red-500">' + esc(res.error || 'Error') + '</p>';
                 toast('Error: ' + (res.error || ''), 'error');
             }
-        });
+        })
+        .catch(function() { out.innerHTML = '<p class="text-red-500">Error de conexión</p>'; });
 }
 
-function esc(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+function esc(s) { var d = document.createElement('div'); d.textContent = s == null ? '' : s; return d.innerHTML; }
 </script>
+
+<?php endif; ?>
 <?php endif; ?>

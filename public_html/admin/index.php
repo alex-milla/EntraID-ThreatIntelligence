@@ -524,6 +524,7 @@ class AdminController
             'classify_iocs'    => 'Clasificar IOCs',
             'extract_iocs'     => 'Extraer IOCs',
             'analyze_incident' => 'Analizar incidente',
+            'analyze_tenant'   => 'Analizar tenant (Análisis IA)',
             'chat'             => 'Chat / Análisis IA',
         ];
         $taskProfiles = [];
