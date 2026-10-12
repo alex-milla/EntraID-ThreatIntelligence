@@ -8,7 +8,14 @@ $totalPages = (int)($iocs['totalPages'] ?? 1);
 $page = (int)($iocs['page'] ?? 1);
 
 function ti_q(array $extra, int $tenant, array $filters): string {
-    $q = array_merge(['tenant' => $tenant, 'type' => $filters['type'] ?? '', 'search' => $filters['search'] ?? ''], $extra);
+    $q = array_merge([
+        'tenant' => $tenant,
+        'type'   => $filters['type'] ?? '',
+        'search' => $filters['search'] ?? '',
+        'from'   => $filters['from'] ?? '',
+        'to'     => $filters['to'] ?? '',
+        'sort'   => $filters['sort'] ?? '',
+    ], $extra);
     return http_build_query(array_filter($q, fn($v) => $v !== '' && $v !== null));
 }
 ?>
@@ -25,7 +32,7 @@ function ti_q(array $extra, int $tenant, array $filters): string {
             <option value="<?= $t['id'] ?>" <?= (int)$selectedTenant === (int)$t['id'] ? 'selected' : '' ?>><?= e($t['name']) ?></option>
         <?php endforeach; ?>
     </select>
-    <select name="type" onchange="this.form.submit()" class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm">
+    <select name="type" class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm">
         <option value="">Todos los tipos</option>
         <?php foreach ($types as $ty): ?>
             <option value="<?= e($ty['ioc_type']) ?>" <?= ($filters['type'] ?? '') === $ty['ioc_type'] ? 'selected' : '' ?>><?= e($ty['ioc_type']) ?> (<?= (int)$ty['cnt'] ?>)</option>
@@ -33,11 +40,39 @@ function ti_q(array $extra, int $tenant, array $filters): string {
     </select>
     <input type="text" name="search" value="<?= e($filters['search'] ?? '') ?>" placeholder="Buscar valor…"
            class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm w-56">
+    <input type="date" name="from" value="<?= e($filters['from'] ?? '') ?>" title="Actividad desde"
+           class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm">
+    <input type="date" name="to" value="<?= e($filters['to'] ?? '') ?>" title="Actividad hasta"
+           class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm">
+    <select name="sort" class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm">
+        <option value="" <?= ($filters['sort'] ?? '') === '' ? 'selected' : '' ?>>Orden: última actividad</option>
+        <option value="value" <?= ($filters['sort'] ?? '') === 'value' ? 'selected' : '' ?>>Orden: valor (A-Z)</option>
+    </select>
     <button type="submit" class="px-3 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg">Filtrar</button>
-    <?php if (($filters['type'] ?? '') !== '' || ($filters['search'] ?? '') !== ''): ?>
+    <?php if (($filters['type'] ?? '') !== '' || ($filters['search'] ?? '') !== '' || ($filters['from'] ?? '') !== '' || ($filters['to'] ?? '') !== ''): ?>
         <a href="<?= base_url('modules/threat_intelligence/iocs?tenant=' . $selectedTenant) ?>" class="text-xs text-gray-500 hover:underline">Limpiar</a>
     <?php endif; ?>
 </form>
+
+<?php
+// Chips de filtros activos (con ×)
+$chipBase = ['tenant' => $selectedTenant, 'type' => $filters['type'] ?? '', 'search' => $filters['search'] ?? '', 'from' => $filters['from'] ?? '', 'to' => $filters['to'] ?? '', 'sort' => $filters['sort'] ?? ''];
+$chips = [];
+if (($filters['search'] ?? '') !== '') { $chipBase['search'] = ''; $chips[] = ['Valor: ' . $filters['search'], $chipBase]; $chipBase['search'] = $filters['search']; }
+if (($filters['type'] ?? '') !== '') { $c = $chipBase; $c['type'] = ''; $chips[] = ['Tipo: ' . $filters['type'], $c]; }
+if (($filters['from'] ?? '') !== '') { $c = $chipBase; $c['from'] = ''; $chips[] = ['Desde: ' . $filters['from'], $c]; }
+if (($filters['to'] ?? '') !== '') { $c = $chipBase; $c['to'] = ''; $chips[] = ['Hasta: ' . $filters['to'], $c]; }
+?>
+<?php if (!empty($chips)): ?>
+<div class="mb-4 flex flex-wrap items-center gap-2">
+    <?php foreach ($chips as $ch): ?>
+        <span class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-full bg-brand-50 dark:bg-brand-950 text-brand-600 dark:text-brand-300">
+            <?= e($ch[0]) ?>
+            <a href="?<?= e(http_build_query(array_filter($ch[1], fn($v) => $v !== '' && $v !== null))) ?>" class="hover:text-red-500" title="Quitar">×</a>
+        </span>
+    <?php endforeach; ?>
+</div>
+<?php endif; ?>
 
 <!-- Exportar -->
 <div class="mb-4 flex flex-wrap items-center gap-2">
@@ -92,6 +127,8 @@ function ti_q(array $extra, int $tenant, array $filters): string {
                     <th class="text-left px-4 py-2">Tipo</th>
                     <th class="text-left px-4 py-2">Valor</th>
                     <th class="text-left px-4 py-2">Severidad</th>
+                    <th class="text-left px-4 py-2">First seen</th>
+                    <th class="text-left px-4 py-2">Last seen</th>
                     <th class="text-left px-4 py-2">Descripción</th>
                     <th class="text-right px-4 py-2"></th>
                 </tr>
@@ -102,6 +139,8 @@ function ti_q(array $extra, int $tenant, array $filters): string {
                         <td class="px-4 py-2"><span class="font-mono text-xs px-2 py-0.5 rounded bg-gray-100 dark:bg-gray-800"><?= e($ioc['ioc_type']) ?></span></td>
                         <td class="px-4 py-2 font-mono text-xs break-all" data-ioc="<?= e($ioc['ioc_value']) ?>"><?= e($ioc['ioc_value']) ?></td>
                         <td class="px-4 py-2 text-xs text-gray-500"><?= e($ioc['severity'] ?? '—') ?></td>
+                        <td class="px-4 py-2 text-xs text-gray-500"><?= e($ioc['first_seen'] ? substr((string)$ioc['first_seen'], 0, 10) : '—') ?></td>
+                        <td class="px-4 py-2 text-xs text-gray-500"><?= e($ioc['last_seen'] ? substr((string)$ioc['last_seen'], 0, 10) : '—') ?></td>
                         <td class="px-4 py-2 text-xs text-gray-500 max-w-xs truncate"><?= e($ioc['description'] ?? '—') ?></td>
                         <td class="px-4 py-2 text-right">
                             <?php if (!empty($ioc['article_id'])): ?>
@@ -134,7 +173,7 @@ function exportIocs(fmt) {
     el.textContent = 'Generando…';
     api('POST', '<?= base_url('modules/export') ?>/' + fmt, {
         tenant_id: <?= (int)$selectedTenant ?>,
-        filters: { type: '<?= e(addslashes($filters['type'] ?? '')) ?>', search: '<?= e(addslashes($filters['search'] ?? '')) ?>' }
+        filters: { type: '<?= e(addslashes($filters['type'] ?? '')) ?>', search: '<?= e(addslashes($filters['search'] ?? '')) ?>', from: '<?= e(addslashes($filters['from'] ?? '')) ?>', to: '<?= e(addslashes($filters['to'] ?? '')) ?>' }
     }).then(function(res) {
         if (res && res.success) { downloadFile(res.content, res.filename, res.mime); el.textContent = 'Exportado (' + (res.count || 0) + ')'; }
         else { el.textContent = 'Error al exportar'; }

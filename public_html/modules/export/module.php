@@ -395,6 +395,14 @@ class Module_Export extends BaseModule
             $where[] = 'ioc_value LIKE ?';
             $params[] = '%' . $filters['search'] . '%';
         }
+        if (!empty($filters['from'])) {
+            $where[] = 'date(COALESCE(last_seen, first_seen, fetched_at)) >= ?';
+            $params[] = $filters['from'];
+        }
+        if (!empty($filters['to'])) {
+            $where[] = 'date(COALESCE(last_seen, first_seen, fetched_at)) <= ?';
+            $params[] = $filters['to'];
+        }
         if (!empty($filters['article_id'])) {
             $where[] = 'article_id = ?';
             $params[] = (int)$filters['article_id'];

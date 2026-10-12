@@ -468,9 +468,21 @@ class Module_ThreatIntelligence extends BaseModule
             $where[] = 'ioc_value LIKE ?';
             $params[] = '%' . $filters['search'] . '%';
         }
+        if (!empty($filters['from'])) {
+            $where[] = 'date(COALESCE(last_seen, first_seen, fetched_at)) >= ?';
+            $params[] = $filters['from'];
+        }
+        if (!empty($filters['to'])) {
+            $where[] = 'date(COALESCE(last_seen, first_seen, fetched_at)) <= ?';
+            $params[] = $filters['to'];
+        }
 
         $whereClause = implode(' AND ', $where);
         $offset = ($page - 1) * $perPage;
+
+        $orderBy = (($filters['sort'] ?? '') === 'value')
+            ? 'ioc_value ASC'
+            : 'COALESCE(last_seen, first_seen, fetched_at) DESC';
 
         $total = (int)Database::fetchOne(
             "SELECT COUNT(*) as cnt FROM ti_iocs WHERE $whereClause",
@@ -481,7 +493,7 @@ class Module_ThreatIntelligence extends BaseModule
         $params[] = $offset;
 
         $iocs = Database::fetchAll(
-            "SELECT * FROM ti_iocs WHERE $whereClause ORDER BY fetched_at DESC LIMIT ? OFFSET ?",
+            "SELECT * FROM ti_iocs WHERE $whereClause ORDER BY $orderBy LIMIT ? OFFSET ?",
             $params
         );
 
@@ -771,6 +783,9 @@ class Module_ThreatIntelligence extends BaseModule
         $filters = [
             'type'   => $_GET['type'] ?? '',
             'search' => $_GET['search'] ?? '',
+            'from'   => $_GET['from'] ?? '',
+            'to'     => $_GET['to'] ?? '',
+            'sort'   => $_GET['sort'] ?? '',
         ];
         $page = max(1, (int)($_GET['page'] ?? 1));
         $data = $selectedTenant
@@ -865,6 +880,9 @@ class Module_ThreatIntelligence extends BaseModule
         $filters = [
             'type'   => $_GET['type'] ?? '',
             'search' => $_GET['search'] ?? '',
+            'from'   => $_GET['from'] ?? '',
+            'to'     => $_GET['to'] ?? '',
+            'sort'   => $_GET['sort'] ?? '',
         ];
         json_response($this->getIocs($tenantId, $filters, $page));
     }
