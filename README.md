@@ -7,8 +7,7 @@ Diseñada para **hosting compartido con PHP** (7.4+ / probada en 8.4) y **SQLite
 ## Estructura
 
 ```
-├── md/                       # Documentación de referencia (APIs Microsoft Security)
-└── public_html/              # Aplicación
+public_html/                 # Aplicación
     ├── index.php             # Front controller
     ├── admin/                # Panel de administración
     ├── api/                  # API REST

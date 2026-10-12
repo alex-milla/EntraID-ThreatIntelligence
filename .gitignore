@@ -5,6 +5,9 @@
 # Token de GitHub y variables de entorno con credenciales
 env/
 
+# Documentación privada de trabajo
+md/
+
 # Scripts PowerShell con credenciales reales de tenant
 powershell/
 
