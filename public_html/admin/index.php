@@ -403,6 +403,82 @@ class AdminController
     }
 
     /**
+     * Actualizaciones del sistema desde GitHub (solo admin).
+     * GET: estado (versión instalada vs última release, backups).
+     * POST: install / restore (CSRF + backup automático + PRG).
+     */
+    public static function updates(): void
+    {
+        Auth::requireAdmin();
+        require_once INCLUDES_PATH . '/updater.php';
+
+        $cfg = updater_config();
+        $error = flash('error');
+        $success = flash('success');
+
+        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+            Csrf::validateOrFail();
+            @set_time_limit(300);
+            ignore_user_abort(true);
+
+            $action = $_POST['action'] ?? '';
+            try {
+                if ($action === 'install') {
+                    $force = !empty($_POST['force']);
+                    $release = updater_latest_release($cfg);
+
+                    if (!$release['ok']) {
+                        flash('error', 'No se pudo consultar GitHub: ' . $release['error']);
+                    } else {
+                        $installed = updater_installed_version();
+                        if (!$force && version_compare($installed, $release['version'], '>=')) {
+                            flash('error', "Ya estás al día (v$installed >= v{$release['version']}). Usa la reinstalación forzada si lo necesitas.");
+                        } else {
+                            $result = updater_run_update($cfg, $release);
+                            log_activity($result['success'] ? 'system.updated' : 'system.update_failed', [
+                                'version' => $release['version'],
+                                'message' => $result['message'],
+                            ]);
+                            flash($result['success'] ? 'success' : 'error', $result['message']);
+                        }
+                    }
+                } elseif ($action === 'restore') {
+                    $name = (string)($_POST['backup'] ?? '');
+                    if (!preg_match('/^backup_\d{8}_\d{6}(_\d+)?$/', $name)) {
+                        flash('error', 'Nombre de backup inválido');
+                    } else {
+                        $backupDir = realpath($cfg['backup_base'] . '/' . $name);
+                        $realBase = realpath($cfg['backup_base']);
+                        if ($backupDir === false || $realBase === false || !str_starts_with($backupDir, $realBase)) {
+                            flash('error', 'Backup no encontrado');
+                        } else {
+                            $res = updater_restore_backup($backupDir, ROOT_PATH, $cfg);
+                            log_activity('system.restored', ['backup' => $name]);
+                            flash('success', "Restaurado $name ({$res['restored']} ficheros). Backup del estado previo: " . basename($res['pre']['dir']));
+                        }
+                    }
+                } else {
+                    flash('error', 'Acción no válida');
+                }
+            } catch (Throwable $e) {
+                flash('error', 'Error durante la operación: ' . $e->getMessage());
+            }
+
+            redirect(base_url('admin/updates'));
+        }
+
+        // GET: estado del sistema
+        $installedVersion = updater_installed_version();
+        $release = updater_latest_release($cfg);
+        $backups = updater_list_backups($cfg);
+
+        require VIEWS_PATH . '/layout/header.php';
+        require VIEWS_PATH . '/layout/sidebar.php';
+        require VIEWS_PATH . '/admin/update.php';
+        require VIEWS_PATH . '/layout/footer.php';
+    }
+
+    /**
      * Cambio de contraseña obligatorio.
      */
     public static function changePassword(): void
@@ -457,6 +533,7 @@ $adminRoutes = [
         'users'            => 'users',
         'modules'          => 'modules',
         'settings'         => 'settings',
+        'updates'          => 'updates',
         'change-password'  => 'changePassword',
     ],
     'POST' => [
@@ -468,6 +545,7 @@ $adminRoutes = [
         'user/delete'      => 'userDelete',
         'module/toggle'    => 'moduleToggle',
         'settings/save'    => 'settingsSave',
+        'updates'          => 'updates',
         'change-password'  => 'changePassword',
     ],
 ];
