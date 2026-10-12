@@ -84,6 +84,9 @@ class Module_ThreatIntelligence extends BaseModule
                 }
             }
 
+            // 2.b) Intel profiles (threat actors y tools)
+            $recordCount += $this->syncIntelProfiles($client, $tenantId);
+
             $this->logSync($tenantId, 'full', empty($errors) ? 'success' : 'partial', $recordCount, implode('; ', $errors) ?: null);
 
             return [
@@ -503,6 +506,196 @@ class Module_ThreatIntelligence extends BaseModule
     }
 
     // ============================================================
+    // Intel profiles (threat actors y tools)
+    // ============================================================
+
+    /**
+     * Sincroniza los intel profiles (threat actors y tools) del tenant.
+     */
+    private function syncIntelProfiles(GraphClient $client, int $tenantId): int
+    {
+        try {
+            $profiles = $client->graphGetAll('security/threatIntelligence/intelProfiles');
+        } catch (Throwable $e) {
+            return 0;
+        }
+        $count = 0;
+        foreach ($profiles as $p) {
+            if (empty($p['id'])) { continue; }
+            try {
+                Database::query(
+                    "INSERT OR REPLACE INTO ti_intel_profiles
+                     (tenant_id, profile_id, kind, title, summary, description, tradecraft, aliases, targets, countries, first_active, raw_data, fetched_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))",
+                    [
+                        $tenantId,
+                        $p['id'],
+                        $p['kind'] ?? null,
+                        $p['title'] ?? 'Sin título',
+                        $p['summary']['content'] ?? null,
+                        $p['description']['content'] ?? null,
+                        $p['tradecraft']['content'] ?? null,
+                        json_encode($p['aliases'] ?? []),
+                        json_encode($p['targets'] ?? []),
+                        json_encode($p['countriesOrRegionsOfOrigin'] ?? []),
+                        $p['firstActiveDateTime'] ?? null,
+                        json_encode($p),
+                    ]
+                );
+                $count++;
+            } catch (Throwable $e) { /* noop */ }
+        }
+        return $count;
+    }
+
+    /**
+     * Cosecha los indicadores de cada intel profile (con topes prudentes).
+     */
+    public function syncProfileIndicators(GraphClient $client, int $tenantId, int $perProfile = 1000, int $totalCap = 50000): array
+    {
+        $profiles = Database::fetchAll("SELECT id, profile_id FROM ti_intel_profiles WHERE tenant_id = ?", [$tenantId]);
+        $total = 0;
+        $errors = 0;
+
+        foreach ($profiles as $p) {
+            if ($total >= $totalCap) { break; }
+            try {
+                $iocs = $client->graphGetAll("security/threatIntelligence/intelProfiles/{$p['profile_id']}/indicators");
+            } catch (Throwable $e) { $errors++; continue; }
+
+            $n = 0;
+            foreach ($iocs as $ioc) {
+                if ($n >= $perProfile || $total >= $totalCap) { break; }
+                $artifact = $ioc['artifact'] ?? [];
+                $value = $this->extractIocValue($artifact);
+                $iocType = $this->mapIocType($artifact, $value);
+                try {
+                    Database::query(
+                        "INSERT OR REPLACE INTO ti_iocs
+                         (tenant_id, profile_id, article_id, ioc_id, ioc_type, ioc_value, source, description, severity, first_seen, last_seen, fetched_at)
+                         VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))",
+                        [
+                            $tenantId,
+                            (int)$p['id'],
+                            $ioc['id'] ?? md5($iocType . '|' . $value),
+                            $iocType,
+                            $value,
+                            $ioc['source'] ?? null,
+                            $ioc['description'] ?? null,
+                            $ioc['severity'] ?? null,
+                            $ioc['firstSeenDateTime'] ?? null,
+                            $ioc['lastSeenDateTime'] ?? null,
+                        ]
+                    );
+                    $n++;
+                    $total++;
+                } catch (Throwable $e) { /* noop */ }
+            }
+        }
+
+        $this->logSync($tenantId, 'profile_indicators', $errors === 0 ? 'success' : 'partial', $total, $errors ? ($errors . ' perfiles con error') : null);
+        return ['success' => true, 'profiles' => count($profiles), 'indicators' => $total, 'errors' => $errors];
+    }
+
+    /**
+     * Lista de intel profiles con filtros.
+     */
+    public function getProfiles(int $tenantId, array $filters = [], int $page = 1, int $perPage = 50): array
+    {
+        $where = ['tenant_id = ?'];
+        $params = [$tenantId];
+        if (!empty($filters['kind'])) {
+            $where[] = 'kind = ?';
+            $params[] = $filters['kind'];
+        }
+        if (!empty($filters['search'])) {
+            $where[] = '(title LIKE ? OR summary LIKE ?)';
+            $params[] = '%' . $filters['search'] . '%';
+            $params[] = '%' . $filters['search'] . '%';
+        }
+        $whereClause = implode(' AND ', $where);
+        $offset = ($page - 1) * $perPage;
+
+        $total = (int)Database::fetchOne("SELECT COUNT(*) as cnt FROM ti_intel_profiles WHERE $whereClause", $params)['cnt'];
+        $params[] = $perPage;
+        $params[] = $offset;
+        $rows = Database::fetchAll("SELECT * FROM ti_intel_profiles WHERE $whereClause ORDER BY title LIMIT ? OFFSET ?", $params);
+
+        return ['data' => $rows, 'total' => $total, 'page' => $page, 'perPage' => $perPage, 'totalPages' => (int)ceil($total / $perPage)];
+    }
+
+    /** Conteo de perfiles por tipo. */
+    public function getProfileCounts(int $tenantId): array
+    {
+        $out = ['actor' => 0, 'tool' => 0, 'other' => 0, 'total' => 0];
+        foreach (Database::fetchAll("SELECT kind, COUNT(*) cnt FROM ti_intel_profiles WHERE tenant_id = ? GROUP BY kind", [$tenantId]) as $r) {
+            $k = strtolower((string)$r['kind']);
+            if (isset($out[$k]) && $k !== 'total') { $out[$k] += (int)$r['cnt']; } else { $out['other'] += (int)$r['cnt']; }
+            $out['total'] += (int)$r['cnt'];
+        }
+        return $out;
+    }
+
+    public function profilesPage(array $params = []): void
+    {
+        $tenants = TenantManager::getActive();
+        $selectedTenant = (int)($_GET['tenant'] ?? ($tenants[0]['id'] ?? 0));
+        $filters = [
+            'kind'   => trim((string)($_GET['kind'] ?? '')),
+            'search' => trim((string)($_GET['search'] ?? '')),
+        ];
+        $page = max(1, (int)($_GET['page'] ?? 1));
+        $data = $selectedTenant ? $this->getProfiles($selectedTenant, $filters, $page, 50) : ['data' => [], 'total' => 0, 'page' => 1, 'perPage' => 50, 'totalPages' => 1];
+        $counts = $selectedTenant ? $this->getProfileCounts($selectedTenant) : ['actor' => 0, 'tool' => 0, 'other' => 0, 'total' => 0];
+
+        echo $this->page('profiles', [
+            'module'         => $this,
+            'tenants'        => $tenants,
+            'selectedTenant' => $selectedTenant,
+            'filters'        => $filters,
+            'profiles'       => $data,
+            'counts'         => $counts,
+        ]);
+    }
+
+    public function showProfilePage(array $params = []): void
+    {
+        $id = (int)($params['id'] ?? 0);
+        $profile = Database::fetchOne("SELECT * FROM ti_intel_profiles WHERE id = ?", [$id]);
+        if (!$profile) {
+            http_response_code(404);
+            require VIEWS_PATH . '/errors/404.php';
+            return;
+        }
+        $indicators = Database::fetchAll("SELECT * FROM ti_iocs WHERE profile_id = ? ORDER BY ioc_type, ioc_value LIMIT 3000", [$id]);
+        $tenant = TenantManager::getById((int)$profile['tenant_id']);
+
+        echo $this->page('profile', [
+            'module'     => $this,
+            'profile'    => $profile,
+            'indicators' => $indicators,
+            'tenant'     => $tenant,
+        ]);
+    }
+
+    public function triggerSyncIndicators(array $params = []): void
+    {
+        Csrf::validateOrFail();
+        $tenantId = (int)($params['tenantId'] ?? 0);
+        $missing = $this->missingPermissions($tenantId);
+        if (!empty($missing)) {
+            json_response(['success' => false, 'skipped' => true, 'error' => 'El tenant no tiene los permisos: ' . implode(', ', $missing)]);
+        }
+        try {
+            $client = $this->getGraphClient($tenantId);
+        } catch (Throwable $e) {
+            json_response(['success' => false, 'error' => $e->getMessage()]);
+            return;
+        }
+        json_response($this->syncProfileIndicators($client, $tenantId));
+    }
+
+    // ============================================================
     // Rutas del módulo
     // ============================================================
 
@@ -516,7 +709,10 @@ class Module_ThreatIntelligence extends BaseModule
             ['method' => 'GET', 'pattern' => 'iocs',                'handler' => [$this, 'iocsPage']],
             ['method' => 'GET', 'pattern' => 'iocs/data',           'handler' => [$this, 'listIocs']],
             ['method' => 'GET', 'pattern' => 'stats',               'handler' => [$this, 'getStats']],
+            ['method' => 'GET', 'pattern' => 'profiles',            'handler' => [$this, 'profilesPage']],
+            ['method' => 'GET', 'pattern' => 'profile/{id}',        'handler' => [$this, 'showProfilePage']],
             ['method' => 'POST','pattern' => 'sync/{tenantId}',    'handler' => [$this, 'triggerSync']],
+            ['method' => 'POST','pattern' => 'sync-indicators/{tenantId}', 'handler' => [$this, 'triggerSyncIndicators']],
         ];
     }
 
@@ -613,6 +809,7 @@ class Module_ThreatIntelligence extends BaseModule
             'sectors'        => array_keys(SECTORS),
             'sector'         => $sector,
             'mySector'       => $mySector,
+            'profileCounts'  => $selectedTenant ? $this->getProfileCounts($selectedTenant) : ['actor' => 0, 'tool' => 0, 'other' => 0, 'total' => 0],
         ]);
     }
 

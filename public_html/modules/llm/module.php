@@ -711,6 +711,20 @@ class Module_Llm extends BaseModule
             $L[] = 'THREAT INTEL: sin datos sincronizados.';
         }
 
+        // Intel profiles (threat actors / tools)
+        $profCount = (int)$this->ctxScalar("SELECT COUNT(*) FROM ti_intel_profiles WHERE tenant_id = ?", $tenantId);
+        if ($profCount > 0) {
+            $L[] = 'INTEL PROFILES: total=' . $profCount
+                 . ' · por tipo: ' . $this->ctxFmt($this->ctxPairs("SELECT kind, COUNT(*) n FROM ti_intel_profiles WHERE tenant_id = ? GROUP BY kind", $tenantId));
+            $topProfiles = Database::fetchAll(
+                "SELECT title, kind FROM ti_intel_profiles WHERE tenant_id = ? " . ($detailed ? '' : "AND kind = 'actor' ") . "ORDER BY title LIMIT 12",
+                [$tenantId]
+            );
+            foreach ($topProfiles as $t) {
+                $L[] = '  - [' . ($t['kind'] ?: '?') . '] ' . $this->ctxClip((string)$t['title'], 120);
+            }
+        }
+
         // Vulnerabilidades
         $v = (int)$this->ctxScalar("SELECT COUNT(*) FROM vulnerabilities WHERE tenant_id = ?", $tenantId);
         if ($v > 0) {

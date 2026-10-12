@@ -55,6 +55,15 @@ class Database
             $db->exec("ALTER TABLE tenants ADD COLUMN country TEXT");
         }
 
+        // ti_iocs.profile_id (indicadores asociados a un intel profile)
+        $iocCols = [];
+        foreach ($db->query("PRAGMA table_info(ti_iocs)") as $c) {
+            $iocCols[$c['name']] = true;
+        }
+        if (!isset($iocCols['profile_id'])) {
+            $db->exec("ALTER TABLE ti_iocs ADD COLUMN profile_id INTEGER");
+        }
+
         // v0.2.5.23: retirada del proveedor OpenCode (sus modelos gratis no se
         // pueden usar desde la web). Limpieza idempotente, una sola vez.
         self::cleanupRemovedProviders($db);
@@ -166,6 +175,25 @@ class Database
             last_seen TEXT,
             fetched_at TEXT NOT NULL DEFAULT (datetime('now')),
             UNIQUE(tenant_id, ioc_id)
+        )");
+
+        // Intel profiles de Threat Intelligence (threat actors y tools)
+        $db->exec("CREATE TABLE IF NOT EXISTS ti_intel_profiles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+            profile_id TEXT NOT NULL,
+            kind TEXT,
+            title TEXT NOT NULL,
+            summary TEXT,
+            description TEXT,
+            tradecraft TEXT,
+            aliases TEXT,
+            targets TEXT,
+            countries TEXT,
+            first_active TEXT,
+            raw_data TEXT,
+            fetched_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(tenant_id, profile_id)
         )");
 
         $db->exec("CREATE TABLE IF NOT EXISTS incidents (
