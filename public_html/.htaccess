@@ -25,12 +25,15 @@ ServerSignature Off
 
 # Bloquear acceso directo a directorios internos
 # (usamos RedirectMatch 404 en lugar de 403 para no revelar estructura)
-RedirectMatch 404 /config/
-RedirectMatch 404 /includes/
-RedirectMatch 404 /modules/
-RedirectMatch 404 /storage/
-RedirectMatch 404 /cron/
-RedirectMatch 404 /views/
+# IMPORTANTE: el patrón DEBE ir anclado con ^. RedirectMatch sin ancla coincide
+# en cualquier parte de la URL y bloquearía rutas de la app como
+# /index.php/modules/reports (contienen "/modules/").
+RedirectMatch 404 ^/config/
+RedirectMatch 404 ^/includes/
+RedirectMatch 404 ^/modules/
+RedirectMatch 404 ^/storage/
+RedirectMatch 404 ^/cron/
+RedirectMatch 404 ^/views/
 
 # ============================================================
 # PHP CONFIGURATION (solo si el hosting lo permite)
