@@ -87,13 +87,13 @@ class GraphClient
     /**
      * Llamada GET a Microsoft Graph.
      */
-    public function graphGet(string $path, array $queryParams = []): array
+    public function graphGet(string $path, array $queryParams = [], array $extraHeaders = []): array
     {
         $url = GRAPH_BASE_URL . ltrim($path, '/');
         if (!empty($queryParams)) {
             $url .= '?' . http_build_query($queryParams);
         }
-        return $this->graphRequest($url);
+        return $this->graphRequest($url, 'GET', null, 3, $extraHeaders);
     }
 
     /**
@@ -108,7 +108,7 @@ class GraphClient
     /**
      * Llamada genérica a Microsoft Graph con reintentos.
      */
-    public function graphRequest(string $url, string $method = 'GET', ?string $body = null, int $retries = 3): array
+    public function graphRequest(string $url, string $method = 'GET', ?string $body = null, int $retries = 3, array $extraHeaders = []): array
     {
         $token = $this->getToken(GRAPH_SCOPE);
 
@@ -117,6 +117,9 @@ class GraphClient
             'Content-Type: application/json',
             'Accept: application/json',
         ];
+        foreach ($extraHeaders as $name => $value) {
+            $headers[] = $name . ': ' . $value;
+        }
 
         $response = $this->httpRequest($url, $method, $body, $headers, $retries);
         return $response;

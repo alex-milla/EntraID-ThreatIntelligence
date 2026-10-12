@@ -328,6 +328,7 @@ class Database
             ['vulnerabilities',    'Vulnerabilidades (TVM)',        'Vulnerabilidades de equipos y software',           '1.0.0'],
             ['secure_score',       'Secure Score',                  'Evolución de la postura de seguridad',             '1.0.0'],
             ['hunting',            'Advanced Hunting (KQL)',        'Consultas programáticas KQL',                      '1.0.0'],
+            ['entra_users',        'Usuarios Entra ID',             'Investigación de usuarios: MFA, logins y riesgo',  '1.0.0'],
             ['reports',            'Reportes',                      'Generación de reportes periódicos',                '1.0.0'],
             ['llm',                'Integración LLM',               'Análisis de datos con modelos de lenguaje',        '1.0.0'],
             ['export',             'Exportación',                   'Exportación a STIX, MISP, CSV y TXT',             '1.0.0'],
