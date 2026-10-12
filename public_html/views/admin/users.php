@@ -84,6 +84,11 @@ foreach ($flashData as $type => $msg):
                         </td>
                         <td class="px-4 py-3 text-sm text-gray-500"><?= $u['last_login_at'] ? time_ago($u['last_login_at']) : 'Nunca' ?></td>
                         <td class="px-4 py-3 text-right">
+                            <a href="<?= base_url('admin/user/edit?id=' . (int)$u['id']) ?>"
+                               class="inline-flex p-1.5 rounded-lg hover:bg-brand-50 dark:hover:bg-brand-950 text-gray-400 hover:text-brand-600 transition-colors"
+                               title="Editar usuario">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                            </a>
                             <?php if ($u['id'] !== Auth::id()): ?>
                                 <form method="POST" action="<?= base_url('admin/user/delete') ?>" class="inline" onsubmit="return confirm('¿Eliminar este usuario?')">
                                     <?= Csrf::field() ?>

@@ -295,6 +295,71 @@ class AdminController
     }
 
     /**
+     * Editar usuario existente (solo admin).
+     * Editarse a uno mismo exige la contraseña actual como verificación extra.
+     */
+    public static function userEdit(): void
+    {
+        Auth::requireAdmin();
+
+        $id = (int)($_GET['id'] ?? 0);
+        $user = $id ? Database::fetchOne("SELECT * FROM users WHERE id = ?", [$id]) : null;
+        if (!$user) {
+            flash('error', 'Usuario no encontrado');
+            redirect(base_url('admin/users'));
+        }
+
+        $isSelf = ($id === Auth::id());
+        $error = flash('error');
+
+        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+            Csrf::validateOrFail();
+
+            // Verificación extra al editarse a uno mismo
+            if ($isSelf && !Encryption::verifyPassword($_POST['current_password'] ?? '', $user['password_hash'])) {
+                flash('error', 'Debes introducir tu contraseña actual correctamente');
+                redirect(base_url('admin/user/edit?id=' . $id));
+            }
+
+            $result = Auth::updateUser($id, [
+                'email'                => $_POST['email'] ?? '',
+                'display_name'         => $_POST['display_name'] ?? '',
+                'role'                 => $_POST['role'] ?? $user['role'],
+                'password'             => $_POST['password'] ?? '',
+                'must_change_password' => !empty($_POST['must_change_password']),
+            ], Auth::id());
+
+            if ($result['success']) {
+                if ($isSelf) {
+                    // El admin conoce la contraseña que acaba de ponerse:
+                    // no forzarle otro cambio en el próximo login
+                    Database::update("UPDATE users SET must_change_password = 0 WHERE id = ?", [$id]);
+
+                    // Refrescar la sesión con los datos nuevos
+                    $fresh = Database::fetchOne("SELECT * FROM users WHERE id = ?", [$id]);
+                    Session::set('auth_user', [
+                        'id'           => $id,
+                        'username'     => $fresh['username'],
+                        'email'        => $fresh['email'],
+                        'display_name' => $fresh['display_name'],
+                        'role'         => $fresh['role'],
+                    ]);
+                }
+                flash('success', 'Usuario actualizado correctamente');
+                redirect(base_url('admin/users'));
+            }
+
+            flash('error', implode(', ', $result['errors']));
+            redirect(base_url('admin/user/edit?id=' . $id));
+        }
+
+        require VIEWS_PATH . '/layout/header.php';
+        require VIEWS_PATH . '/layout/sidebar.php';
+        require VIEWS_PATH . '/admin/user_edit.php';
+        require VIEWS_PATH . '/layout/footer.php';
+    }
+
+    /**
      * Eliminar usuario.
      */
     public static function userDelete(): void
@@ -531,6 +596,7 @@ $adminRoutes = [
         'tenants'          => 'tenants',
         'tenant/edit'      => 'tenantEdit',
         'users'            => 'users',
+        'user/edit'        => 'userEdit',
         'modules'          => 'modules',
         'settings'         => 'settings',
         'updates'          => 'updates',
@@ -543,6 +609,7 @@ $adminRoutes = [
         'tenant/toggle'    => 'tenantToggle',
         'user/create'      => 'userCreate',
         'user/delete'      => 'userDelete',
+        'user/edit'        => 'userEdit',
         'module/toggle'    => 'moduleToggle',
         'settings/save'    => 'settingsSave',
         'updates'          => 'updates',

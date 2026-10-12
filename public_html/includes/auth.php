@@ -210,4 +210,91 @@ class Auth
         log_activity('user.created', ['user_id' => $id, 'username' => $data['username']]);
         return ['success' => true, 'user_id' => $id];
     }
+
+    /**
+     * Edita un usuario existente (solo admin).
+     * El username no se modifica. La contraseña es opcional (vacía = no cambiar);
+     * si se establece, el usuario deberá cambiarla en su próximo login.
+     */
+    public static function updateUser(int $userId, array $data, ?int $actorId = null): array
+    {
+        $user = Database::fetchOne("SELECT * FROM users WHERE id = ?", [$userId]);
+        if (!$user) {
+            return ['success' => false, 'errors' => ['Usuario no encontrado']];
+        }
+
+        $errors = [];
+
+        // Email
+        $email = trim((string)($data['email'] ?? ''));
+        if (empty($email) || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            $errors[] = 'El email no es válido';
+        } else {
+            $dup = Database::fetchOne(
+                "SELECT id FROM users WHERE email = ? AND id != ?",
+                [$email, $userId]
+            );
+            if ($dup) {
+                $errors[] = 'El email ya está en uso por otro usuario';
+            }
+        }
+
+        // Rol
+        $role = (string)($data['role'] ?? $user['role']);
+        if (!in_array($role, ['admin', 'user'], true)) {
+            $errors[] = 'Rol no válido';
+        }
+
+        // Nadie cambia su propio rol (evita auto-bloqueo por descuido)
+        if ($actorId !== null && $actorId === $userId && $role !== $user['role']) {
+            $errors[] = 'No puedes cambiar tu propio rol';
+        }
+
+        // El sistema siempre debe tener al menos un admin
+        if ($user['role'] === 'admin' && $role !== 'admin') {
+            $adminCount = (int)(Database::fetchOne(
+                "SELECT COUNT(*) AS c FROM users WHERE role = 'admin' AND id != ?",
+                [$userId]
+            )['c'] ?? 0);
+            if ($adminCount < 1) {
+                $errors[] = 'No puedes quitar el último administrador del sistema';
+            }
+        }
+
+        // Contraseña nueva (opcional)
+        $newPassword = (string)($data['password'] ?? '');
+        if ($newPassword !== '' && strlen($newPassword) < 8) {
+            $errors[] = 'La nueva contraseña debe tener al menos 8 caracteres';
+        }
+
+        if (!empty($errors)) {
+            return ['success' => false, 'errors' => $errors];
+        }
+
+        // Si se establece contraseña nueva, forzar cambio en el próximo login
+        $mustChange = !empty($data['must_change_password']) || $newPassword !== '';
+
+        $sets = "email = ?, display_name = ?, role = ?, must_change_password = ?, updated_at = datetime('now')";
+        $params = [
+            $email,
+            trim((string)($data['display_name'] ?? '')) ?: null,
+            $role,
+            $mustChange ? 1 : 0,
+        ];
+        if ($newPassword !== '') {
+            $sets .= ', password_hash = ?';
+            $params[] = Encryption::hashPassword($newPassword);
+        }
+        $params[] = $userId;
+
+        Database::update("UPDATE users SET $sets WHERE id = ?", $params);
+
+        log_activity('user.updated', [
+            'user_id'       => $userId,
+            'password_set'  => $newPassword !== '',
+            'role'          => $role,
+        ], $actorId);
+
+        return ['success' => true];
+    }
 }
