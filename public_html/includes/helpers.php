@@ -404,3 +404,38 @@ if (!function_exists('llm_config')) {
         ];
     }
 }
+
+if (!function_exists('render_markdown')) {
+    /**
+     * Convierte Markdown a HTML de forma segura (Parsedown en modo seguro:
+     * el HTML crudo de la fuente se escapa). Si el parser no está disponible,
+     * devuelve el texto escapado en un <pre>.
+     */
+    function render_markdown(?string $markdown): string
+    {
+        $md = (string)($markdown ?? '');
+        if (trim($md) === '') {
+            return '';
+        }
+
+        $parserFile = INCLUDES_PATH . '/parsedown.php';
+        if (is_file($parserFile)) {
+            require_once $parserFile;
+            if (class_exists('Parsedown')) {
+                $p = new Parsedown();
+                $p->setSafeMode(true);
+                $html = $p->text($md);
+                // Enlaces externos: abrir en pestaña nueva y sin referrer
+                $html = preg_replace(
+                    '/<a href="(https?:\/\/[^"]+)"/i',
+                    '<a href="$1" target="_blank" rel="noopener noreferrer"',
+                    $html
+                );
+                return $html;
+            }
+        }
+
+        // Fallback seguro
+        return '<pre class="whitespace-pre-wrap">' . e($md) . '</pre>';
+    }
+}
