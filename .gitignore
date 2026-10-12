@@ -1,0 +1,18 @@
+# ============================================================
+# .gitignore raíz — Datos privados y credenciales NUNCA al repo
+# ============================================================
+
+# Token de GitHub y variables de entorno con credenciales
+env/
+
+# Scripts PowerShell con credenciales reales de tenant
+powershell/
+
+# Artefacto de Windows
+nul
+
+# IDE y sistema
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

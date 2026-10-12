@@ -1,0 +1,39 @@
+# ============================================================
+# .gitignore — Nunca subir datos sensibles ni generados
+# ============================================================
+
+# Entorno
+.env
+.env.local
+.env.*.local
+
+# Base de datos
+storage/*.sqlite
+storage/*.sqlite-journal
+storage/*.sqlite-wal
+storage/*.sqlite-shm
+
+# Logs
+storage/*.log
+storage/cache/*
+!storage/cache/.gitkeep
+storage/exports/*
+!storage/exports/.gitkeep
+
+# Archivos del sistema
+*.log
+*.bak
+*.backup
+*.old
+*.swp
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.sublime-*
+
+# Composer (si se usa en el futuro)
+/vendor/
+composer.lock

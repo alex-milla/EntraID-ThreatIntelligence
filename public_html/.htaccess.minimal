@@ -1,0 +1,23 @@
+# ============================================================
+# .htaccess MINIMAL — Solo lo esencial para que funcione
+# Si este archivo también da 403, el hosting tiene AllowOverride None
+# y deberás usar el modo "sin .htaccess" (archivos PHP shim)
+# ============================================================
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # Si el archivo existe, servirlo directamente
+    RewriteCond %{REQUEST_FILENAME} -f [OR]
+    RewriteCond %{REQUEST_FILENAME} -d
+    RewriteRule ^ - [L]
+
+    # API: /api/xxx -> api/index.php
+    RewriteRule ^api(/.*)?$ api/index.php [L,QSA]
+
+    # Admin: /admin/xxx -> admin/index.php
+    RewriteRule ^admin(/.*)?$ admin/index.php [L,QSA]
+
+    # Todo lo demás -> index.php
+    RewriteRule ^(.*)$ index.php [L,QSA]
+</IfModule>

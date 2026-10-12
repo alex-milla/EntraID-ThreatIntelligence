@@ -1,0 +1,92 @@
+# ============================================================
+# .htaccess RECOMMENDED — EntraID Threat Intelligence
+# Versión segura para hosting compartido
+# - Sin php_flag/php_value (incompatible con PHP-FPM)
+# - Sin Options -Indexes (algunos hostings lo bloquean)
+# - Toda directiva condicional protegida con <IfModule>
+# ============================================================
+
+# ============================================================
+# PROTECCIÓN DE ARCHIVOS SENSIBLES
+# ============================================================
+
+# Bloquear archivos ocultos (.env, .git, .htaccess, etc.)
+<FilesMatch "^\.">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Deny from all
+    </IfModule>
+</FilesMatch>
+
+# Bloquear extensiones sensibles
+<FilesMatch "\.(env|ini|log|sqlite|db|bak|backup|old|sql)$">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Deny from all
+    </IfModule>
+</FilesMatch>
+
+# ============================================================
+# OCULTAR DIRECTORIOS INTERNOS (devolver 404 en lugar de 403)
+# ============================================================
+
+<IfModule mod_alias.c>
+    RedirectMatch 404 ^/config/
+    RedirectMatch 404 ^/includes/
+    RedirectMatch 404 ^/modules/
+    RedirectMatch 404 ^/storage/
+    RedirectMatch 404 ^/cron/
+    RedirectMatch 404 ^/views/
+</IfModule>
+
+# ============================================================
+# REWRITE ENGINE (URLs limpias)
+# ============================================================
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # Servir archivos/directorios existentes directamente
+    RewriteCond %{REQUEST_FILENAME} -f [OR]
+    RewriteCond %{REQUEST_FILENAME} -d
+    RewriteRule ^ - [L]
+
+    # API: /api/xxx -> api/index.php
+    RewriteRule ^api(/.*)?$ api/index.php [L,QSA]
+
+    # Admin: /admin/xxx -> admin/index.php
+    RewriteRule ^admin(/.*)?$ admin/index.php [L,QSA]
+
+    # Todo lo demás -> index.php (front controller)
+    RewriteRule ^(.*)$ index.php [L,QSA]
+</IfModule>
+
+# ============================================================
+# HEADERS DE SEGURIDAD (opcional)
+# ============================================================
+
+<IfModule mod_headers.c>
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set X-Frame-Options "SAMEORIGIN"
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+</IfModule>
+
+# ============================================================
+# COMPRESIÓN (opcional)
+# ============================================================
+
+<IfModule mod_deflate.c>
+    AddOutputFilterByType DEFLATE text/html text/css application/javascript application/json text/plain
+</IfModule>
+
+# ============================================================
+# CHARSET
+# ============================================================
+
+AddDefaultCharset UTF-8

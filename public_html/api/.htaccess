@@ -1,0 +1,8 @@
+# API .htaccess — redirigir todo a index.php
+# Compatible con hosting compartido (sin RewriteBase fijo)
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteRule ^(.*)$ index.php [QSA,L]
+</IfModule>
