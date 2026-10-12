@@ -284,6 +284,15 @@ class Module_ThreatIntelligence extends BaseModule
             $where[] = "substr(COALESCE(a.last_updated, a.created_date), 1, 10) <= ?";
             $params[] = $filters['to'];
         }
+        if (!empty($filters['q'])) {
+            $like = '%' . $filters['q'] . '%';
+            $where[] = "(a.title LIKE ? OR a.summary LIKE ? OR a.body LIKE ? OR a.tags LIKE ?)";
+            array_push($params, $like, $like, $like, $like);
+        }
+        if (!empty($filters['tag'])) {
+            $where[] = 'a.tags LIKE ?';
+            $params[] = '%' . $filters['tag'] . '%';
+        }
         $whereClause = implode(' AND ', $where);
         $offset = ($page - 1) * $perPage;
 
@@ -313,6 +322,33 @@ class Module_ThreatIntelligence extends BaseModule
             'perPage'   => $perPage,
             'totalPages'=> (int)ceil($total / max(1, $perPage)),
         ];
+    }
+
+    /**
+     * Etiquetas distintas de los artículos del tenant (tag => nº de artículos).
+     */
+    public function getArticleTags(int $tenantId, int $limit = 200): array
+    {
+        $rows = Database::fetchAll(
+            "SELECT tags FROM ti_articles WHERE tenant_id = ? AND tags IS NOT NULL AND tags != ''",
+            [$tenantId]
+        );
+        $set = [];
+        foreach ($rows as $r) {
+            $tags = safe_json_decode($r['tags'], []);
+            if (!is_array($tags)) {
+                continue;
+            }
+            foreach ($tags as $t) {
+                $val = is_array($t) ? ($t['value'] ?? $t['name'] ?? '') : $t;
+                $val = trim((string)$val);
+                if ($val !== '') {
+                    $set[$val] = ($set[$val] ?? 0) + 1;
+                }
+            }
+        }
+        arsort($set);
+        return array_slice($set, 0, $limit, true);
     }
 
     /**
@@ -347,6 +383,18 @@ class Module_ThreatIntelligence extends BaseModule
         $params[] = $range['from'];
         $rangeSql .= " AND substr(COALESCE(last_updated, created_date), 1, 10) <= ?";
         $params[] = $range['to'];
+
+        $q = trim((string)($_GET['q'] ?? ''));
+        if ($q !== '') {
+            $like = '%' . $q . '%';
+            $rangeSql .= " AND (title LIKE ? OR summary LIKE ? OR body LIKE ? OR tags LIKE ?)";
+            array_push($params, $like, $like, $like, $like);
+        }
+        $tag = trim((string)($_GET['tag'] ?? ''));
+        if ($tag !== '') {
+            $rangeSql .= " AND tags LIKE ?";
+            $params[] = '%' . $tag . '%';
+        }
 
         if ($dir === 'prev') {
             $row = Database::fetchOne(
@@ -467,6 +515,8 @@ class Module_ThreatIntelligence extends BaseModule
             'nextId'   => $nextId,
             'dateFrom' => $range['from'],
             'dateTo'   => $range['to'],
+            'q'        => trim((string)($_GET['q'] ?? '')),
+            'tag'      => trim((string)($_GET['tag'] ?? '')),
         ]);
     }
 
@@ -502,8 +552,12 @@ class Module_ThreatIntelligence extends BaseModule
         $tenants = TenantManager::getActive();
         $selectedTenant = (int)($_GET['tenant'] ?? ($tenants[0]['id'] ?? 0));
         $range = $this->resolveDateRange();
+        $q = trim((string)($_GET['q'] ?? ''));
+        $tag = trim((string)($_GET['tag'] ?? ''));
+        $filters = array_merge($range, ['q' => $q, 'tag' => $tag]);
         $stats = $selectedTenant ? $this->getIocStats($selectedTenant) : [];
-        $articles = $selectedTenant ? $this->getArticles($selectedTenant, 1, 20, $range) : ['data' => []];
+        $articles = $selectedTenant ? $this->getArticles($selectedTenant, 1, 50, $filters) : ['data' => []];
+        $tagOptions = $selectedTenant ? $this->getArticleTags($selectedTenant) : [];
 
         echo $this->page('index', [
             'module'         => $this,
@@ -513,6 +567,9 @@ class Module_ThreatIntelligence extends BaseModule
             'articles'       => $articles,
             'dateFrom'       => $range['from'],
             'dateTo'         => $range['to'],
+            'q'              => $q,
+            'tag'            => $tag,
+            'tagOptions'     => $tagOptions,
         ]);
     }
 

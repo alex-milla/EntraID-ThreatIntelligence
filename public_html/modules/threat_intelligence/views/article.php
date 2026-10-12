@@ -27,7 +27,11 @@ $bodyHtml    = render_markdown((string)($article['body'] ?? ''));
 
 <!-- Navegación anterior / siguiente -->
 <?php
-$navQs = 'tenant=' . (int)$article['tenant_id'] . '&from=' . urlencode($dateFrom ?? '') . '&to=' . urlencode($dateTo ?? '');
+$navQs = 'tenant=' . (int)$article['tenant_id']
+    . '&from=' . urlencode($dateFrom ?? '')
+    . '&to=' . urlencode($dateTo ?? '')
+    . '&q=' . urlencode($q ?? '')
+    . '&tag=' . urlencode($tag ?? '');
 ?>
 <div class="mb-4 flex items-center justify-between">
     <?php if (!empty($prevId)): ?>
