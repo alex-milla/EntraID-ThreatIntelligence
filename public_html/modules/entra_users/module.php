@@ -108,16 +108,19 @@ class Module_EntraUsers extends BaseModule
         }
     }
 
-    private function getSignIns(int $tenantId, string $id, int $top = 50): array
+    private function getSignIns(int $tenantId, string $id, int $days = 30, int $top = 100): array
     {
         try {
             $client = $this->getGraphClient($tenantId);
             $esc = str_replace("'", "''", $id);
+            $since = gmdate('Y-m-d\TH:i:s\Z', time() - ($days * 86400));
             $res = $client->graphGet('auditLogs/signIns', [
-                '$filter' => "userId eq '$esc'",
+                '$filter' => "userId eq '$esc' and createdDateTime ge $since",
                 '$top'    => $top,
             ]);
-            return ['success' => true, 'signIns' => $res['value'] ?? []];
+            $signIns = $res['value'] ?? [];
+            usort($signIns, fn($a, $b) => strcmp((string)($b['createdDateTime'] ?? ''), (string)($a['createdDateTime'] ?? '')));
+            return ['success' => true, 'signIns' => $signIns];
         } catch (Throwable $e) {
             return ['success' => false, 'error' => $e->getMessage(), 'signIns' => []];
         }
@@ -189,7 +192,12 @@ class Module_EntraUsers extends BaseModule
         $profile = $this->getUserProfile($tenantId, $id);
         $methods = $this->getAuthMethods($tenantId, $id);
         $mfa     = $this->getMfaRegistration($tenantId, $id);
-        $signIns = $this->getSignIns($tenantId, $id, 50);
+
+        $days = (int)($_GET['days'] ?? 30);
+        if (!in_array($days, [1, 7, 14, 30], true)) {
+            $days = 30;
+        }
+        $signIns = $this->getSignIns($tenantId, $id, $days, 100);
         $risk    = $this->getUserRisk($tenantId, $id);
 
         // País habitual = el más repetido en sus sign-ins
@@ -214,6 +222,7 @@ class Module_EntraUsers extends BaseModule
             'mfaError'     => $mfa['success'] ? null : $mfa['error'],
             'signIns'      => $signIns['signIns'],
             'signInsError' => $signIns['success'] ? null : $signIns['error'],
+            'days'         => $days,
             'risk'         => $risk['risk'],
             'riskError'    => $risk['success'] ? null : $risk['error'],
             'usualCountry' => $usualCountry,

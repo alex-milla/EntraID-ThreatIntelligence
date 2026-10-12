@@ -110,23 +110,47 @@ $methodsMap = [
 </div>
 
 <!-- Sign-ins -->
+<?php $mfaCodes = [50074, 50076, 500121, 50158]; ?>
 <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
     <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between gap-3 flex-wrap">
-        <h2 class="text-sm font-semibold">Inicios de sesión (<?= count($signIns) ?>)</h2>
-        <div class="flex items-center gap-4 text-xs">
-            <span class="text-gray-400">País habitual: <strong class="text-gray-600 dark:text-gray-300"><?= e($usualCountry ?? '—') ?></strong></span>
+        <div class="flex items-center gap-3 flex-wrap">
+            <h2 class="text-sm font-semibold">Inicios de sesión (<?= count($signIns) ?>)</h2>
+            <div class="flex items-center gap-2 text-xs">
+                <span class="text-gray-400">Periodo:</span>
+                <?php foreach ([1 => '24 h', 7 => '7 días', 14 => '14 días', 30 => '30 días'] as $d => $lbl): ?>
+                    <a href="?tenant=<?= (int)$tenant['id'] ?>&days=<?= $d ?>" class="<?= (int)($days ?? 30) === $d ? 'font-semibold text-brand-500' : 'text-gray-500 hover:underline' ?>"><?= $lbl ?></a>
+                <?php endforeach; ?>
+            </div>
+        </div>
+        <div class="flex items-center gap-3 flex-wrap text-xs">
+            <select id="filter-state" onchange="applyFilters()" class="px-2 py-1 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-xs">
+                <option value="">Todos los resultados</option>
+                <option value="ok">Correcto</option>
+                <option value="mfa">MFA no completado</option>
+                <option value="fail">Fallido</option>
+            </select>
             <label class="inline-flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" id="only-outside" onchange="filterSignins()" class="rounded border-gray-300 text-brand-500 focus:ring-brand-500">
+                <input type="checkbox" id="only-outside" onchange="applyFilters()" class="rounded border-gray-300 text-brand-500 focus:ring-brand-500">
                 Solo fuera del país habitual
             </label>
         </div>
     </div>
 
     <?php if (!empty($signInsError)): ?>
-        <p class="px-5 py-6 text-sm text-red-500">No se pudieron leer los sign-ins: <?= e($signInsError) ?></p>
+        <div class="px-5 py-6 text-sm text-red-500">
+            No se pudieron leer los sign-ins: <?= e($signInsError) ?>
+            <p class="text-xs text-gray-400 mt-1">Requiere el permiso <code>AuditLog.Read.All</code>.</p>
+        </div>
     <?php elseif (empty($signIns)): ?>
-        <p class="px-5 py-6 text-sm text-gray-500">Sin inicios de sesión registrados.</p>
+        <p class="px-5 py-6 text-sm text-gray-500">Sin inicios de sesión en el periodo seleccionado. <span class="text-gray-400">(El histórico es de 7 días; con Entra ID P1/P2, hasta 30).</span></p>
     <?php else: ?>
+        <div class="px-5 py-3 border-b border-gray-200 dark:border-gray-700 flex items-center gap-4 text-xs flex-wrap">
+            <span class="text-gray-400">Mostrando <strong id="cnt-shown"><?= count($signIns) ?></strong>:</span>
+            <span class="text-green-600 dark:text-green-400">● Correctos: <strong id="cnt-ok">0</strong></span>
+            <span class="text-orange-500 dark:text-orange-400">● MFA no completado: <strong id="cnt-mfa">0</strong></span>
+            <span class="text-red-600 dark:text-red-400">● Fallidos: <strong id="cnt-fail">0</strong></span>
+            <span class="text-gray-400">· País habitual: <strong class="text-gray-600 dark:text-gray-300"><?= e($usualCountry ?? '—') ?></strong></span>
+        </div>
         <div class="overflow-x-auto">
             <table class="w-full text-sm">
                 <thead>
@@ -144,9 +168,23 @@ $methodsMap = [
                         $country = $s['location']['countryOrRegion'] ?? '';
                         $city = $s['location']['city'] ?? '';
                         $outside = ($usualCountry !== null && $country !== '' && $country !== $usualCountry);
-                        $ok = ((int)($s['status']['errorCode'] ?? 0) === 0);
+                        $ec = (int)($s['status']['errorCode'] ?? 0);
+                        $fr = (string)($s['status']['failureReason'] ?? '');
+                        if ($ec === 0) {
+                            $state = 'ok';
+                        } elseif (in_array($ec, $mfaCodes, true) || stripos($fr, 'strong authentication') !== false || stripos($fr, 'multi-factor') !== false) {
+                            $state = 'mfa';
+                        } else {
+                            $state = 'fail';
+                        }
+                        $badge = match($state) {
+                            'ok'    => 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300',
+                            'mfa'   => 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300',
+                            default => 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',
+                        };
+                        $label = match($state) { 'ok' => 'Correcto', 'mfa' => 'MFA no completado', default => 'Fallido' };
                         ?>
-                        <tr class="hover:bg-gray-50 dark:hover:bg-gray-800/50 <?= $outside ? 'bg-red-50/60 dark:bg-red-950/20' : '' ?>" data-outside="<?= $outside ? '1' : '0' ?>">
+                        <tr class="hover:bg-gray-50 dark:hover:bg-gray-800/50 <?= $outside ? 'bg-red-50/60 dark:bg-red-950/20' : '' ?>" data-state="<?= $state ?>" data-outside="<?= $outside ? '1' : '0' ?>">
                             <td class="px-4 py-2 text-xs whitespace-nowrap"><?= format_date($s['createdDateTime'] ?? null) ?></td>
                             <td class="px-4 py-2 text-xs font-mono"><?= e($s['ipAddress'] ?? '—') ?></td>
                             <td class="px-4 py-2 text-xs">
@@ -155,7 +193,9 @@ $methodsMap = [
                             </td>
                             <td class="px-4 py-2 text-xs text-gray-500"><?= e($s['clientAppUsed'] ?? '—') ?></td>
                             <td class="px-4 py-2 text-xs">
-                                <span class="<?= $ok ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400' ?>"><?= $ok ? 'Correcto' : ('Fallido (' . (int)($s['status']['errorCode'] ?? 0) . ')') ?></span>
+                                <span class="inline-flex px-2 py-0.5 rounded text-[11px] <?= $badge ?>"><?= e($label) ?></span>
+                                <?php if ($ec !== 0): ?><span class="ml-1 text-[10px] text-gray-400 font-mono"><?= $ec ?></span><?php endif; ?>
+                                <?php if ($fr !== ''): ?><div class="text-[10px] text-gray-400 mt-0.5"><?= e(truncate($fr, 90)) ?></div><?php endif; ?>
                             </td>
                         </tr>
                     <?php endforeach; ?>
@@ -166,10 +206,21 @@ $methodsMap = [
 </div>
 
 <script>
-function filterSignins() {
-    var only = document.getElementById('only-outside').checked;
+function applyFilters() {
+    var state = document.getElementById('filter-state') ? document.getElementById('filter-state').value : '';
+    var only = document.getElementById('only-outside') ? document.getElementById('only-outside').checked : false;
+    var c = { ok: 0, mfa: 0, fail: 0 }, shown = 0;
+
     document.querySelectorAll('#signin-body tr').forEach(function (tr) {
-        tr.style.display = (only && tr.getAttribute('data-outside') !== '1') ? 'none' : '';
+        var st = tr.getAttribute('data-state');
+        var outside = tr.getAttribute('data-outside') === '1';
+        var vis = (state === '' || state === st) && (!only || outside);
+        tr.style.display = vis ? '' : 'none';
+        if (vis) { shown++; if (c[st] !== undefined) c[st]++; }
     });
+
+    var set = function (id, v) { var el = document.getElementById(id); if (el) el.textContent = v; };
+    set('cnt-ok', c.ok); set('cnt-mfa', c.mfa); set('cnt-fail', c.fail); set('cnt-shown', shown);
 }
+document.addEventListener('DOMContentLoaded', applyFilters);
 </script>
