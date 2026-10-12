@@ -58,8 +58,8 @@ class Module_Llm extends BaseModule
         if ($c['provider'] === '') {
             return false;
         }
-        // Ollama y endpoints locales no requieren API key
-        if (in_array($c['provider'], ['ollama'], true)) {
+        // Ollama y OpenCode Console (modelos gratis) no requieren API key
+        if (in_array($c['provider'], ['ollama', 'opencode'], true)) {
             return true;
         }
         return $c['api_key'] !== '';
@@ -95,7 +95,7 @@ class Module_Llm extends BaseModule
     {
         return match ($cfg['provider']) {
             // Compatibles con la API de chat/completions de OpenAI
-            'openai', 'custom', 'gemini', 'mistral'
+            'openai', 'custom', 'gemini', 'mistral', 'opencode'
                         => $this->callOpenAI($cfg, $system, $user, $options),
             'anthropic' => $this->callAnthropic($cfg, $system, $user, $options),
             'ollama'    => $this->callOllama($cfg, $system, $user, $options),
@@ -114,7 +114,7 @@ class Module_Llm extends BaseModule
         if (empty($cfg['provider'])) {
             return ['success' => false, 'error' => 'Falta seleccionar un proveedor'];
         }
-        if ($cfg['provider'] !== 'ollama' && empty($cfg['api_key'])) {
+        if (!in_array($cfg['provider'], ['ollama', 'opencode'], true) && empty($cfg['api_key'])) {
             return ['success' => false, 'error' => 'Falta la API key'];
         }
         try {
@@ -136,12 +136,19 @@ class Module_Llm extends BaseModule
     {
         // Endpoints y modelos por defecto de los proveedores compatibles con OpenAI
         [$defaultUrl, $defaultModel] = match ($cfg['provider']) {
-            'gemini'  => ['https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', 'gemini-1.5-flash'],
-            'mistral' => ['https://api.mistral.ai/v1/chat/completions', 'mistral-large-latest'],
-            default   => ['https://api.openai.com/v1/chat/completions', 'gpt-4o-mini'],
+            'gemini'   => ['https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', 'gemini-1.5-flash'],
+            'mistral'  => ['https://api.mistral.ai/v1/chat/completions', 'mistral-large-latest'],
+            'opencode' => ['https://opencode.ai/inference/v1/chat/completions', 'space-bunny-free'],
+            default    => ['https://api.openai.com/v1/chat/completions', 'gpt-4o-mini'],
         };
         $url = $cfg['api_url'] ?: $defaultUrl;
         $model = $cfg['model'] ?: $defaultModel;
+
+        // OpenCode Console: probar también el endpoint "openai" por si el primero diera 404
+        $urls = [$url];
+        if ($cfg['provider'] === 'opencode' && $cfg['api_url'] === '') {
+            $urls[] = 'https://opencode.ai/inference/openai/v1/chat/completions';
+        }
 
         $body = json_encode([
             'model'       => $model,
@@ -153,17 +160,27 @@ class Module_Llm extends BaseModule
             'temperature' => $options['temperature'] ?? 0.3,
         ]);
 
-        $response = $this->httpPost($url, $body, [
-            'Authorization: Bearer ' . $cfg['api_key'],
-            'Content-Type: application/json',
-        ]);
+        $lastError = null;
+        foreach ($urls as $u) {
+            try {
+                $response = $this->httpPost($u, $body, [
+                    'Authorization: Bearer ' . $cfg['api_key'],
+                    'Content-Type: application/json',
+                ]);
 
-        $content = $response['choices'][0]['message']['content'] ?? null;
-        if ($content === null) {
-            return ['success' => false, 'error' => 'Respuesta vacía del modelo', 'raw' => $response];
+                $content = $response['choices'][0]['message']['content'] ?? null;
+                if ($content === null) {
+                    $lastError = new RuntimeException('Respuesta vacía del modelo');
+                    continue;
+                }
+
+                return ['success' => true, 'content' => $content, 'model' => $model];
+            } catch (Throwable $e) {
+                $lastError = $e;
+            }
         }
 
-        return ['success' => true, 'content' => $content, 'model' => $model];
+        throw $lastError ?? new RuntimeException('Error en la llamada al modelo');
     }
 
     private function callAnthropic(array $cfg, string $system, string $user, array $options): array

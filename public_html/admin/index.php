@@ -531,7 +531,7 @@ class AdminController
         Auth::requireAdmin();
         Csrf::validateOrFail();
 
-        $allowed = ['', 'openai', 'anthropic', 'azure', 'ollama', 'gemini', 'mistral', 'custom'];
+        $allowed = ['', 'openai', 'anthropic', 'azure', 'ollama', 'gemini', 'mistral', 'opencode', 'custom'];
         $provider = strtolower(trim((string)($_POST['llm_provider'] ?? '')));
         if (!in_array($provider, $allowed, true)) {
             $provider = '';

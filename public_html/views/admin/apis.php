@@ -12,6 +12,7 @@ $providers = [
     'ollama'    => 'Ollama (local)',
     'gemini'    => 'Google Gemini',
     'mistral'   => 'Mistral',
+    'opencode'  => 'OpenCode Console (modelos gratis)',
     'custom'    => 'Personalizado (compatible OpenAI)',
 ];
 ?>
@@ -64,8 +65,17 @@ foreach ($flashData as $type => $msg):
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Modelo</label>
-                <input type="text" name="llm_model" id="llm_model" value="<?= e($cfg['model']) ?>" placeholder="gpt-4o-mini"
+                <input type="text" name="llm_model" id="llm_model" value="<?= e($cfg['model']) ?>" placeholder="gpt-4o-mini" list="llm-model-list"
                        class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-brand-500 outline-none font-mono text-sm">
+                <datalist id="llm-model-list">
+                    <option value="space-bunny-free">
+                    <option value="longcat-2.5-preview-free">
+                    <option value="step-5-preview-free">
+                    <option value="gpt-4o-mini">
+                    <option value="gemini-1.5-flash">
+                    <option value="mistral-large-latest">
+                    <option value="llama3.1">
+                </datalist>
             </div>
             <div>
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Max tokens</label>
@@ -85,7 +95,7 @@ foreach ($flashData as $type => $msg):
                     Borrar la clave guardada
                 </label>
             <?php endif; ?>
-            <p class="text-xs text-gray-400 mt-1">Ollama no necesita clave.</p>
+            <p class="text-xs text-gray-400 mt-1">Ollama y OpenCode Console (modelos gratis) no necesitan clave.</p>
         </div>
 
         <div class="flex items-center gap-3 pt-2 border-t border-gray-100 dark:border-gray-700">
