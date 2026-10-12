@@ -408,10 +408,10 @@ class Module_Reports extends BaseModule
         $report = $this->getReport((int)($params['id'] ?? 0));
         if (!$report) {
             http_response_code(404);
-            echo $this->render('error', ['message' => 'Reporte no encontrado']);
+            echo $this->page('error', ['module' => $this, 'message' => 'Reporte no encontrado']);
             return;
         }
-        echo $this->render('view', ['module' => $this, 'report' => $report]);
+        echo $this->page('view', ['module' => $this, 'report' => $report]);
     }
 
     public function getPeriods(array $params = []): void
