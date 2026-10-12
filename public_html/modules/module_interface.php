@@ -163,6 +163,26 @@ abstract class BaseModule implements ModuleInterface
     }
 
     /**
+     * Renderiza una vista de módulo envuelta en el layout completo del panel
+     * (header + sidebar + footer). A diferencia de render(), esta salida es una
+     * página HTML completa lista para responder a una navegación del usuario.
+     */
+    public function page(string $view, array $data = []): string
+    {
+        $content = $this->render($view, $data);
+
+        $title = $this->name();
+        $pageTitle = $this->name();
+
+        ob_start();
+        require VIEWS_PATH . '/layout/header.php';
+        require VIEWS_PATH . '/layout/sidebar.php';
+        echo $content;
+        require VIEWS_PATH . '/layout/footer.php';
+        return ob_get_clean();
+    }
+
+    /**
      * Obtiene un cliente Graph para un tenant (descifrando el secret).
      */
     protected function getGraphClient(int $tenantId): GraphClient

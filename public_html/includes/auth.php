@@ -240,8 +240,13 @@ class Auth
         }
 
         // Email
+        // NOTA: el usuario admin por defecto se crea con "admin@localhost".
+        // FILTER_VALIDATE_EMAIL rechaza dominios sin TLD, así que aceptamos
+        // expresamente los emails "@localhost" para no bloquear la edición
+        // (contraseña/usuario/rol) de esa cuenta.
         $email = trim((string)($data['email'] ?? ''));
-        if (empty($email) || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        $isLocalEmail = (bool)preg_match('/^[^\s@]+@localhost$/i', $email);
+        if (empty($email) || (!$isLocalEmail && !filter_var($email, FILTER_VALIDATE_EMAIL))) {
             $errors[] = 'El email no es válido';
         } else {
             $dup = Database::fetchOne(

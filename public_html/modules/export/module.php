@@ -451,7 +451,7 @@ class Module_Export extends BaseModule
         $iocCount = $selectedTenant ? $this->countIocs($selectedTenant) : 0;
         $iocTypes = $selectedTenant ? $this->getIocTypes($selectedTenant) : [];
 
-        echo $this->render('index', [
+        echo $this->page('index', [
             'module' => $this, 'tenants' => $tenants,
             'selectedTenant' => $selectedTenant,
             'iocCount' => $iocCount, 'iocTypes' => $iocTypes,

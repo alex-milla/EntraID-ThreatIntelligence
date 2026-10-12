@@ -288,7 +288,7 @@ class Module_ThreatIntelligence extends BaseModule
         $stats = $selectedTenant ? $this->getIocStats($selectedTenant) : [];
         $articles = $selectedTenant ? $this->getArticles($selectedTenant, 1, 10) : ['data' => []];
 
-        echo $this->render('index', [
+        echo $this->page('index', [
             'module'         => $this,
             'tenants'        => $tenants,
             'selectedTenant' => $selectedTenant,

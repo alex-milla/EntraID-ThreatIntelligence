@@ -91,7 +91,7 @@ class Module_GraphConnector extends BaseModule
     {
         $tenants = TenantManager::getAll();
         $data = ['module' => $this, 'tenants' => $tenants];
-        echo $this->render('index', $data);
+        echo $this->page('index', $data);
     }
 
     public function testConnection(array $params = []): void

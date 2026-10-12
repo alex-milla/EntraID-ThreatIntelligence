@@ -369,7 +369,7 @@ class Module_Reports extends BaseModule
         $selectedTenant = (int)($_GET['tenant'] ?? ($tenants[0]['id'] ?? 0));
         $reports = $this->getReports($selectedTenant);
 
-        echo $this->render('index', [
+        echo $this->page('index', [
             'module' => $this, 'tenants' => $tenants, 'groups' => $groups,
             'selectedTenant' => $selectedTenant, 'reports' => $reports,
         ]);

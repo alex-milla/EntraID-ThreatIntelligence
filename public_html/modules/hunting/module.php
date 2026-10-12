@@ -204,7 +204,7 @@ class Module_Hunting extends BaseModule
     {
         $tenants = TenantManager::getActive();
         $selectedTenant = (int)($_GET['tenant'] ?? ($tenants[0]['id'] ?? 0));
-        echo $this->render('index', [
+        echo $this->page('index', [
             'module' => $this, 'tenants' => $tenants,
             'selectedTenant' => $selectedTenant,
             'presets' => $this->getPresetQueries(),

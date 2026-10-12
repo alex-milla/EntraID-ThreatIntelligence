@@ -173,26 +173,27 @@ class Module_Vulnerabilities extends BaseModule
      */
     public function getMachines(int $tenantId, array $filters = [], int $page = 1, int $perPage = 50): array
     {
-        $where = ['tenant_id = ?'];
+        // OJO: JOIN con vulnerabilities (solo para contar) → cualificar con "m."
+        $where = ['m.tenant_id = ?'];
         $params = [$tenantId];
 
         if (!empty($filters['health'])) {
-            $where[] = 'health_status = ?';
+            $where[] = 'm.health_status = ?';
             $params[] = $filters['health'];
         }
         if (!empty($filters['exposure'])) {
-            $where[] = 'exposure_level = ?';
+            $where[] = 'm.exposure_level = ?';
             $params[] = $filters['exposure'];
         }
         if (!empty($filters['search'])) {
-            $where[] = 'computer_dns_name LIKE ?';
+            $where[] = 'm.computer_dns_name LIKE ?';
             $params[] = '%' . $filters['search'] . '%';
         }
 
         $whereClause = implode(' AND ', $where);
         $offset = ($page - 1) * $perPage;
 
-        $total = (int)Database::fetchOne("SELECT COUNT(*) as cnt FROM machines WHERE $whereClause", $params)['cnt'];
+        $total = (int)Database::fetchOne("SELECT COUNT(*) as cnt FROM machines m WHERE $whereClause", $params)['cnt'];
         $params[] = $perPage;
         $params[] = $offset;
 
@@ -257,7 +258,7 @@ class Module_Vulnerabilities extends BaseModule
     {
         $tenants = TenantManager::getActive();
         $selectedTenant = (int)($_GET['tenant'] ?? ($tenants[0]['id'] ?? 0));
-        echo $this->render('index', ['module' => $this, 'tenants' => $tenants, 'selectedTenant' => $selectedTenant]);
+        echo $this->page('index', ['module' => $this, 'tenants' => $tenants, 'selectedTenant' => $selectedTenant]);
     }
 
     public function listVulns(array $params = []): void

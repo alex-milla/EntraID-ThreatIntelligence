@@ -122,30 +122,32 @@ class Module_Incidents extends BaseModule
      */
     public function getIncidents(int $tenantId, array $filters = [], int $page = 1, int $perPage = 20): array
     {
-        $where = ['tenant_id = ?'];
+        // OJO: la consulta hace JOIN con alerts, que también tiene tenant_id,
+        // severity, status y created_date → hay que cualificar con "i."
+        $where = ['i.tenant_id = ?'];
         $params = [$tenantId];
 
         if (!empty($filters['severity'])) {
-            $where[] = 'severity = ?';
+            $where[] = 'i.severity = ?';
             $params[] = $filters['severity'];
         }
         if (!empty($filters['status'])) {
-            $where[] = 'status = ?';
+            $where[] = 'i.status = ?';
             $params[] = $filters['status'];
         }
         if (!empty($filters['date_from'])) {
-            $where[] = 'created_date >= ?';
+            $where[] = 'i.created_date >= ?';
             $params[] = $filters['date_from'];
         }
         if (!empty($filters['date_to'])) {
-            $where[] = 'created_date <= ?';
+            $where[] = 'i.created_date <= ?';
             $params[] = $filters['date_to'];
         }
 
         $whereClause = implode(' AND ', $where);
         $offset = ($page - 1) * $perPage;
 
-        $total = (int)Database::fetchOne("SELECT COUNT(*) as cnt FROM incidents WHERE $whereClause", $params)['cnt'];
+        $total = (int)Database::fetchOne("SELECT COUNT(*) as cnt FROM incidents i WHERE $whereClause", $params)['cnt'];
 
         $params[] = $perPage;
         $params[] = $offset;
@@ -239,7 +241,7 @@ class Module_Incidents extends BaseModule
         $tenants = TenantManager::getActive();
         $selectedTenant = (int)($_GET['tenant'] ?? ($tenants[0]['id'] ?? 0));
 
-        echo $this->render('index', [
+        echo $this->page('index', [
             'module' => $this, 'tenants' => $tenants,
             'selectedTenant' => $selectedTenant,
         ]);

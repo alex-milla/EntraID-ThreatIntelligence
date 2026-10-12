@@ -292,7 +292,7 @@ class Module_Llm extends BaseModule
     public function index(array $params = []): void
     {
         $tenants = TenantManager::getActive();
-        echo $this->render('index', [
+        echo $this->page('index', [
             'module' => $this, 'tenants' => $tenants,
             'configured' => $this->isConfigured(),
             'provider' => LLM_PROVIDER ?: 'no configurado',
