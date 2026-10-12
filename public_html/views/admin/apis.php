@@ -11,6 +11,7 @@ $providers = [
     'azure'     => 'Azure OpenAI',
     'ollama'    => 'Ollama (local)',
     'gemini'    => 'Google Gemini',
+    'mistral'   => 'Mistral',
     'custom'    => 'Personalizado (compatible OpenAI)',
 ];
 ?>

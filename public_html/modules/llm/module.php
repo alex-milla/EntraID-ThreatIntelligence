@@ -89,7 +89,9 @@ class Module_Llm extends BaseModule
     private function dispatch(array $cfg, string $system, string $user, array $options): array
     {
         return match ($cfg['provider']) {
-            'openai'    => $this->callOpenAI($cfg, $system, $user, $options),
+            // Compatibles con la API de chat/completions de OpenAI
+            'openai', 'custom', 'gemini', 'mistral'
+                        => $this->callOpenAI($cfg, $system, $user, $options),
             'anthropic' => $this->callAnthropic($cfg, $system, $user, $options),
             'ollama'    => $this->callOllama($cfg, $system, $user, $options),
             'azure'     => $this->callAzure($cfg, $system, $user, $options),
@@ -127,8 +129,14 @@ class Module_Llm extends BaseModule
 
     private function callOpenAI(array $cfg, string $system, string $user, array $options): array
     {
-        $url = $cfg['api_url'] ?: 'https://api.openai.com/v1/chat/completions';
-        $model = $cfg['model'] ?: 'gpt-4o-mini';
+        // Endpoints y modelos por defecto de los proveedores compatibles con OpenAI
+        [$defaultUrl, $defaultModel] = match ($cfg['provider']) {
+            'gemini'  => ['https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', 'gemini-1.5-flash'],
+            'mistral' => ['https://api.mistral.ai/v1/chat/completions', 'mistral-large-latest'],
+            default   => ['https://api.openai.com/v1/chat/completions', 'gpt-4o-mini'],
+        };
+        $url = $cfg['api_url'] ?: $defaultUrl;
+        $model = $cfg['model'] ?: $defaultModel;
 
         $body = json_encode([
             'model'       => $model,

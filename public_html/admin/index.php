@@ -531,7 +531,7 @@ class AdminController
         Auth::requireAdmin();
         Csrf::validateOrFail();
 
-        $allowed = ['', 'openai', 'anthropic', 'azure', 'ollama', 'gemini', 'custom'];
+        $allowed = ['', 'openai', 'anthropic', 'azure', 'ollama', 'gemini', 'mistral', 'custom'];
         $provider = strtolower(trim((string)($_POST['llm_provider'] ?? '')));
         if (!in_array($provider, $allowed, true)) {
             $provider = '';
@@ -540,7 +540,11 @@ class AdminController
         setting_set('llm_provider', $provider);
         setting_set('llm_api_url', trim((string)($_POST['llm_api_url'] ?? '')));
         setting_set('llm_model', trim((string)($_POST['llm_model'] ?? '')));
-        setting_set('llm_max_tokens', (string)max(1, min(128000, (int)($_POST['llm_max_tokens'] ?? 2048))));
+
+        // Max tokens: si se deja vacío, usar el valor por defecto (no 1)
+        $mtRaw = trim((string)($_POST['llm_max_tokens'] ?? ''));
+        $maxTokens = ($mtRaw === '') ? 2048 : max(1, min(128000, (int)$mtRaw));
+        setting_set('llm_max_tokens', (string)$maxTokens);
 
         // La API key nunca se muestra en el formulario: solo se actualiza si viene una nueva,
         // salvo que se marque explícitamente "borrar".
