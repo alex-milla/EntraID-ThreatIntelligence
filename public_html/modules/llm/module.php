@@ -355,6 +355,7 @@ class Module_Llm extends BaseModule
             CURLOPT_HTTPHEADER     => $headers,
             CURLOPT_TIMEOUT        => 120,
             CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
         ]);
         $response = curl_exec($ch);
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);

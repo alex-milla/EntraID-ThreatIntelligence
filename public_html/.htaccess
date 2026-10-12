@@ -57,6 +57,8 @@ php_value max_execution_time 120
     Header always set X-Frame-Options "SAMEORIGIN"
     Header always set X-XSS-Protection "1; mode=block"
     Header always set Referrer-Policy "strict-origin-when-cross-origin"
+    # HSTS: obliga al navegador a usar HTTPS durante 1 año
+    Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
 </IfModule>
 
 # ============================================================
@@ -65,6 +67,11 @@ php_value max_execution_time 120
 
 <IfModule mod_rewrite.c>
     RewriteEngine On
+
+    # Forzar HTTPS (HTTP -> HTTPS). Respeta proxies/CDN que ya indican https.
+    RewriteCond %{HTTPS} off
+    RewriteCond %{HTTP:X-Forwarded-Proto} !https
+    RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
 
     # Detectar RewriteBase automáticamente
     # Comenta la siguiente línea si sabes la ruta base exacta

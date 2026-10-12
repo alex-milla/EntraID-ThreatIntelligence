@@ -9,6 +9,7 @@ declare(strict_types=1);
 class Encryption
 {
     private const CIPHER = 'aes-256-cbc';
+    private const CIPHER_AEAD = 'aes-256-gcm';
     private static ?string $key = null;
 
     /**
@@ -50,10 +51,28 @@ class Encryption
 
     /**
      * Cifra un valor y devuelve ['encrypted' => base64, 'iv' => base64].
+     * Usa AES-256-GCM (cifrado autenticado). El campo 'iv' contiene "iv:tag"
+     * (separados por ':') para poder almacenar el tag de autenticación.
+     * Si GCM no está disponible, cae a AES-256-CBC (formato legacy).
      */
     public static function encrypt(string $plaintext): array
     {
         $key = self::getKey();
+
+        $gcmIvLen = @openssl_cipher_iv_length(self::CIPHER_AEAD);
+        if ($gcmIvLen) {
+            $iv = random_bytes($gcmIvLen);
+            $tag = '';
+            $ct = @openssl_encrypt($plaintext, self::CIPHER_AEAD, $key, OPENSSL_RAW_DATA, $iv, $tag, '', 16);
+            if ($ct !== false && $tag !== '') {
+                return [
+                    'encrypted' => base64_encode($ct),
+                    'iv'        => base64_encode($iv) . ':' . base64_encode($tag),
+                ];
+            }
+        }
+
+        // Fallback: AES-256-CBC (formato legacy)
         $iv = random_bytes(openssl_cipher_iv_length(self::CIPHER));
         $encrypted = openssl_encrypt($plaintext, self::CIPHER, $key, OPENSSL_RAW_DATA, $iv);
 
@@ -68,14 +87,31 @@ class Encryption
     }
 
     /**
-     * Descifra un valor usando el ciphertext y el IV en base64.
+     * Descifra un valor. Detecta automáticamente:
+     *  - GCM:  $ivB64 contiene "iv:tag"
+     *  - CBC legacy: $ivB64 es solo el IV (datos ya existentes)
      */
     public static function decrypt(string $encryptedB64, string $ivB64): string
     {
         $key = self::getKey();
         $encrypted = base64_decode($encryptedB64, true);
-        $iv = base64_decode($ivB64, true);
 
+        if (str_contains($ivB64, ':')) {
+            [$ivPart, $tagPart] = explode(':', $ivB64, 2);
+            $iv = base64_decode($ivPart, true);
+            $tag = base64_decode($tagPart, true);
+            if ($encrypted === false || $iv === false || $tag === false) {
+                throw new RuntimeException('Datos de cifrado inválidos (base64 GCM)');
+            }
+            $decrypted = openssl_decrypt($encrypted, self::CIPHER_AEAD, $key, OPENSSL_RAW_DATA, $iv, $tag);
+            if ($decrypted === false) {
+                throw new RuntimeException('Error al descifrar (GCM): ' . openssl_error_string());
+            }
+            return $decrypted;
+        }
+
+        // Legacy CBC
+        $iv = base64_decode($ivB64, true);
         if ($encrypted === false || $iv === false) {
             throw new RuntimeException('Datos de cifrado inválidos (base64)');
         }
@@ -90,8 +126,8 @@ class Encryption
     }
 
     /**
-     * Cifra un valor y devuelve un string combinado (iv:encrypted) en base64.
-     * Útil para almacenar en una sola columna.
+     * Cifra un valor y devuelve un string combinado en base64.
+     * GCM: "iv:tag:encrypted" (3 partes) · CBC legacy: "iv:encrypted" (2 partes).
      */
     public static function encryptCombined(string $plaintext): string
     {
@@ -100,15 +136,21 @@ class Encryption
     }
 
     /**
-     * Descifra un string combinado (iv:encrypted).
+     * Descifra un string combinado. Soporta el formato nuevo (iv:tag:ct) y el
+     * legacy (iv:ct).
      */
     public static function decryptCombined(string $combined): string
     {
-        $parts = explode(':', $combined, 2);
-        if (count($parts) !== 2) {
-            throw new RuntimeException('Formato de cifrado combinado inválido');
+        $parts = explode(':', $combined);
+        if (count($parts) === 3) {
+            // iv:tag:ct
+            return self::decrypt($parts[2], $parts[0] . ':' . $parts[1]);
         }
-        return self::decrypt($parts[1], $parts[0]);
+        if (count($parts) === 2) {
+            // iv:ct (CBC legacy)
+            return self::decrypt($parts[1], $parts[0]);
+        }
+        throw new RuntimeException('Formato de cifrado combinado inválido');
     }
 
     /**

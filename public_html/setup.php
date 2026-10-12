@@ -173,8 +173,10 @@ $envCreated = false;
 if (!file_exists($envPath)) {
     echo '<div class="card"><h2>Archivo .env</h2>';
 
-    // Detectar URL automáticamente
-    $protocol = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+    // Detectar URL automáticamente (respetando proxies)
+    $isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+        || (strtolower((string)($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '')) === 'https');
+    $protocol = $isHttps ? 'https' : 'http';
     $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
     $appUrl = $protocol . '://' . $host;
 

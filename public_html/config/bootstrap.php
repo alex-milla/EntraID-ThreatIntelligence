@@ -39,9 +39,13 @@ spl_autoload_register(function (string $class): void {
 // ============================================================
 
 if (session_status() === PHP_SESSION_NONE) {
+    // Detecta HTTPS aunque haya un proxy/CDN delante
+    $isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+        || (strtolower((string)($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '')) === 'https');
+
     // Configuración segura de sesión
     ini_set('session.cookie_httponly', '1');
-    ini_set('session.cookie_secure', (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? '1' : '0');
+    ini_set('session.cookie_secure', $isHttps ? '1' : '0');
     ini_set('session.cookie_samesite', 'Strict');
     ini_set('session.use_strict_mode', '1');
     ini_set('session.gc_maxlifetime', '7200'); // 2 horas
