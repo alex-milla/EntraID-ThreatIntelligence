@@ -780,6 +780,128 @@ class AdminController
         require VIEWS_PATH . '/admin/change_password.php';
         require VIEWS_PATH . '/layout/footer.php';
     }
+
+    /**
+     * Panel de Almacenamiento: ocupación de la BD, del disco del hosting y PHP.
+     */
+    public static function storage(): void
+    {
+        Auth::requireAdmin();
+
+        $refresh = !empty($_GET['refresh']);
+        $cacheKey = 'storage_stats_cache';
+        $stats = null;
+
+        if (!$refresh) {
+            $cached = setting_get($cacheKey);
+            if (is_string($cached) && $cached !== '') {
+                $data = safe_json_decode($cached, null);
+                if (is_array($data) && isset($data['ts'], $data['stats']) && (time() - (int)$data['ts']) < 300) {
+                    $stats = $data['stats'];
+                }
+            }
+        }
+
+        if ($stats === null) {
+            $stats = self::computeStorageStats();
+            setting_set($cacheKey, json_encode(['ts' => time(), 'stats' => $stats]));
+        }
+
+        $success = flash('success');
+        $error = flash('error');
+
+        require VIEWS_PATH . '/layout/header.php';
+        require VIEWS_PATH . '/layout/sidebar.php';
+        require VIEWS_PATH . '/admin/storage.php';
+        require VIEWS_PATH . '/layout/footer.php';
+    }
+
+    /**
+     * Calcula las métricas de almacenamiento (BD, disco y PHP).
+     */
+    private static function computeStorageStats(): array
+    {
+        $dbPath = DB_PATH;
+        $dbSize = is_file($dbPath) ? (int)filesize($dbPath) : 0;
+        $walSize = is_file($dbPath . '-wal') ? (int)filesize($dbPath . '-wal') : 0;
+        $shmSize = is_file($dbPath . '-shm') ? (int)filesize($dbPath . '-shm') : 0;
+
+        $tables = [];
+        $totalRows = 0;
+        try {
+            foreach (Database::fetchAll("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name") as $t) {
+                $name = (string)$t['name'];
+                try {
+                    $c = (int)Database::fetchOne('SELECT COUNT(*) AS c FROM "' . $name . '"')['c'];
+                } catch (Throwable $e) {
+                    $c = 0;
+                }
+                $tables[$name] = $c;
+                $totalRows += $c;
+            }
+        } catch (Throwable $e) {}
+        arsort($tables);
+
+        $pageCount = 0;
+        $pageSize = 0;
+        try { $pageCount = (int)Database::fetchOne("PRAGMA page_count")['page_count']; } catch (Throwable $e) {}
+        try { $pageSize = (int)Database::fetchOne("PRAGMA page_size")['page_size']; } catch (Throwable $e) {}
+
+        $diskTotal = function_exists('disk_total_space') ? (int)@disk_total_space(ROOT_PATH) : 0;
+        $diskFree = function_exists('disk_free_space') ? (int)@disk_free_space(ROOT_PATH) : 0;
+        $diskUsed = $diskTotal > 0 ? $diskTotal - $diskFree : 0;
+
+        return [
+            'db' => [
+                'path' => $dbPath, 'size' => $dbSize, 'wal' => $walSize, 'shm' => $shmSize,
+                'page_count' => $pageCount, 'page_size' => $pageSize,
+                'tables' => $tables, 'table_count' => count($tables), 'total_rows' => $totalRows,
+            ],
+            'disk' => ['total' => $diskTotal, 'free' => $diskFree, 'used' => $diskUsed],
+            'dirs' => [
+                'storage'           => self::dirSize(STORAGE_PATH),
+                'storage/backups'   => self::dirSize(STORAGE_PATH . '/backups'),
+                'storage/exports'   => self::dirSize(STORAGE_PATH . '/exports'),
+                'storage/cache'     => self::dirSize(STORAGE_PATH . '/cache'),
+                'app (public_html)' => self::dirSize(ROOT_PATH),
+            ],
+            'php' => [
+                'memory_limit'        => (string)ini_get('memory_limit'),
+                'memory_usage'        => memory_get_usage(true),
+                'memory_peak'         => memory_get_peak_usage(true),
+                'upload_max_filesize' => (string)ini_get('upload_max_filesize'),
+                'post_max_size'       => (string)ini_get('post_max_size'),
+                'max_execution_time'  => (string)ini_get('max_execution_time'),
+                'curl'                => function_exists('curl_init'),
+                'mbstring'            => function_exists('mb_strlen'),
+                'openssl'             => function_exists('openssl_encrypt'),
+            ],
+            'ts' => time(),
+        ];
+    }
+
+    /**
+     * Tamaño de un directorio (con tope de ficheros para no castigar el hosting).
+     */
+    private static function dirSize(string $path, int $maxFiles = 20000): int
+    {
+        if (!is_dir($path)) { return 0; }
+        $total = 0;
+        $count = 0;
+        try {
+            $it = new RecursiveIteratorIterator(
+                new RecursiveDirectoryIterator($path, FilesystemIterator::SKIP_DOTS),
+                RecursiveIteratorIterator::LEAVES_ONLY
+            );
+            foreach ($it as $f) {
+                if ($f->isFile()) {
+                    $total += $f->getSize();
+                    if (++$count >= $maxFiles) { break; }
+                }
+            }
+        } catch (Throwable $e) {}
+        return $total;
+    }
 }
 
 // ============================================================
@@ -805,6 +927,7 @@ $adminRoutes = [
         'user/edit'        => 'userEdit',
         'modules'          => 'modules',
         'settings'         => 'settings',
+        'storage'          => 'storage',
         'apis'             => 'apis',
         'updates'          => 'updates',
         'change-password'  => 'changePassword',
