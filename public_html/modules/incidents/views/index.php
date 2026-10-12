@@ -47,12 +47,12 @@
                     var sevClass = inc.severity === 'high' || inc.severity === 'critical' ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'
                         : inc.severity === 'medium' ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300'
                         : 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300';
-                    html += '<div class="px-5 py-3 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">'
+                    html += '<a href="<?= base_url('modules/incidents/incident') ?>/' + inc.id + '" class="block px-5 py-3 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">'
                         + '<div class="flex items-start justify-between gap-3">'
                         + '<div class="min-w-0"><p class="text-sm font-medium truncate">' + esc(inc.display_name) + '</p>'
                         + '<p class="text-xs text-gray-400 mt-0.5">' + (inc.created_date || '') + ' · ' + (inc.alert_count || 0) + ' alertas</p></div>'
                         + '<span class="inline-flex px-2 py-0.5 text-xs rounded-full shrink-0 ' + sevClass + '">' + esc(inc.severity || '—') + '</span>'
-                        + '</div></div>';
+                        + '</div></a>';
                 });
             }
             document.getElementById('incidents-list').innerHTML = html;

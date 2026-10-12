@@ -231,7 +231,7 @@ class Module_Incidents extends BaseModule
             ['method' => 'GET',  'pattern' => 'list',                   'handler' => [$this, 'listIncidents']],
             ['method' => 'GET',  'pattern' => 'alerts',                 'handler' => [$this, 'listAlerts']],
             ['method' => 'GET',  'pattern' => 'stats',                  'handler' => [$this, 'getStats']],
-            ['method' => 'GET',  'pattern' => 'incident/{id}',          'handler' => [$this, 'showIncident']],
+            ['method' => 'GET',  'pattern' => 'incident/{id}',          'handler' => [$this, 'showIncidentPage']],
             ['method' => 'POST', 'pattern' => 'sync/{tenantId}',        'handler' => [$this, 'triggerSync']],
         ];
     }
@@ -282,6 +282,35 @@ class Module_Incidents extends BaseModule
         $incident = Database::fetchOne("SELECT * FROM incidents WHERE id = ?", [$id]);
         $alerts = Database::fetchAll("SELECT * FROM alerts WHERE incident_id = ?", [$id]);
         json_response(['incident' => $incident, 'alerts' => $alerts]);
+    }
+
+    /**
+     * Página de detalle de un incidente: datos, alertas, MITRE, acciones y análisis IA manual.
+     */
+    public function showIncidentPage(array $params = []): void
+    {
+        $id = (int)($params['id'] ?? 0);
+        $incident = Database::fetchOne("SELECT * FROM incidents WHERE id = ?", [$id]);
+        if (!$incident) {
+            http_response_code(404);
+            require VIEWS_PATH . '/errors/404.php';
+            return;
+        }
+
+        $alerts = Database::fetchAll(
+            "SELECT * FROM alerts WHERE incident_id = ? ORDER BY COALESCE(first_activity, last_activity) ASC",
+            [$id]
+        );
+        $tenant = TenantManager::getById((int)$incident['tenant_id']);
+
+        echo $this->page('incident', [
+            'module'           => $this,
+            'incident'         => $incident,
+            'alerts'           => $alerts,
+            'tenant'           => $tenant,
+            'profiles'         => llm_profile_list(),
+            'defaultProfileId' => (llm_profile_default()['id'] ?? null),
+        ]);
     }
 
     public function triggerSync(array $params = []): void

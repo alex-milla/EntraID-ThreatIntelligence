@@ -377,17 +377,63 @@ class Module_Llm extends BaseModule
         $incident = Database::fetchOne("SELECT * FROM incidents WHERE id = ?", [$incidentId]);
         if (!$incident) return ['success' => false, 'error' => 'Incidente no encontrado'];
 
-        $alerts = Database::fetchAll("SELECT * FROM alerts WHERE incident_id = ? LIMIT 10", [$incidentId]);
+        $alerts = Database::fetchAll(
+            "SELECT * FROM alerts WHERE incident_id = ? ORDER BY COALESCE(first_activity, last_activity) ASC LIMIT 25",
+            [$incidentId]
+        );
+        $tenant = TenantManager::getById((int)$incident['tenant_id']);
 
-        $system = 'Eres un analista de ciberseguridad senior. Analiza incidentes de seguridad y proporciona un resumen ejecutivo claro, conciso y accionable en español. Incluye: naturaleza del incidente, impacto potencial, y 3 acciones recomendadas prioritarias.';
-        $user = "Incidente: {$incident['display_name']}\nSeveridad: {$incident['severity']}\nEstado: {$incident['status']}\nClasificación: {$incident['classification']}\nAlertas asociadas:\n" . json_encode(array_map(fn($a) => [
-            'title' => $a['title'],
-            'threat' => $a['threat_display_name'],
-            'service' => $a['service_source'],
-            'mitre' => safe_json_decode($a['mitre_techniques'], []),
-        ], $alerts), JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        $alertLines = [];
+        $evidenceLines = [];
+        foreach ($alerts as $a) {
+            $mitre = safe_json_decode((string)$a['mitre_techniques'], []);
+            $alertLines[] = '- «' . $a['title'] . '»'
+                . (!empty($a['threat_display_name']) ? ' · amenaza: ' . $a['threat_display_name'] : '')
+                . (!empty($a['threat_family_name']) ? ' (' . $a['threat_family_name'] . ')' : '')
+                . (!empty($a['category']) ? ' · categoría: ' . $a['category'] : '')
+                . ' · severidad: ' . ($a['severity'] ?: '?')
+                . (!empty($a['service_source']) ? ' · servicio: ' . $a['service_source'] : '')
+                . (!empty($a['detection_source']) ? ' · detección: ' . $a['detection_source'] : '')
+                . (is_array($mitre) && $mitre ? ' · MITRE: ' . implode(', ', array_map('strval', $mitre)) : '')
+                . (!empty($a['first_activity']) ? ' · primera: ' . $a['first_activity'] : '')
+                . (!empty($a['last_activity']) ? ' · última: ' . $a['last_activity'] : '');
 
-        return $this->chat($system, $user, [], $profileId);
+            $raw = safe_json_decode((string)$a['raw_data'], []);
+            $ev = (is_array($raw) && isset($raw['evidence']) && is_array($raw['evidence'])) ? $raw['evidence'] : [];
+            foreach ($ev as $e) {
+                if (!is_array($e)) { continue; }
+                $lab = $e['ipAddress'] ?? $e['url'] ?? ($e['userAccount']['accountName'] ?? null)
+                    ?? $e['deviceDnsName'] ?? ($e['fileDetails']['fileName'] ?? null)
+                    ?? ($e['process']['filePath'] ?? null) ?? $e['processCommandLine'] ?? null;
+                if (!empty($lab)) { $evidenceLines[] = '- ' . $lab; }
+            }
+        }
+
+        $ctx = "INCIDENTE: {$incident['display_name']}\n"
+            . 'Tenant: ' . ($tenant['name'] ?? '') . "\n"
+            . 'Severidad: ' . ($incident['severity'] ?: '—') . "\n"
+            . 'Estado: ' . ($incident['status'] ?: '—') . "\n"
+            . 'Clasificación: ' . ($incident['classification'] ?: '—') . "\n"
+            . 'Determinación: ' . ($incident['determination'] ?: '—') . "\n"
+            . 'Asignado a: ' . ($incident['assigned_to'] ?: '—') . "\n"
+            . 'Creado: ' . ($incident['created_date'] ?: '—') . ' · Actualizado: ' . ($incident['last_update_date'] ?: '—') . "\n\n"
+            . 'ALERTAS (' . count($alerts) . "):\n" . ($alertLines ? implode("\n", $alertLines) : '- (sin alertas)') . "\n";
+
+        if ($evidenceLines) {
+            $ctx .= "\nEVIDENCIA/ENTIDADES:\n" . implode("\n", array_slice($evidenceLines, 0, 40)) . "\n";
+        }
+        if (!empty($incident['recommended_actions'])) {
+            $ctx .= "\nACCIONES RECOMENDADAS (Microsoft): " . truncate((string)$incident['recommended_actions'], 500) . "\n";
+        }
+
+        $system = 'Eres un analista de ciberseguridad senior de un SOC. Responde SIEMPRE en español y en Markdown, basándote '
+            . 'EXCLUSIVAMENTE en los datos del incidente que se te dan; no inventes. Estructura la respuesta con: '
+            . '1) Resumen ejecutivo; 2) Naturaleza y vector (mapea las técnicas MITRE); 3) Impacto potencial; '
+            . '4) Indicadores (IoCs) relevantes; 5) Acciones recomendadas priorizadas (3-5). Sé concreto y accionable.';
+
+        $user = $ctx . "\nTAREA: Analiza este incidente y devuelve el informe según la estructura indicada.";
+
+        return $this->chat($system, $user, ['max_tokens' => 2000], $profileId);
     }
 
     /**
