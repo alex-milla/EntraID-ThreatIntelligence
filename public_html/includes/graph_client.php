@@ -290,4 +290,38 @@ class GraphClient
             ];
         }
     }
+
+    /**
+     * Ejecuta una llamada de diagnóstico SIN lanzar excepción.
+     * Sirve para comprobar permisos reales (403 = falta permiso/consentimiento).
+     * Devuelve ['ok' => bool, 'http' => int, 'message' => string, 'count' => ?int].
+     */
+    public function probe(string $method, string $path, array $queryParams = [], bool $defender = false): array
+    {
+        try {
+            if ($defender) {
+                $url = MDE_BASE_URL . ltrim($path, '/');
+                if (!empty($queryParams)) {
+                    $url .= '?' . http_build_query($queryParams);
+                }
+                $response = $this->mdeRequest($url, strtoupper($method));
+            } else {
+                $url = GRAPH_BASE_URL . ltrim($path, '/');
+                if (!empty($queryParams)) {
+                    $url .= '?' . http_build_query($queryParams);
+                }
+                $response = $this->graphRequest($url, strtoupper($method));
+            }
+
+            $count = (isset($response['value']) && is_array($response['value'])) ? count($response['value']) : null;
+            return ['ok' => true, 'http' => 200, 'message' => 'OK', 'count' => $count];
+        } catch (Throwable $e) {
+            $msg = $e->getMessage();
+            $http = 0;
+            if (preg_match('/\((\d{3})\)/', $msg, $m)) {
+                $http = (int)$m[1];
+            }
+            return ['ok' => false, 'http' => $http, 'message' => $msg];
+        }
+    }
 }

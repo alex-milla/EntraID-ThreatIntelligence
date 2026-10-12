@@ -139,8 +139,10 @@ if (!function_exists('truncate')) {
     function truncate(?string $text, int $length = 100, string $suffix = '...'): string
     {
         if ($text === null) return '';
-        if (mb_strlen($text) <= $length) return $text;
-        return mb_substr($text, 0, $length) . $suffix;
+        $len = function_exists('mb_strlen') ? mb_strlen($text) : strlen($text);
+        if ($len <= $length) return $text;
+        $cut = function_exists('mb_substr') ? mb_substr($text, 0, $length) : substr($text, 0, $length);
+        return $cut . $suffix;
     }
 }
 
@@ -196,7 +198,7 @@ if (!function_exists('slugify')) {
      */
     function slugify(string $text): string
     {
-        $text = mb_strtolower(trim($text), 'UTF-8');
+        $text = function_exists('mb_strtolower') ? mb_strtolower(trim($text), 'UTF-8') : strtolower(trim($text));
         $text = preg_replace('/[^a-z0-9\x{00C0}-\x{00FF}]+/u', '-', $text);
         $text = trim($text ?? '', '-');
         return $text !== '' ? $text : 'tenant-' . substr(md5($text . time()), 0, 8);

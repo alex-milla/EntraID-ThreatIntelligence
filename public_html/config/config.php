@@ -139,7 +139,7 @@ define('GRAPH_SCOPE', 'https://graph.microsoft.com/.default');
 
 // Defender for Endpoint (audience diferente)
 define('MDE_BASE_URL', 'https://api.security.microsoft.com/');
-define('MDE_SCOPE', 'https://api.securitycenter.microsoft.com/.default');
+define('MDE_SCOPE', 'https://api.security.microsoft.com/.default');
 
 // Token cache: 55 minutos (el token dura 1h)
 define('TOKEN_CACHE_TTL', 55 * 60);

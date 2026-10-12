@@ -54,3 +54,5 @@
     </script>
 </head>
 <body class="h-full flex overflow-hidden bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white antialiased transition-theme">
+<!-- Token CSRF global: lo usan las llamadas AJAX (api() en app.js) de los módulos -->
+<input type="hidden" name="csrf_token" value="<?= e(Csrf::token()) ?>">

@@ -84,6 +84,7 @@ class Module_GraphConnector extends BaseModule
             ['method' => 'POST', 'pattern' => 'test/{id}',                 'handler' => [$this, 'testConnection']],
             ['method' => 'GET',  'pattern' => 'org/{id}',                  'handler' => [$this, 'showOrganization']],
             ['method' => 'POST', 'pattern' => 'sync-all/{id}',            'handler' => [$this, 'syncAllModules']],
+            ['method' => 'POST', 'pattern' => 'diagnose/{id}',            'handler' => [$this, 'diagnoseEndpoint']],
         ];
     }
 
@@ -115,5 +116,77 @@ class Module_GraphConnector extends BaseModule
         $tenantId = (int)($params['id'] ?? 0);
         $results = ModuleManager::syncAll($tenantId);
         json_response(['success' => true, 'results' => $results]);
+    }
+
+    /**
+     * Diagnóstico de conexión + permisos reales del tenant.
+     * Comprueba un endpoint representativo por permiso (Graph y Defender).
+     */
+    public function diagnose(int $tenantId): array
+    {
+        $tenant = TenantManager::getById($tenantId);
+        if (!$tenant) {
+            return ['success' => false, 'error' => 'Tenant no encontrado'];
+        }
+
+        try {
+            $client = $this->getGraphClient($tenantId);
+        } catch (Throwable $e) {
+            return ['success' => false, 'error' => 'No se pudo preparar el cliente: ' . $e->getMessage()];
+        }
+
+        $token = $client->testConnection();
+
+        // permiso => [scope, método, endpoint, params]
+        $probes = [
+            ['Organization.Read.All',       'Graph', 'GET', 'organization',                              []],
+            ['ThreatIntelligence.Read.All', 'Graph', 'GET', 'security/threatIntelligence/articles',      ['$top' => 1]],
+            ['SecurityIncident.Read.All',   'Graph', 'GET', 'security/incidents',                        ['$top' => 1]],
+            ['SecurityAlert.Read.All',      'Graph', 'GET', 'security/alerts_v2',                        ['$top' => 1]],
+            ['SecurityEvents.Read.All',     'Graph', 'GET', 'security/secureScores',                     ['$top' => 1]],
+            ['Machine.Read.All',            'MDE',   'GET', 'api/machines',                              ['$top' => 1]],
+            ['Vulnerability.Read.All',      'MDE',   'GET', 'api/vulnerabilities/machinesVulnerabilities', ['$top' => 1]],
+            ['Software.Read.All',           'MDE',   'GET', 'api/software',                              ['$top' => 1]],
+        ];
+
+        $checks = [];
+        foreach ($probes as [$perm, $scope, $method, $path, $params]) {
+            if (empty($token['success'])) {
+                $checks[] = ['permission' => $perm, 'scope' => $scope, 'ok' => false, 'http' => 0, 'message' => 'Sin token', 'count' => null];
+                continue;
+            }
+            $res = $client->probe($method, $path, $params, $scope === 'MDE');
+            $checks[] = [
+                'permission' => $perm,
+                'scope'      => $scope,
+                'ok'         => (bool)$res['ok'],
+                'http'       => (int)$res['http'],
+                'message'    => (string)$res['message'],
+                'count'      => $res['count'] ?? null,
+            ];
+        }
+
+        $lastSync = Database::fetchOne(
+            "SELECT module_key, status, records_processed, error_message, completed_at
+             FROM sync_log WHERE tenant_id = ? ORDER BY id DESC LIMIT 1",
+            [$tenantId]
+        );
+
+        $okCount = count(array_filter($checks, fn($c) => $c['ok']));
+
+        return [
+            'success'  => true,
+            'tenant'   => ['id' => $tenantId, 'name' => $tenant['name']],
+            'token'    => $token,
+            'checks'   => $checks,
+            'summary'  => ['ok' => $okCount, 'total' => count($checks), 'missing' => count($checks) - $okCount],
+            'last_sync'=> $lastSync,
+        ];
+    }
+
+    public function diagnoseEndpoint(array $params = []): void
+    {
+        Csrf::validateOrFail();
+        json_response($this->diagnose((int)($params['id'] ?? 0)));
     }
 }
