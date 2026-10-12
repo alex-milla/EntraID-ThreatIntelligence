@@ -16,7 +16,9 @@ function getAdminPath(): string
 {
     // Opción 1: PATH_INFO (sin mod_rewrite: /admin/index.php/login)
     if (!empty($_SERVER['PATH_INFO'])) {
-        return trim($_SERVER['PATH_INFO'], '/');
+        $p = trim($_SERVER['PATH_INFO'], '/');
+        // /admin/index.php o /admin/index.php/index.php → dashboard
+        return ($p === '' || $p === 'index.php') ? '' : $p;
     }
 
     // Opción 2: REQUEST_URI (con mod_rewrite: /admin/login -> admin/index.php)
@@ -28,14 +30,16 @@ function getAdminPath(): string
         $uri = substr($uri, strlen($appPath));
     }
 
-    // Quitar /admin del inicio
     if (preg_match('#^/admin(/.*)?$#', $uri, $matches)) {
-        return trim($matches[1] ?? '', '/');
+        $p = trim($matches[1] ?? '', '/');
+        // /admin y /admin/index.php son el dashboard, no una sub-ruta
+        return ($p === '' || $p === 'index.php') ? '' : $p;
     }
 
     // Opción 3: parámetro _path (fallback universal)
     if (!empty($_GET['_path'])) {
-        return trim($_GET['_path'], '/');
+        $p = trim($_GET['_path'], '/');
+        return ($p === '' || $p === 'index.php') ? '' : $p;
     }
 
     return '';
