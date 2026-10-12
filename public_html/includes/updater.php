@@ -59,7 +59,7 @@ function updater_config(): array
 
         // Utilidades que se borran SIEMPRE al actualizar (el updater solo
         // corre en instalaciones ya montadas; nunca reinyectamos el setup).
-        'force_delete' => ['setup.php', 'diagnostic.php'],
+        'force_delete' => ['setup.php', 'diagnostic.php', 'admin-recovery.php'],
     ];
 }
 
