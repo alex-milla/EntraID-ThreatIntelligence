@@ -293,6 +293,23 @@ class Module_ThreatIntelligence extends BaseModule
             $where[] = 'a.tags LIKE ?';
             $params[] = '%' . $filters['tag'] . '%';
         }
+        if (!empty($filters['sector']) && isset(SECTORS[$filters['sector']])) {
+            $or = [];
+            foreach (SECTORS[$filters['sector']] as $kw) {
+                $like = '%' . $kw . '%';
+                $or[] = 'a.title LIKE ?';
+                $params[] = $like;
+                $or[] = 'a.summary LIKE ?';
+                $params[] = $like;
+                $or[] = 'a.body LIKE ?';
+                $params[] = $like;
+                $or[] = 'a.tags LIKE ?';
+                $params[] = $like;
+            }
+            if (!empty($or)) {
+                $where[] = '(' . implode(' OR ', $or) . ')';
+            }
+        }
         $whereClause = implode(' AND ', $where);
         $offset = ($page - 1) * $perPage;
 
@@ -394,6 +411,24 @@ class Module_ThreatIntelligence extends BaseModule
         if ($tag !== '') {
             $rangeSql .= " AND tags LIKE ?";
             $params[] = '%' . $tag . '%';
+        }
+        $sector = trim((string)($_GET['sector'] ?? ''));
+        if ($sector !== '' && isset(SECTORS[$sector])) {
+            $or = [];
+            foreach (SECTORS[$sector] as $kw) {
+                $like = '%' . $kw . '%';
+                $or[] = 'title LIKE ?';
+                $params[] = $like;
+                $or[] = 'summary LIKE ?';
+                $params[] = $like;
+                $or[] = 'body LIKE ?';
+                $params[] = $like;
+                $or[] = 'tags LIKE ?';
+                $params[] = $like;
+            }
+            if (!empty($or)) {
+                $rangeSql .= ' AND (' . implode(' OR ', $or) . ')';
+            }
         }
 
         if ($dir === 'prev') {
@@ -517,6 +552,7 @@ class Module_ThreatIntelligence extends BaseModule
             'dateTo'   => $range['to'],
             'q'        => trim((string)($_GET['q'] ?? '')),
             'tag'      => trim((string)($_GET['tag'] ?? '')),
+            'sector'   => trim((string)($_GET['sector'] ?? '')),
         ]);
     }
 
@@ -554,10 +590,12 @@ class Module_ThreatIntelligence extends BaseModule
         $range = $this->resolveDateRange();
         $q = trim((string)($_GET['q'] ?? ''));
         $tag = trim((string)($_GET['tag'] ?? ''));
-        $filters = array_merge($range, ['q' => $q, 'tag' => $tag]);
+        $sector = trim((string)($_GET['sector'] ?? ''));
+        $filters = array_merge($range, ['q' => $q, 'tag' => $tag, 'sector' => $sector]);
         $stats = $selectedTenant ? $this->getIocStats($selectedTenant) : [];
         $articles = $selectedTenant ? $this->getArticles($selectedTenant, 1, 50, $filters) : ['data' => []];
         $tagOptions = $selectedTenant ? $this->getArticleTags($selectedTenant) : [];
+        $mySector = $selectedTenant ? $this->tenantSectorKey($selectedTenant) : null;
 
         echo $this->page('index', [
             'module'         => $this,
@@ -570,7 +608,28 @@ class Module_ThreatIntelligence extends BaseModule
             'q'              => $q,
             'tag'            => $tag,
             'tagOptions'     => $tagOptions,
+            'sectors'        => array_keys(SECTORS),
+            'sector'         => $sector,
+            'mySector'       => $mySector,
         ]);
+    }
+
+    /**
+     * Sector del tenant a partir del campo industry (Graph /organization).
+     */
+    private function tenantSectorKey(int $tenantId): ?string
+    {
+        $tenant = TenantManager::getById($tenantId);
+        $ind = strtolower((string)($tenant['industry'] ?? ''));
+        if ($ind === '') {
+            return null;
+        }
+        foreach (SECTOR_INDUSTRY_MAP as $needle => $sector) {
+            if (str_contains($ind, $needle)) {
+                return $sector;
+            }
+        }
+        return null;
     }
 
     public function listArticles(array $params = []): void

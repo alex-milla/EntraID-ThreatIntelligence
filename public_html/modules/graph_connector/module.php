@@ -63,13 +63,23 @@ class Module_GraphConnector extends BaseModule
             $client = $this->getGraphClient($tenantId);
             $org = $client->graphGet('organization');
             $value = $org['value'][0] ?? [];
+
+            $industry = isset($value['industry']) && $value['industry'] !== '' ? (string)$value['industry'] : null;
+            $country  = isset($value['countryLetterCode']) && $value['countryLetterCode'] !== '' ? (string)$value['countryLetterCode'] : null;
+
+            // Persistir el sector/país detectados en el tenant
+            TenantManager::updateOrgInfo($tenantId, $industry, $country);
+
             return [
                 'success' => true,
                 'data' => [
-                    'displayName'      => $value['displayName'] ?? 'N/A',
-                    'id'               => $value['id'] ?? 'N/A',
-                    'verifiedDomains'  => array_column($value['verifiedDomains'] ?? [], 'name'),
-                    'createdDateTime'  => $value['createdDateTime'] ?? null,
+                    'displayName'     => $value['displayName'] ?? 'N/A',
+                    'id'              => $value['id'] ?? 'N/A',
+                    'industry'        => $industry,
+                    'country'         => $country,
+                    'tenantType'      => $value['tenantType'] ?? null,
+                    'verifiedDomains' => array_column($value['verifiedDomains'] ?? [], 'name'),
+                    'createdDateTime' => $value['createdDateTime'] ?? null,
                 ],
             ];
         } catch (Throwable $e) {

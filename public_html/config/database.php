@@ -32,8 +32,28 @@ class Database
             self::$instance->exec('PRAGMA busy_timeout = 5000');
 
             self::createSchema(self::$instance);
+            self::migrateSchema(self::$instance);
         }
         return self::$instance;
+    }
+
+    /**
+     * Migraciones idempotentes: añade columnas nuevas a tablas existentes
+     * sin perder datos (las BD ya creadas con CREATE TABLE IF NOT EXISTS no
+     * reciben columnas nuevas solas).
+     */
+    private static function migrateSchema(PDO $db): void
+    {
+        $cols = [];
+        foreach ($db->query("PRAGMA table_info(tenants)") as $c) {
+            $cols[$c['name']] = true;
+        }
+        if (!isset($cols['industry'])) {
+            $db->exec("ALTER TABLE tenants ADD COLUMN industry TEXT");
+        }
+        if (!isset($cols['country'])) {
+            $db->exec("ALTER TABLE tenants ADD COLUMN country TEXT");
+        }
     }
 
     /**

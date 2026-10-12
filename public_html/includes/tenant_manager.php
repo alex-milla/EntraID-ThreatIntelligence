@@ -53,6 +53,17 @@ class TenantManager
     }
 
     /**
+     * Guarda el sector/país detectados de la organización (Graph /organization).
+     */
+    public static function updateOrgInfo(int $id, ?string $industry, ?string $country): void
+    {
+        Database::update(
+            "UPDATE tenants SET industry = ?, country = ?, updated_at = datetime('now') WHERE id = ?",
+            [$industry, $country, $id]
+        );
+    }
+
+    /**
      * Obtiene un tenant por slug.
      */
     public static function getBySlug(string $slug): ?array

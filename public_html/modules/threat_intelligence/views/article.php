@@ -31,7 +31,8 @@ $navQs = 'tenant=' . (int)$article['tenant_id']
     . '&from=' . urlencode($dateFrom ?? '')
     . '&to=' . urlencode($dateTo ?? '')
     . '&q=' . urlencode($q ?? '')
-    . '&tag=' . urlencode($tag ?? '');
+    . '&tag=' . urlencode($tag ?? '')
+    . '&sector=' . urlencode($sector ?? '');
 ?>
 <div class="mb-4 flex items-center justify-between">
     <?php if (!empty($prevId)): ?>

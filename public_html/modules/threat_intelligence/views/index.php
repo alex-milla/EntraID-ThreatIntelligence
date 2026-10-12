@@ -29,6 +29,18 @@
             </select>
         </div>
         <div>
+            <label class="block text-xs text-gray-500 mb-1">Sector</label>
+            <select name="sector" class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+                <option value="">Todos los sectores</option>
+                <?php foreach (($sectors ?? []) as $sc): ?>
+                    <option value="<?= e($sc) ?>" <?= ($sector ?? '') === $sc ? 'selected' : '' ?>><?= e($sc) ?></option>
+                <?php endforeach; ?>
+            </select>
+            <?php if (!empty($mySector)): ?>
+                <a href="?<?= e(http_build_query(array_filter(['tenant' => (int)$selectedTenant, 'from' => $dateFrom ?? '', 'to' => $dateTo ?? '', 'sector' => $mySector]))) ?>" class="text-[11px] text-brand-500 hover:underline">→ Mi sector (<?= e($mySector) ?>)</a>
+            <?php endif; ?>
+        </div>
+        <div>
             <label class="block text-xs text-gray-500 mb-1">Desde</label>
             <input type="date" name="from" value="<?= e($dateFrom ?? '') ?>"
                    class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
@@ -39,7 +51,7 @@
                    class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
         </div>
         <button type="submit" class="px-3 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 text-sm font-medium rounded-lg transition-colors">Filtrar</button>
-        <?php if (($q ?? '') !== '' || ($tag ?? '') !== '' || ($dateFrom ?? '') !== '' || ($dateTo ?? '') !== ''): ?>
+        <?php if (($q ?? '') !== '' || ($tag ?? '') !== '' || ($sector ?? '') !== '' || ($dateFrom ?? '') !== '' || ($dateTo ?? '') !== ''): ?>
             <a href="?tenant=<?= (int)$selectedTenant ?>" class="text-xs text-gray-500 hover:underline">Limpiar</a>
         <?php endif; ?>
         <?php if (!empty($selectedTenant)): ?>
@@ -52,7 +64,7 @@
     <div class="flex items-center gap-3 text-xs">
         <span class="text-gray-400">Rápido:</span>
         <?php foreach ([7 => '7 días', 30 => '30 días', 90 => '90 días'] as $d => $lbl): $f = gmdate('Y-m-d', strtotime($dateTo ?? 'now') - $d * 86400); ?>
-            <a href="?<?= e(http_build_query(array_filter(['tenant' => (int)$selectedTenant, 'q' => $q ?? '', 'tag' => $tag ?? '', 'from' => $f, 'to' => $dateTo ?? '']))) ?>" class="text-brand-500 hover:underline"><?= $lbl ?></a>
+            <a href="?<?= e(http_build_query(array_filter(['tenant' => (int)$selectedTenant, 'q' => $q ?? '', 'tag' => $tag ?? '', 'sector' => $sector ?? '', 'from' => $f, 'to' => $dateTo ?? '']))) ?>" class="text-brand-500 hover:underline"><?= $lbl ?></a>
         <?php endforeach; ?>
         <span class="text-gray-400">· máx. 90 días</span>
     </div>
@@ -82,7 +94,7 @@
             <p class="px-5 py-8 text-sm text-gray-500 text-center">Sin artículos. Sincroniza el tenant para obtener datos.</p>
         <?php else: ?>
             <?php foreach ($articles['data'] as $a): ?>
-                <a href="<?= base_url('modules/threat_intelligence/article/' . (int)$a['id'] . '?' . http_build_query(array_filter(['tenant' => (int)$selectedTenant, 'from' => $dateFrom ?? '', 'to' => $dateTo ?? '', 'q' => $q ?? '', 'tag' => $tag ?? '']))) ?>" class="block px-5 py-3 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
+                <a href="<?= base_url('modules/threat_intelligence/article/' . (int)$a['id'] . '?' . http_build_query(array_filter(['tenant' => (int)$selectedTenant, 'from' => $dateFrom ?? '', 'to' => $dateTo ?? '', 'q' => $q ?? '', 'tag' => $tag ?? '', 'sector' => $sector ?? '']))) ?>" class="block px-5 py-3 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
                     <div class="flex items-start justify-between gap-3">
                         <div class="min-w-0">
                             <p class="text-sm font-medium truncate"><?= e($a['title']) ?></p>

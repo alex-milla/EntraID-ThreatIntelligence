@@ -177,3 +177,43 @@ define('MISP_TLP_DISTRIBUTION', [
     'amber' => '1', // This community only
     'red'   => '0', // Your organisation only
 ]);
+
+// ============================================================
+// Sectores (filtro de Threat Intelligence por sector)
+// label => palabras clave que se buscan en título/resumen/cuerpo/tags
+// ============================================================
+
+define('SECTORS', [
+    'Finanzas'    => ['financial', 'finance', 'bank', 'banking', 'fintech', 'payment', 'insurance'],
+    'Salud'       => ['health', 'hospital', 'medical', 'pharma', 'clinic'],
+    'Energía'     => ['energy', 'oil', 'gas', 'utility', 'utilities', 'power grid', 'electric', 'nuclear'],
+    'Gobierno'    => ['government', 'public sector', 'ministry', 'federal', 'state-sponsored', 'military', 'defense'],
+    'Manufactura' => ['manufactur', 'industrial', 'factory', 'scada', 'operational technology', 'plc'],
+    'Educación'   => ['university', 'education', 'school', 'academic'],
+    'Retail'      => ['retail', 'e-commerce', 'ecommerce', 'commerce', 'point of sale'],
+    'Tecnología'  => ['technology', 'software', 'saas', 'cloud', 'developer', 'npm', 'open source', 'supply chain'],
+    'Telecom'     => ['telecom', 'isp', 'mobile network', '5g'],
+]);
+
+// Mapeo del campo "industry" de Microsoft Graph (/organization) a un sector de arriba
+define('SECTOR_INDUSTRY_MAP', [
+    'financ'     => 'Finanzas',
+    'bank'       => 'Finanzas',
+    'insurance'  => 'Finanzas',
+    'health'     => 'Salud',
+    'energy'     => 'Energía',
+    'utilit'     => 'Energía',
+    'oil'        => 'Energía',
+    'gas'        => 'Energía',
+    'government' => 'Gobierno',
+    'public'     => 'Gobierno',
+    'manufactur' => 'Manufactura',
+    'industrial' => 'Manufactura',
+    'educat'     => 'Educación',
+    'retail'     => 'Retail',
+    'commerce'   => 'Retail',
+    'technolog'  => 'Tecnología',
+    'software'   => 'Tecnología',
+    'information'=> 'Tecnología',
+    'telecom'    => 'Telecom',
+]);

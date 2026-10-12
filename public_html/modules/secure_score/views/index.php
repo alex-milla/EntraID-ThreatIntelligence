@@ -33,6 +33,45 @@
     </div>
 </div>
 
+<?php
+$comparative = safe_json_decode($trend['latest']['average_comparative'] ?? '[]', []);
+$industryRow = null;
+if (is_array($comparative)) {
+    foreach ($comparative as $c) {
+        if (isset($c['basis']) && stripos((string)$c['basis'], 'industry') !== false) {
+            $industryRow = $c;
+            break;
+        }
+    }
+}
+?>
+<?php if ($industryRow !== null || !empty($industry)): ?>
+<div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-6 mb-6">
+    <h2 class="text-sm font-semibold mb-4">Comparativa de sector <span class="text-gray-400 font-normal">(Microsoft)</span></h2>
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
+        <div>
+            <p class="text-gray-500">Sector</p>
+            <p class="font-medium mt-1"><?= e(($industry ?? '') !== '' ? $industry : '—') ?></p>
+        </div>
+        <?php if ($industryRow !== null): ?>
+            <div>
+                <p class="text-gray-500">Media del sector</p>
+                <p class="font-medium mt-1 text-brand-500"><?= e((string)($industryRow['averageScore'] ?? '—')) ?></p>
+            </div>
+            <div>
+                <p class="text-gray-500">Dispositivos (sector)</p>
+                <p class="font-medium mt-1"><?= e((string)($industryRow['deviceScore'] ?? '—')) ?></p>
+            </div>
+            <div>
+                <p class="text-gray-500">Identidad (sector)</p>
+                <p class="font-medium mt-1"><?= e((string)($industryRow['identityScore'] ?? '—')) ?></p>
+            </div>
+        <?php endif; ?>
+    </div>
+    <p class="text-xs text-gray-400 mt-3">Comparativa por industria de Microsoft Secure Score. Si tu sector sale como «—», pulsa «Detectar organización» en Conexión Graph (requiere <code>Organization.Read.All</code>).</p>
+</div>
+<?php endif; ?>
+
 <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-6">
     <h2 class="text-sm font-semibold mb-4">Evolución</h2>
     <?php if (!empty($trend['trend'])): ?>

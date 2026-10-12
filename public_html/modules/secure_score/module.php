@@ -126,9 +126,15 @@ class Module_SecureScore extends BaseModule
         $tenants = TenantManager::getActive();
         $selectedTenant = (int)($_GET['tenant'] ?? ($tenants[0]['id'] ?? 0));
         $trend = $selectedTenant ? $this->getTrend($selectedTenant) : ['trend' => [], 'latest' => null];
+        $industry = null;
+        if ($selectedTenant) {
+            $t = TenantManager::getById($selectedTenant);
+            $industry = $t['industry'] ?? null;
+        }
         echo $this->page('index', [
             'module' => $this, 'tenants' => $tenants,
             'selectedTenant' => $selectedTenant, 'trend' => $trend,
+            'industry' => $industry,
         ]);
     }
 

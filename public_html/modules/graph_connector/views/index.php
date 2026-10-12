@@ -15,6 +15,10 @@
                 <div class="min-w-0">
                     <h3 class="text-sm font-semibold truncate"><?= e($t['name']) ?></h3>
                     <p class="text-xs text-gray-400 font-mono mt-0.5"><?= e(truncate($t['tenant_id'], 24)) ?></p>
+                    <p class="text-xs text-gray-400 mt-0.5">
+                        Sector: <span class="text-gray-600 dark:text-gray-300"><?= e(($t['industry'] ?? '') !== '' && ($t['industry'] ?? null) !== null ? $t['industry'] : '—') ?></span>
+                        <?php if (!empty($t['country'])): ?> · <?= e($t['country']) ?><?php endif; ?>
+                    </p>
                 </div>
                 <span class="inline-flex px-2 py-0.5 text-xs rounded-full shrink-0 <?= $t['is_active'] ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400' ?>">
                     <?= $t['is_active'] ? 'Activo' : 'Inactivo' ?>
@@ -33,6 +37,10 @@
                 <button onclick="diagnose(<?= $t['id'] ?>)" class="inline-flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 dark:border-gray-700 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">
                     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
                     Diagnóstico
+                </button>
+                <button onclick="detectOrg(<?= $t['id'] ?>)" class="inline-flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 dark:border-gray-700 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 21h18M5 21V7l7-4 7 4v14M9 9h.01M9 13h.01M9 17h.01M15 9h.01M15 13h.01M15 17h.01"/></svg>
+                    Detectar organización
                 </button>
             </div>
 
@@ -100,6 +108,25 @@ function syncAll(id) {
 }
 
 function esc(s) { var d = document.createElement('div'); d.textContent = s == null ? '' : s; return d.innerHTML; }
+
+function detectOrg(id) {
+    var el = document.getElementById('result-' + id);
+    el.classList.remove('hidden');
+    el.className = 'mt-3 text-xs px-3 py-2 rounded-lg bg-blue-50 dark:bg-blue-900/20 text-blue-700';
+    el.textContent = 'Detectando organización…';
+    api('GET', '<?= base_url('modules/graph_connector/org') ?>/' + id, null)
+        .then(function(res) {
+            if (res.success && res.data) {
+                el.className = 'mt-3 text-xs px-3 py-2 rounded-lg bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300';
+                el.textContent = 'Organización: ' + (res.data.displayName || '') + ' · Sector: ' + (res.data.industry || '—') + ' · País: ' + (res.data.country || '—');
+                setTimeout(function() { location.reload(); }, 1800);
+            } else {
+                el.className = 'mt-3 text-xs px-3 py-2 rounded-lg bg-red-50 dark:bg-red-900/20 text-red-700';
+                el.textContent = 'Error: ' + esc(res.message || res.error || 'No se pudo detectar');
+            }
+        })
+        .catch(function() { el.className = 'mt-3 text-xs px-3 py-2 rounded-lg bg-red-50 dark:bg-red-900/20 text-red-700'; el.textContent = 'Error de conexión'; });
+}
 
 function diagnose(id) {
     var el = document.getElementById('diag-' + id);
