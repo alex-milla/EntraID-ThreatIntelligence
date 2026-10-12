@@ -44,7 +44,7 @@
 <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-5 mb-6">
     <h2 class="text-sm font-semibold mb-4">Acciones</h2>
     <div class="flex items-center gap-3 flex-wrap">
-        <form method="POST" onsubmit="return confirm('Se creará un backup antes de instalar. ¿Continuar?');">
+        <form method="POST" data-confirm="Se creará un backup antes de instalar. ¿Continuar?">
             <?= Csrf::field() ?>
             <input type="hidden" name="action" value="install">
             <button type="submit"
@@ -52,7 +52,7 @@
                 <?= $release['ok'] && version_compare($installedVersion, $release['version'], '>=') ? 'Reinstalar (forzado)' : 'Instalar actualización' ?>
             </button>
         </form>
-        <form method="POST" onsubmit="return confirm('Reinstalación forzada: sobrescribe TODOS los ficheros de código con la release. ¿Continuar?');">
+        <form method="POST" data-confirm="Reinstalación forzada: sobrescribe TODOS los ficheros de código con la release. ¿Continuar?" data-confirm-danger>
             <?= Csrf::field() ?>
             <input type="hidden" name="action" value="install">
             <input type="hidden" name="force" value="1">
@@ -102,7 +102,7 @@
                             <td class="py-2 pr-4"><?= e($b['date']) ?></td>
                             <td class="py-2 pr-4"><?= (int)$b['files'] ?></td>
                             <td class="py-2">
-                                <form method="POST" onsubmit="return confirm('Se creará un backup del estado actual y después se restaurará <?= e($b['name']) ?>. ¿Continuar?');">
+                                <form method="POST" data-confirm="Se creará un backup del estado actual y después se restaurará <?= e($b['name']) ?>. ¿Continuar?" data-confirm-danger>
                                     <?= Csrf::field() ?>
                                     <input type="hidden" name="action" value="restore">
                                     <input type="hidden" name="backup" value="<?= e($b['name']) ?>">

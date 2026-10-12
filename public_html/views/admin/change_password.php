@@ -29,7 +29,7 @@ foreach ($flashData as $type => $msg):
             </div>
         </div>
 
-        <form method="POST" action="<?= base_url('admin/change-password') ?>" class="space-y-4" onsubmit="if (this.new_password.value !== this.new_password_confirm.value) { alert('La nueva contraseña y su confirmación no coinciden'); return false; }">
+        <form method="POST" action="<?= base_url('admin/change-password') ?>" class="space-y-4" onsubmit="if (this.new_password.value !== this.new_password_confirm.value) { toast('La nueva contraseña y su confirmación no coinciden', 'error'); return false; }">
             <?= Csrf::field() ?>
             <div>
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Contraseña actual</label>

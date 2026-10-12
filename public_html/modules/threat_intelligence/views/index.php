@@ -3,15 +3,28 @@
  * Vista índice del módulo Threat Intelligence.
  */
 ?>
-<div class="mb-6">
-    <form method="GET" class="flex items-center gap-3 flex-wrap">
-        <label class="text-sm font-medium text-gray-700 dark:text-gray-300">Tenant:</label>
-        <select name="tenant" onchange="this.form.submit()"
-                class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 focus:border-transparent outline-none">
-            <?php foreach ($tenants as $t): ?>
-                <option value="<?= $t['id'] ?>" <?= (int)($selectedTenant ?? 0) === (int)$t['id'] ? 'selected' : '' ?>><?= e($t['name']) ?></option>
-            <?php endforeach; ?>
-        </select>
+<div class="mb-6 space-y-3">
+    <form method="GET" class="flex items-end gap-3 flex-wrap">
+        <div>
+            <label class="block text-xs text-gray-500 mb-1">Tenant</label>
+            <select name="tenant" onchange="this.form.submit()"
+                    class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 focus:border-transparent outline-none">
+                <?php foreach ($tenants as $t): ?>
+                    <option value="<?= $t['id'] ?>" <?= (int)($selectedTenant ?? 0) === (int)$t['id'] ? 'selected' : '' ?>><?= e($t['name']) ?></option>
+                <?php endforeach; ?>
+            </select>
+        </div>
+        <div>
+            <label class="block text-xs text-gray-500 mb-1">Desde</label>
+            <input type="date" name="from" value="<?= e($dateFrom ?? '') ?>"
+                   class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+        </div>
+        <div>
+            <label class="block text-xs text-gray-500 mb-1">Hasta</label>
+            <input type="date" name="to" value="<?= e($dateTo ?? '') ?>"
+                   class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+        </div>
+        <button type="submit" class="px-3 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 text-sm font-medium rounded-lg transition-colors">Filtrar</button>
         <?php if (!empty($selectedTenant)): ?>
             <button type="button" onclick="syncModule('threat_intelligence', <?= (int)$selectedTenant ?>)" class="inline-flex items-center gap-2 px-3 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
@@ -19,6 +32,13 @@
             </button>
         <?php endif; ?>
     </form>
+    <div class="flex items-center gap-3 text-xs">
+        <span class="text-gray-400">Rápido:</span>
+        <?php foreach ([7 => '7 días', 30 => '30 días', 90 => '90 días'] as $d => $lbl): $f = gmdate('Y-m-d', strtotime($dateTo ?? 'now') - $d * 86400); ?>
+            <a href="?tenant=<?= (int)$selectedTenant ?>&from=<?= e($f) ?>&to=<?= e($dateTo ?? '') ?>" class="text-brand-500 hover:underline"><?= $lbl ?></a>
+        <?php endforeach; ?>
+        <span class="text-gray-400">· máx. 90 días</span>
+    </div>
 </div>
 
 <?php if (!empty($selectedTenant)): ?>

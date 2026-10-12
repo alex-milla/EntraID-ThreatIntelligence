@@ -21,7 +21,7 @@ foreach ($flashData as $type => $msg):
     <!-- Crear usuario -->
     <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-6">
         <h2 class="text-lg font-semibold mb-4">Nuevo usuario</h2>
-        <form method="POST" action="<?= base_url('admin/user/create') ?>" class="space-y-4" onsubmit="if (this.password.value !== this.password_confirm.value) { alert('La contraseña y su confirmación no coinciden'); return false; }">
+        <form method="POST" action="<?= base_url('admin/user/create') ?>" class="space-y-4" onsubmit="if (this.password.value !== this.password_confirm.value) { toast('La contraseña y su confirmación no coinciden', 'error'); return false; }">
             <?= Csrf::field() ?>
             <div>
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Usuario *</label>
@@ -94,7 +94,7 @@ foreach ($flashData as $type => $msg):
                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
                             </a>
                             <?php if ($u['id'] !== Auth::id()): ?>
-                                <form method="POST" action="<?= base_url('admin/user/delete') ?>" class="inline" onsubmit="return confirm('¿Eliminar este usuario?')">
+                                <form method="POST" action="<?= base_url('admin/user/delete') ?>" class="inline" data-confirm="¿Eliminar este usuario?" data-confirm-danger>
                                     <?= Csrf::field() ?>
                                     <input type="hidden" name="id" value="<?= $u['id'] ?>">
                                     <button type="submit" class="p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-950 text-gray-400 hover:text-red-600 transition-colors">

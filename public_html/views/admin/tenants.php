@@ -70,7 +70,7 @@ foreach ($flashData as $type => $msg):
                                         <?php endif; ?>
                                     </button>
                                 </form>
-                                <form method="POST" action="<?= base_url('admin/tenant/delete') ?>" class="inline" onsubmit="return confirm('¿Eliminar este tenant y TODOS sus datos? Esta acción no se puede deshacer.')">
+                                <form method="POST" action="<?= base_url('admin/tenant/delete') ?>" class="inline" data-confirm="¿Eliminar este tenant y TODOS sus datos? Esta acción no se puede deshacer." data-confirm-danger>
                                     <?= Csrf::field() ?>
                                     <input type="hidden" name="id" value="<?= $t['id'] ?>">
                                     <button type="submit" class="p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-950 text-gray-400 hover:text-red-600 transition-colors" title="Eliminar">

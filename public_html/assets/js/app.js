@@ -158,4 +158,112 @@
         });
     });
 
+    // ============================================================
+    // Diálogos propios (sustituyen confirm()/alert() nativos)
+    // ============================================================
+
+    function _escapeHtml(s) {
+        var d = document.createElement('div');
+        d.textContent = (s == null) ? '' : s;
+        return d.innerHTML;
+    }
+
+    function _buildDialog(title) {
+        var overlay = document.createElement('div');
+        overlay.className = 'fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50';
+        var card = document.createElement('div');
+        card.className = 'w-full max-w-md bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 shadow-xl p-5';
+        card.setAttribute('role', 'dialog');
+        card.setAttribute('aria-modal', 'true');
+
+        var h = document.createElement('h3');
+        h.className = 'text-base font-semibold mb-2';
+        h.textContent = title || '';
+        var p = document.createElement('p');
+        p.className = 'text-sm text-gray-600 dark:text-gray-300 whitespace-pre-wrap';
+        p.textContent = '';
+        var actions = document.createElement('div');
+        actions.className = 'mt-5 flex justify-end gap-2';
+
+        card.appendChild(h);
+        card.appendChild(p);
+        card.appendChild(actions);
+        overlay.appendChild(card);
+        return { overlay: overlay, message: p, actions: actions };
+    }
+
+    function _showDialog(dialog) {
+        document.body.appendChild(dialog.overlay);
+    }
+    function _hideDialog(dialog) {
+        if (dialog.overlay.parentNode) {
+            dialog.overlay.parentNode.removeChild(dialog.overlay);
+        }
+    }
+
+    window.appAlert = function (message, opts) {
+        opts = opts || {};
+        return new Promise(function (resolve) {
+            var d = _buildDialog(opts.title || 'Aviso');
+            d.message.textContent = message || '';
+            var ok = document.createElement('button');
+            ok.type = 'button';
+            ok.className = 'px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors';
+            ok.textContent = opts.confirmText || 'Aceptar';
+            var onKey = function (e) { if (e.key === 'Escape' || e.key === 'Enter') close(); };
+            function close() { _hideDialog(d); document.removeEventListener('keydown', onKey); resolve(true); }
+            ok.onclick = close;
+            d.actions.appendChild(ok);
+            _showDialog(d);
+            document.addEventListener('keydown', onKey);
+            ok.focus();
+        });
+    };
+
+    window.appConfirm = function (message, opts) {
+        opts = opts || {};
+        return new Promise(function (resolve) {
+            var d = _buildDialog(opts.title || 'Confirmar');
+            d.message.textContent = message || '';
+
+            var cancel = document.createElement('button');
+            cancel.type = 'button';
+            cancel.className = 'px-4 py-2 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 text-sm font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors';
+            cancel.textContent = opts.cancelText || 'Cancelar';
+
+            var ok = document.createElement('button');
+            ok.type = 'button';
+            ok.className = 'px-4 py-2 ' + (opts.danger ? 'bg-red-600 hover:bg-red-700' : 'bg-brand-500 hover:bg-brand-600') + ' text-white text-sm font-medium rounded-lg transition-colors';
+            ok.textContent = opts.confirmText || 'Aceptar';
+
+            function onKey(e) { if (e.key === 'Escape') close(false); }
+            function close(val) { _hideDialog(d); document.removeEventListener('keydown', onKey); resolve(val); }
+
+            cancel.onclick = function () { close(false); };
+            ok.onclick = function () { close(true); };
+            d.overlay.addEventListener('click', function (e) { if (e.target === d.overlay) close(false); });
+            document.addEventListener('keydown', onKey);
+
+            d.actions.appendChild(cancel);
+            d.actions.appendChild(ok);
+            _showDialog(d);
+            ok.focus();
+        });
+    };
+
+    // Formularios con data-confirm="mensaje" (sustituye onsubmit="return confirm(...)")
+    document.addEventListener('submit', function (e) {
+        var form = e.target;
+        if (!form || form.nodeName !== 'FORM') { return; }
+        var msg = form.getAttribute('data-confirm');
+        if (!msg || form.dataset.confirmed === '1') { return; }
+        e.preventDefault();
+        window.appConfirm(msg, { danger: form.hasAttribute('data-confirm-danger') }).then(function (ok) {
+            if (ok) {
+                form.dataset.confirmed = '1';
+                form.submit();
+            }
+        });
+    }, true);
+
 })();

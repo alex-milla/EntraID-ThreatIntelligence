@@ -270,25 +270,40 @@ class Module_ThreatIntelligence extends BaseModule
     // ============================================================
 
     /**
-     * Obtiene artículos de un tenant con paginación.
+     * Obtiene artículos de un tenant con paginación y filtro por fechas.
      */
-    public function getArticles(int $tenantId, int $page = 1, int $perPage = 20): array
+    public function getArticles(int $tenantId, int $page = 1, int $perPage = 20, array $filters = []): array
     {
+        $where = ['a.tenant_id = ?'];
+        $params = [$tenantId];
+        if (!empty($filters['from'])) {
+            $where[] = "substr(COALESCE(a.last_updated, a.created_date), 1, 10) >= ?";
+            $params[] = $filters['from'];
+        }
+        if (!empty($filters['to'])) {
+            $where[] = "substr(COALESCE(a.last_updated, a.created_date), 1, 10) <= ?";
+            $params[] = $filters['to'];
+        }
+        $whereClause = implode(' AND ', $where);
         $offset = ($page - 1) * $perPage;
+
         $total = (int)Database::fetchOne(
-            "SELECT COUNT(*) as cnt FROM ti_articles WHERE tenant_id = ?",
-            [$tenantId]
+            "SELECT COUNT(*) as cnt FROM ti_articles a WHERE $whereClause",
+            $params
         )['cnt'];
+
+        $params[] = $perPage;
+        $params[] = $offset;
 
         $articles = Database::fetchAll(
             "SELECT a.*, COUNT(i.id) as ioc_count
              FROM ti_articles a
              LEFT JOIN ti_iocs i ON a.id = i.article_id AND i.tenant_id = a.tenant_id
-             WHERE a.tenant_id = ?
+             WHERE $whereClause
              GROUP BY a.id
              ORDER BY a.last_updated DESC
              LIMIT ? OFFSET ?",
-            [$tenantId, $perPage, $offset]
+            $params
         );
 
         return [
@@ -296,8 +311,59 @@ class Module_ThreatIntelligence extends BaseModule
             'total'     => $total,
             'page'      => $page,
             'perPage'   => $perPage,
-            'totalPages'=> (int)ceil($total / $perPage),
+            'totalPages'=> (int)ceil($total / max(1, $perPage)),
         ];
+    }
+
+    /**
+     * Rango de fechas activo (por defecto últimos 90 días; máximo 90 días).
+     */
+    private function resolveDateRange(): array
+    {
+        $to   = $_GET['to'] ?? gmdate('Y-m-d');
+        $from = $_GET['from'] ?? gmdate('Y-m-d', strtotime($to) - 90 * 86400);
+        $min  = gmdate('Y-m-d', strtotime($to) - 90 * 86400);
+        if ($from < $min) {
+            $from = $min; // límite de 90 días
+        }
+        if ($from > $to) {
+            $from = $to;
+        }
+        return ['from' => $from, 'to' => $to];
+    }
+
+    /**
+     * Artículo anterior (más reciente) o siguiente (más antiguo) dentro del tenant y rango.
+     */
+    private function adjacentArticle(string $dir, array $article): ?int
+    {
+        $tenantId = (int)$article['tenant_id'];
+        $key = $article['last_updated'] ?? $article['created_date'];
+        $range = $this->resolveDateRange();
+
+        $params = [$tenantId, $key];
+        $rangeSql = '';
+        $rangeSql .= " AND substr(COALESCE(last_updated, created_date), 1, 10) >= ?";
+        $params[] = $range['from'];
+        $rangeSql .= " AND substr(COALESCE(last_updated, created_date), 1, 10) <= ?";
+        $params[] = $range['to'];
+
+        if ($dir === 'prev') {
+            $row = Database::fetchOne(
+                "SELECT id FROM ti_articles
+                 WHERE tenant_id = ? AND COALESCE(last_updated, created_date) > ? $rangeSql
+                 ORDER BY COALESCE(last_updated, created_date) ASC LIMIT 1",
+                $params
+            );
+        } else {
+            $row = Database::fetchOne(
+                "SELECT id FROM ti_articles
+                 WHERE tenant_id = ? AND COALESCE(last_updated, created_date) < ? $rangeSql
+                 ORDER BY COALESCE(last_updated, created_date) DESC LIMIT 1",
+                $params
+            );
+        }
+        return $row ? (int)$row['id'] : null;
     }
 
     /**
@@ -388,12 +454,19 @@ class Module_ThreatIntelligence extends BaseModule
             [$id]
         );
         $tenant = TenantManager::getById((int)$article['tenant_id']);
+        $range = $this->resolveDateRange();
+        $prevId = $this->adjacentArticle('prev', $article);
+        $nextId = $this->adjacentArticle('next', $article);
 
         echo $this->page('article', [
-            'module'  => $this,
-            'article' => $article,
-            'iocs'    => $iocs,
-            'tenant'  => $tenant,
+            'module'   => $this,
+            'article'  => $article,
+            'iocs'     => $iocs,
+            'tenant'   => $tenant,
+            'prevId'   => $prevId,
+            'nextId'   => $nextId,
+            'dateFrom' => $range['from'],
+            'dateTo'   => $range['to'],
         ]);
     }
 
@@ -428,8 +501,9 @@ class Module_ThreatIntelligence extends BaseModule
     {
         $tenants = TenantManager::getActive();
         $selectedTenant = (int)($_GET['tenant'] ?? ($tenants[0]['id'] ?? 0));
+        $range = $this->resolveDateRange();
         $stats = $selectedTenant ? $this->getIocStats($selectedTenant) : [];
-        $articles = $selectedTenant ? $this->getArticles($selectedTenant, 1, 10) : ['data' => []];
+        $articles = $selectedTenant ? $this->getArticles($selectedTenant, 1, 20, $range) : ['data' => []];
 
         echo $this->page('index', [
             'module'         => $this,
@@ -437,6 +511,8 @@ class Module_ThreatIntelligence extends BaseModule
             'selectedTenant' => $selectedTenant,
             'stats'          => $stats,
             'articles'       => $articles,
+            'dateFrom'       => $range['from'],
+            'dateTo'         => $range['to'],
         ]);
     }
 

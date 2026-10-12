@@ -25,6 +25,19 @@ $bodyHtml    = render_markdown((string)($article['body'] ?? ''));
     <?php endif; ?>
 </div>
 
+<!-- Navegación anterior / siguiente -->
+<?php
+$navQs = 'tenant=' . (int)$article['tenant_id'] . '&from=' . urlencode($dateFrom ?? '') . '&to=' . urlencode($dateTo ?? '');
+?>
+<div class="mb-4 flex items-center justify-between">
+    <?php if (!empty($prevId)): ?>
+        <a href="<?= base_url('modules/threat_intelligence/article/' . (int)$prevId . '?' . $navQs) ?>" class="text-sm text-brand-500 hover:underline">← Anterior</a>
+    <?php else: ?><span></span><?php endif; ?>
+    <?php if (!empty($nextId)): ?>
+        <a href="<?= base_url('modules/threat_intelligence/article/' . (int)$nextId . '?' . $navQs) ?>" class="text-sm text-brand-500 hover:underline">Siguiente →</a>
+    <?php else: ?><span></span><?php endif; ?>
+</div>
+
 <!-- Acciones -->
 <div class="mb-6 flex flex-wrap items-center gap-2">
     <span class="text-xs text-gray-500 mr-1">Exportar IOCs del artículo:</span>
