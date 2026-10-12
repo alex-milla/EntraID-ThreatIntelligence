@@ -288,6 +288,40 @@ class Module_Llm extends BaseModule
     }
 
     /**
+     * Extrae IOCs y resumen de un texto (artículo o correo) con IA.
+     */
+    public function extractIocs(string $text): array
+    {
+        $system = 'Eres un analista de threat intelligence. A partir del texto (artículo o correo), devuelve EXCLUSIVAMENTE un JSON válido con esta forma: '
+            . '{"resumen":"...","iocs":[{"tipo":"ipv4-addr|domain-name|url|file|email-addr|otro","valor":"..."}],"recomendaciones":"..."}. '
+            . 'No inventes IOCs; si no hay, deja el array vacío. Responde en español.';
+        $user = "Analiza el siguiente contenido:\n\n" . $text;
+
+        $res = $this->chat($system, $user);
+        if (!empty($res['success'])) {
+            $res['parsed'] = safe_json_decode($this->cleanJson((string)$res['content']), null);
+        }
+        return $res;
+    }
+
+    /**
+     * Limpia posibles fences ```json ... ``` y recorta al primer objeto JSON.
+     */
+    private function cleanJson(string $s): string
+    {
+        $s = trim($s);
+        if (preg_match('/```(?:json)?\s*(.*?)```/is', $s, $m)) {
+            return trim($m[1]);
+        }
+        $start = strpos($s, '{');
+        $end = strrpos($s, '}');
+        if ($start !== false && $end !== false && $end > $start) {
+            return substr($s, $start, $end - $start + 1);
+        }
+        return $s;
+    }
+
+    /**
      * Genera un resumen narrativo de un reporte.
      */
     public function summarizeReport(int $reportId): array
@@ -342,6 +376,7 @@ class Module_Llm extends BaseModule
             ['method' => 'POST', 'pattern' => 'chat',                    'handler' => [$this, 'chatEndpoint']],
             ['method' => 'POST', 'pattern' => 'analyze-incident/{id}',   'handler' => [$this, 'analyzeIncidentEndpoint']],
             ['method' => 'POST', 'pattern' => 'classify-iocs',           'handler' => [$this, 'classifyIocsEndpoint']],
+            ['method' => 'POST', 'pattern' => 'extract-iocs',            'handler' => [$this, 'extractIocsEndpoint']],
             ['method' => 'POST', 'pattern' => 'summarize-report/{id}',   'handler' => [$this, 'summarizeReportEndpoint']],
             ['method' => 'GET',  'pattern' => 'status',                  'handler' => [$this, 'getStatus']],
         ];
@@ -382,6 +417,29 @@ class Module_Llm extends BaseModule
         Csrf::validateOrFail();
         $input = json_decode(file_get_contents('php://input'), true) ?? $_POST;
         json_response($this->classifyIocs((int)($input['tenant_id'] ?? 0), (int)($input['limit'] ?? 50)));
+    }
+
+    public function extractIocsEndpoint(array $params = []): void
+    {
+        Csrf::validateOrFail();
+        $input = json_decode(file_get_contents('php://input'), true) ?? $_POST;
+
+        $text = (string)($input['text'] ?? '');
+        $articleId = (int)($input['article_id'] ?? 0);
+
+        if ($articleId > 0 && trim($text) === '') {
+            $a = Database::fetchOne("SELECT title, summary, body FROM ti_articles WHERE id = ?", [$articleId]);
+            if (!$a) {
+                json_response(['success' => false, 'error' => 'Artículo no encontrado']);
+            }
+            $text = ($a['title'] ?? '') . "\n\n" . ($a['summary'] ?? '') . "\n\n" . strip_tags((string)($a['body'] ?? ''));
+        }
+
+        if (trim($text) === '') {
+            json_response(['success' => false, 'error' => 'No hay texto para analizar']);
+        }
+
+        json_response($this->extractIocs($text));
     }
 
     public function summarizeReportEndpoint(array $params = []): void

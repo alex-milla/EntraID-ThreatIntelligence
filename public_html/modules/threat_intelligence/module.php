@@ -113,7 +113,8 @@ class Module_ThreatIntelligence extends BaseModule
             $count = 0;
             foreach ($iocs['value'] ?? [] as $ioc) {
                 $artifact = $ioc['artifact'] ?? [];
-                $iocType = $this->mapIocType($artifact);
+                $value    = $this->extractIocValue($artifact);
+                $iocType  = $this->mapIocType($artifact, $value);
 
                 Database::query(
                     "INSERT OR REPLACE INTO ti_iocs
@@ -124,7 +125,7 @@ class Module_ThreatIntelligence extends BaseModule
                         $articleDbId,
                         $ioc['id'],
                         $iocType,
-                        $this->extractIocValue($artifact),
+                        $value,
                         $ioc['source'] ?? null,
                         $ioc['description'] ?? null,
                         $ioc['severity'] ?? null,
@@ -143,38 +144,125 @@ class Module_ThreatIntelligence extends BaseModule
     }
 
     /**
-     * Mapea el tipo de artefacto a tipo STIX-like.
-     */
-    private function mapIocType(array $artifact): string
-    {
-        return match (true) {
-            isset($artifact['ipV4Address'], $artifact['ipV6Address']) => 'ipv4-addr',
-            isset($artifact['domainName'])                           => 'domain-name',
-            isset($artifact['url'])                                  => 'url',
-            isset($artifact['fileHash'])                             => 'file',
-            isset($artifact['emailAddress'])                         => 'email-addr',
-            isset($artifact['userAccount'])                          => 'user-account',
-            isset($artifact['registryKey'])                          => 'windows-registry-key',
-            isset($artifact['macAddress'])                           => 'mac-addr',
-            default                                                  => 'unknown',
-        };
-    }
-
-    /**
-     * Extrae el valor del IOC desde el artefacto.
+     * Extrae el valor del IOC desde el artefacto (robusto ante distintas formas
+     * de la estructura que devuelve Microsoft Graph).
      */
     private function extractIocValue(array $artifact): string
     {
-        return $artifact['ipV4Address']
-            ?? $artifact['ipV6Address']
-            ?? $artifact['domainName']
-            ?? $artifact['url']
-            ?? ($artifact['fileHash']['value'] ?? null)
-            ?? $artifact['emailAddress']
-            ?? ($artifact['userAccount']['value'] ?? null)
-            ?? $artifact['registryKey']
-            ?? $artifact['macAddress']
-            ?? 'unknown';
+        // 1) Claves conocidas (escalares)
+        $knownKeys = ['ipV4Address', 'ipAddress', 'ipv6Address', 'domainName', 'domain', 'hostname',
+                      'url', 'emailAddress', 'registryKey', 'macAddress', 'value'];
+        foreach ($knownKeys as $k) {
+            if (isset($artifact[$k]) && is_scalar($artifact[$k]) && (string)$artifact[$k] !== '') {
+                return (string)$artifact[$k];
+            }
+        }
+        // 2) Objetos típicos (fileHash / userAccount)
+        foreach (['fileHash', 'userAccount'] as $k) {
+            if (isset($artifact[$k])) {
+                $v = $artifact[$k];
+                if (is_array($v)) {
+                    foreach (['value', 'hashValue', 'sha256', 'sha1', 'md5', 'name'] as $kk) {
+                        if (isset($v[$kk]) && is_scalar($v[$kk]) && (string)$v[$kk] !== '') {
+                            return (string)$v[$kk];
+                        }
+                    }
+                    $first = reset($v);
+                    if (is_scalar($first) && (string)$first !== '') {
+                        return (string)$first;
+                    }
+                } elseif (is_scalar($v) && (string)$v !== '') {
+                    return (string)$v;
+                }
+            }
+        }
+        // 3) Recursivo: primera hoja escalar (ignorando @odata.type)
+        return $this->firstScalar($artifact) ?? 'unknown';
+    }
+
+    private function firstScalar(array $arr): ?string
+    {
+        foreach ($arr as $k => $v) {
+            if ($k === '@odata.type') {
+                continue;
+            }
+            if (is_scalar($v) && (string)$v !== '') {
+                return (string)$v;
+            }
+            if (is_array($v)) {
+                $r = $this->firstScalar($v);
+                if ($r !== null) {
+                    return $r;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Mapea el artefacto a un tipo STIX-like. Usa @odata.type, claves conocidas
+     * y, como último recurso, el propio valor.
+     */
+    private function mapIocType(array $artifact, string $value = ''): string
+    {
+        // 1) @odata.type
+        $odata = strtolower((string)($artifact['@odata.type'] ?? ''));
+        $odataMap = [
+            'ipv4address' => 'ipv4-addr', 'ipaddress' => 'ipv4-addr', 'ipv6address' => 'ipv6-addr',
+            'hostname' => 'domain-name', 'domainname' => 'domain-name', 'domain' => 'domain-name',
+            'urlinfo' => 'url', 'url' => 'url',
+            'filehash' => 'file', 'file' => 'file',
+            'emailaddress' => 'email-addr', 'email' => 'email-addr',
+            'useraccount' => 'user-account', 'registrykey' => 'windows-registry-key', 'macaddress' => 'mac-addr',
+        ];
+        foreach ($odataMap as $needle => $type) {
+            if ($odata !== '' && str_contains($odata, $needle)) {
+                return $type;
+            }
+        }
+
+        // 2) Claves conocidas
+        $keyMap = [
+            'ipV4Address' => 'ipv4-addr', 'ipAddress' => 'ipv4-addr', 'ipv6Address' => 'ipv6-addr',
+            'domainName' => 'domain-name', 'domain' => 'domain-name', 'hostname' => 'domain-name',
+            'url' => 'url', 'fileHash' => 'file', 'emailAddress' => 'email-addr',
+            'userAccount' => 'user-account', 'registryKey' => 'windows-registry-key', 'macAddress' => 'mac-addr',
+        ];
+        foreach ($keyMap as $k => $type) {
+            if (isset($artifact[$k])) {
+                return $type;
+            }
+        }
+
+        // 3) Por el valor
+        return $this->classifyByValue($value);
+    }
+
+    private function classifyByValue(string $v): string
+    {
+        $v = trim($v);
+        if ($v === '' || $v === 'unknown') {
+            return 'unknown';
+        }
+        if (filter_var($v, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+            return 'ipv4-addr';
+        }
+        if (filter_var($v, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
+            return 'ipv6-addr';
+        }
+        if (filter_var($v, FILTER_VALIDATE_EMAIL)) {
+            return 'email-addr';
+        }
+        if (preg_match('#^https?://#i', $v)) {
+            return 'url';
+        }
+        if (preg_match('/^[a-f0-9]{32}$|^[a-f0-9]{40}$|^[a-f0-9]{64}$/i', $v)) {
+            return 'file';
+        }
+        if (preg_match('/^([a-z0-9\-]+\.)+[a-z]{2,}$/i', $v)) {
+            return 'domain-name';
+        }
+        return 'unknown';
     }
 
     // ============================================================
@@ -274,11 +362,66 @@ class Module_ThreatIntelligence extends BaseModule
         return [
             ['method' => 'GET', 'pattern' => '',                    'handler' => [$this, 'index']],
             ['method' => 'GET', 'pattern' => 'articles',            'handler' => [$this, 'listArticles']],
-            ['method' => 'GET', 'pattern' => 'article/{id}',        'handler' => [$this, 'showArticle']],
-            ['method' => 'GET', 'pattern' => 'iocs',                'handler' => [$this, 'listIocs']],
+            ['method' => 'GET', 'pattern' => 'article/{id}',        'handler' => [$this, 'showArticlePage']],
+            ['method' => 'GET', 'pattern' => 'article/{id}/data',   'handler' => [$this, 'showArticle']],
+            ['method' => 'GET', 'pattern' => 'iocs',                'handler' => [$this, 'iocsPage']],
+            ['method' => 'GET', 'pattern' => 'iocs/data',           'handler' => [$this, 'listIocs']],
             ['method' => 'GET', 'pattern' => 'stats',               'handler' => [$this, 'getStats']],
             ['method' => 'POST','pattern' => 'sync/{tenantId}',    'handler' => [$this, 'triggerSync']],
         ];
+    }
+
+    /**
+     * Página de detalle de un artículo: cuerpo, IOCs, export y análisis IA.
+     */
+    public function showArticlePage(array $params = []): void
+    {
+        $id = (int)($params['id'] ?? 0);
+        $article = Database::fetchOne("SELECT * FROM ti_articles WHERE id = ?", [$id]);
+        if (!$article) {
+            http_response_code(404);
+            require VIEWS_PATH . '/errors/404.php';
+            return;
+        }
+        $iocs = Database::fetchAll(
+            "SELECT * FROM ti_iocs WHERE article_id = ? ORDER BY ioc_type, ioc_value",
+            [$id]
+        );
+        $tenant = TenantManager::getById((int)$article['tenant_id']);
+
+        echo $this->page('article', [
+            'module'  => $this,
+            'article' => $article,
+            'iocs'    => $iocs,
+            'tenant'  => $tenant,
+        ]);
+    }
+
+    /**
+     * Página con la lista de IOCs (filtros + paginación).
+     */
+    public function iocsPage(array $params = []): void
+    {
+        $tenants = TenantManager::getActive();
+        $selectedTenant = (int)($_GET['tenant'] ?? ($tenants[0]['id'] ?? 0));
+        $filters = [
+            'type'   => $_GET['type'] ?? '',
+            'search' => $_GET['search'] ?? '',
+        ];
+        $page = max(1, (int)($_GET['page'] ?? 1));
+        $data = $selectedTenant
+            ? $this->getIocs($selectedTenant, $filters, $page, 50)
+            : ['data' => [], 'total' => 0, 'page' => 1, 'perPage' => 50, 'totalPages' => 1];
+        $types = $selectedTenant ? $this->getIocStats($selectedTenant) : [];
+
+        echo $this->page('iocs', [
+            'module'         => $this,
+            'tenants'        => $tenants,
+            'selectedTenant' => $selectedTenant,
+            'filters'        => $filters,
+            'iocs'           => $data,
+            'types'          => $types,
+        ]);
     }
 
     public function index(array $params = []): void

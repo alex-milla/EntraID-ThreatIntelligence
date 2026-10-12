@@ -45,15 +45,15 @@
             <p class="px-5 py-8 text-sm text-gray-500 text-center">Sin artículos. Sincroniza el tenant para obtener datos.</p>
         <?php else: ?>
             <?php foreach ($articles['data'] as $a): ?>
-                <div class="px-5 py-3 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
+                <a href="<?= base_url('modules/threat_intelligence/article/' . (int)$a['id']) ?>" class="block px-5 py-3 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
                     <div class="flex items-start justify-between gap-3">
                         <div class="min-w-0">
                             <p class="text-sm font-medium truncate"><?= e($a['title']) ?></p>
-                            <p class="text-xs text-gray-400 mt-0.5"><?= format_date($a['last_updated'] ?? $a['created_date']) ?> · <?= $a['ioc_count'] ?> IOCs</p>
+                            <p class="text-xs text-gray-400 mt-0.5"><?= format_date($a['last_updated'] ?? $a['created_date']) ?> · <?= (int)$a['ioc_count'] ?> IOCs</p>
                         </div>
-                        <span class="text-xs text-gray-400 shrink-0"><?= time_ago($a['fetched_at']) ?></span>
+                        <span class="text-xs text-gray-400 shrink-0"><?= time_ago($a['fetched_at']) ?> →</span>
                     </div>
-                </div>
+                </a>
             <?php endforeach; ?>
         <?php endif; ?>
     </div>

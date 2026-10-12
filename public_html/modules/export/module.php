@@ -395,6 +395,10 @@ class Module_Export extends BaseModule
             $where[] = 'ioc_value LIKE ?';
             $params[] = '%' . $filters['search'] . '%';
         }
+        if (!empty($filters['article_id'])) {
+            $where[] = 'article_id = ?';
+            $params[] = (int)$filters['article_id'];
+        }
         if (!empty($filters['limit'])) {
             $params[] = (int)$filters['limit'];
             return Database::fetchAll(
