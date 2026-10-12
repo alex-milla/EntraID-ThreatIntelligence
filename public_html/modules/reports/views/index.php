@@ -85,7 +85,7 @@ function generateReport() {
             toast('Reporte generado: ' + res.title, 'success');
             setTimeout(function() { location.reload(); }, 1500);
         } else {
-            toast('Error al generar reporte', 'error');
+            toast('Error al generar reporte' + (res.error ? ': ' + res.error : ''), 'error');
         }
     }).catch(function() { toast('Error de conexión', 'error'); });
 }

@@ -38,7 +38,15 @@ if (!function_exists('json_response')) {
         http_response_code($status);
         header('Content-Type: application/json; charset=utf-8');
         header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
-        echo json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        $flags = JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE;
+        $json = json_encode($data, $flags);
+        if ($json === false) {
+            $json = json_encode(
+                ['error' => 'No se pudo serializar la respuesta: ' . json_last_error_msg()],
+                JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE
+            );
+        }
+        echo $json;
         exit;
     }
 }

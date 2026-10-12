@@ -134,7 +134,7 @@ class Module_Reports extends BaseModule
                 $range['start'],
                 $range['end'],
                 $title,
-                json_encode($data, JSON_UNESCAPED_SLASHES),
+                json_encode($data, JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE),
                 Auth::id(),
             ]
         );
@@ -382,13 +382,18 @@ class Module_Reports extends BaseModule
         Csrf::validateOrFail();
         $input = json_decode(file_get_contents('php://input'), true) ?? $_POST;
 
-        $result = $this->generateReport(
-            (int)($input['tenant_id'] ?? 0),
-            !empty($input['group_id']) ? (int)$input['group_id'] : null,
-            $input['report_type'] ?? 'full',
-            $input['period_type'] ?? 'monthly',
-            $input['reference_date'] ?? null
-        );
+        try {
+            $result = $this->generateReport(
+                (int)($input['tenant_id'] ?? 0),
+                !empty($input['group_id']) ? (int)$input['group_id'] : null,
+                $input['report_type'] ?? 'full',
+                $input['period_type'] ?? 'monthly',
+                $input['reference_date'] ?? null
+            );
+        } catch (Throwable $e) {
+            log_activity('report.generate_error', ['error' => $e->getMessage()]);
+            json_response(['success' => false, 'error' => $e->getMessage()]);
+        }
 
         json_response($result);
     }
