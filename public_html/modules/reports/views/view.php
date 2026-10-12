@@ -168,7 +168,7 @@ function summarizeReport(id) {
     container.classList.remove('hidden');
     container.textContent = 'Generando resumen con IA...';
 
-    api('POST', '<?= base_url('modules/llm/summarize-report/') ?>' + id, {})
+    api('POST', '<?= base_url('modules/llm/summarize-report') ?>/' + id, {})
         .then(function(res) {
             if (res.success) {
                 container.textContent = res.content;

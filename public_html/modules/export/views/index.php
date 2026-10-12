@@ -112,7 +112,7 @@ function doExport(format) {
     toast('Generando exportación ' + format.toUpperCase() + '...', 'info');
     var cfg = getExportConfig();
 
-    api('POST', '<?= base_url('modules/export/') ?>' + format, cfg)
+    api('POST', '<?= base_url('modules/export') ?>/' + format, cfg)
         .then(function(res) {
             if (!res.success) { toast('Error: ' + (res.error || 'Error desconocido'), 'error'); return; }
             if (res.files) {

@@ -119,7 +119,7 @@ function esc(s) { var d = document.createElement('div'); d.textContent = s == nu
 function exportArticle(fmt) {
     var el = document.getElementById('export-msg');
     el.textContent = 'Generando…';
-    api('POST', '<?= base_url('modules/export/') ?>' + fmt, {
+    api('POST', '<?= base_url('modules/export') ?>/' + fmt, {
         tenant_id: <?= (int)$article['tenant_id'] ?>,
         filters: { article_id: <?= (int)$article['id'] ?> }
     }).then(function(res) {

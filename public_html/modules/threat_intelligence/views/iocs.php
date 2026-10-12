@@ -100,7 +100,7 @@ function ti_q(array $extra, int $tenant, array $filters): string {
 function exportIocs(fmt) {
     var el = document.getElementById('export-msg');
     el.textContent = 'Generando…';
-    api('POST', '<?= base_url('modules/export/') ?>' + fmt, {
+    api('POST', '<?= base_url('modules/export') ?>/' + fmt, {
         tenant_id: <?= (int)$selectedTenant ?>,
         filters: { type: '<?= e(addslashes($filters['type'] ?? '')) ?>', search: '<?= e(addslashes($filters['search'] ?? '')) ?>' }
     }).then(function(res) {
