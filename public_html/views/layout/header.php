@@ -53,4 +53,4 @@
         })();
     </script>
 </head>
-<body class="h-full bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white antialiased transition-theme">
+<body class="h-full flex overflow-hidden bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white antialiased transition-theme">
