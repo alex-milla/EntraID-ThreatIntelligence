@@ -1,11 +1,11 @@
 <?php
 /**
- * Vista: Panel de configuración de APIs (LLM).
- * Variables: $cfg (array), $keySet (bool), $success, $error
+ * Vista: Panel de APIs / perfiles de IA.
+ * Variables: $profiles, $editProfile, $tasks, $taskProfiles, $success, $error
  */
 $pageTitle = 'APIs';
 $providers = [
-    ''          => '— Sin configurar —',
+    ''          => '— Selecciona proveedor —',
     'openai'    => 'OpenAI',
     'anthropic' => 'Anthropic',
     'azure'     => 'Azure OpenAI',
@@ -15,8 +15,8 @@ $providers = [
     'opencode'  => 'OpenCode Console (modelos gratis)',
     'custom'    => 'Personalizado (compatible OpenAI)',
 ];
+$editId = (int)($editProfile['id'] ?? 0);
 ?>
-
 <?php
 $flashData = flash();
 foreach ($flashData as $type => $msg):
@@ -29,115 +29,178 @@ foreach ($flashData as $type => $msg):
     <div class="mb-4 px-4 py-3 rounded-lg text-sm <?= $colors ?>"><?= e($msg) ?></div>
 <?php endforeach; ?>
 
-<div class="max-w-2xl space-y-6">
-    <div>
-        <h1 class="text-xl font-semibold">Configuración de APIs</h1>
-        <p class="text-sm text-gray-500 mt-1">Credenciales de los servicios externos que usa la plataforma. Se guardan <strong>cifradas</strong> en la base de datos.</p>
+<div class="mb-6">
+    <h1 class="text-xl font-semibold">Configuración de APIs</h1>
+    <p class="text-sm text-gray-500 mt-1">Guarda varios proveedores de IA a la vez. Marca uno como <strong>predeterminado</strong> y, si quieres, asigna un modelo distinto a cada tarea.</p>
+</div>
+
+<!-- Perfiles -->
+<div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden mb-6">
+    <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700">
+        <h2 class="text-sm font-semibold">Perfiles de IA (<?= count($profiles) ?>)</h2>
     </div>
+    <?php if (empty($profiles)): ?>
+        <p class="px-5 py-6 text-sm text-gray-500">No hay perfiles todavía. Crea el primero abajo.</p>
+    <?php else: ?>
+        <table class="w-full text-sm">
+            <thead>
+                <tr class="border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-xs text-gray-500 uppercase">
+                    <th class="text-left px-4 py-2">Nombre</th>
+                    <th class="text-left px-4 py-2">Proveedor</th>
+                    <th class="text-left px-4 py-2">Modelo</th>
+                    <th class="text-left px-4 py-2">Estado</th>
+                    <th class="text-right px-4 py-2">Acciones</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-100 dark:divide-gray-700/50">
+                <?php foreach ($profiles as $p): ?>
+                    <tr class="hover:bg-gray-50 dark:hover:bg-gray-800/50">
+                        <td class="px-4 py-2 font-medium"><?= e($p['name']) ?></td>
+                        <td class="px-4 py-2 text-xs text-gray-500"><?= e($p['provider'] ?: '—') ?></td>
+                        <td class="px-4 py-2 text-xs font-mono text-gray-500"><?= e($p['model'] ?: '—') ?></td>
+                        <td class="px-4 py-2">
+                            <?php if (!empty($p['is_default'])): ?>
+                                <span class="inline-flex px-2 py-0.5 text-xs rounded-full bg-brand-100 dark:bg-brand-900 text-brand-700 dark:text-brand-300">Predeterminado</span>
+                            <?php endif; ?>
+                        </td>
+                        <td class="px-4 py-2 text-right whitespace-nowrap">
+                            <button type="button" onclick="testProfile(<?= (int)$p['id'] ?>)" class="text-xs text-gray-400 hover:text-brand-500 mr-2">Probar</button>
+                            <a href="<?= base_url('admin/apis?edit=' . (int)$p['id']) ?>" class="text-xs text-gray-400 hover:text-brand-500 mr-2">Editar</a>
+                            <?php if (empty($p['is_default'])): ?>
+                                <form method="POST" action="<?= base_url('admin/apis/default') ?>" class="inline">
+                                    <?= Csrf::field() ?>
+                                    <input type="hidden" name="id" value="<?= (int)$p['id'] ?>">
+                                    <button type="submit" class="text-xs text-gray-400 hover:text-brand-500 mr-2">Usar por defecto</button>
+                                </form>
+                            <?php endif; ?>
+                            <form method="POST" action="<?= base_url('admin/apis/delete') ?>" class="inline" data-confirm="¿Eliminar el perfil «<?= e($p['name']) ?>»?" data-confirm-danger>
+                                <?= Csrf::field() ?>
+                                <input type="hidden" name="id" value="<?= (int)$p['id'] ?>">
+                                <button type="submit" class="text-xs text-gray-400 hover:text-red-500">Eliminar</button>
+                            </form>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+            </tbody>
+        </table>
+    <?php endif; ?>
+</div>
 
-    <!-- LLM -->
-    <form method="POST" action="<?= base_url('admin/apis/save') ?>" class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-6 space-y-4">
-        <?= Csrf::field() ?>
-        <div class="flex items-center justify-between">
-            <h2 class="text-lg font-semibold">Inteligencia Artificial (LLM)</h2>
-            <span class="inline-flex px-2 py-0.5 text-xs rounded-full <?= $cfg['provider'] !== '' && ($keySet || $cfg['provider'] === 'ollama') ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400' ?>">
-                <?= $cfg['provider'] !== '' && ($keySet || $cfg['provider'] === 'ollama') ? 'Configurado' : 'No configurado' ?>
-            </span>
+<!-- Formulario perfil -->
+<form method="POST" action="<?= base_url('admin/apis/save') ?>" class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-6 space-y-4 mb-6">
+    <?= Csrf::field() ?>
+    <input type="hidden" name="id" value="<?= $editId ?>">
+    <h2 class="text-lg font-semibold"><?= $editId ? 'Editar perfil' : 'Nuevo perfil' ?></h2>
+
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Nombre</label>
+            <input type="text" name="name" value="<?= e($editProfile['name'] ?? '') ?>" placeholder="Mistral prod / OpenCode gratis…"
+                   class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
         </div>
-
         <div>
             <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Proveedor</label>
-            <select name="llm_provider" id="llm_provider"
-                    class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-brand-500 outline-none">
+            <select name="provider" id="provider"
+                    class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
                 <?php foreach ($providers as $val => $label): ?>
-                    <option value="<?= e($val) ?>" <?= $cfg['provider'] === $val ? 'selected' : '' ?>><?= e($label) ?></option>
+                    <option value="<?= e($val) ?>" <?= ($editProfile['provider'] ?? '') === $val ? 'selected' : '' ?>><?= e($label) ?></option>
                 <?php endforeach; ?>
             </select>
         </div>
-
-        <div>
-            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Base URL <span class="text-gray-400 font-normal">(opcional)</span></label>
-            <input type="text" name="llm_api_url" id="llm_api_url" value="<?= e($cfg['api_url']) ?>" placeholder="https://api.openai.com/v1/chat/completions"
-                   class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-brand-500 outline-none font-mono text-sm">
-            <p class="text-xs text-gray-400 mt-1">Vacío = endpoint por defecto del proveedor. Para Ollama: <code class="font-mono">http://localhost:11434</code>. Para Azure: endpoint del recurso.</p>
-        </div>
-
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Modelo</label>
-                <input type="text" name="llm_model" id="llm_model" value="<?= e($cfg['model']) ?>" placeholder="gpt-4o-mini" list="llm-model-list"
-                       class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-brand-500 outline-none font-mono text-sm">
-                <datalist id="llm-model-list">
-                    <option value="space-bunny-free">
-                    <option value="longcat-2.5-preview-free">
-                    <option value="step-5-preview-free">
-                    <option value="gpt-4o-mini">
-                    <option value="gemini-1.5-flash">
-                    <option value="mistral-large-latest">
-                    <option value="llama3.1">
-                </datalist>
-            </div>
-            <div>
-                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Max tokens</label>
-                <input type="number" name="llm_max_tokens" id="llm_max_tokens" value="<?= (int)$cfg['max_tokens'] ?>" min="1" max="128000"
-                       class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-brand-500 outline-none">
-            </div>
-        </div>
-
-        <div>
-            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">API Key</label>
-            <input type="password" name="llm_api_key" id="llm_api_key" autocomplete="new-password"
-                   placeholder="<?= $keySet ? '•••••••• (ya configurada — deja vacío para mantenerla)' : 'Pega aquí tu API key' ?>"
-                   class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-brand-500 outline-none font-mono text-sm">
-            <?php if ($keySet): ?>
-                <label class="inline-flex items-center gap-2 mt-2 text-xs text-gray-500">
-                    <input type="checkbox" name="llm_api_key_clear" value="1" class="rounded border-gray-300 text-brand-500 focus:ring-brand-500">
-                    Borrar la clave guardada
-                </label>
-            <?php endif; ?>
-            <p class="text-xs text-gray-400 mt-1">Ollama y OpenCode Console (modelos gratis) no necesitan clave.</p>
-        </div>
-
-        <div class="flex items-center gap-3 pt-2 border-t border-gray-100 dark:border-gray-700">
-            <button type="submit" class="px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors">
-                Guardar
-            </button>
-            <button type="button" onclick="testApi()" id="btn-test"
-                    class="px-4 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 text-sm font-medium rounded-lg transition-colors">
-                Probar conexión
-            </button>
-            <span id="test-result" class="text-sm"></span>
-        </div>
-    </form>
-
-    <div class="bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 rounded-xl p-4">
-        <p class="text-xs text-amber-700 dark:text-amber-300">
-            La API key se guarda <strong>cifrada (AES-256)</strong> y nunca se muestra ni se envía al navegador.
-            Si no configuras nada aquí, se seguirán usando los valores del archivo <code class="font-mono">.env</code>.
-        </p>
     </div>
+
+    <div>
+        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Base URL <span class="text-gray-400 font-normal">(opcional)</span></label>
+        <input type="text" name="api_url" value="<?= e($editProfile['api_url'] ?? '') ?>" placeholder="Vacío = endpoint por defecto del proveedor"
+               class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white font-mono text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+    </div>
+
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Modelo</label>
+            <input type="text" name="model" value="<?= e($editProfile['model'] ?? '') ?>" placeholder="gpt-4o-mini" list="llm-model-list"
+                   class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white font-mono text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+            <datalist id="llm-model-list">
+                <option value="space-bunny-free">
+                <option value="longcat-2.5-preview-free">
+                <option value="step-5-preview-free">
+                <option value="gpt-4o-mini">
+                <option value="gemini-1.5-flash">
+                <option value="mistral-large-latest">
+                <option value="llama3.1">
+            </datalist>
+        </div>
+        <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Max tokens</label>
+            <input type="number" name="max_tokens" value="<?= (int)($editProfile['max_tokens'] ?? 2048) ?>" min="1" max="128000"
+                   class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+        </div>
+    </div>
+
+    <div>
+        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">API Key</label>
+        <input type="password" name="api_key" autocomplete="new-password"
+               placeholder="<?= !empty($editProfile['api_key']) ? '•••••••• (ya configurada — deja vacío para mantenerla)' : 'Pega aquí tu API key (no necesaria para Ollama ni OpenCode gratis)' ?>"
+               class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white font-mono text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+    </div>
+
+    <label class="inline-flex items-center gap-2 text-sm">
+        <input type="checkbox" name="is_default" value="1" <?= !empty($editProfile['is_default']) || $editId === 0 ? 'checked' : '' ?> class="rounded border-gray-300 text-brand-500 focus:ring-brand-500">
+        Usar como perfil predeterminado
+    </label>
+
+    <div class="flex items-center gap-3 pt-2 border-t border-gray-100 dark:border-gray-700">
+        <button type="submit" class="px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors">Guardar perfil</button>
+        <button type="button" onclick="testForm()" class="px-4 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 text-sm font-medium rounded-lg transition-colors">Probar conexión</button>
+        <?php if ($editId): ?>
+            <a href="<?= base_url('admin/apis') ?>" class="text-sm text-gray-500 hover:underline">Cancelar edición</a>
+        <?php endif; ?>
+    </div>
+</form>
+
+<!-- Modelo por tarea -->
+<form method="POST" action="<?= base_url('admin/apis/tasks') ?>" class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-6 mb-6">
+    <?= Csrf::field() ?>
+    <h2 class="text-lg font-semibold mb-1">Modelo por tarea</h2>
+    <p class="text-xs text-gray-500 mb-4">Elige qué perfil usar en cada tarea (o deja «Predeterminado»).</p>
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <?php foreach ($tasks as $key => $label): ?>
+            <div>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"><?= e($label) ?></label>
+                <select name="tasks[<?= e($key) ?>]" class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+                    <option value="0" <?= empty($taskProfiles[$key]) ? 'selected' : '' ?>>Predeterminado</option>
+                    <?php foreach ($profiles as $p): ?>
+                        <option value="<?= (int)$p['id'] ?>" <?= (int)($taskProfiles[$key] ?? 0) === (int)$p['id'] ? 'selected' : '' ?>><?= e($p['name']) ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+        <?php endforeach; ?>
+    </div>
+    <div class="pt-4">
+        <button type="submit" class="px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors">Guardar tareas</button>
+    </div>
+</form>
+
+<div class="bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 rounded-xl p-4">
+    <p class="text-xs text-amber-700 dark:text-amber-300">
+        La API key se guarda <strong>cifrada (AES-256-GCM)</strong> y nunca se muestra ni se envía al navegador.
+        Los modelos gratis de OpenCode con <strong>zero-retention</strong> (space-bunny/longcat/step) no entrenan con tus datos.
+    </p>
 </div>
 
 <script>
-function testApi() {
-    var btn = document.getElementById('btn-test');
-    var out = document.getElementById('test-result');
-    btn.disabled = true;
-    out.className = 'text-sm text-gray-500';
-    out.textContent = 'Probando...';
+function testProfile(id) {
+    api('POST', '<?= base_url('admin/apis/test') ?>', { profile_id: id })
+        .then(function(res) { toast(res.success ? (res.message || 'OK') : ('Error: ' + (res.error || 'desconocido')), res.success ? 'success' : 'error'); })
+        .catch(function() { toast('Error de conexión', 'error'); });
+}
+function testForm() {
     api('POST', '<?= base_url('admin/apis/test') ?>', {
-        llm_provider: document.getElementById('llm_provider').value,
-        llm_api_url: document.getElementById('llm_api_url').value,
-        llm_model: document.getElementById('llm_model').value,
-        llm_api_key: document.getElementById('llm_api_key').value
-    }).then(function(res) {
-        out.className = 'text-sm ' + (res.success ? 'text-green-600' : 'text-red-600');
-        out.textContent = res.success ? (res.message || 'OK') : ('Error: ' + (res.error || 'desconocido'));
-    }).catch(function() {
-        out.className = 'text-sm text-red-600';
-        out.textContent = 'Error de conexión';
-    }).finally(function() {
-        btn.disabled = false;
-    });
+        provider: document.getElementById('provider').value,
+        api_url: document.querySelector('input[name="api_url"]').value,
+        model: document.querySelector('input[name="model"]').value,
+        api_key: document.querySelector('input[name="api_key"]').value
+    }).then(function(res) { toast(res.success ? (res.message || 'OK') : ('Error: ' + (res.error || 'desconocido')), res.success ? 'success' : 'error'); })
+      .catch(function() { toast('Error de conexión', 'error'); });
 }
 </script>

@@ -282,6 +282,20 @@ class Database
             updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         )");
 
+        // Perfiles de IA (varios proveedores guardados a la vez)
+        $db->exec("CREATE TABLE IF NOT EXISTS llm_profiles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            provider TEXT NOT NULL DEFAULT '',
+            api_url TEXT,
+            api_key_encrypted TEXT,
+            model TEXT,
+            max_tokens INTEGER NOT NULL DEFAULT 2048,
+            is_default INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )");
+
         $db->exec("CREATE TABLE IF NOT EXISTS sync_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,

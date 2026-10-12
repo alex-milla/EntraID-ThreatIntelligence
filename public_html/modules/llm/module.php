@@ -40,21 +40,28 @@ class Module_Llm extends BaseModule
     }
 
     /**
-     * Configuración efectiva: primero la guardada en la BD (Admin → APIs),
-     * con fallback a las constantes de .env. Así no rompe instalaciones que
-     * sigan configurando el LLM por .env.
+     * Configuración efectiva: perfil indicado → perfil predeterminado →
+     * configuración única (compat) → constantes .env.
      */
-    public function cfg(): array
+    public function cfg(?int $profileId = null): array
     {
-        return llm_config();
+        return llm_config($profileId);
     }
 
     /**
-     * Verifica si el módulo está configurado.
+     * Perfiles de IA disponibles (para el selector).
      */
-    public function isConfigured(): bool
+    public function profiles(): array
     {
-        $c = $this->cfg();
+        return llm_profile_list();
+    }
+
+    /**
+     * Verifica si el módulo está configurado (para un perfil concreto o el predeterminado).
+     */
+    public function isConfigured(?int $profileId = null): bool
+    {
+        $c = $this->cfg($profileId);
         if ($c['provider'] === '') {
             return false;
         }
@@ -66,15 +73,15 @@ class Module_Llm extends BaseModule
     }
 
     /**
-     * Envía un prompt al proveedor LLM configurado.
+     * Envía un prompt al proveedor LLM configurado (perfil opcional).
      */
-    public function chat(string $systemPrompt, string $userPrompt, array $options = []): array
+    public function chat(string $systemPrompt, string $userPrompt, array $options = [], ?int $profileId = null): array
     {
-        if (!$this->isConfigured()) {
-            return ['success' => false, 'error' => 'LLM no configurado. Configúralo en Admin → APIs (o en .env).'];
+        if (!$this->isConfigured($profileId)) {
+            return ['success' => false, 'error' => 'LLM no configurado. Configúralo en Admin → APIs.'];
         }
 
-        $cfg = $this->cfg();
+        $cfg = $this->cfg($profileId);
 
         try {
             $res = $this->dispatch($cfg, $systemPrompt, $userPrompt, $options);
@@ -86,6 +93,18 @@ class Module_Llm extends BaseModule
         } catch (Throwable $e) {
             return ['success' => false, 'error' => $e->getMessage()];
         }
+    }
+
+    /**
+     * Perfil a usar: el indicado en la petición o el configurado para la tarea.
+     */
+    private function resolveProfile(array $input, string $task): ?int
+    {
+        $pid = (int)($input['profile_id'] ?? 0);
+        if ($pid > 0) {
+            return $pid;
+        }
+        return llm_task_profile($task);
     }
 
     /**
@@ -271,7 +290,7 @@ class Module_Llm extends BaseModule
     /**
      * Analiza un incidente con LLM para obtener resumen ejecutivo.
      */
-    public function analyzeIncident(int $incidentId): array
+    public function analyzeIncident(int $incidentId, ?int $profileId = null): array
     {
         $incident = Database::fetchOne("SELECT * FROM incidents WHERE id = ?", [$incidentId]);
         if (!$incident) return ['success' => false, 'error' => 'Incidente no encontrado'];
@@ -286,13 +305,13 @@ class Module_Llm extends BaseModule
             'mitre' => safe_json_decode($a['mitre_techniques'], []),
         ], $alerts), JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
 
-        return $this->chat($system, $user);
+        return $this->chat($system, $user, [], $profileId);
     }
 
     /**
      * Analiza un conjunto de IOCs para clasificación.
      */
-    public function classifyIocs(int $tenantId, int $limit = 50): array
+    public function classifyIocs(int $tenantId, int $limit = 50, ?int $profileId = null): array
     {
         $iocs = Database::fetchAll(
             "SELECT ioc_type, ioc_value, source FROM ti_iocs WHERE tenant_id = ? ORDER BY fetched_at DESC LIMIT ?",
@@ -302,7 +321,7 @@ class Module_Llm extends BaseModule
         $system = 'Eres un analista de threat intelligence. Clasifica cada IOC en: tipo de amenaza (malware, phishing, C2, etc.), nivel de confianza (alta/media/baja) y una breve descripción. Responde en formato JSON array.';
         $user = "Clasifica estos IOCs:\n" . json_encode($iocs, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
 
-        $result = $this->chat($system, $user);
+        $result = $this->chat($system, $user, [], $profileId);
         if ($result['success']) {
             $result['classification'] = safe_json_decode($result['content'], null);
         }
@@ -312,14 +331,14 @@ class Module_Llm extends BaseModule
     /**
      * Extrae IOCs y resumen de un texto (artículo o correo) con IA.
      */
-    public function extractIocs(string $text): array
+    public function extractIocs(string $text, ?int $profileId = null): array
     {
         $system = 'Eres un analista de threat intelligence. A partir del texto (artículo o correo), devuelve EXCLUSIVAMENTE un JSON válido con esta forma: '
             . '{"resumen":"...","iocs":[{"tipo":"ipv4-addr|domain-name|url|file|email-addr|otro","valor":"..."}],"recomendaciones":"..."}. '
             . 'No inventes IOCs; si no hay, deja el array vacío. Responde en español.';
         $user = "Analiza el siguiente contenido:\n\n" . $text;
 
-        $res = $this->chat($system, $user);
+        $res = $this->chat($system, $user, [], $profileId);
         if (!empty($res['success'])) {
             $res['parsed'] = safe_json_decode($this->cleanJson((string)$res['content']), null);
         }
@@ -346,7 +365,7 @@ class Module_Llm extends BaseModule
     /**
      * Genera un resumen narrativo de un reporte.
      */
-    public function summarizeReport(int $reportId): array
+    public function summarizeReport(int $reportId, ?int $profileId = null): array
     {
         $report = Database::fetchOne("SELECT * FROM reports WHERE id = ?", [$reportId]);
         if (!$report) return ['success' => false, 'error' => 'Reporte no encontrado'];
@@ -356,7 +375,7 @@ class Module_Llm extends BaseModule
         $system = 'Eres un analista de ciberseguridad que escribe informes ejecutivos. Convierte los datos técnicos en un resumen narrativo profesional en español, destacando los hallazgos más relevantes y el estado general de la seguridad.';
         $user = "Genera un resumen ejecutivo del siguiente reporte ({$report['title']}):\n" . json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
 
-        return $this->chat($system, $user);
+        return $this->chat($system, $user, [], $profileId);
     }
 
     /**
@@ -409,11 +428,14 @@ class Module_Llm extends BaseModule
     {
         $tenants = TenantManager::getActive();
         $cfg = $this->cfg();
+        $defaultProfile = llm_profile_default();
         echo $this->page('index', [
             'module' => $this, 'tenants' => $tenants,
             'configured' => $this->isConfigured(),
             'provider' => $cfg['provider'] ?: 'no configurado',
             'model' => $cfg['model'] ?: '—',
+            'profiles' => $this->profiles(),
+            'defaultProfileId' => $defaultProfile['id'] ?? null,
         ]);
     }
 
@@ -424,7 +446,8 @@ class Module_Llm extends BaseModule
         $result = $this->chat(
             $input['system'] ?? 'Eres un asistente de ciberseguridad.',
             $input['prompt'] ?? '',
-            $input['options'] ?? []
+            $input['options'] ?? [],
+            $this->resolveProfile($input, 'chat')
         );
         json_response($result);
     }
@@ -432,14 +455,15 @@ class Module_Llm extends BaseModule
     public function analyzeIncidentEndpoint(array $params = []): void
     {
         Csrf::validateOrFail();
-        json_response($this->analyzeIncident((int)($params['id'] ?? 0)));
+        $input = json_decode(file_get_contents('php://input'), true) ?? $_POST;
+        json_response($this->analyzeIncident((int)($params['id'] ?? 0), $this->resolveProfile($input, 'analyze_incident')));
     }
 
     public function classifyIocsEndpoint(array $params = []): void
     {
         Csrf::validateOrFail();
         $input = json_decode(file_get_contents('php://input'), true) ?? $_POST;
-        json_response($this->classifyIocs((int)($input['tenant_id'] ?? 0), (int)($input['limit'] ?? 50)));
+        json_response($this->classifyIocs((int)($input['tenant_id'] ?? 0), (int)($input['limit'] ?? 50), $this->resolveProfile($input, 'classify_iocs')));
     }
 
     public function extractIocsEndpoint(array $params = []): void
@@ -462,13 +486,14 @@ class Module_Llm extends BaseModule
             json_response(['success' => false, 'error' => 'No hay texto para analizar']);
         }
 
-        json_response($this->extractIocs($text));
+        json_response($this->extractIocs($text, $this->resolveProfile($input, 'extract_iocs')));
     }
 
     public function summarizeReportEndpoint(array $params = []): void
     {
         Csrf::validateOrFail();
-        json_response($this->summarizeReport((int)($params['id'] ?? 0)));
+        $input = json_decode(file_get_contents('php://input'), true) ?? $_POST;
+        json_response($this->summarizeReport((int)($params['id'] ?? 0), $this->resolveProfile($input, 'summarize_report')));
     }
 
     public function getStatus(array $params = []): void

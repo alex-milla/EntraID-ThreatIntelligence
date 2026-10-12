@@ -397,13 +397,182 @@ if (!function_exists('setting_set')) {
     }
 }
 
+if (!function_exists('llm_profile_list')) {
+    /**
+     * Lista de perfiles de IA (varios proveedores guardados a la vez).
+     */
+    function llm_profile_list(): array
+    {
+        try {
+            return Database::fetchAll("SELECT * FROM llm_profiles ORDER BY is_default DESC, name");
+        } catch (Throwable $e) {
+            return [];
+        }
+    }
+}
+
+if (!function_exists('llm_profile_get')) {
+    /**
+     * Devuelve un perfil con la API key ya descifrada (o null).
+     */
+    function llm_profile_get(?int $id): ?array
+    {
+        if (!$id || $id <= 0) {
+            return null;
+        }
+        try {
+            $p = Database::fetchOne("SELECT * FROM llm_profiles WHERE id = ?", [$id]);
+        } catch (Throwable $e) {
+            return null;
+        }
+        if (!$p) {
+            return null;
+        }
+        $p['api_key'] = '';
+        if (!empty($p['api_key_encrypted'])) {
+            try {
+                $p['api_key'] = Encryption::decryptCombined($p['api_key_encrypted']);
+            } catch (Throwable $e) {
+                $p['api_key'] = '';
+            }
+        }
+        return $p;
+    }
+}
+
+if (!function_exists('llm_profile_default')) {
+    /**
+     * Perfil predeterminado (o null si no hay ninguno).
+     */
+    function llm_profile_default(): ?array
+    {
+        try {
+            $row = Database::fetchOne("SELECT id FROM llm_profiles ORDER BY is_default DESC, id LIMIT 1");
+        } catch (Throwable $e) {
+            return null;
+        }
+        return $row ? llm_profile_get((int)$row['id']) : null;
+    }
+}
+
+if (!function_exists('llm_profile_save')) {
+    /**
+     * Crea o actualiza un perfil de IA. Si $data['api_key'] viene vacío en una
+     * edición, se conserva la clave existente.
+     */
+    function llm_profile_save(array $data, ?int $id = null): int
+    {
+        $name = trim((string)($data['name'] ?? '')) ?: 'Perfil';
+        $provider = strtolower(trim((string)($data['provider'] ?? '')));
+        $apiUrl = trim((string)($data['api_url'] ?? ''));
+        $model = trim((string)($data['model'] ?? ''));
+        $maxTokens = max(1, min(128000, (int)($data['max_tokens'] ?? 2048)));
+
+        $key = trim((string)($data['api_key'] ?? ''));
+        $keyEnc = null;
+        if ($key !== '') {
+            $keyEnc = Encryption::encryptCombined($key);
+        }
+
+        if ($id && $id > 0) {
+            $sets = "name = ?, provider = ?, api_url = ?, model = ?, max_tokens = ?, updated_at = datetime('now')";
+            $params = [$name, $provider, $apiUrl, $model, $maxTokens];
+            if ($keyEnc !== null) {
+                $sets .= ", api_key_encrypted = ?";
+                $params[] = $keyEnc;
+            }
+            $params[] = $id;
+            Database::update("UPDATE llm_profiles SET $sets WHERE id = ?", $params);
+            return $id;
+        }
+
+        return Database::insert(
+            "INSERT INTO llm_profiles (name, provider, api_url, model, max_tokens, api_key_encrypted)
+             VALUES (?, ?, ?, ?, ?, ?)",
+            [$name, $provider, $apiUrl, $model, $maxTokens, $keyEnc]
+        );
+    }
+}
+
+if (!function_exists('llm_profile_set_default')) {
+    function llm_profile_set_default(int $id): void
+    {
+        Database::query("UPDATE llm_profiles SET is_default = 0");
+        Database::query("UPDATE llm_profiles SET is_default = 1 WHERE id = ?", [$id]);
+    }
+}
+
+if (!function_exists('llm_profile_delete')) {
+    function llm_profile_delete(int $id): void
+    {
+        Database::query("DELETE FROM llm_profiles WHERE id = ?", [$id]);
+    }
+}
+
+if (!function_exists('llm_migrate_legacy_profile')) {
+    /**
+     * Migración única: si no hay perfiles pero sí la config única antigua,
+     * la convierte en un perfil "Principal" (para no perder Mistral, etc.).
+     */
+    function llm_migrate_legacy_profile(): void
+    {
+        try {
+            $count = (int)(Database::fetchOne("SELECT COUNT(*) AS c FROM llm_profiles")['c'] ?? 0);
+        } catch (Throwable $e) {
+            return;
+        }
+        if ($count > 0) {
+            return;
+        }
+        $provider = (string)(setting_get('llm_provider') ?? LLM_PROVIDER);
+        if ($provider === '') {
+            return;
+        }
+        $id = llm_profile_save([
+            'name'       => 'Principal',
+            'provider'   => $provider,
+            'api_url'    => (string)(setting_get('llm_api_url') ?? LLM_API_URL),
+            'model'      => (string)(setting_get('llm_model') ?? LLM_MODEL),
+            'max_tokens' => (int)(setting_get('llm_max_tokens') ?? LLM_MAX_TOKENS),
+            'api_key'    => (string)(setting_get('llm_api_key') ?? LLM_API_KEY),
+        ]);
+        llm_profile_set_default($id);
+    }
+}
+
+if (!function_exists('llm_task_profile')) {
+    /**
+     * Perfil configurado para una tarea concreta (o null = predeterminado).
+     */
+    function llm_task_profile(string $task): ?int
+    {
+        $id = (int)(setting_get('llm_task_' . $task) ?? 0);
+        return $id > 0 ? $id : null;
+    }
+}
+
 if (!function_exists('llm_config')) {
     /**
-     * Configuración efectiva del LLM: primero la guardada en la BD
-     * (Admin → APIs), con fallback a las constantes de .env.
+     * Configuración efectiva del LLM.
+     * Orden: perfil indicado → perfil predeterminado → configuración única (compat) → .env.
      */
-    function llm_config(): array
+    function llm_config(?int $profileId = null): array
     {
+        $p = $profileId ? llm_profile_get($profileId) : null;
+        if ($p === null) {
+            $p = llm_profile_default();
+        }
+        if ($p !== null) {
+            return [
+                'provider'   => strtolower((string)$p['provider']),
+                'api_key'    => (string)$p['api_key'],
+                'api_url'    => (string)$p['api_url'],
+                'model'      => (string)$p['model'],
+                'max_tokens' => (int)$p['max_tokens'],
+            ];
+        }
+
+        // Compat: configuración única antigua / constantes .env
         return [
             'provider'   => strtolower((string)(setting_get('llm_provider') ?? LLM_PROVIDER)),
             'api_key'    => (string)(setting_get('llm_api_key') ?? LLM_API_KEY),

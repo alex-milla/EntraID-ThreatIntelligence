@@ -505,16 +505,31 @@ class AdminController
     }
 
     /**
-     * Panel de configuración de APIs (LLM: OpenAI, Anthropic, Azure, Ollama, Gemini).
+     * Panel de configuración de APIs / perfiles de IA.
      */
     public static function apis(): void
     {
         Auth::requireAdmin();
+        llm_migrate_legacy_profile();
 
         $success = flash('success');
         $error = flash('error');
-        $cfg = llm_config();
-        $keySet = $cfg['api_key'] !== '';
+
+        $profiles = llm_profile_list();
+        $editId = (int)($_GET['edit'] ?? 0);
+        $editProfile = $editId ? llm_profile_get($editId) : null;
+
+        $tasks = [
+            'summarize_report' => 'Resumen de reporte',
+            'classify_iocs'    => 'Clasificar IOCs',
+            'extract_iocs'     => 'Extraer IOCs',
+            'analyze_incident' => 'Analizar incidente',
+            'chat'             => 'Chat / Análisis IA',
+        ];
+        $taskProfiles = [];
+        foreach (array_keys($tasks) as $t) {
+            $taskProfiles[$t] = llm_task_profile($t);
+        }
 
         require VIEWS_PATH . '/layout/header.php';
         require VIEWS_PATH . '/layout/sidebar.php';
@@ -523,50 +538,102 @@ class AdminController
     }
 
     /**
-     * Guarda la configuración de APIs.
-     * La API key se guarda cifrada (AES-256) y solo se actualiza si se envía.
+     * Guarda (crea o edita) un perfil de IA. La API key se guarda cifrada
+     * (AES-GCM) y solo se actualiza si se envía una nueva.
      */
     public static function apisSave(): void
     {
         Auth::requireAdmin();
         Csrf::validateOrFail();
 
+        $id = (int)($_POST['id'] ?? 0);
         $allowed = ['', 'openai', 'anthropic', 'azure', 'ollama', 'gemini', 'mistral', 'opencode', 'custom'];
-        $provider = strtolower(trim((string)($_POST['llm_provider'] ?? '')));
+        $provider = strtolower(trim((string)($_POST['provider'] ?? '')));
         if (!in_array($provider, $allowed, true)) {
             $provider = '';
         }
 
-        setting_set('llm_provider', $provider);
-        setting_set('llm_api_url', trim((string)($_POST['llm_api_url'] ?? '')));
-        setting_set('llm_model', trim((string)($_POST['llm_model'] ?? '')));
+        $name = trim((string)($_POST['name'] ?? ''));
+        if ($name === '') {
+            $name = $provider !== '' ? ucfirst($provider) : 'Perfil';
+        }
 
-        // Max tokens: si se deja vacío, usar el valor por defecto (no 1)
-        $mtRaw = trim((string)($_POST['llm_max_tokens'] ?? ''));
-        $maxTokens = ($mtRaw === '') ? 2048 : max(1, min(128000, (int)$mtRaw));
-        setting_set('llm_max_tokens', (string)$maxTokens);
-
-        // La API key nunca se muestra en el formulario: solo se actualiza si viene una nueva,
-        // salvo que se marque explícitamente "borrar".
-        $key = trim((string)($_POST['llm_api_key'] ?? ''));
-        $clear = !empty($_POST['llm_api_key_clear']);
-        if ($key !== '' && ENCRYPTION_KEY === '') {
+        $key = trim((string)($_POST['api_key'] ?? ''));
+        $needsKey = !in_array($provider, ['ollama', 'opencode'], true);
+        if ($key !== '' && $needsKey && ENCRYPTION_KEY === '') {
             flash('error', 'No se puede guardar la API key: falta ENCRYPTION_KEY en el .env.');
             redirect(base_url('admin/apis'));
         }
-        if ($key !== '') {
-            setting_set('llm_api_key', $key, true);
-        } elseif ($clear) {
-            setting_set('llm_api_key', '', true);
+
+        $newId = llm_profile_save([
+            'name'       => $name,
+            'provider'   => $provider,
+            'api_url'    => trim((string)($_POST['api_url'] ?? '')),
+            'model'      => trim((string)($_POST['model'] ?? '')),
+            'max_tokens' => (int)($_POST['max_tokens'] ?? 2048),
+            'api_key'    => $key,
+        ], $id ?: null);
+
+        if (!empty($_POST['is_default']) || llm_profile_default() === null) {
+            llm_profile_set_default($newId);
         }
 
-        log_activity('settings.apis_saved', ['provider' => $provider]);
-        flash('success', 'Configuración de APIs guardada correctamente');
+        log_activity('settings.api_saved', ['profile_id' => $newId, 'provider' => $provider]);
+        flash('success', 'Perfil guardado correctamente');
         redirect(base_url('admin/apis'));
     }
 
     /**
-     * Prueba la conexión con el proveedor LLM configurado (respuesta JSON).
+     * Marca un perfil como predeterminado.
+     */
+    public static function apisDefault(): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        $id = (int)($_POST['id'] ?? 0);
+        if ($id > 0 && llm_profile_get($id) !== null) {
+            llm_profile_set_default($id);
+            flash('success', 'Perfil predeterminado actualizado');
+        }
+        redirect(base_url('admin/apis'));
+    }
+
+    /**
+     * Elimina un perfil de IA.
+     */
+    public static function apisDelete(): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        $id = (int)($_POST['id'] ?? 0);
+        if ($id > 0) {
+            llm_profile_delete($id);
+            flash('success', 'Perfil eliminado');
+        }
+        redirect(base_url('admin/apis'));
+    }
+
+    /**
+     * Guarda el mapa "tarea → perfil".
+     */
+    public static function apisTasks(): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        foreach (($_POST['tasks'] ?? []) as $task => $pid) {
+            if (is_string($task) && preg_match('/^[a-z_]+$/', $task)) {
+                setting_set('llm_task_' . $task, (string)((int)$pid));
+            }
+        }
+        flash('success', 'Modelo por tarea guardado');
+        redirect(base_url('admin/apis'));
+    }
+
+    /**
+     * Prueba la conexión con un proveedor LLM (perfil guardado o valores del formulario).
      */
     public static function apisTest(): void
     {
@@ -580,14 +647,28 @@ class AdminController
         }
 
         $override = [];
-        $provider = strtolower(trim((string)($input['llm_provider'] ?? '')));
-        if ($provider !== '') { $override['provider'] = $provider; }
-        $url = trim((string)($input['llm_api_url'] ?? ''));
-        if ($url !== '') { $override['api_url'] = $url; }
-        $model = trim((string)($input['llm_model'] ?? ''));
-        if ($model !== '') { $override['model'] = $model; }
-        $key = trim((string)($input['llm_api_key'] ?? ''));
-        if ($key !== '') { $override['api_key'] = $key; }
+        $pid = (int)($input['profile_id'] ?? 0);
+        if ($pid > 0) {
+            $p = llm_profile_get($pid);
+            if ($p) {
+                $override = [
+                    'provider'   => $p['provider'],
+                    'api_url'    => (string)$p['api_url'],
+                    'model'      => (string)$p['model'],
+                    'api_key'    => (string)$p['api_key'],
+                    'max_tokens' => (int)$p['max_tokens'],
+                ];
+            }
+        } else {
+            $provider = strtolower(trim((string)($input['provider'] ?? $input['llm_provider'] ?? '')));
+            if ($provider !== '') { $override['provider'] = $provider; }
+            $url = trim((string)($input['api_url'] ?? $input['llm_api_url'] ?? ''));
+            if ($url !== '') { $override['api_url'] = $url; }
+            $model = trim((string)($input['model'] ?? $input['llm_model'] ?? ''));
+            if ($model !== '') { $override['model'] = $model; }
+            $key = trim((string)($input['api_key'] ?? $input['llm_api_key'] ?? ''));
+            if ($key !== '') { $override['api_key'] = $key; }
+        }
 
         json_response($module->testConnection($override));
     }
@@ -746,6 +827,9 @@ $adminRoutes = [
         'settings/save'    => 'settingsSave',
         'apis/save'        => 'apisSave',
         'apis/test'        => 'apisTest',
+        'apis/default'     => 'apisDefault',
+        'apis/delete'      => 'apisDelete',
+        'apis/tasks'       => 'apisTasks',
         'updates'          => 'updates',
         'change-password'  => 'changePassword',
     ],

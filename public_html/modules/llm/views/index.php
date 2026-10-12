@@ -22,9 +22,18 @@
     </div>
 </div>
 <?php else: ?>
-<div class="mb-4 flex items-center gap-3">
+<div class="mb-4 flex items-center gap-3 flex-wrap">
     <span class="inline-flex px-2 py-0.5 text-xs rounded-full bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300">Configurado</span>
-    <span class="text-sm text-gray-500">Proveedor: <strong><?= e($provider) ?></strong> · Modelo: <strong><?= e($model) ?></strong></span>
+    <?php if (count($profiles ?? []) > 1): ?>
+        <label class="text-sm text-gray-500">Modelo:</label>
+        <select id="llm-profile" class="px-2 py-1 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+            <?php foreach ($profiles as $p): ?>
+                <option value="<?= (int)$p['id'] ?>" <?= (int)($defaultProfileId ?? 0) === (int)$p['id'] ? 'selected' : '' ?>><?= e($p['name']) ?><?= !empty($p['model']) ? ' · ' . e($p['model']) : '' ?></option>
+            <?php endforeach; ?>
+        </select>
+    <?php else: ?>
+        <span class="text-sm text-gray-500">Proveedor: <strong><?= e($provider) ?></strong> · Modelo: <strong><?= e($model) ?></strong></span>
+    <?php endif; ?>
 </div>
 
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -68,12 +77,14 @@
 </div>
 
 <script>
+function getProfile() { var s = document.getElementById('llm-profile'); return s ? parseInt(s.value, 10) : 0; }
+
 function sendChat() {
     var sys = document.getElementById('system-prompt').value;
     var usr = document.getElementById('user-prompt').value;
     if (!usr.trim()) { toast('Escribe un mensaje', 'warning'); return; }
     document.getElementById('llm-response').innerHTML = '<div class="spinner mx-auto"></div>';
-    api('POST', '<?= base_url('modules/llm/chat') ?>', { system: sys, prompt: usr })
+    api('POST', '<?= base_url('modules/llm/chat') ?>', { system: sys, prompt: usr, profile_id: getProfile() })
         .then(function(res) {
             if (res.success) {
                 document.getElementById('llm-response').innerHTML = res.content_html || esc(res.content);
@@ -87,7 +98,7 @@ function sendChat() {
 function classifyIocs() {
     var tid = document.getElementById('ioc-tenant').value;
     toast('Clasificando IOCs...', 'info');
-    api('POST', '<?= base_url('modules/llm/classify-iocs') ?>', { tenant_id: parseInt(tid), limit: 30 })
+    api('POST', '<?= base_url('modules/llm/classify-iocs') ?>', { tenant_id: parseInt(tid), limit: 30, profile_id: getProfile() })
         .then(function(res) {
             if (res.success) {
                 document.getElementById('llm-response').innerHTML = res.content_html || esc(res.content);
