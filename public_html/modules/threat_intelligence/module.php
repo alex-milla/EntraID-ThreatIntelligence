@@ -553,6 +553,8 @@ class Module_ThreatIntelligence extends BaseModule
             'q'        => trim((string)($_GET['q'] ?? '')),
             'tag'      => trim((string)($_GET['tag'] ?? '')),
             'sector'   => trim((string)($_GET['sector'] ?? '')),
+            'profiles' => llm_profile_list(),
+            'defaultProfileId' => (llm_profile_default()['id'] ?? null),
         ]);
     }
 

@@ -411,7 +411,12 @@ class Module_Reports extends BaseModule
             echo $this->page('error', ['module' => $this, 'message' => 'Reporte no encontrado']);
             return;
         }
-        echo $this->page('view', ['module' => $this, 'report' => $report]);
+        echo $this->page('view', [
+            'module' => $this,
+            'report' => $report,
+            'profiles' => llm_profile_list(),
+            'defaultProfileId' => (llm_profile_default()['id'] ?? null),
+        ]);
     }
 
     public function getPeriods(array $params = []): void

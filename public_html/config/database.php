@@ -328,6 +328,17 @@ class Database
             updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         )");
 
+        // Acciones rápidas de Análisis IA (editables)
+        $db->exec("CREATE TABLE IF NOT EXISTS llm_actions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            label TEXT NOT NULL,
+            prompt TEXT NOT NULL,
+            position INTEGER NOT NULL DEFAULT 0,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )");
+
         $db->exec("CREATE TABLE IF NOT EXISTS sync_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
@@ -363,6 +374,9 @@ class Database
 
         // Registrar módulos por defecto
         self::registerDefaultModules($db);
+
+        // Sembrar las acciones rápidas de Análisis IA (solo si no hay)
+        self::registerDefaultActions($db);
     }
 
     private static function registerDefaultModules(PDO $db): void
@@ -385,6 +399,52 @@ class Database
         foreach ($modules as $m) {
             $stmt->execute($m);
         }
+    }
+
+    /**
+     * Siembra las acciones rápidas de Análisis IA por defecto (solo si la tabla
+     * está vacía). Son editables desde Admin → APIs.
+     */
+    private static function registerDefaultActions(PDO $db): void
+    {
+        try {
+            $count = (int)$db->query("SELECT COUNT(*) FROM llm_actions")->fetchColumn();
+            if ($count > 0) {
+                return;
+            }
+        } catch (Throwable $e) {
+            return;
+        }
+        self::insertDefaultActions($db);
+    }
+
+    /** Inserta las acciones rápidas por defecto. */
+    private static function insertDefaultActions(PDO $db): void
+    {
+        $actions = [
+            ['Resumen ejecutivo', 'Elabora un RESUMEN EJECUTIVO de la postura de seguridad del tenant: lo más relevante, los riesgos principales y 3-5 recomendaciones priorizadas.'],
+            ['Incidentes y alertas', 'Analiza los INCIDENTES y ALERTAS: tendencias, severidad, amenazas y técnicas más relevantes, y acciones recomendadas.'],
+            ['Vulnerabilidades', 'Analiza las VULNERABILIDADES: prioriza por explotabilidad (exploit público, EPSS, CVSS) y propón un plan de remediación.'],
+            ['Secure Score', 'Analiza el SECURE SCORE: interpreta el valor y su evolución y propón mejoras concretas y priorizadas.'],
+            ['IOCs', 'Analiza los IOCs recientes: agrúpalos por tipo y relevancia, indica de qué artículo provienen y qué acciones tomar.'],
+            ['Artículos TI', 'Lista los ARTÍCULOS de Threat Intelligence recientes con su título, fecha, enlace y los IOCs asociados a cada uno, y resume brevemente su relevancia para el tenant.'],
+            ['Riesgos', 'Identifica los PRINCIPALES RIESGOS del tenant (incidentes, alertas, vulnerabilidades, IOCs y postura) y priorízalos.'],
+        ];
+
+        $stmt = $db->prepare("INSERT INTO llm_actions (label, prompt, position, is_active) VALUES (?, ?, ?, 1)");
+        $pos = 10;
+        foreach ($actions as $a) {
+            $stmt->execute([$a[0], $a[1], $pos]);
+            $pos += 10;
+        }
+    }
+
+    /** Borra las acciones actuales y reinserta las de por defecto. */
+    public static function resetDefaultActions(): void
+    {
+        $db = self::getInstance();
+        $db->exec("DELETE FROM llm_actions");
+        self::insertDefaultActions($db);
     }
 
     /**

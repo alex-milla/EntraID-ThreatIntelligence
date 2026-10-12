@@ -1,16 +1,8 @@
 <?php
 /**
  * Vista índice del módulo LLM — Análisis IA sobre los datos del tenant.
+ * Las acciones rápidas se leen de la tabla llm_actions (editables en Admin → APIs).
  */
-$anTasks = [
-    'summary'         => 'Resumen ejecutivo',
-    'incidents'       => 'Incidentes y alertas',
-    'vulnerabilities' => 'Vulnerabilidades',
-    'secure_score'    => 'Secure Score',
-    'iocs'            => 'IOCs',
-    'articles'        => 'Artículos TI',
-    'risks'           => 'Riesgos',
-];
 ?>
 <?php if (!$configured): ?>
 <div class="bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 rounded-xl p-6 mb-6">
@@ -19,7 +11,6 @@ $anTasks = [
         <div>
             <p class="text-sm font-medium text-amber-800 dark:text-amber-200">LLM no configurado</p>
             <p class="text-sm text-amber-700 dark:text-amber-300 mt-1">Configura un proveedor en <strong>Admin → APIs</strong> (perfiles de IA).</p>
-            <p class="text-xs text-amber-600 dark:text-amber-400 mt-2">Proveedores soportados: openai, anthropic, azure, ollama, ollama_cloud, gemini, mistral</p>
             <a href="<?= base_url('admin/apis') ?>" class="mt-3 inline-flex items-center gap-2 px-3 py-1.5 bg-brand-500 hover:bg-brand-600 text-white text-xs font-medium rounded-lg transition-colors">
                 Configurar APIs
             </a>
@@ -63,7 +54,7 @@ $anTasks = [
         <label class="block text-xs text-gray-500 mb-1 mt-4">Pregunta</label>
         <textarea id="an-question" rows="4" placeholder="p. ej. títulos y enlaces de las últimas noticias y sus IOCs asociados" class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm focus:ring-2 focus:ring-brand-500 outline-none"></textarea>
 
-        <button type="button" onclick="analyzeTenant('question')" class="w-full mt-3 px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors">Preguntar</button>
+        <button type="button" onclick="analyzeTenantQuestion()" class="w-full mt-3 px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors">Preguntar</button>
 
         <label class="inline-flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300 mt-3 cursor-pointer">
             <input type="checkbox" id="an-detailed" class="rounded border-gray-300 text-brand-500 focus:ring-brand-500">
@@ -82,11 +73,15 @@ $anTasks = [
             <span id="an-status" class="text-xs text-gray-400"></span>
         </div>
         <div class="flex flex-wrap gap-2 mb-4">
-            <?php foreach ($anTasks as $key => $label): ?>
-                <button type="button" onclick="analyzeTenant('<?= e($key) ?>')" class="inline-flex items-center px-3 py-1.5 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-muted-dark text-xs font-medium rounded-lg transition-colors">
-                    <?= e($label) ?>
-                </button>
-            <?php endforeach; ?>
+            <?php if (empty($actions ?? [])): ?>
+                <p class="text-xs text-gray-400">No hay acciones rápidas configuradas. Añádelas en <a href="<?= base_url('admin/apis') ?>" class="text-brand-500 hover:underline">Admin → APIs</a>.</p>
+            <?php else: ?>
+                <?php foreach ($actions as $ac): ?>
+                    <button type="button" onclick="analyzeTenantAction(<?= (int)$ac['id'] ?>)" class="inline-flex items-center px-3 py-1.5 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-muted-dark text-xs font-medium rounded-lg transition-colors">
+                        <?= e($ac['label']) ?>
+                    </button>
+                <?php endforeach; ?>
+            <?php endif; ?>
         </div>
         <div id="llm-response" class="md-body min-h-[240px] border-t border-gray-100 dark:border-gray-700 pt-4">
             <p class="text-gray-400">Elige un tenant, escribe una pregunta o pulsa una acción rápida.</p>
@@ -97,32 +92,21 @@ $anTasks = [
 <script>
 function getProfile() { var s = document.getElementById('llm-profile'); return s ? parseInt(s.value, 10) : 0; }
 
-function analyzeTenant(task) {
+function runAnalyze(payload) {
     var sel = document.getElementById('an-tenant');
     var tid = sel ? sel.value : '';
     if (!tid) { toast('Selecciona un tenant', 'warning'); return; }
 
-    var q = document.getElementById('an-question');
-    var question = q ? q.value : '';
-    if (task === 'question' && !question.trim()) {
-        toast('Escribe una pregunta', 'warning');
-        if (q) q.focus();
-        return;
-    }
+    payload.tenant_id = parseInt(tid, 10);
+    payload.detailed = document.getElementById('an-detailed').checked ? 1 : 0;
+    payload.profile_id = getProfile();
 
-    var detailed = document.getElementById('an-detailed').checked ? 1 : 0;
     var out = document.getElementById('llm-response');
     var st = document.getElementById('an-status');
     st.textContent = 'Analizando…';
     out.innerHTML = '<div class="spinner mx-auto"></div>';
 
-    api('POST', '<?= base_url('modules/llm/analyze-tenant') ?>', {
-        tenant_id: parseInt(tid, 10),
-        task: task,
-        question: question,
-        detailed: detailed,
-        profile_id: getProfile()
-    })
+    api('POST', '<?= base_url('modules/llm/analyze-tenant') ?>', payload)
         .then(function(res) {
             st.textContent = '';
             if (res.success) {
@@ -133,6 +117,17 @@ function analyzeTenant(task) {
             }
         })
         .catch(function() { st.textContent = ''; out.innerHTML = '<p class="text-red-500">Error de conexión</p>'; });
+}
+
+function analyzeTenantAction(id) {
+    runAnalyze({ action_id: id, question: '' });
+}
+
+function analyzeTenantQuestion() {
+    var q = document.getElementById('an-question');
+    var val = q ? q.value : '';
+    if (!val.trim()) { toast('Escribe una pregunta', 'warning'); if (q) q.focus(); return; }
+    runAnalyze({ action_id: 0, question: val });
 }
 
 function esc(s) { var d = document.createElement('div'); d.textContent = s == null ? '' : s; return d.innerHTML; }

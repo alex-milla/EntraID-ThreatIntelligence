@@ -591,6 +591,63 @@ if (!function_exists('llm_cfg_from_input')) {
     }
 }
 
+if (!function_exists('llm_actions_list')) {
+    /** Lista de acciones rápidas de Análisis IA (editables). */
+    function llm_actions_list(bool $onlyActive = false): array
+    {
+        try {
+            $sql = "SELECT * FROM llm_actions";
+            if ($onlyActive) { $sql .= " WHERE is_active = 1"; }
+            $sql .= " ORDER BY position, id";
+            return Database::fetchAll($sql);
+        } catch (Throwable $e) {
+            return [];
+        }
+    }
+}
+
+if (!function_exists('llm_action_get')) {
+    function llm_action_get(int $id): ?array
+    {
+        if ($id <= 0) { return null; }
+        try {
+            $a = Database::fetchOne("SELECT * FROM llm_actions WHERE id = ?", [$id]);
+        } catch (Throwable $e) {
+            return null;
+        }
+        return $a ?: null;
+    }
+}
+
+if (!function_exists('llm_action_save')) {
+    function llm_action_save(array $data, ?int $id = null): int
+    {
+        $label = trim((string)($data['label'] ?? '')) ?: 'Acción';
+        $prompt = trim((string)($data['prompt'] ?? ''));
+        $position = (int)($data['position'] ?? 0);
+        $active = !empty($data['is_active']) ? 1 : 0;
+
+        if ($id && $id > 0) {
+            Database::update(
+                "UPDATE llm_actions SET label = ?, prompt = ?, position = ?, is_active = ?, updated_at = datetime('now') WHERE id = ?",
+                [$label, $prompt, $position, $active, $id]
+            );
+            return $id;
+        }
+        return Database::insert(
+            "INSERT INTO llm_actions (label, prompt, position, is_active) VALUES (?, ?, ?, ?)",
+            [$label, $prompt, $position, $active]
+        );
+    }
+}
+
+if (!function_exists('llm_action_delete')) {
+    function llm_action_delete(int $id): void
+    {
+        Database::query("DELETE FROM llm_actions WHERE id = ?", [$id]);
+    }
+}
+
 if (!function_exists('llm_config')) {
     /**
      * Configuración efectiva del LLM.

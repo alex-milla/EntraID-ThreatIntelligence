@@ -50,6 +50,14 @@ $navQs = 'tenant=' . (int)$article['tenant_id']
     <button onclick="exportArticle('csv')" class="px-3 py-1.5 border border-gray-200 dark:border-gray-700 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">CSV</button>
     <button onclick="exportArticle('stix')" class="px-3 py-1.5 border border-gray-200 dark:border-gray-700 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">STIX 2.1</button>
     <button onclick="exportArticle('misp')" class="px-3 py-1.5 border border-gray-200 dark:border-gray-700 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">MISP</button>
+    <?php if (!empty($profiles)): ?>
+        <label class="text-xs text-gray-500 ml-1">IA:</label>
+        <select id="ai-profile" class="px-2 py-1 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+            <?php foreach ($profiles as $p): ?>
+                <option value="<?= (int)$p['id'] ?>" <?= (int)($defaultProfileId ?? 0) === (int)$p['id'] ? 'selected' : '' ?>><?= e($p['name']) ?><?= !empty($p['model']) ? ' · ' . e($p['model']) : '' ?></option>
+            <?php endforeach; ?>
+        </select>
+    <?php endif; ?>
     <button onclick="analyzeAI()" class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-brand-500 hover:bg-brand-600 text-white text-xs font-medium rounded-lg transition-colors">
         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
         Analizar con IA
@@ -121,6 +129,8 @@ $navQs = 'tenant=' . (int)$article['tenant_id']
 <script>
 function esc(s) { var d = document.createElement('div'); d.textContent = s == null ? '' : s; return d.innerHTML; }
 
+function getAiProfile() { var s = document.getElementById('ai-profile'); return s ? parseInt(s.value, 10) : 0; }
+
 function exportArticle(fmt) {
     var el = document.getElementById('export-msg');
     el.textContent = 'Generando…';
@@ -148,7 +158,7 @@ function analyzeAI() {
     var box = document.getElementById('ai-result');
     panel.classList.remove('hidden');
     box.innerHTML = '<p class="text-sm text-gray-500">Analizando con IA…</p>';
-    api('POST', '<?= base_url('modules/llm/extract-iocs') ?>', { article_id: <?= (int)$article['id'] ?> })
+    api('POST', '<?= base_url('modules/llm/extract-iocs') ?>', { article_id: <?= (int)$article['id'] ?>, profile_id: getAiProfile() })
         .then(function(res) {
             if (!res.success) { box.innerHTML = '<p class="text-sm text-red-500">' + esc(res.error || 'Error') + '</p>'; return; }
             var p = res.parsed;

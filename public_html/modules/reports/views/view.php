@@ -151,15 +151,26 @@ $data = $report['data'] ?? [];
             <h3 class="text-sm font-semibold text-brand-700 dark:text-brand-300">Resumen con IA</h3>
             <p class="text-xs text-brand-600 dark:text-brand-400 mt-0.5">Genera un resumen ejecutivo narrativo de este reporte usando LLM.</p>
         </div>
-        <button onclick="summarizeReport(<?= (int)$report['id'] ?>)" id="btn-summarize" class="inline-flex items-center gap-2 px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors">
+        <div class="flex items-center gap-3">
+            <?php if (!empty($profiles)): ?>
+                <select id="ai-profile" class="px-2 py-1.5 rounded-lg border border-brand-200 dark:border-brand-800 bg-white dark:bg-gray-800 text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                    <?php foreach ($profiles as $p): ?>
+                        <option value="<?= (int)$p['id'] ?>" <?= (int)($defaultProfileId ?? 0) === (int)$p['id'] ? 'selected' : '' ?>><?= e($p['name']) ?><?= !empty($p['model']) ? ' · ' . e($p['model']) : '' ?></option>
+                    <?php endforeach; ?>
+                </select>
+            <?php endif; ?>
+            <button onclick="summarizeReport(<?= (int)$report['id'] ?>)" id="btn-summarize" class="inline-flex items-center gap-2 px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
             Generar resumen
-        </button>
+            </button>
+        </div>
     </div>
     <div id="llm-summary" class="hidden md-body mt-4 bg-white dark:bg-surface-dark rounded-lg p-4 border border-gray-200 dark:border-gray-700"></div>
 </div>
 
 <script>
+function getAiProfile() { var s = document.getElementById('ai-profile'); return s ? parseInt(s.value, 10) : 0; }
+
 function summarizeReport(id) {
     var btn = document.getElementById('btn-summarize');
     var container = document.getElementById('llm-summary');
@@ -168,7 +179,7 @@ function summarizeReport(id) {
     container.classList.remove('hidden');
     container.textContent = 'Generando resumen con IA...';
 
-    api('POST', '<?= base_url('modules/llm/summarize-report') ?>/' + id, {})
+    api('POST', '<?= base_url('modules/llm/summarize-report') ?>/' + id, { profile_id: getAiProfile() })
         .then(function(res) {
             if (res.success) {
                 container.innerHTML = res.content_html || res.content;

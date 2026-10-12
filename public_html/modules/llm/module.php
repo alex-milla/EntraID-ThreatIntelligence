@@ -540,34 +540,27 @@ class Module_Llm extends BaseModule
     // Análisis del tenant (usa datos locales)
     // ============================================================
 
-    /** Instrucciones por tipo de análisis. */
-    private function tenantTasks(): array
+    /** Instrucción usada para la pregunta libre. */
+    private function questionInstruction(): string
     {
-        return [
-            'summary'         => 'Elabora un RESUMEN EJECUTIVO de la postura de seguridad del tenant: lo más relevante, los riesgos principales y 3-5 recomendaciones priorizadas.',
-            'incidents'       => 'Analiza los INCIDENTES y ALERTAS: tendencias, severidad, amenazas y técnicas más relevantes, y acciones recomendadas.',
-            'vulnerabilities' => 'Analiza las VULNERABILIDADES: prioriza por explotabilidad (exploit público, EPSS, CVSS) y propón un plan de remediación.',
-            'secure_score'    => 'Analiza el SECURE SCORE: interpreta el valor y su evolución y propón mejoras concretas y priorizadas.',
-            'iocs'            => 'Analiza los IOCs recientes: agrúpalos por tipo y relevancia, indica de qué artículo provienen y qué acciones tomar.',
-            'articles'        => 'Lista los ARTÍCULOS de Threat Intelligence recientes con su título, fecha, enlace y los IOCs asociados a cada uno, y resume brevemente su relevancia para el tenant.',
-            'risks'           => 'Identifica los PRINCIPALES RIESGOS del tenant (incidentes, alertas, vulnerabilidades, IOCs y postura) y priorízalos.',
-            'question'        => 'Responde a la pregunta del analista usando EXCLUSIVAMENTE los datos del tenant. Cuando se pidan títulos, enlaces, valores o cifras, devuélvelos de forma CONCRETA y completa.',
-        ];
+        return 'Responde a la pregunta del analista usando EXCLUSIVAMENTE los datos del tenant. '
+             . 'Cuando se pidan títulos, enlaces, valores o cifras, devuélvelos de forma CONCRETA y completa.';
     }
 
     /**
      * Analiza los datos locales de un tenant con el LLM.
      */
-    public function analyzeTenant(int $tenantId, string $task = 'summary', string $question = '', ?int $profileId = null, bool $detailed = false): array
+    public function analyzeTenant(int $tenantId, string $instruction, string $question = '', ?int $profileId = null, bool $detailed = false): array
     {
         $tenant = TenantManager::getById($tenantId);
         if (!$tenant) {
             return ['success' => false, 'error' => 'Tenant no encontrado'];
         }
 
-        $tasks = $this->tenantTasks();
-        $taskKey = array_key_exists($task, $tasks) ? $task : 'summary';
-        $instruction = $tasks[$taskKey];
+        $instruction = trim($instruction);
+        if ($instruction === '') {
+            $instruction = $this->questionInstruction();
+        }
 
         $context = $this->tenantContextText($tenantId, $detailed);
 
@@ -583,7 +576,6 @@ class Module_Llm extends BaseModule
         $res = $this->chat($system, $user, ['max_tokens' => 2500], $profileId);
         if (!empty($res['success'])) {
             $res['tenant'] = $tenant['name'];
-            $res['task'] = $taskKey;
         }
         return $res;
     }
@@ -788,6 +780,7 @@ class Module_Llm extends BaseModule
             'model' => $cfg['model'] ?: '—',
             'profiles' => $this->profiles(),
             'defaultProfileId' => $defaultProfile['id'] ?? null,
+            'actions' => llm_actions_list(true),
         ]);
     }
 
@@ -808,9 +801,17 @@ class Module_Llm extends BaseModule
     {
         Csrf::validateOrFail();
         $input = json_decode(file_get_contents('php://input'), true) ?? $_POST;
+
+        $instruction = '';
+        $actionId = (int)($input['action_id'] ?? 0);
+        if ($actionId > 0) {
+            $action = llm_action_get($actionId);
+            if ($action) { $instruction = (string)$action['prompt']; }
+        }
+
         json_response($this->analyzeTenant(
             (int)($input['tenant_id'] ?? 0),
-            (string)($input['task'] ?? 'summary'),
+            $instruction,
             (string)($input['question'] ?? ''),
             $this->resolveProfile($input, 'analyze_tenant'),
             !empty($input['detailed'])
