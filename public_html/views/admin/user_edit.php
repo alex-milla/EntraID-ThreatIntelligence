@@ -37,10 +37,11 @@ foreach ($flashData as $type => $msg):
             <?= Csrf::field() ?>
 
             <div>
-                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Usuario</label>
-                <input type="text" value="<?= e($user['username']) ?>" disabled
-                       class="w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-100 dark:bg-gray-800 text-gray-500 text-sm">
-                <p class="text-xs text-gray-400 mt-1">El nombre de usuario no se puede modificar.</p>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Usuario *</label>
+                <input type="text" name="username" required value="<?= e($user['username']) ?>"
+                       pattern="[a-zA-Z0-9._\-]{3,40}" title="3-40 caracteres: letras, números, . _ -"
+                       class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-brand-500 focus:border-transparent outline-none">
+                <p class="text-xs text-gray-400 mt-1">3-40 caracteres (letras, números, . _ -). Debe ser único.</p>
             </div>
 
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">

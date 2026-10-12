@@ -213,8 +213,8 @@ class Auth
 
     /**
      * Edita un usuario existente (solo admin).
-     * El username no se modifica. La contraseña es opcional (vacía = no cambiar);
-     * si se establece, el usuario deberá cambiarla en su próximo login.
+     * Username, email, nombre, rol y contraseña opcional; si se establece
+     * una contraseña, el usuario deberá cambiarla en su próximo login.
      */
     public static function updateUser(int $userId, array $data, ?int $actorId = null): array
     {
@@ -224,6 +224,20 @@ class Auth
         }
 
         $errors = [];
+
+        // Username (opcional: solo se cambia si difiere del actual)
+        $username = trim((string)($data['username'] ?? $user['username']));
+        if ($username === '' || !preg_match('/^[a-zA-Z0-9._-]{3,40}$/', $username)) {
+            $errors[] = 'El usuario debe tener 3-40 caracteres (letras, números, . _ -)';
+        } elseif ($username !== $user['username']) {
+            $dup = Database::fetchOne(
+                "SELECT id FROM users WHERE username = ? AND id != ?",
+                [$username, $userId]
+            );
+            if ($dup) {
+                $errors[] = 'Ese nombre de usuario ya existe';
+            }
+        }
 
         // Email
         $email = trim((string)($data['email'] ?? ''));
@@ -274,8 +288,9 @@ class Auth
         // Si se establece contraseña nueva, forzar cambio en el próximo login
         $mustChange = !empty($data['must_change_password']) || $newPassword !== '';
 
-        $sets = "email = ?, display_name = ?, role = ?, must_change_password = ?, updated_at = datetime('now')";
+        $sets = "username = ?, email = ?, display_name = ?, role = ?, must_change_password = ?, updated_at = datetime('now')";
         $params = [
+            $username,
             $email,
             trim((string)($data['display_name'] ?? '')) ?: null,
             $role,

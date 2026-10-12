@@ -120,15 +120,31 @@ class Encryption
     }
 
     /**
-     * Hash seguro para contraseñas (wrapper de password_hash).
+     * Hash seguro para contraseñas.
+     * Argon2id si el hosting lo soporta; BCRYPT como fallback universal
+     * (algunos hostings compartidos no compilan Argon2 o limitan la memoria).
      */
     public static function hashPassword(string $password): string
     {
-        return password_hash($password, PASSWORD_ARGON2ID, [
-            'memory_cost' => 65536,
-            'time_cost'   => 4,
-            'threads'     => 1,
-        ]);
+        if (defined('PASSWORD_ARGON2ID')) {
+            try {
+                $hash = @password_hash($password, PASSWORD_ARGON2ID, [
+                    'memory_cost' => 65536,
+                    'time_cost'   => 4,
+                    'threads'     => 1,
+                ]);
+                if (is_string($hash) && $hash !== '') {
+                    return $hash;
+                }
+            } catch (Throwable $e) {
+                // Argon2 falló en este entorno: usar bcrypt
+            }
+        }
+        $hash = password_hash($password, PASSWORD_BCRYPT);
+        if (!is_string($hash) || $hash === '') {
+            throw new RuntimeException('No se pudo generar el hash de la contraseña');
+        }
+        return $hash;
     }
 
     /**

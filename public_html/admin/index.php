@@ -338,15 +338,32 @@ class AdminController
                 redirect(base_url('admin/user/edit?id=' . $id));
             }
 
-            $result = Auth::updateUser($id, [
-                'email'                => $_POST['email'] ?? '',
-                'display_name'         => $_POST['display_name'] ?? '',
-                'role'                 => $_POST['role'] ?? $user['role'],
-                'password'             => $newPassword,
-                'must_change_password' => !empty($_POST['must_change_password']),
-            ], Auth::id());
+            try {
+                $result = Auth::updateUser($id, [
+                    'username'             => $_POST['username'] ?? $user['username'],
+                    'email'                => $_POST['email'] ?? '',
+                    'display_name'         => $_POST['display_name'] ?? '',
+                    'role'                 => $_POST['role'] ?? $user['role'],
+                    'password'             => $newPassword,
+                    'must_change_password' => !empty($_POST['must_change_password']),
+                ], Auth::id());
+            } catch (Throwable $e) {
+                log_activity('user.update_error', ['user_id' => $id, 'error' => $e->getMessage()]);
+                flash('error', 'Error del servidor al guardar: ' . $e->getMessage());
+                redirect(base_url('admin/user/edit?id=' . $id));
+            }
 
             if ($result['success']) {
+                // Verificación post-escritura de la contraseña
+                if ($newPassword !== '') {
+                    $freshHash = Database::fetchOne("SELECT password_hash FROM users WHERE id = ?", [$id]);
+                    if (!$freshHash || !Encryption::verifyPassword($newPassword, $freshHash['password_hash'])) {
+                        log_activity('user.password_verify_failed', ['user_id' => $id]);
+                        flash('error', 'La contraseña no quedó guardada correctamente (verificación post-escritura fallida). Revisa el log de actividad.');
+                        redirect(base_url('admin/user/edit?id=' . $id));
+                    }
+                }
+
                 if ($isSelf) {
                     // El admin conoce la contraseña que acaba de ponerse:
                     // no forzarle otro cambio en el próximo login
