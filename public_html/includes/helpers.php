@@ -551,6 +551,46 @@ if (!function_exists('llm_task_profile')) {
     }
 }
 
+if (!function_exists('llm_cfg_from_input')) {
+    /**
+     * Resuelve la config de LLM a partir de una petición de prueba/verificación.
+     * Si se edita un perfil (id) o se indica uno (profile_id) y no llega una
+     * API key nueva, se usa la clave GUARDADA de ese perfil (no la del
+     * predeterminado, que era un bug de la pantalla de prueba).
+     */
+    function llm_cfg_from_input(array $input): array
+    {
+        $formId = (int)($input['id'] ?? 0);
+        $pid = (int)($input['profile_id'] ?? 0);
+        $srcId = $formId > 0 ? $formId : $pid;
+
+        $override = [];
+        if ($srcId > 0) {
+            $p = llm_profile_get($srcId);
+            if ($p) {
+                $override = [
+                    'provider'   => (string)$p['provider'],
+                    'api_url'    => (string)$p['api_url'],
+                    'model'      => (string)$p['model'],
+                    'api_key'    => (string)$p['api_key'],
+                    'max_tokens' => (int)$p['max_tokens'],
+                ];
+            }
+        }
+
+        $provider = strtolower(trim((string)($input['provider'] ?? $input['llm_provider'] ?? '')));
+        if ($provider !== '') { $override['provider'] = $provider; }
+        $model = trim((string)($input['model'] ?? $input['llm_model'] ?? ''));
+        if ($model !== '') { $override['model'] = $model; }
+        $url = trim((string)($input['api_url'] ?? $input['llm_api_url'] ?? ''));
+        if ($url !== '') { $override['api_url'] = $url; }
+        $key = trim((string)($input['api_key'] ?? $input['llm_api_key'] ?? ''));
+        if ($key !== '') { $override['api_key'] = $key; }
+
+        return $override;
+    }
+}
+
 if (!function_exists('llm_config')) {
     /**
      * Configuración efectiva del LLM.

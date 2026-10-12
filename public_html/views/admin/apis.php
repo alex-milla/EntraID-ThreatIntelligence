@@ -145,6 +145,7 @@ foreach ($flashData as $type => $msg):
     <div class="flex items-center gap-3 pt-2 border-t border-gray-100 dark:border-gray-700">
         <button type="submit" class="px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors">Guardar perfil</button>
         <button type="button" onclick="testForm()" class="px-4 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 text-sm font-medium rounded-lg transition-colors">Probar conexión</button>
+        <button type="button" onclick="verifyForm()" class="px-4 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 text-sm font-medium rounded-lg transition-colors">Verificar clave (Ollama)</button>
         <?php if ($editId): ?>
             <a href="<?= base_url('admin/apis') ?>" class="text-sm text-gray-500 hover:underline">Cancelar edición</a>
         <?php endif; ?>
@@ -210,14 +211,25 @@ function testProfile(id) {
         .then(function(res) { toast(res.success ? (res.message || 'OK') : ('Error: ' + (res.error || 'desconocido')), res.success ? 'success' : 'error'); })
         .catch(function() { toast('Error de conexión', 'error'); });
 }
-function testForm() {
-    api('POST', '<?= base_url('admin/apis/test') ?>', {
+function formPayload() {
+    var idInput = document.querySelector('input[name="id"]');
+    return {
+        id: idInput ? idInput.value : '0',
         provider: document.getElementById('provider').value,
         api_url: document.querySelector('input[name="api_url"]').value,
         model: document.querySelector('input[name="model"]').value,
         api_key: document.querySelector('input[name="api_key"]').value
-    }).then(function(res) { toast(res.success ? (res.message || 'OK') : ('Error: ' + (res.error || 'desconocido')), res.success ? 'success' : 'error'); })
-      .catch(function() { toast('Error de conexión', 'error'); });
+    };
+}
+function testForm() {
+    api('POST', '<?= base_url('admin/apis/test') ?>', formPayload())
+        .then(function(res) { toast(res.success ? (res.message || 'OK') : ('Error: ' + (res.error || 'desconocido')), res.success ? 'success' : 'error'); })
+        .catch(function() { toast('Error de conexión', 'error'); });
+}
+function verifyForm() {
+    api('POST', '<?= base_url('admin/apis/verify') ?>', formPayload())
+        .then(function(res) { toast(res.success ? (res.message || 'OK') : ('Error: ' + (res.error || 'desconocido')), res.success ? 'success' : 'error'); })
+        .catch(function() { toast('Error de conexión', 'error'); });
 }
 
 (function() {

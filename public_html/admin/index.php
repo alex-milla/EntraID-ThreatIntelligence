@@ -646,31 +646,24 @@ class AdminController
             json_response(['success' => false, 'error' => 'El módulo LLM no está activo'], 400);
         }
 
-        $override = [];
-        $pid = (int)($input['profile_id'] ?? 0);
-        if ($pid > 0) {
-            $p = llm_profile_get($pid);
-            if ($p) {
-                $override = [
-                    'provider'   => $p['provider'],
-                    'api_url'    => (string)$p['api_url'],
-                    'model'      => (string)$p['model'],
-                    'api_key'    => (string)$p['api_key'],
-                    'max_tokens' => (int)$p['max_tokens'],
-                ];
-            }
-        } else {
-            $provider = strtolower(trim((string)($input['provider'] ?? $input['llm_provider'] ?? '')));
-            if ($provider !== '') { $override['provider'] = $provider; }
-            $url = trim((string)($input['api_url'] ?? $input['llm_api_url'] ?? ''));
-            if ($url !== '') { $override['api_url'] = $url; }
-            $model = trim((string)($input['model'] ?? $input['llm_model'] ?? ''));
-            if ($model !== '') { $override['model'] = $model; }
-            $key = trim((string)($input['api_key'] ?? $input['llm_api_key'] ?? ''));
-            if ($key !== '') { $override['api_key'] = $key; }
+        json_response($module->testConnection(llm_cfg_from_input($input)));
+    }
+
+    /**
+     * Verifica que la API key de Ollama funciona (lista de modelos).
+     */
+    public static function apisVerify(): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        $input = json_decode(file_get_contents('php://input'), true) ?? $_POST;
+        $module = ModuleManager::get('llm');
+        if (!$module) {
+            json_response(['success' => false, 'error' => 'El módulo LLM no está activo'], 400);
         }
 
-        json_response($module->testConnection($override));
+        json_response($module->verifyOllama(llm_cfg_from_input($input)));
     }
 
     /**
@@ -827,6 +820,7 @@ $adminRoutes = [
         'settings/save'    => 'settingsSave',
         'apis/save'        => 'apisSave',
         'apis/test'        => 'apisTest',
+        'apis/verify'      => 'apisVerify',
         'apis/default'     => 'apisDefault',
         'apis/delete'      => 'apisDelete',
         'apis/tasks'       => 'apisTasks',

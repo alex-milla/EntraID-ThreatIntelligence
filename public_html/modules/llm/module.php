@@ -110,7 +110,11 @@ class Module_Llm extends BaseModule
                  . '. Revisa el nombre del modelo en Admin → APIs: debe corresponder al proveedor elegido.';
         }
         if (str_contains($low, 'invalid api key') || str_contains($low, 'incorrect api key') || str_contains($low, 'invalid credential') || str_contains($low, 'unauthorized') || str_contains($low, '(401)')) {
-            return 'La API key de ' . $who . ' es inválida o falta. Revísala en Admin → APIs.';
+            $hint = '';
+            if (str_contains($provider, 'ollama')) {
+                $hint = ' Comprueba que es una API key de ollama.com/settings/keys (no la Public Key de "ollama signin").';
+            }
+            return 'La API key de ' . $who . ' es inválida o falta.' . $hint . ' Revísala en Admin → APIs.';
         }
         if (str_contains($low, 'free tier can only be used from within opencode')) {
             return 'Los modelos gratis de OpenCode solo funcionan dentro de la app OpenCode; no se pueden usar desde aquí. Usa otro proveedor.';
@@ -255,12 +259,57 @@ class Module_Llm extends BaseModule
         return ['success' => true, 'content' => $content, 'model' => $model];
     }
 
+    /**
+     * Normaliza el host de Ollama: admite solo el host, o una URL con
+     * /api/chat, /api, /v1/chat/completions o /v1 de más (no duplica rutas).
+     */
+    private function ollamaBase(string $host): string
+    {
+        $base = rtrim($host, '/');
+        $changed = true;
+        while ($changed) {
+            $changed = false;
+            foreach (['/api/chat', '/v1/chat/completions', '/api', '/v1'] as $suffix) {
+                if (str_ends_with($base, $suffix)) {
+                    $base = rtrim(substr($base, 0, -strlen($suffix)), '/');
+                    $changed = true;
+                    break;
+                }
+            }
+        }
+        return $base;
+    }
+
+    /**
+     * Comprueba que la API key de Ollama funciona (lista de modelos).
+     */
+    public function verifyOllama(array $cfg = []): array
+    {
+        $cfg = array_merge($this->cfg(), $cfg);
+        $provider = (string)($cfg['provider'] ?? '');
+        if (!in_array($provider, ['ollama', 'ollama_cloud'], true)) {
+            return ['success' => false, 'error' => 'La verificación de clave solo aplica a Ollama / Ollama Cloud.'];
+        }
+        $isCloud = $provider === 'ollama_cloud';
+        $host = $cfg['api_url'] ?: ($isCloud ? 'https://ollama.com' : 'http://localhost:11434');
+        $url = $this->ollamaBase($host) . '/api/tags';
+
+        try {
+            $res = $this->httpGet($url, (string)($cfg['api_key'] ?? ''));
+        } catch (Throwable $e) {
+            return ['success' => false, 'error' => $this->friendlyError($e->getMessage(), $cfg)];
+        }
+
+        $n = is_array($res['models'] ?? null) ? count($res['models']) : 0;
+        return ['success' => true, 'message' => 'La clave funciona correctamente. Modelos disponibles: ' . $n . '.', 'models' => $n];
+    }
+
     private function callOllama(array $cfg, string $system, string $user, array $options): array
     {
         // Ollama local (sin API key) u Ollama Cloud (API oficial, con API key)
         $isCloud = ($cfg['provider'] ?? '') === 'ollama_cloud';
         $host = $cfg['api_url'] ?: ($isCloud ? 'https://ollama.com' : 'http://localhost:11434');
-        $url = rtrim($host, '/') . '/api/chat';
+        $url = $this->ollamaBase($host) . '/api/chat';
         $model = $cfg['model'] ?: ($isCloud ? 'gpt-oss:120b' : 'llama3.1');
 
         $body = json_encode([
@@ -442,6 +491,49 @@ class Module_Llm extends BaseModule
         }
 
         return $decoded ?? ['raw' => $response];
+    }
+
+    /**
+     * HTTP GET genérico con cURL (JSON), con API key opcional.
+     */
+    private function httpGet(string $url, string $apiKey = ''): array
+    {
+        if (!function_exists('curl_init')) {
+            throw new RuntimeException('cURL no está disponible en el servidor.');
+        }
+        $headers = ['Accept: application/json'];
+        if ($apiKey !== '') {
+            $headers[] = 'Authorization: Bearer ' . $apiKey;
+        }
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT        => 30,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_MAXREDIRS      => 5,
+            CURLOPT_HTTPHEADER     => $headers,
+        ]);
+        $response = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $error = curl_error($ch);
+        curl_close($ch);
+
+        if ($response === false) {
+            throw new RuntimeException("Error cURL: $error");
+        }
+
+        $decoded = json_decode($response, true);
+        if ($httpCode >= 400) {
+            $msg = $decoded['error']['message'] ?? $decoded['error'] ?? $decoded['message'] ?? $response;
+            if (is_array($msg)) {
+                $msg = json_encode($msg);
+            }
+            throw new RuntimeException("HTTP $httpCode: $msg");
+        }
+
+        return $decoded ?? [];
     }
 
     public function routes(): array
