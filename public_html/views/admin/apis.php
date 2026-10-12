@@ -10,6 +10,7 @@ $providers = [
     'anthropic' => 'Anthropic',
     'azure'     => 'Azure OpenAI',
     'ollama'    => 'Ollama (local)',
+    'ollama_cloud' => 'Ollama Cloud (API)',
     'gemini'    => 'Google Gemini',
     'mistral'   => 'Mistral',
     'custom'    => 'Personalizado (compatible OpenAI)',
@@ -190,6 +191,7 @@ var MODEL_SUGGESTIONS = {
     gemini:    ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.0-flash'],
     azure:     ['gpt-4o-mini', 'gpt-4o'],
     ollama:    ['llama3.1', 'qwen2.5', 'mistral', 'phi3'],
+    ollama_cloud: ['gpt-oss:120b', 'gpt-oss:20b', 'gemma4:31b'],
     custom:    []
 };
 function updateModelSuggestions() {

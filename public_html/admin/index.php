@@ -547,7 +547,7 @@ class AdminController
         Csrf::validateOrFail();
 
         $id = (int)($_POST['id'] ?? 0);
-        $allowed = ['', 'openai', 'anthropic', 'azure', 'ollama', 'gemini', 'mistral', 'custom'];
+        $allowed = ['', 'openai', 'anthropic', 'azure', 'ollama', 'ollama_cloud', 'gemini', 'mistral', 'custom'];
         $provider = strtolower(trim((string)($_POST['provider'] ?? '')));
         if (!in_array($provider, $allowed, true)) {
             $provider = '';

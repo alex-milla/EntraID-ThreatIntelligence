@@ -14,7 +14,7 @@
                 <code class="font-mono bg-amber-100 dark:bg-amber-900 px-1 rounded">LLM_API_KEY</code> y
                 <code class="font-mono bg-amber-100 dark:bg-amber-900 px-1 rounded">LLM_MODEL</code> en el archivo <code class="font-mono bg-amber-100 dark:bg-amber-900 px-1 rounded">.env</code>
             </p>
-            <p class="text-xs text-amber-600 dark:text-amber-400 mt-2">Proveedores soportados: openai, anthropic, azure, ollama, gemini, mistral</p>
+            <p class="text-xs text-amber-600 dark:text-amber-400 mt-2">Proveedores soportados: openai, anthropic, azure, ollama, ollama_cloud, gemini, mistral</p>
             <a href="<?= base_url('admin/apis') ?>" class="mt-3 inline-flex items-center gap-2 px-3 py-1.5 bg-brand-500 hover:bg-brand-600 text-white text-xs font-medium rounded-lg transition-colors">
                 Configurar APIs
             </a>

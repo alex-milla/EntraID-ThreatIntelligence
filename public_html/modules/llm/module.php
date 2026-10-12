@@ -146,7 +146,8 @@ class Module_Llm extends BaseModule
             'openai', 'custom', 'gemini', 'mistral'
                         => $this->callOpenAI($cfg, $system, $user, $options),
             'anthropic' => $this->callAnthropic($cfg, $system, $user, $options),
-            'ollama'    => $this->callOllama($cfg, $system, $user, $options),
+            'ollama', 'ollama_cloud'
+                        => $this->callOllama($cfg, $system, $user, $options),
             'azure'     => $this->callAzure($cfg, $system, $user, $options),
             default     => ['success' => false, 'error' => 'Proveedor no soportado: ' . $cfg['provider']],
         };
@@ -256,8 +257,11 @@ class Module_Llm extends BaseModule
 
     private function callOllama(array $cfg, string $system, string $user, array $options): array
     {
-        $url = rtrim($cfg['api_url'] ?: 'http://localhost:11434', '/') . '/api/chat';
-        $model = $cfg['model'] ?: 'llama3.1';
+        // Ollama local (sin API key) u Ollama Cloud (API oficial, con API key)
+        $isCloud = ($cfg['provider'] ?? '') === 'ollama_cloud';
+        $host = $cfg['api_url'] ?: ($isCloud ? 'https://ollama.com' : 'http://localhost:11434');
+        $url = rtrim($host, '/') . '/api/chat';
+        $model = $cfg['model'] ?: ($isCloud ? 'gpt-oss:120b' : 'llama3.1');
 
         $body = json_encode([
             'model'    => $model,
@@ -271,7 +275,12 @@ class Module_Llm extends BaseModule
             ],
         ]);
 
-        $response = $this->httpPost($url, $body, ['Content-Type: application/json']);
+        $headers = ['Content-Type: application/json'];
+        if (!empty($cfg['api_key'])) {
+            $headers[] = 'Authorization: Bearer ' . $cfg['api_key'];
+        }
+
+        $response = $this->httpPost($url, $body, $headers);
 
         $content = $response['message']['content'] ?? null;
         if ($content === null) {
