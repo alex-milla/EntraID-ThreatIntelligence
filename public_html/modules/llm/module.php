@@ -77,7 +77,12 @@ class Module_Llm extends BaseModule
         $cfg = $this->cfg();
 
         try {
-            return $this->dispatch($cfg, $systemPrompt, $userPrompt, $options);
+            $res = $this->dispatch($cfg, $systemPrompt, $userPrompt, $options);
+            if (!empty($res['success']) && isset($res['content'])) {
+                // HTML renderizado (Markdown seguro) para pintarlo como los artículos
+                $res['content_html'] = render_markdown((string)$res['content']);
+            }
+            return $res;
         } catch (Throwable $e) {
             return ['success' => false, 'error' => $e->getMessage()];
         }

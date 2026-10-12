@@ -47,7 +47,7 @@
     <!-- Respuesta -->
     <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-5">
         <h2 class="text-sm font-semibold mb-4">Respuesta</h2>
-        <div id="llm-response" class="text-sm text-gray-600 dark:text-gray-300 whitespace-pre-wrap min-h-[200px]">
+        <div id="llm-response" class="md-body min-h-[200px]">
             <p class="text-gray-400">La respuesta aparecerá aquí...</p>
         </div>
     </div>
@@ -76,7 +76,7 @@ function sendChat() {
     api('POST', '<?= base_url('modules/llm/chat') ?>', { system: sys, prompt: usr })
         .then(function(res) {
             if (res.success) {
-                document.getElementById('llm-response').textContent = res.content;
+                document.getElementById('llm-response').innerHTML = res.content_html || esc(res.content);
             } else {
                 document.getElementById('llm-response').innerHTML = '<p class="text-red-500">' + esc(res.error || 'Error') + '</p>';
             }
@@ -90,7 +90,7 @@ function classifyIocs() {
     api('POST', '<?= base_url('modules/llm/classify-iocs') ?>', { tenant_id: parseInt(tid), limit: 30 })
         .then(function(res) {
             if (res.success) {
-                document.getElementById('llm-response').textContent = res.content;
+                document.getElementById('llm-response').innerHTML = res.content_html || esc(res.content);
                 toast('Clasificación completada', 'success');
             } else {
                 toast('Error: ' + (res.error || ''), 'error');

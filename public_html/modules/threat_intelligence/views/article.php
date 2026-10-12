@@ -147,7 +147,7 @@ function analyzeAI() {
         .then(function(res) {
             if (!res.success) { box.innerHTML = '<p class="text-sm text-red-500">' + esc(res.error || 'Error') + '</p>'; return; }
             var p = res.parsed;
-            if (!p) { box.innerHTML = '<div class="whitespace-pre-wrap">' + esc(res.content || '') + '</div>'; return; }
+            if (!p) { box.innerHTML = '<div class="md-body">' + (res.content_html || esc(res.content || '')) + '</div>'; return; }
             var html = '<p class="whitespace-pre-wrap">' + esc(p.resumen || '') + '</p>';
             if (p.iocs && p.iocs.length) {
                 html += '<table class="mt-3 w-full text-xs"><thead><tr class="text-gray-500 uppercase"><th class="text-left py-1">Tipo</th><th class="text-left py-1">Valor</th></tr></thead><tbody>';

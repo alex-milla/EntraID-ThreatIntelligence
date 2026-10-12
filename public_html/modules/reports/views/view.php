@@ -156,7 +156,7 @@ $data = $report['data'] ?? [];
             Generar resumen
         </button>
     </div>
-    <div id="llm-summary" class="hidden mt-4 text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap bg-white dark:bg-surface-dark rounded-lg p-4 border border-gray-200 dark:border-gray-700"></div>
+    <div id="llm-summary" class="hidden md-body mt-4 bg-white dark:bg-surface-dark rounded-lg p-4 border border-gray-200 dark:border-gray-700"></div>
 </div>
 
 <script>
@@ -171,7 +171,7 @@ function summarizeReport(id) {
     api('POST', '<?= base_url('modules/llm/summarize-report') ?>/' + id, {})
         .then(function(res) {
             if (res.success) {
-                container.textContent = res.content;
+                container.innerHTML = res.content_html || res.content;
             } else {
                 container.innerHTML = '<span class="text-red-500">' + (res.error || 'Error desconocido') + '</span>';
             }
