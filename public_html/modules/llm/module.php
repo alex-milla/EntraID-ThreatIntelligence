@@ -548,16 +548,17 @@ class Module_Llm extends BaseModule
             'incidents'       => 'Analiza los INCIDENTES y ALERTAS: tendencias, severidad, amenazas y técnicas más relevantes, y acciones recomendadas.',
             'vulnerabilities' => 'Analiza las VULNERABILIDADES: prioriza por explotabilidad (exploit público, EPSS, CVSS) y propón un plan de remediación.',
             'secure_score'    => 'Analiza el SECURE SCORE: interpreta el valor y su evolución y propón mejoras concretas y priorizadas.',
-            'iocs'            => 'Analiza los IOCs recientes: agrúpalos por tipo y relevancia, explica qué representan y qué acciones tomar.',
+            'iocs'            => 'Analiza los IOCs recientes: agrúpalos por tipo y relevancia, indica de qué artículo provienen y qué acciones tomar.',
+            'articles'        => 'Lista los ARTÍCULOS de Threat Intelligence recientes con su título, fecha, enlace y los IOCs asociados a cada uno, y resume brevemente su relevancia para el tenant.',
             'risks'           => 'Identifica los PRINCIPALES RIESGOS del tenant (incidentes, alertas, vulnerabilidades, IOCs y postura) y priorízalos.',
-            'question'        => 'Responde a la pregunta del analista usando EXCLUSIVAMENTE los datos del tenant.',
+            'question'        => 'Responde a la pregunta del analista usando EXCLUSIVAMENTE los datos del tenant. Cuando se pidan títulos, enlaces, valores o cifras, devuélvelos de forma CONCRETA y completa.',
         ];
     }
 
     /**
      * Analiza los datos locales de un tenant con el LLM.
      */
-    public function analyzeTenant(int $tenantId, string $task = 'summary', string $question = '', ?int $profileId = null): array
+    public function analyzeTenant(int $tenantId, string $task = 'summary', string $question = '', ?int $profileId = null, bool $detailed = false): array
     {
         $tenant = TenantManager::getById($tenantId);
         if (!$tenant) {
@@ -568,7 +569,7 @@ class Module_Llm extends BaseModule
         $taskKey = array_key_exists($task, $tasks) ? $task : 'summary';
         $instruction = $tasks[$taskKey];
 
-        $context = $this->tenantContextText($tenantId);
+        $context = $this->tenantContextText($tenantId, $detailed);
 
         $system = 'Eres un analista de ciberseguridad senior. Responde SIEMPRE en español y en Markdown. '
             . 'Básate EXCLUSIVAMENTE en los datos del tenant que se te proporcionan; no inventes cifras ni hechos. '
@@ -590,8 +591,14 @@ class Module_Llm extends BaseModule
     /**
      * Texto con el resumen de los datos locales del tenant (acotado).
      */
-    private function tenantContextText(int $tenantId): string
+    private function tenantContextText(int $tenantId, bool $detailed = false): string
     {
+        $artLimit  = $detailed ? 25 : 12;
+        $iocLimit  = $detailed ? 60 : 20;
+        $incLimit  = $detailed ? 20 : 10;
+        $vulnLimit = $detailed ? 25 : 12;
+        $base = rtrim(base_url('modules/threat_intelligence/article'), '/');
+
         $L = [];
         $tenant = TenantManager::getById($tenantId);
         if ($tenant) {
@@ -602,6 +609,7 @@ class Module_Llm extends BaseModule
                  . ($extra ? ' · ' . implode(', ', $extra) : '')
                  . ' · última sync: ' . ($tenant['last_sync_at'] ?: 'nunca') . ' (' . ($tenant['last_sync_status'] ?: '—') . ')';
         }
+        $L[] = 'NOTA: los enlaces de artículos son internos de la app (' . $base . '/{id}); cada artículo incluye su enlace directo.';
 
         // Incidentes
         $n = (int)$this->ctxScalar("SELECT COUNT(*) FROM incidents WHERE tenant_id = ?", $tenantId);
@@ -609,8 +617,8 @@ class Module_Llm extends BaseModule
             $L[] = 'INCIDENTES: ' . $n
                  . ' · severidad: ' . $this->ctxFmt($this->ctxPairs("SELECT severity, COUNT(*) n FROM incidents WHERE tenant_id = ? GROUP BY severity", $tenantId))
                  . ' · estado: ' . $this->ctxFmt($this->ctxPairs("SELECT status, COUNT(*) n FROM incidents WHERE tenant_id = ? GROUP BY status", $tenantId));
-            foreach (Database::fetchAll("SELECT display_name, severity, status, created_date FROM incidents WHERE tenant_id = ? ORDER BY COALESCE(created_date,'') DESC LIMIT 10", [$tenantId]) as $r) {
-                $L[] = '  - [' . ($r['severity'] ?: '?') . '/' . ($r['status'] ?: '?') . '] ' . $this->ctxClip((string)$r['display_name'], 120) . ' (' . ($r['created_date'] ?: '?') . ')';
+            foreach (Database::fetchAll("SELECT display_name, severity, status, classification, created_date FROM incidents WHERE tenant_id = ? ORDER BY COALESCE(created_date,'') DESC LIMIT ?", [$tenantId, $incLimit]) as $r) {
+                $L[] = '  - [' . ($r['severity'] ?: '?') . '/' . ($r['status'] ?: '?') . '] ' . $this->ctxClip((string)$r['display_name'], 140) . (!empty($r['classification']) ? ' · clasificación: ' . $r['classification'] : '') . ' (' . ($r['created_date'] ?: '?') . ')';
             }
         } else {
             $L[] = 'INCIDENTES: sin datos sincronizados.';
@@ -623,16 +631,43 @@ class Module_Llm extends BaseModule
                  . ' · severidad: ' . $this->ctxFmt($this->ctxPairs("SELECT severity, COUNT(*) n FROM alerts WHERE tenant_id = ? GROUP BY severity", $tenantId));
             $thr = $this->ctxPairs("SELECT threat_display_name, COUNT(*) n FROM alerts WHERE tenant_id = ? AND threat_display_name IS NOT NULL AND threat_display_name <> '' GROUP BY threat_display_name ORDER BY n DESC LIMIT 5", $tenantId);
             if ($thr) { $L[] = '  Amenazas más frecuentes: ' . $this->ctxFmt($thr); }
+            $mitre = $this->ctxPairs("SELECT mitre_techniques, COUNT(*) n FROM alerts WHERE tenant_id = ? AND mitre_techniques IS NOT NULL AND mitre_techniques <> '' GROUP BY mitre_techniques ORDER BY n DESC LIMIT 5", $tenantId);
+            if ($mitre) { $L[] = '  Técnicas MITRE más frecuentes: ' . $this->ctxFmt($mitre); }
         }
 
-        // Threat Intel
+        // Threat Intel (artículos con enlace + sus IOCs)
         $arts = (int)$this->ctxScalar("SELECT COUNT(*) FROM ti_articles WHERE tenant_id = ?", $tenantId);
         $iocs = (int)$this->ctxScalar("SELECT COUNT(*) FROM ti_iocs WHERE tenant_id = ?", $tenantId);
         if ($arts > 0 || $iocs > 0) {
             $L[] = 'THREAT INTEL: artículos=' . $arts . ', IOCs=' . $iocs
-                 . ' · tipos: ' . $this->ctxFmt($this->ctxPairs("SELECT ioc_type, COUNT(*) n FROM ti_iocs WHERE tenant_id = ? GROUP BY ioc_type ORDER BY n DESC", $tenantId));
-            foreach (Database::fetchAll("SELECT ioc_type, ioc_value, severity FROM ti_iocs WHERE tenant_id = ? ORDER BY COALESCE(last_seen, fetched_at) DESC LIMIT 10", [$tenantId]) as $r) {
-                $L[] = '  - [' . $r['ioc_type'] . '] ' . $this->ctxClip((string)$r['ioc_value'], 80) . ($r['severity'] ? ' (' . $r['severity'] . ')' : '');
+                 . ' · tipos de IOC: ' . $this->ctxFmt($this->ctxPairs("SELECT ioc_type, COUNT(*) n FROM ti_iocs WHERE tenant_id = ? GROUP BY ioc_type ORDER BY n DESC", $tenantId));
+
+            $L[] = 'ARTÍCULOS TI (título · fecha · enlace · tags · IOCs):';
+            foreach (Database::fetchAll("SELECT id, title, created_date, last_updated, tags, summary FROM ti_articles WHERE tenant_id = ? ORDER BY COALESCE(last_updated, created_date, fetched_at) DESC LIMIT ?", [$tenantId, $artLimit]) as $ar) {
+                $artId = (int)$ar['id'];
+                $tags = '';
+                if (!empty($ar['tags'])) {
+                    $t = json_decode((string)$ar['tags'], true);
+                    if (is_array($t)) { $tags = implode(', ', array_slice(array_map('strval', $t), 0, 6)); }
+                }
+                $sum = $this->ctxClip((string)($ar['summary'] ?? ''), 160);
+                $artTotal = (int)(Database::fetchOne("SELECT COUNT(*) c FROM ti_iocs WHERE tenant_id = ? AND article_id = ?", [$tenantId, $artId])['c'] ?? 0);
+                $samples = [];
+                foreach (Database::fetchAll("SELECT ioc_type, ioc_value FROM ti_iocs WHERE tenant_id = ? AND article_id = ? ORDER BY ioc_type LIMIT 6", [$tenantId, $artId]) as $ii) {
+                    $samples[] = $ii['ioc_type'] . ':' . $this->ctxClip((string)$ii['ioc_value'], 60);
+                }
+                $L[] = '  - «' . $this->ctxClip((string)$ar['title'], 160) . '» [' . ($ar['last_updated'] ?: $ar['created_date'] ?: '?') . ']'
+                     . ($tags ? ' · tags: ' . $tags : '')
+                     . ' · enlace: ' . $base . '/' . $artId
+                     . ($sum ? ' · resumen: "' . $sum . '"' : '')
+                     . ' · IOCs (' . $artTotal . ')' . ($samples ? ': ' . implode(', ', $samples) : '');
+            }
+
+            $L[] = 'IOCs RECIENTES (tipo · valor · severidad · artículo):';
+            foreach (Database::fetchAll("SELECT i.ioc_type, i.ioc_value, i.severity, a.title AS article_title FROM ti_iocs i LEFT JOIN ti_articles a ON a.id = i.article_id WHERE i.tenant_id = ? ORDER BY COALESCE(i.last_seen, i.fetched_at) DESC LIMIT ?", [$tenantId, $iocLimit]) as $r) {
+                $L[] = '  - [' . $r['ioc_type'] . '] ' . $this->ctxClip((string)$r['ioc_value'], 80)
+                     . ($r['severity'] ? ' (' . $r['severity'] . ')' : '')
+                     . (!empty($r['article_title']) ? ' — artículo: «' . $this->ctxClip((string)$r['article_title'], 120) . '»' : ' (sin artículo asociado)');
             }
         } else {
             $L[] = 'THREAT INTEL: sin datos sincronizados.';
@@ -645,7 +680,7 @@ class Module_Llm extends BaseModule
             $L[] = 'VULNERABILIDADES: ' . $v
                  . ' · severidad: ' . $this->ctxFmt($this->ctxPairs("SELECT severity, COUNT(*) n FROM vulnerabilities WHERE tenant_id = ? GROUP BY severity", $tenantId))
                  . ' · con exploit público: ' . $exp;
-            foreach (Database::fetchAll("SELECT cve_id, product_name, cvss_v3, epss, public_exploit FROM vulnerabilities WHERE tenant_id = ? ORDER BY (cvss_v3 IS NULL), cvss_v3 DESC LIMIT 10", [$tenantId]) as $r) {
+            foreach (Database::fetchAll("SELECT cve_id, product_name, cvss_v3, epss, public_exploit FROM vulnerabilities WHERE tenant_id = ? ORDER BY (cvss_v3 IS NULL), cvss_v3 DESC LIMIT ?", [$tenantId, $vulnLimit]) as $r) {
                 $L[] = '  - ' . $r['cve_id'] . ' (' . $this->ctxClip((string)$r['product_name'], 60) . ') cvss=' . ($r['cvss_v3'] ?? '?') . ' epss=' . ($r['epss'] ?? '?') . ($r['public_exploit'] ? ' [EXPLOIT PÚBLICO]' : '');
             }
         }
@@ -679,8 +714,9 @@ class Module_Llm extends BaseModule
         }
 
         $text = implode("\n", $L);
-        if (strlen($text) > 12000) {
-            $text = substr($text, 0, 12000) . "\n[... contexto truncado ...]";
+        $cap = $detailed ? 60000 : 24000;
+        if (strlen($text) > $cap) {
+            $text = substr($text, 0, $cap) . "\n[... contexto truncado ...]";
         }
         return $text;
     }
@@ -776,7 +812,8 @@ class Module_Llm extends BaseModule
             (int)($input['tenant_id'] ?? 0),
             (string)($input['task'] ?? 'summary'),
             (string)($input['question'] ?? ''),
-            $this->resolveProfile($input, 'analyze_tenant')
+            $this->resolveProfile($input, 'analyze_tenant'),
+            !empty($input['detailed'])
         ));
     }
 
