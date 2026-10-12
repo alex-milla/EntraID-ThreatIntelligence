@@ -148,6 +148,110 @@ class Module_Llm extends BaseModule
     }
 
     // ============================================================
+    // Modelos disponibles (carga automática, solo OpenCode Console)
+    // ============================================================
+
+    /** Modelos de OpenCode que NO retienen ni entrenan con datos (allowlist propia). */
+    private const OPENCODE_ZERO_RETENTION = [
+        'space-bunny-free',
+        'longcat-2.5-preview-free',
+        'step-5-preview-free',
+    ];
+
+    /** Modelos gratis de OpenCode que (según su política) SÍ pueden usar datos. */
+    private const OPENCODE_TRAINS = [
+        'ling-3.1-flash-free',
+        'mimo-v2.6-flash-free',
+        'nemotron-3.5-lightning-free',
+        'muse-spark-1.2-contributor-free',
+        'muse-spark-1.3-contributor-free',
+        'big-pickle',
+    ];
+
+    /**
+     * Lista los modelos disponibles del proveedor (solo OpenCode Console),
+     * leyendo su endpoint OpenAI-compatible /models. Con caché de 1 h.
+     */
+    public function listModels(array $cfg = [], bool $refresh = false): array
+    {
+        $cfg = array_merge($this->cfg(), $cfg);
+        if (($cfg['provider'] ?? '') !== 'opencode') {
+            return ['success' => false, 'error' => 'La carga automática de modelos solo está disponible para OpenCode Console.'];
+        }
+
+        $cacheKey = 'llm_models_cache_opencode';
+        if (!$refresh) {
+            $cached = setting_get($cacheKey);
+            if (is_string($cached) && $cached !== '') {
+                $data = safe_json_decode($cached, null);
+                if (is_array($data) && isset($data['ts'], $data['models']) && (time() - (int)$data['ts']) < 3600) {
+                    return ['success' => true, 'models' => $data['models'], 'cached' => true, 'source' => 'cache'];
+                }
+            }
+        }
+
+        try {
+            $res = $this->httpGet('https://opencode.ai/inference/v1/models');
+        } catch (Throwable $e) {
+            return [
+                'success'  => true,
+                'models'   => $this->curatedOpenCodeModels(),
+                'cached'   => false,
+                'fallback' => true,
+                'error'    => 'No se pudo consultar OpenCode (' . $e->getMessage() . '). Se muestra la lista conocida.',
+            ];
+        }
+
+        $ids = [];
+        foreach ($res['data'] ?? [] as $m) {
+            if (!empty($m['id'])) {
+                $ids[] = (string)$m['id'];
+            }
+        }
+        if (empty($ids)) {
+            return [
+                'success'  => true,
+                'models'   => $this->curatedOpenCodeModels(),
+                'cached'   => false,
+                'fallback' => true,
+                'error'    => 'OpenCode no devolvió modelos. Se muestra la lista conocida.',
+            ];
+        }
+
+        $models = array_map(fn(string $id): array => $this->classifyModel($id), $ids);
+        setting_set($cacheKey, json_encode(['ts' => time(), 'models' => $models]));
+
+        return ['success' => true, 'models' => $models, 'cached' => false, 'source' => 'api'];
+    }
+
+    /**
+     * Etiqueta un modelo de OpenCode según nuestra clasificación de privacidad.
+     * (La API no expone la retención: esto es política nuestra.)
+     */
+    private function classifyModel(string $id): array
+    {
+        if (in_array($id, self::OPENCODE_ZERO_RETENTION, true)) {
+            return ['id' => $id, 'group' => 'zero', 'label' => $id . ' — zero-retention'];
+        }
+        if (in_array($id, self::OPENCODE_TRAINS, true)) {
+            return ['id' => $id, 'group' => 'trains', 'label' => $id . ' — gratis (puede usar datos)'];
+        }
+        if (str_ends_with($id, '-free')) {
+            return ['id' => $id, 'group' => 'free_unknown', 'label' => $id . ' — gratis (sin clasificar)'];
+        }
+        return ['id' => $id, 'group' => 'other', 'label' => $id];
+    }
+
+    /**
+     * Lista curada de respaldo (si la API de OpenCode no responde).
+     */
+    private function curatedOpenCodeModels(): array
+    {
+        $ids = array_merge(self::OPENCODE_ZERO_RETENTION, self::OPENCODE_TRAINS, ['jev-1.13-free']);
+        return array_map(fn(string $id): array => $this->classifyModel($id), $ids);
+    }
+
+    // ============================================================
     // Proveedores LLM
     // ============================================================
 
@@ -409,6 +513,42 @@ class Module_Llm extends BaseModule
         }
 
         return $decoded ?? ['raw' => $response];
+    }
+
+    /**
+     * HTTP GET genérico con cURL (JSON).
+     */
+    private function httpGet(string $url): array
+    {
+        if (!function_exists('curl_init')) {
+            throw new RuntimeException('cURL no está disponible en el servidor.');
+        }
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT        => 30,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_MAXREDIRS      => 5,
+            CURLOPT_HTTPHEADER     => ['Accept: application/json'],
+        ]);
+        $response = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $error = curl_error($ch);
+        curl_close($ch);
+
+        if ($response === false) {
+            throw new RuntimeException("Error cURL: $error");
+        }
+
+        $decoded = json_decode($response, true);
+        if ($httpCode >= 400) {
+            $msg = $decoded['error']['message'] ?? $decoded['message'] ?? $response;
+            throw new RuntimeException("HTTP $httpCode: $msg");
+        }
+
+        return $decoded ?? [];
     }
 
     public function routes(): array

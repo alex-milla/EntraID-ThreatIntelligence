@@ -118,17 +118,18 @@ foreach ($flashData as $type => $msg):
     <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
             <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Modelo</label>
-            <input type="text" name="model" value="<?= e($editProfile['model'] ?? '') ?>" placeholder="gpt-4o-mini" list="llm-model-list"
+            <input type="text" name="model" id="model-input" value="<?= e($editProfile['model'] ?? '') ?>" placeholder="gpt-4o-mini / space-bunny-free"
                    class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white font-mono text-sm focus:ring-2 focus:ring-brand-500 outline-none">
-            <datalist id="llm-model-list">
-                <option value="space-bunny-free">
-                <option value="longcat-2.5-preview-free">
-                <option value="step-5-preview-free">
-                <option value="gpt-4o-mini">
-                <option value="gemini-1.5-flash">
-                <option value="mistral-large-latest">
-                <option value="llama3.1">
-            </datalist>
+            <div id="opencode-models" class="mt-2 hidden">
+                <select id="model-picker"
+                        class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+                    <option value="">— Modelos de OpenCode Console —</option>
+                </select>
+                <div class="flex items-start justify-between gap-2 mt-1">
+                    <p class="text-xs text-gray-400">Elige uno para rellenar el campo. La etiqueta <strong>zero-retention</strong> sale de nuestra lista (la API no la expone).</p>
+                    <button type="button" onclick="loadModels(true)" class="text-xs text-brand-500 hover:underline whitespace-nowrap">↻ Recargar</button>
+                </div>
+            </div>
         </div>
         <div>
             <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Max tokens</label>
@@ -189,6 +190,56 @@ foreach ($flashData as $type => $msg):
 </div>
 
 <script>
+function esc(s) {
+    return String(s).replace(/[&<>"']/g, function(c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+}
+function currentProvider() {
+    var el = document.getElementById('provider');
+    return el ? el.value : '';
+}
+function maybeShowModels() {
+    var box = document.getElementById('opencode-models');
+    if (!box) return;
+    if (currentProvider() === 'opencode') {
+        box.classList.remove('hidden');
+        if (box.dataset.loaded !== '1') { loadModels(false); }
+    } else {
+        box.classList.add('hidden');
+    }
+}
+function loadModels(refresh) {
+    var sel = document.getElementById('model-picker');
+    if (!sel) return;
+    sel.innerHTML = '<option value="">Cargando modelos…</option>';
+    api('POST', '<?= base_url('admin/apis/models') ?>', { provider: 'opencode', refresh: refresh ? 1 : 0 })
+        .then(function(res) {
+            if (!res.success || !res.models || !res.models.length) {
+                sel.innerHTML = '<option value="">' + esc(res.error || 'No se pudieron cargar los modelos') + '</option>';
+                return;
+            }
+            var groups = { zero: [], trains: [], free_unknown: [], other: [] };
+            res.models.forEach(function(m) { (groups[m.group] || groups.other).push(m); });
+            var html = '<option value="">— Modelos de OpenCode Console —</option>';
+            [
+                ['zero', '✅ Recomendados · zero-retention'],
+                ['trains', '⚠️ Gratis (puede usar datos)'],
+                ['free_unknown', '☐ Gratis (sin clasificar)'],
+                ['other', 'Otros modelos']
+            ].forEach(function(g) {
+                if (!groups[g[0]].length) return;
+                html += '<optgroup label="' + g[1] + '">';
+                groups[g[0]].forEach(function(m) {
+                    html += '<option value="' + esc(m.id) + '">' + esc(m.label) + '</option>';
+                });
+                html += '</optgroup>';
+            });
+            sel.innerHTML = html;
+            document.getElementById('opencode-models').dataset.loaded = '1';
+        })
+        .catch(function() { sel.innerHTML = '<option value="">Error de conexión</option>'; });
+}
 function testProfile(id) {
     api('POST', '<?= base_url('admin/apis/test') ?>', { profile_id: id })
         .then(function(res) { toast(res.success ? (res.message || 'OK') : ('Error: ' + (res.error || 'desconocido')), res.success ? 'success' : 'error'); })
@@ -203,4 +254,16 @@ function testForm() {
     }).then(function(res) { toast(res.success ? (res.message || 'OK') : ('Error: ' + (res.error || 'desconocido')), res.success ? 'success' : 'error'); })
       .catch(function() { toast('Error de conexión', 'error'); });
 }
+
+(function() {
+    var prov = document.getElementById('provider');
+    if (prov) { prov.addEventListener('change', maybeShowModels); }
+    var picker = document.getElementById('model-picker');
+    if (picker) {
+        picker.addEventListener('change', function() {
+            if (this.value) { document.getElementById('model-input').value = this.value; }
+        });
+    }
+    maybeShowModels();
+})();
 </script>

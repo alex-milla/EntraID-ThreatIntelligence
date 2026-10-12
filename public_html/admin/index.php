@@ -674,6 +674,40 @@ class AdminController
     }
 
     /**
+     * Lista los modelos disponibles del proveedor (solo OpenCode Console).
+     * Se consulta en el servidor para evitar CORS; la API key no viaja al navegador.
+     */
+    public static function apisModels(): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        $input = json_decode(file_get_contents('php://input'), true) ?? $_POST;
+        $module = ModuleManager::get('llm');
+        if (!$module) {
+            json_response(['success' => false, 'error' => 'El módulo LLM no está activo'], 400);
+        }
+
+        $refresh = !empty($input['refresh']);
+        $cfg = [];
+
+        $pid = (int)($input['profile_id'] ?? 0);
+        if ($pid > 0) {
+            $p = llm_profile_get($pid);
+            if ($p) {
+                $cfg['provider'] = (string)$p['provider'];
+            }
+        } else {
+            $provider = strtolower(trim((string)($input['provider'] ?? '')));
+            if ($provider !== '') {
+                $cfg['provider'] = $provider;
+            }
+        }
+
+        json_response($module->listModels($cfg, $refresh));
+    }
+
+    /**
      * Actualizaciones del sistema desde GitHub (solo admin).
      * GET: estado (versión instalada vs última release, backups).
      * POST: install / restore (CSRF + backup automático + PRG).
@@ -827,6 +861,7 @@ $adminRoutes = [
         'settings/save'    => 'settingsSave',
         'apis/save'        => 'apisSave',
         'apis/test'        => 'apisTest',
+        'apis/models'      => 'apisModels',
         'apis/default'     => 'apisDefault',
         'apis/delete'      => 'apisDelete',
         'apis/tasks'       => 'apisTasks',
