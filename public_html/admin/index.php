@@ -281,6 +281,11 @@ class AdminController
         Auth::requireAdmin();
         Csrf::validateOrFail();
 
+        if (($_POST['password'] ?? '') !== ($_POST['password_confirm'] ?? '')) {
+            flash('error', 'La contraseña y su confirmación no coinciden');
+            redirect(base_url('admin/users'));
+        }
+
         $result = Auth::createUser([
             'username'             => $_POST['username'] ?? '',
             'email'                => $_POST['email'] ?? '',
@@ -319,6 +324,14 @@ class AdminController
         if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             Csrf::validateOrFail();
 
+            // Confirmación de la nueva contraseña (si se rellena)
+            $newPassword = (string)($_POST['password'] ?? '');
+            $confirm = (string)($_POST['password_confirm'] ?? '');
+            if ($newPassword !== $confirm) {
+                flash('error', 'La nueva contraseña y su confirmación no coinciden');
+                redirect(base_url('admin/user/edit?id=' . $id));
+            }
+
             // Verificación extra al editarse a uno mismo
             if ($isSelf && !Encryption::verifyPassword($_POST['current_password'] ?? '', $user['password_hash'])) {
                 flash('error', 'Debes introducir tu contraseña actual correctamente');
@@ -329,7 +342,7 @@ class AdminController
                 'email'                => $_POST['email'] ?? '',
                 'display_name'         => $_POST['display_name'] ?? '',
                 'role'                 => $_POST['role'] ?? $user['role'],
-                'password'             => $_POST['password'] ?? '',
+                'password'             => $newPassword,
                 'must_change_password' => !empty($_POST['must_change_password']),
             ], Auth::id());
 
@@ -349,7 +362,10 @@ class AdminController
                         'role'         => $fresh['role'],
                     ]);
                 }
-                flash('success', 'Usuario actualizado correctamente');
+                // Feedback explícito sobre la contraseña
+                flash('success', $newPassword !== ''
+                    ? 'Usuario actualizado. Contraseña modificada correctamente.'
+                    : 'Usuario actualizado. La contraseña NO se ha modificado.');
                 redirect(base_url('admin/users'));
             }
 
@@ -559,6 +575,12 @@ class AdminController
 
         if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             Csrf::validateOrFail();
+
+            if (($_POST['new_password'] ?? '') !== ($_POST['new_password_confirm'] ?? '')) {
+                flash('error', 'La nueva contraseña y su confirmación no coinciden');
+                redirect(base_url('admin/change-password'));
+            }
+
             $result = Auth::changePassword(
                 Auth::id(),
                 $_POST['current_password'] ?? '',

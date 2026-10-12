@@ -33,7 +33,7 @@ foreach ($flashData as $type => $msg):
     </div>
 
     <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-6">
-        <form method="POST" action="<?= base_url('admin/user/edit?id=' . (int)$user['id']) ?>" class="space-y-4">
+        <form method="POST" action="<?= base_url('admin/user/edit?id=' . (int)$user['id']) ?>" class="space-y-4" onsubmit="var p=this.password.value, c=this.password_confirm.value; if (p && p!==c) { alert('La nueva contraseña y su confirmación no coinciden'); return false; }">
             <?= Csrf::field() ?>
 
             <div>
@@ -84,16 +84,23 @@ foreach ($flashData as $type => $msg):
                     </div>
                 <?php endif; ?>
 
-                <div class="mb-4">
-                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                        <?= $isSelf ? 'Nueva contraseña (opcional)' : 'Establecer nueva contraseña (opcional)' ?>
-                    </label>
-                    <input type="password" name="password" minlength="8" autocomplete="new-password" placeholder="Dejar vacío para mantener la actual"
-                           class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-brand-500 focus:border-transparent outline-none">
-                    <?php if (!$isSelf): ?>
-                        <p class="text-xs text-gray-400 mt-1">Si la estableces, el usuario deberá cambiarla en su próximo inicio de sesión.</p>
-                    <?php endif; ?>
+                <div class="mb-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                            <?= $isSelf ? 'Nueva contraseña (opcional)' : 'Establecer nueva contraseña (opcional)' ?>
+                        </label>
+                        <input type="password" name="password" minlength="8" autocomplete="new-password" placeholder="Dejar vacío para mantener la actual"
+                               class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-brand-500 focus:border-transparent outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Repetir nueva contraseña</label>
+                        <input type="password" name="password_confirm" minlength="8" autocomplete="new-password" placeholder="Repite la nueva contraseña"
+                               class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-brand-500 focus:border-transparent outline-none">
+                    </div>
                 </div>
+                <?php if (!$isSelf): ?>
+                    <p class="text-xs text-gray-400 -mt-2 mb-4">Si la estableces, el usuario deberá cambiarla en su próximo inicio de sesión.</p>
+                <?php endif; ?>
 
                 <?php if (!$isSelf): ?>
                     <div class="flex items-center gap-2">

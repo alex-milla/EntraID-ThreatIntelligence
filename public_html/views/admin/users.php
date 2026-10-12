@@ -21,7 +21,7 @@ foreach ($flashData as $type => $msg):
     <!-- Crear usuario -->
     <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-6">
         <h2 class="text-lg font-semibold mb-4">Nuevo usuario</h2>
-        <form method="POST" action="<?= base_url('admin/user/create') ?>" class="space-y-4">
+        <form method="POST" action="<?= base_url('admin/user/create') ?>" class="space-y-4" onsubmit="if (this.password.value !== this.password_confirm.value) { alert('La contraseña y su confirmación no coinciden'); return false; }">
             <?= Csrf::field() ?>
             <div>
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Usuario *</label>
@@ -38,6 +38,10 @@ foreach ($flashData as $type => $msg):
             <div>
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Contraseña *</label>
                 <input type="password" name="password" required minlength="8" class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-brand-500 focus:border-transparent outline-none">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Repetir contraseña *</label>
+                <input type="password" name="password_confirm" required minlength="8" class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-brand-500 focus:border-transparent outline-none">
             </div>
             <div>
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Rol</label>

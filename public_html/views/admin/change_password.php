@@ -29,7 +29,7 @@ foreach ($flashData as $type => $msg):
             </div>
         </div>
 
-        <form method="POST" action="<?= base_url('admin/change-password') ?>" class="space-y-4">
+        <form method="POST" action="<?= base_url('admin/change-password') ?>" class="space-y-4" onsubmit="if (this.new_password.value !== this.new_password_confirm.value) { alert('La nueva contraseña y su confirmación no coinciden'); return false; }">
             <?= Csrf::field() ?>
             <div>
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Contraseña actual</label>
@@ -39,6 +39,10 @@ foreach ($flashData as $type => $msg):
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Nueva contraseña</label>
                 <input type="password" name="new_password" required minlength="8" class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-brand-500 focus:border-transparent outline-none">
                 <p class="text-xs text-gray-400 mt-1">Mínimo 8 caracteres</p>
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Repetir nueva contraseña</label>
+                <input type="password" name="new_password_confirm" required minlength="8" class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-brand-500 focus:border-transparent outline-none">
             </div>
             <button type="submit" class="w-full px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors">
                 Cambiar contraseña
