@@ -760,6 +760,9 @@ class Module_Llm extends BaseModule
             ['method' => 'GET',  'pattern' => '',                        'handler' => [$this, 'index']],
             ['method' => 'POST', 'pattern' => 'chat',                    'handler' => [$this, 'chatEndpoint']],
             ['method' => 'POST', 'pattern' => 'analyze-tenant',          'handler' => [$this, 'analyzeTenantEndpoint']],
+            ['method' => 'POST', 'pattern' => 'actions/save',            'handler' => [$this, 'actionsSaveEndpoint']],
+            ['method' => 'POST', 'pattern' => 'actions/delete',          'handler' => [$this, 'actionsDeleteEndpoint']],
+            ['method' => 'POST', 'pattern' => 'actions/restore',         'handler' => [$this, 'actionsRestoreEndpoint']],
             ['method' => 'POST', 'pattern' => 'analyze-incident/{id}',   'handler' => [$this, 'analyzeIncidentEndpoint']],
             ['method' => 'POST', 'pattern' => 'classify-iocs',           'handler' => [$this, 'classifyIocsEndpoint']],
             ['method' => 'POST', 'pattern' => 'extract-iocs',            'handler' => [$this, 'extractIocsEndpoint']],
@@ -816,6 +819,57 @@ class Module_Llm extends BaseModule
             $this->resolveProfile($input, 'analyze_tenant'),
             !empty($input['detailed'])
         ));
+    }
+
+    /**
+     * Guarda (crea o edita) una acción rápida de Análisis IA (solo admin).
+     */
+    public function actionsSaveEndpoint(array $params = []): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+        $input = json_decode(file_get_contents('php://input'), true) ?? $_POST;
+
+        $prompt = trim((string)($input['prompt'] ?? ''));
+        if ($prompt === '') {
+            json_response(['success' => false, 'error' => 'El prompt de la acción no puede estar vacío.'], 400);
+        }
+
+        $id = llm_action_save([
+            'label'     => trim((string)($input['label'] ?? '')),
+            'prompt'    => $prompt,
+            'position'  => (int)($input['position'] ?? 0),
+            'is_active' => $input['is_active'] ?? '',
+        ], ((int)($input['id'] ?? 0)) ?: null);
+
+        log_activity('llm.action_saved', ['action_id' => $id]);
+        json_response(['success' => true, 'id' => $id]);
+    }
+
+    /**
+     * Elimina una acción rápida de Análisis IA (solo admin).
+     */
+    public function actionsDeleteEndpoint(array $params = []): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+        $input = json_decode(file_get_contents('php://input'), true) ?? $_POST;
+        $id = (int)($input['id'] ?? 0);
+        if ($id > 0) {
+            llm_action_delete($id);
+        }
+        json_response(['success' => true]);
+    }
+
+    /**
+     * Restaura las acciones rápidas por defecto (solo admin).
+     */
+    public function actionsRestoreEndpoint(array $params = []): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+        Database::resetDefaultActions();
+        json_response(['success' => true]);
     }
 
     public function analyzeIncidentEndpoint(array $params = []): void

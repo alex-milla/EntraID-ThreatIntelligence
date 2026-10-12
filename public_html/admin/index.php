@@ -532,10 +532,6 @@ class AdminController
             $taskProfiles[$t] = llm_task_profile($t);
         }
 
-        $actions = llm_actions_list();
-        $editActionId = (int)($_GET['action'] ?? 0);
-        $editAction = $editActionId ? llm_action_get($editActionId) : null;
-
         require VIEWS_PATH . '/layout/header.php';
         require VIEWS_PATH . '/layout/sidebar.php';
         require VIEWS_PATH . '/admin/apis.php';
@@ -634,62 +630,6 @@ class AdminController
             }
         }
         flash('success', 'Modelo por tarea guardado');
-        redirect(base_url('admin/apis'));
-    }
-
-    /**
-     * Guarda (crea o edita) una acción rápida de Análisis IA.
-     */
-    public static function apisActionSave(): void
-    {
-        Auth::requireAdmin();
-        Csrf::validateOrFail();
-
-        $id = (int)($_POST['id'] ?? 0);
-        $prompt = trim((string)($_POST['prompt'] ?? ''));
-        if ($prompt === '') {
-            flash('error', 'El prompt de la acción no puede estar vacío.');
-            redirect(base_url('admin/apis'));
-        }
-
-        $newId = llm_action_save([
-            'label'     => trim((string)($_POST['label'] ?? '')),
-            'prompt'    => $prompt,
-            'position'  => (int)($_POST['position'] ?? 0),
-            'is_active' => $_POST['is_active'] ?? '',
-        ], $id ?: null);
-
-        log_activity('settings.llm_action_saved', ['action_id' => $newId]);
-        flash('success', 'Acción guardada correctamente');
-        redirect(base_url('admin/apis'));
-    }
-
-    /**
-     * Elimina una acción rápida de Análisis IA.
-     */
-    public static function apisActionDelete(): void
-    {
-        Auth::requireAdmin();
-        Csrf::validateOrFail();
-
-        $id = (int)($_POST['id'] ?? 0);
-        if ($id > 0) {
-            llm_action_delete($id);
-            flash('success', 'Acción eliminada');
-        }
-        redirect(base_url('admin/apis'));
-    }
-
-    /**
-     * Restaura las acciones rápidas por defecto.
-     */
-    public static function apisActionRestore(): void
-    {
-        Auth::requireAdmin();
-        Csrf::validateOrFail();
-
-        Database::resetDefaultActions();
-        flash('success', 'Acciones restauradas a las de por defecto');
         redirect(base_url('admin/apis'));
     }
 
@@ -885,9 +825,6 @@ $adminRoutes = [
         'apis/default'     => 'apisDefault',
         'apis/delete'      => 'apisDelete',
         'apis/tasks'       => 'apisTasks',
-        'apis/actions'     => 'apisActionSave',
-        'apis/actions/delete'  => 'apisActionDelete',
-        'apis/actions/restore' => 'apisActionRestore',
         'updates'          => 'updates',
         'change-password'  => 'changePassword',
     ],
