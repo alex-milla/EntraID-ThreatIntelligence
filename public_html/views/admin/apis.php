@@ -12,7 +12,6 @@ $providers = [
     'ollama'    => 'Ollama (local)',
     'gemini'    => 'Google Gemini',
     'mistral'   => 'Mistral',
-    'opencode'  => 'OpenCode Console (modelos gratis)',
     'custom'    => 'Personalizado (compatible OpenAI)',
 ];
 $editId = (int)($editProfile['id'] ?? 0);
@@ -95,7 +94,7 @@ foreach ($flashData as $type => $msg):
     <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
             <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Nombre</label>
-            <input type="text" name="name" value="<?= e($editProfile['name'] ?? '') ?>" placeholder="Mistral prod / OpenCode gratis…"
+            <input type="text" name="name" value="<?= e($editProfile['name'] ?? '') ?>" placeholder="Mistral prod / OpenAI…"
                    class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
         </div>
         <div>
@@ -118,18 +117,10 @@ foreach ($flashData as $type => $msg):
     <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
             <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Modelo</label>
-            <input type="text" name="model" id="model-input" value="<?= e($editProfile['model'] ?? '') ?>" placeholder="gpt-4o-mini / space-bunny-free"
+            <input type="text" name="model" id="model-input" value="<?= e($editProfile['model'] ?? '') ?>" placeholder="mistral-large-latest / gpt-4o-mini" list="model-suggestions" autocomplete="off"
                    class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white font-mono text-sm focus:ring-2 focus:ring-brand-500 outline-none">
-            <div id="opencode-models" class="mt-2 hidden">
-                <select id="model-picker"
-                        class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
-                    <option value="">— Modelos de OpenCode Console —</option>
-                </select>
-                <div class="flex items-start justify-between gap-2 mt-1">
-                    <p class="text-xs text-gray-400">Elige uno para rellenar el campo. La etiqueta <strong>zero-retention</strong> sale de nuestra lista (la API no la expone).</p>
-                    <button type="button" onclick="loadModels(true)" class="text-xs text-brand-500 hover:underline whitespace-nowrap">↻ Recargar</button>
-                </div>
-            </div>
+            <datalist id="model-suggestions"></datalist>
+            <p class="text-xs text-gray-400 mt-1">El modelo debe ser válido para el proveedor elegido (se sugieren los típicos de cada uno).</p>
         </div>
         <div>
             <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Max tokens</label>
@@ -141,7 +132,7 @@ foreach ($flashData as $type => $msg):
     <div>
         <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">API Key</label>
         <input type="password" name="api_key" autocomplete="new-password"
-               placeholder="<?= !empty($editProfile['api_key']) ? '•••••••• (ya configurada — deja vacío para mantenerla)' : 'Pega aquí tu API key (no necesaria para Ollama ni OpenCode gratis)' ?>"
+               placeholder="<?= !empty($editProfile['api_key']) ? '•••••••• (ya configurada — deja vacío para mantenerla)' : 'Pega aquí tu API key (no necesaria para Ollama local)' ?>"
                class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white font-mono text-sm focus:ring-2 focus:ring-brand-500 outline-none">
     </div>
 
@@ -185,60 +176,32 @@ foreach ($flashData as $type => $msg):
 <div class="bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 rounded-xl p-4">
     <p class="text-xs text-amber-700 dark:text-amber-300">
         La API key se guarda <strong>cifrada (AES-256-GCM)</strong> y nunca se muestra ni se envía al navegador.
-        Los modelos gratis de OpenCode con <strong>zero-retention</strong> (space-bunny/longcat/step) no entrenan con tus datos.
+        Consejo: el <strong>nombre del modelo debe ser válido para el proveedor</strong> elegido; si no, la prueba de conexión indicará «Invalid model».
+        Mistral no entrena con tus prompts (zero-retention).
     </p>
 </div>
 
 <script>
-function esc(s) {
-    return String(s).replace(/[&<>"']/g, function(c) {
-        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+// Sugerencias de modelos por proveedor (se vuelcan en el <datalist>).
+var MODEL_SUGGESTIONS = {
+    openai:    ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1-mini', 'gpt-4.1'],
+    mistral:   ['mistral-large-latest', 'mistral-small-latest', 'open-mistral-nemo', 'codestral-latest'],
+    anthropic: ['claude-3-5-sonnet-20241022', 'claude-3-5-haiku-20241022', 'claude-3-opus-20240229'],
+    gemini:    ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.0-flash'],
+    azure:     ['gpt-4o-mini', 'gpt-4o'],
+    ollama:    ['llama3.1', 'qwen2.5', 'mistral', 'phi3'],
+    custom:    []
+};
+function updateModelSuggestions() {
+    var list = document.getElementById('model-suggestions');
+    var prov = document.getElementById('provider');
+    if (!list || !prov) return;
+    list.innerHTML = '';
+    (MODEL_SUGGESTIONS[prov.value] || []).forEach(function(m) {
+        var o = document.createElement('option');
+        o.value = m;
+        list.appendChild(o);
     });
-}
-function currentProvider() {
-    var el = document.getElementById('provider');
-    return el ? el.value : '';
-}
-function maybeShowModels() {
-    var box = document.getElementById('opencode-models');
-    if (!box) return;
-    if (currentProvider() === 'opencode') {
-        box.classList.remove('hidden');
-        if (box.dataset.loaded !== '1') { loadModels(false); }
-    } else {
-        box.classList.add('hidden');
-    }
-}
-function loadModels(refresh) {
-    var sel = document.getElementById('model-picker');
-    if (!sel) return;
-    sel.innerHTML = '<option value="">Cargando modelos…</option>';
-    api('POST', '<?= base_url('admin/apis/models') ?>', { provider: 'opencode', refresh: refresh ? 1 : 0 })
-        .then(function(res) {
-            if (!res.success || !res.models || !res.models.length) {
-                sel.innerHTML = '<option value="">' + esc(res.error || 'No se pudieron cargar los modelos') + '</option>';
-                return;
-            }
-            var groups = { zero: [], trains: [], free_unknown: [], other: [] };
-            res.models.forEach(function(m) { (groups[m.group] || groups.other).push(m); });
-            var html = '<option value="">— Modelos de OpenCode Console —</option>';
-            [
-                ['zero', '✅ Recomendados · zero-retention'],
-                ['trains', '⚠️ Gratis (puede usar datos)'],
-                ['free_unknown', '☐ Gratis (sin clasificar)'],
-                ['other', 'Otros modelos']
-            ].forEach(function(g) {
-                if (!groups[g[0]].length) return;
-                html += '<optgroup label="' + g[1] + '">';
-                groups[g[0]].forEach(function(m) {
-                    html += '<option value="' + esc(m.id) + '">' + esc(m.label) + '</option>';
-                });
-                html += '</optgroup>';
-            });
-            sel.innerHTML = html;
-            document.getElementById('opencode-models').dataset.loaded = '1';
-        })
-        .catch(function() { sel.innerHTML = '<option value="">Error de conexión</option>'; });
 }
 function testProfile(id) {
     api('POST', '<?= base_url('admin/apis/test') ?>', { profile_id: id })
@@ -257,13 +220,7 @@ function testForm() {
 
 (function() {
     var prov = document.getElementById('provider');
-    if (prov) { prov.addEventListener('change', maybeShowModels); }
-    var picker = document.getElementById('model-picker');
-    if (picker) {
-        picker.addEventListener('change', function() {
-            if (this.value) { document.getElementById('model-input').value = this.value; }
-        });
-    }
-    maybeShowModels();
+    if (prov) { prov.addEventListener('change', updateModelSuggestions); }
+    updateModelSuggestions();
 })();
 </script>

@@ -547,7 +547,7 @@ class AdminController
         Csrf::validateOrFail();
 
         $id = (int)($_POST['id'] ?? 0);
-        $allowed = ['', 'openai', 'anthropic', 'azure', 'ollama', 'gemini', 'mistral', 'opencode', 'custom'];
+        $allowed = ['', 'openai', 'anthropic', 'azure', 'ollama', 'gemini', 'mistral', 'custom'];
         $provider = strtolower(trim((string)($_POST['provider'] ?? '')));
         if (!in_array($provider, $allowed, true)) {
             $provider = '';
@@ -559,7 +559,7 @@ class AdminController
         }
 
         $key = trim((string)($_POST['api_key'] ?? ''));
-        $needsKey = !in_array($provider, ['ollama', 'opencode'], true);
+        $needsKey = $provider !== 'ollama';
         if ($key !== '' && $needsKey && ENCRYPTION_KEY === '') {
             flash('error', 'No se puede guardar la API key: falta ENCRYPTION_KEY en el .env.');
             redirect(base_url('admin/apis'));
@@ -671,40 +671,6 @@ class AdminController
         }
 
         json_response($module->testConnection($override));
-    }
-
-    /**
-     * Lista los modelos disponibles del proveedor (solo OpenCode Console).
-     * Se consulta en el servidor para evitar CORS; la API key no viaja al navegador.
-     */
-    public static function apisModels(): void
-    {
-        Auth::requireAdmin();
-        Csrf::validateOrFail();
-
-        $input = json_decode(file_get_contents('php://input'), true) ?? $_POST;
-        $module = ModuleManager::get('llm');
-        if (!$module) {
-            json_response(['success' => false, 'error' => 'El módulo LLM no está activo'], 400);
-        }
-
-        $refresh = !empty($input['refresh']);
-        $cfg = [];
-
-        $pid = (int)($input['profile_id'] ?? 0);
-        if ($pid > 0) {
-            $p = llm_profile_get($pid);
-            if ($p) {
-                $cfg['provider'] = (string)$p['provider'];
-            }
-        } else {
-            $provider = strtolower(trim((string)($input['provider'] ?? '')));
-            if ($provider !== '') {
-                $cfg['provider'] = $provider;
-            }
-        }
-
-        json_response($module->listModels($cfg, $refresh));
     }
 
     /**
@@ -861,7 +827,6 @@ $adminRoutes = [
         'settings/save'    => 'settingsSave',
         'apis/save'        => 'apisSave',
         'apis/test'        => 'apisTest',
-        'apis/models'      => 'apisModels',
         'apis/default'     => 'apisDefault',
         'apis/delete'      => 'apisDelete',
         'apis/tasks'       => 'apisTasks',

@@ -65,8 +65,8 @@ class Module_Llm extends BaseModule
         if ($c['provider'] === '') {
             return false;
         }
-        // Ollama y OpenCode Console (modelos gratis) no requieren API key
-        if (in_array($c['provider'], ['ollama', 'opencode'], true)) {
+        // Ollama (local) no requiere API key
+        if ($c['provider'] === 'ollama') {
             return true;
         }
         return $c['api_key'] !== '';
@@ -91,8 +91,37 @@ class Module_Llm extends BaseModule
             }
             return $res;
         } catch (Throwable $e) {
-            return ['success' => false, 'error' => $e->getMessage()];
+            return ['success' => false, 'error' => $this->friendlyError($e->getMessage(), $cfg)];
         }
+    }
+
+    /**
+     * Traduce los errores más comunes de los proveedores a mensajes claros.
+     */
+    private function friendlyError(string $msg, array $cfg): string
+    {
+        $provider = (string)($cfg['provider'] ?? '');
+        $model = (string)($cfg['model'] ?? '');
+        $low = strtolower($msg);
+        $who = $provider !== '' ? $provider : 'el proveedor';
+
+        if (str_contains($low, 'invalid model') || str_contains($low, 'does not exist') || str_contains($low, 'unknown model') || str_contains($low, 'model_not_found')) {
+            return 'El modelo «' . ($model !== '' ? $model : '(vacío)') . '» no existe en ' . $who
+                 . '. Revisa el nombre del modelo en Admin → APIs: debe corresponder al proveedor elegido.';
+        }
+        if (str_contains($low, 'invalid api key') || str_contains($low, 'incorrect api key') || str_contains($low, 'invalid credential') || str_contains($low, 'unauthorized') || str_contains($low, '(401)')) {
+            return 'La API key de ' . $who . ' es inválida o falta. Revísala en Admin → APIs.';
+        }
+        if (str_contains($low, 'free tier can only be used from within opencode')) {
+            return 'Los modelos gratis de OpenCode solo funcionan dentro de la app OpenCode; no se pueden usar desde aquí. Usa otro proveedor.';
+        }
+        if (str_contains($low, 'rate limit') || str_contains($low, 'too many requests') || str_contains($low, '(429)')) {
+            return 'Límite de peticiones o cuota agotada (429) en ' . $who . '. Inténtalo más tarde.';
+        }
+        if (str_contains($low, 'forbidden') || str_contains($low, '(403)')) {
+            return 'Acceso denegado (403) por ' . $who . '. Revisa la API key, los permisos o la Base URL.';
+        }
+        return $msg;
     }
 
     /**
@@ -114,7 +143,7 @@ class Module_Llm extends BaseModule
     {
         return match ($cfg['provider']) {
             // Compatibles con la API de chat/completions de OpenAI
-            'openai', 'custom', 'gemini', 'mistral', 'opencode'
+            'openai', 'custom', 'gemini', 'mistral'
                         => $this->callOpenAI($cfg, $system, $user, $options),
             'anthropic' => $this->callAnthropic($cfg, $system, $user, $options),
             'ollama'    => $this->callOllama($cfg, $system, $user, $options),
@@ -133,7 +162,7 @@ class Module_Llm extends BaseModule
         if (empty($cfg['provider'])) {
             return ['success' => false, 'error' => 'Falta seleccionar un proveedor'];
         }
-        if (!in_array($cfg['provider'], ['ollama', 'opencode'], true) && empty($cfg['api_key'])) {
+        if ($cfg['provider'] !== 'ollama' && empty($cfg['api_key'])) {
             return ['success' => false, 'error' => 'Falta la API key'];
         }
         try {
@@ -143,112 +172,8 @@ class Module_Llm extends BaseModule
             }
             return $res;
         } catch (Throwable $e) {
-            return ['success' => false, 'error' => $e->getMessage()];
+            return ['success' => false, 'error' => $this->friendlyError($e->getMessage(), $cfg)];
         }
-    }
-
-    // ============================================================
-    // Modelos disponibles (carga automática, solo OpenCode Console)
-    // ============================================================
-
-    /** Modelos de OpenCode que NO retienen ni entrenan con datos (allowlist propia). */
-    private const OPENCODE_ZERO_RETENTION = [
-        'space-bunny-free',
-        'longcat-2.5-preview-free',
-        'step-5-preview-free',
-    ];
-
-    /** Modelos gratis de OpenCode que (según su política) SÍ pueden usar datos. */
-    private const OPENCODE_TRAINS = [
-        'ling-3.1-flash-free',
-        'mimo-v2.6-flash-free',
-        'nemotron-3.5-lightning-free',
-        'muse-spark-1.2-contributor-free',
-        'muse-spark-1.3-contributor-free',
-        'big-pickle',
-    ];
-
-    /**
-     * Lista los modelos disponibles del proveedor (solo OpenCode Console),
-     * leyendo su endpoint OpenAI-compatible /models. Con caché de 1 h.
-     */
-    public function listModels(array $cfg = [], bool $refresh = false): array
-    {
-        $cfg = array_merge($this->cfg(), $cfg);
-        if (($cfg['provider'] ?? '') !== 'opencode') {
-            return ['success' => false, 'error' => 'La carga automática de modelos solo está disponible para OpenCode Console.'];
-        }
-
-        $cacheKey = 'llm_models_cache_opencode';
-        if (!$refresh) {
-            $cached = setting_get($cacheKey);
-            if (is_string($cached) && $cached !== '') {
-                $data = safe_json_decode($cached, null);
-                if (is_array($data) && isset($data['ts'], $data['models']) && (time() - (int)$data['ts']) < 3600) {
-                    return ['success' => true, 'models' => $data['models'], 'cached' => true, 'source' => 'cache'];
-                }
-            }
-        }
-
-        try {
-            $res = $this->httpGet('https://opencode.ai/inference/v1/models');
-        } catch (Throwable $e) {
-            return [
-                'success'  => true,
-                'models'   => $this->curatedOpenCodeModels(),
-                'cached'   => false,
-                'fallback' => true,
-                'error'    => 'No se pudo consultar OpenCode (' . $e->getMessage() . '). Se muestra la lista conocida.',
-            ];
-        }
-
-        $ids = [];
-        foreach ($res['data'] ?? [] as $m) {
-            if (!empty($m['id'])) {
-                $ids[] = (string)$m['id'];
-            }
-        }
-        if (empty($ids)) {
-            return [
-                'success'  => true,
-                'models'   => $this->curatedOpenCodeModels(),
-                'cached'   => false,
-                'fallback' => true,
-                'error'    => 'OpenCode no devolvió modelos. Se muestra la lista conocida.',
-            ];
-        }
-
-        $models = array_map(fn(string $id): array => $this->classifyModel($id), $ids);
-        setting_set($cacheKey, json_encode(['ts' => time(), 'models' => $models]));
-
-        return ['success' => true, 'models' => $models, 'cached' => false, 'source' => 'api'];
-    }
-
-    /**
-     * Etiqueta un modelo de OpenCode según nuestra clasificación de privacidad.
-     * (La API no expone la retención: esto es política nuestra.)
-     */
-    private function classifyModel(string $id): array
-    {
-        if (in_array($id, self::OPENCODE_ZERO_RETENTION, true)) {
-            return ['id' => $id, 'group' => 'zero', 'label' => $id . ' — zero-retention'];
-        }
-        if (in_array($id, self::OPENCODE_TRAINS, true)) {
-            return ['id' => $id, 'group' => 'trains', 'label' => $id . ' — gratis (puede usar datos)'];
-        }
-        if (str_ends_with($id, '-free')) {
-            return ['id' => $id, 'group' => 'free_unknown', 'label' => $id . ' — gratis (sin clasificar)'];
-        }
-        return ['id' => $id, 'group' => 'other', 'label' => $id];
-    }
-
-    /**
-     * Lista curada de respaldo (si la API de OpenCode no responde).
-     */
-    private function curatedOpenCodeModels(): array
-    {
-        $ids = array_merge(self::OPENCODE_ZERO_RETENTION, self::OPENCODE_TRAINS, ['jev-1.13-free']);
-        return array_map(fn(string $id): array => $this->classifyModel($id), $ids);
     }
 
     // ============================================================
@@ -261,17 +186,12 @@ class Module_Llm extends BaseModule
         [$defaultUrl, $defaultModel] = match ($cfg['provider']) {
             'gemini'   => ['https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', 'gemini-1.5-flash'],
             'mistral'  => ['https://api.mistral.ai/v1/chat/completions', 'mistral-large-latest'],
-            'opencode' => ['https://opencode.ai/inference/v1/chat/completions', 'space-bunny-free'],
             default    => ['https://api.openai.com/v1/chat/completions', 'gpt-4o-mini'],
         };
         $url = $cfg['api_url'] ?: $defaultUrl;
         $model = $cfg['model'] ?: $defaultModel;
 
-        // OpenCode Console: probar también el endpoint "openai" por si el primero diera 404
         $urls = [$url];
-        if ($cfg['provider'] === 'opencode' && $cfg['api_url'] === '') {
-            $urls[] = 'https://opencode.ai/inference/openai/v1/chat/completions';
-        }
 
         $body = json_encode([
             'model'       => $model,
@@ -513,42 +433,6 @@ class Module_Llm extends BaseModule
         }
 
         return $decoded ?? ['raw' => $response];
-    }
-
-    /**
-     * HTTP GET genérico con cURL (JSON).
-     */
-    private function httpGet(string $url): array
-    {
-        if (!function_exists('curl_init')) {
-            throw new RuntimeException('cURL no está disponible en el servidor.');
-        }
-        $ch = curl_init($url);
-        curl_setopt_array($ch, [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_TIMEOUT        => 30,
-            CURLOPT_SSL_VERIFYPEER => true,
-            CURLOPT_SSL_VERIFYHOST => 2,
-            CURLOPT_FOLLOWLOCATION => true,
-            CURLOPT_MAXREDIRS      => 5,
-            CURLOPT_HTTPHEADER     => ['Accept: application/json'],
-        ]);
-        $response = curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $error = curl_error($ch);
-        curl_close($ch);
-
-        if ($response === false) {
-            throw new RuntimeException("Error cURL: $error");
-        }
-
-        $decoded = json_decode($response, true);
-        if ($httpCode >= 400) {
-            $msg = $decoded['error']['message'] ?? $decoded['message'] ?? $response;
-            throw new RuntimeException("HTTP $httpCode: $msg");
-        }
-
-        return $decoded ?? [];
     }
 
     public function routes(): array

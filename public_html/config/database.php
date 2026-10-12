@@ -54,6 +54,38 @@ class Database
         if (!isset($cols['country'])) {
             $db->exec("ALTER TABLE tenants ADD COLUMN country TEXT");
         }
+
+        // v0.2.5.23: retirada del proveedor OpenCode (sus modelos gratis no se
+        // pueden usar desde la web). Limpieza idempotente, una sola vez.
+        self::cleanupRemovedProviders($db);
+    }
+
+    /**
+     * Elimina la configuración del proveedor OpenCode retirado en v0.2.5.23.
+     * Se ejecuta una única vez (bandera en settings) y sin depender de helpers.
+     */
+    private static function cleanupRemovedProviders(PDO $db): void
+    {
+        try {
+            $stmt = $db->prepare("SELECT setting_value FROM settings WHERE setting_key = 'llm_cleanup_opencode'");
+            $stmt->execute();
+            if ($stmt->fetchColumn() === '1') {
+                return;
+            }
+
+            // Perfiles cuyo proveedor ya no existe
+            $db->exec("DELETE FROM llm_profiles WHERE lower(provider) = 'opencode'");
+            // Configuración única heredada apuntando a OpenCode
+            $db->exec("UPDATE settings SET setting_value = '' WHERE setting_key = 'llm_provider' AND lower(setting_value) = 'opencode'");
+            // Caché de modelos de OpenCode
+            $db->exec("DELETE FROM settings WHERE setting_key = 'llm_models_cache_opencode'");
+            // Tareas que apuntaban a perfiles borrados → predeterminado
+            $db->exec("UPDATE settings SET setting_value = '0' WHERE setting_key LIKE 'llm_task_%'");
+            // Bandera de limpieza realizada
+            $db->exec("INSERT OR REPLACE INTO settings (setting_key, setting_value, updated_at) VALUES ('llm_cleanup_opencode', '1', datetime('now'))");
+        } catch (Throwable $e) {
+            // Instalaciones sin estas tablas: no hacer nada.
+        }
     }
 
     /**
