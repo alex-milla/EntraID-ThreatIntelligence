@@ -592,14 +592,20 @@ if (!function_exists('llm_cfg_from_input')) {
 }
 
 if (!function_exists('llm_actions_list')) {
-    /** Lista de acciones rápidas de Análisis IA (editables). */
-    function llm_actions_list(bool $onlyActive = false): array
+    /** Lista de acciones rápidas (editables), opcionalmente filtradas por ámbito. */
+    function llm_actions_list(bool $onlyActive = false, ?string $scope = null): array
     {
         try {
+            $where = [];
+            $params = [];
+            if ($onlyActive) { $where[] = 'is_active = 1'; }
+            if ($scope !== null && $scope !== '') { $where[] = 'scope = ?'; $params[] = $scope; }
+
             $sql = "SELECT * FROM llm_actions";
-            if ($onlyActive) { $sql .= " WHERE is_active = 1"; }
+            if ($where) { $sql .= ' WHERE ' . implode(' AND ', $where); }
             $sql .= " ORDER BY position, id";
-            return Database::fetchAll($sql);
+
+            return $params ? Database::fetchAll($sql, $params) : Database::fetchAll($sql);
         } catch (Throwable $e) {
             return [];
         }
@@ -626,8 +632,10 @@ if (!function_exists('llm_action_save')) {
         $prompt = trim((string)($data['prompt'] ?? ''));
         $position = (int)($data['position'] ?? 0);
         $active = !empty($data['is_active']) ? 1 : 0;
+        $scope = trim((string)($data['scope'] ?? '')) ?: 'tenant';
 
         if ($id && $id > 0) {
+            // El ámbito no se cambia al editar.
             Database::update(
                 "UPDATE llm_actions SET label = ?, prompt = ?, position = ?, is_active = ?, updated_at = datetime('now') WHERE id = ?",
                 [$label, $prompt, $position, $active, $id]
@@ -635,8 +643,8 @@ if (!function_exists('llm_action_save')) {
             return $id;
         }
         return Database::insert(
-            "INSERT INTO llm_actions (label, prompt, position, is_active) VALUES (?, ?, ?, ?)",
-            [$label, $prompt, $position, $active]
+            "INSERT INTO llm_actions (label, prompt, position, is_active, scope) VALUES (?, ?, ?, ?, ?)",
+            [$label, $prompt, $position, $active, $scope]
         );
     }
 }

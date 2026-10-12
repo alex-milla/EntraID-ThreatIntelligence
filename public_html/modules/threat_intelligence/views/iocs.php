@@ -49,6 +49,38 @@ function ti_q(array $extra, int $tenant, array $filters): string {
     <span id="export-msg" class="text-xs text-gray-500"></span>
 </div>
 
+<!-- Análisis con IA (indicadores) -->
+<div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-5 mb-4">
+    <div class="flex items-center justify-between mb-3">
+        <h3 class="text-sm font-semibold">Análisis con IA</h3>
+        <?php if (Auth::isAdmin()): ?>
+            <button type="button" onclick="scopeOpenEditor()" class="w-7 h-7 inline-flex items-center justify-center rounded-lg text-gray-400 hover:text-brand-500 hover:bg-gray-100 dark:hover:bg-gray-800 text-lg leading-none" title="Editar acciones">&#8942;</button>
+        <?php endif; ?>
+    </div>
+    <?php if (empty($profiles)): ?>
+        <p class="text-xs text-gray-400">No hay perfiles de IA configurados. Añádelos en <a href="<?= base_url('admin/apis') ?>" class="text-brand-500 hover:underline">Admin → APIs</a>.</p>
+    <?php else: ?>
+        <p class="text-xs text-gray-400 mb-2">Analiza los indicadores <strong>según los filtros actuales</strong> (máx. 200).</p>
+        <select id="ia-profile" class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm focus:ring-2 focus:ring-brand-500 outline-none mb-3">
+            <?php foreach ($profiles as $p): ?>
+                <option value="<?= (int)$p['id'] ?>" <?= (int)($defaultProfileId ?? 0) === (int)$p['id'] ? 'selected' : '' ?>><?= e($p['name']) ?><?= !empty($p['model']) ? ' · ' . e($p['model']) : '' ?></option>
+            <?php endforeach; ?>
+        </select>
+        <div class="flex flex-wrap gap-2">
+            <?php foreach (($actions ?? []) as $ac): ?>
+                <button type="button" onclick="analyzeIndicatorsIA(<?= (int)$ac['id'] ?>)" class="inline-flex items-center px-3 py-1.5 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-muted-dark text-xs font-medium rounded-lg transition-colors"><?= e($ac['label']) ?></button>
+            <?php endforeach; ?>
+        </div>
+        <textarea id="ia-question" rows="2" placeholder="Pregunta libre (opcional)…" class="w-full mt-3 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm focus:ring-2 focus:ring-brand-500 outline-none"></textarea>
+        <button type="button" onclick="analyzeIndicatorsIA(0)" class="w-full mt-2 px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors">Preguntar</button>
+        <div id="scope-result-actions" class="hidden items-center justify-end gap-2 mt-3">
+            <button type="button" onclick="copyAnalysisScope()" class="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">Copiar</button>
+            <button type="button" onclick="downloadAnalysisScope()" class="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">Descargar .md</button>
+        </div>
+        <div id="ia-result" class="hidden md-body mt-3 border-t border-gray-100 dark:border-gray-700 pt-3"></div>
+    <?php endif; ?>
+</div>
+
 <!-- Tabla -->
 <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
     <?php if (empty($rows)): ?>
@@ -108,4 +140,34 @@ function exportIocs(fmt) {
         else { el.textContent = 'Error al exportar'; }
     }).catch(function() { el.textContent = 'Error de conexión'; });
 }
+
+var SCOPE_REPORT = '';
+function getIaProfile() { var s = document.getElementById('ia-profile'); return s ? parseInt(s.value, 10) : 0; }
+function setScopeActions(show) { var el = document.getElementById('scope-result-actions'); if (!el) return; if (show) { el.classList.remove('hidden'); el.classList.add('flex'); } else { el.classList.add('hidden'); el.classList.remove('flex'); } }
+function analyzeIndicatorsIA(actionId) {
+    var q = document.getElementById('ia-question');
+    var question = q ? q.value : '';
+    if (actionId === 0 && !question.trim()) { toast('Escribe una pregunta', 'warning'); return; }
+    var box = document.getElementById('ia-result');
+    if (!box) return;
+    box.classList.remove('hidden');
+    setScopeActions(false);
+    box.innerHTML = '<div class="spinner mx-auto"></div>';
+    api('POST', '<?= base_url('modules/llm/analyze-indicators') ?>', {
+        tenant_id: <?= (int)$selectedTenant ?>,
+        type: '<?= e(addslashes($filters['type'] ?? '')) ?>',
+        search: '<?= e(addslashes($filters['search'] ?? '')) ?>',
+        action_id: actionId,
+        question: question,
+        profile_id: getIaProfile()
+    }).then(function (res) {
+        if (res.success) { SCOPE_REPORT = res.content || ''; box.innerHTML = res.content_html || esc(res.content); setScopeActions(SCOPE_REPORT.trim() !== ''); }
+        else { box.innerHTML = '<p class="text-sm text-red-500">' + esc(res.error || 'Error') + '</p>'; toast('Error: ' + (res.error || ''), 'error'); }
+    }).catch(function () { box.innerHTML = '<p class="text-sm text-red-500">Error de conexión</p>'; });
+}
+function copyAnalysisScope() { if (!SCOPE_REPORT) return; navigator.clipboard.writeText(SCOPE_REPORT).then(function () { toast('Copiado al portapapeles', 'success'); }).catch(function () { toast('No se pudo copiar', 'error'); }); }
+function downloadAnalysisScope() { if (!SCOPE_REPORT) return; var d = new Date(); var s = d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0'); downloadFile(SCOPE_REPORT, 'indicadores-<?= (int)$selectedTenant ?>-' + s + '.md', 'text/markdown'); }
+function esc(s) { var d = document.createElement('div'); d.textContent = s == null ? '' : s; return d.innerHTML; }
 </script>
+
+<?php if (Auth::isAdmin()) { require VIEWS_PATH . '/partials/llm_actions_editor.php'; } ?>

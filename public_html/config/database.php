@@ -363,9 +363,19 @@ class Database
             prompt TEXT NOT NULL,
             position INTEGER NOT NULL DEFAULT 0,
             is_active INTEGER NOT NULL DEFAULT 1,
+            scope TEXT NOT NULL DEFAULT 'tenant',
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         )");
+
+        // Migración: columna scope en instalaciones antiguas
+        $actionCols = [];
+        foreach ($db->query("PRAGMA table_info(llm_actions)") as $c) {
+            $actionCols[$c['name']] = true;
+        }
+        if (!isset($actionCols['scope'])) {
+            $db->exec("ALTER TABLE llm_actions ADD COLUMN scope TEXT NOT NULL DEFAULT 'tenant'");
+        }
 
         $db->exec("CREATE TABLE IF NOT EXISTS sync_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -430,49 +440,81 @@ class Database
     }
 
     /**
-     * Siembra las acciones rápidas de Análisis IA por defecto (solo si la tabla
-     * está vacía). Son editables desde Admin → APIs.
+     * Siembra las acciones rápidas por defecto de cada ámbito (solo si ese
+     * ámbito no tiene acciones). Son editables desde la propia UI (⋮).
      */
     private static function registerDefaultActions(PDO $db): void
     {
+        foreach (['tenant', 'actor', 'tool', 'indicator'] as $scope) {
+            self::ensureScopeActions($db, $scope, self::defaultActionsForScope($scope));
+        }
+    }
+
+    /** Acciones rápidas por defecto para un ámbito. */
+    private static function defaultActionsForScope(string $scope): array
+    {
+        $sets = [
+            'tenant' => [
+                ['Resumen ejecutivo', 'Elabora un RESUMEN EJECUTIVO de la postura de seguridad del tenant: lo más relevante, los riesgos principales y 3-5 recomendaciones priorizadas.'],
+                ['Incidentes y alertas', 'Analiza los INCIDENTES y ALERTAS: tendencias, severidad, amenazas y técnicas más relevantes, y acciones recomendadas.'],
+                ['Vulnerabilidades', 'Analiza las VULNERABILIDADES: prioriza por explotabilidad (exploit público, EPSS, CVSS) y propón un plan de remediación.'],
+                ['Secure Score', 'Analiza el SECURE SCORE: interpreta el valor y su evolución y propón mejoras concretas y priorizadas.'],
+                ['IOCs', 'Analiza los IOCs recientes: agrúpalos por tipo y relevancia, indica de qué artículo provienen y qué acciones tomar.'],
+                ['Artículos TI', 'Lista los ARTÍCULOS de Threat Intelligence recientes con su título, fecha, enlace y los IOCs asociados a cada uno, y resume brevemente su relevancia para el tenant.'],
+                ['Riesgos', 'Identifica los PRINCIPALES RIESGOS del tenant (incidentes, alertas, vulnerabilidades, IOCs y postura) y priorízalos.'],
+            ],
+            'actor' => [
+                ['Perfil del actor', 'Elabora un perfil del actor: quién es, motivación, atribución, país/región de origen y a quién suele atacar, basándote SOLO en los datos proporcionados.'],
+                ['TTPs y MITRE', 'Resume las TTPs y técnicas MITRE de este actor a partir de la información y de sus indicadores; agrúpalas por táctica.'],
+                ['Detección', 'Propón recomendaciones de detección para este actor: señales a monitorizar, reglas/búsquedas (KQL conceptual) y prioridades.'],
+                ['Indicadores clave', 'Resume los indicadores asociados más relevantes (tipos y valores clave) y qué acciones tomar con ellos.'],
+            ],
+            'tool' => [
+                ['Qué es y cómo se usa', 'Explica qué es esta herramienta, para qué la usan los atacantes y en qué fase del ataque (MITRE) encaja, basándote SOLO en los datos.'],
+                ['TTPs / uso en campañas', 'Resume cómo se emplea esta herramienta (técnicas MITRE) y ejemplos de uso en campañas.'],
+                ['Detección', 'Propón recomendaciones de detección para esta herramienta (señales, reglas/búsquedas y prioridades).'],
+                ['Indicadores clave', 'Resume los indicadores asociados más relevantes y qué acciones tomar con ellos.'],
+            ],
+            'indicator' => [
+                ['Análisis de indicadores', 'Analiza los indicadores mostrados: clasifícalos por tipo, indica su relevancia/riesgo y posibles falsos positivos.'],
+                ['Prioriza accionables', 'Prioriza los indicadores más accionables y explica por qué, con el contexto disponible.'],
+                ['Bloqueo/detección', 'Propón cómo usar estos indicadores (bloqueo, reglas, búsquedas) y qué precauciones tomar para evitar falsos positivos.'],
+            ],
+        ];
+        return $sets[$scope] ?? [];
+    }
+
+    /** Inserta las acciones de un ámbito solo si ese ámbito no tiene ninguna. */
+    private static function ensureScopeActions(PDO $db, string $scope, array $actions): void
+    {
+        if (empty($actions)) {
+            return;
+        }
         try {
-            $count = (int)$db->query("SELECT COUNT(*) FROM llm_actions")->fetchColumn();
-            if ($count > 0) {
+            $stmt = $db->prepare("SELECT COUNT(*) FROM llm_actions WHERE scope = ?");
+            $stmt->execute([$scope]);
+            if ((int)$stmt->fetchColumn() > 0) {
                 return;
             }
         } catch (Throwable $e) {
             return;
         }
-        self::insertDefaultActions($db);
-    }
 
-    /** Inserta las acciones rápidas por defecto. */
-    private static function insertDefaultActions(PDO $db): void
-    {
-        $actions = [
-            ['Resumen ejecutivo', 'Elabora un RESUMEN EJECUTIVO de la postura de seguridad del tenant: lo más relevante, los riesgos principales y 3-5 recomendaciones priorizadas.'],
-            ['Incidentes y alertas', 'Analiza los INCIDENTES y ALERTAS: tendencias, severidad, amenazas y técnicas más relevantes, y acciones recomendadas.'],
-            ['Vulnerabilidades', 'Analiza las VULNERABILIDADES: prioriza por explotabilidad (exploit público, EPSS, CVSS) y propón un plan de remediación.'],
-            ['Secure Score', 'Analiza el SECURE SCORE: interpreta el valor y su evolución y propón mejoras concretas y priorizadas.'],
-            ['IOCs', 'Analiza los IOCs recientes: agrúpalos por tipo y relevancia, indica de qué artículo provienen y qué acciones tomar.'],
-            ['Artículos TI', 'Lista los ARTÍCULOS de Threat Intelligence recientes con su título, fecha, enlace y los IOCs asociados a cada uno, y resume brevemente su relevancia para el tenant.'],
-            ['Riesgos', 'Identifica los PRINCIPALES RIESGOS del tenant (incidentes, alertas, vulnerabilidades, IOCs y postura) y priorízalos.'],
-        ];
-
-        $stmt = $db->prepare("INSERT INTO llm_actions (label, prompt, position, is_active) VALUES (?, ?, ?, 1)");
+        $stmt = $db->prepare("INSERT INTO llm_actions (label, prompt, position, is_active, scope) VALUES (?, ?, ?, 1, ?)");
         $pos = 10;
         foreach ($actions as $a) {
-            $stmt->execute([$a[0], $a[1], $pos]);
+            $stmt->execute([$a[0], $a[1], $pos, $scope]);
             $pos += 10;
         }
     }
 
-    /** Borra las acciones actuales y reinserta las de por defecto. */
-    public static function resetDefaultActions(): void
+    /** Borra las acciones de un ámbito y reinserta las de por defecto. */
+    public static function resetDefaultActions(string $scope = 'tenant'): void
     {
         $db = self::getInstance();
-        $db->exec("DELETE FROM llm_actions");
-        self::insertDefaultActions($db);
+        $stmt = $db->prepare("DELETE FROM llm_actions WHERE scope = ?");
+        $stmt->execute([$scope]);
+        self::ensureScopeActions($db, $scope, self::defaultActionsForScope($scope));
     }
 
     /**

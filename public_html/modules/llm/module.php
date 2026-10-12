@@ -814,12 +814,98 @@ class Module_Llm extends BaseModule
         return (strlen($s) > $max) ? (substr($s, 0, $max - 1) . '…') : $s;
     }
 
+    // ============================================================
+    // Análisis IA de Intel Profiles e Indicadores (con scope)
+    // ============================================================
+
+    public function analyzeProfile(int $id, string $instruction, string $question = '', ?int $llmProfileId = null): array
+    {
+        $p = Database::fetchOne("SELECT * FROM ti_intel_profiles WHERE id = ?", [$id]);
+        if (!$p) { return ['success' => false, 'error' => 'Perfil no encontrado']; }
+
+        $iocs = Database::fetchAll("SELECT ioc_type, ioc_value FROM ti_iocs WHERE profile_id = ? ORDER BY ioc_type LIMIT 150", [$id]);
+
+        $ctx = 'PERFIL (' . ucfirst((string)$p['kind']) . "): {$p['title']}\n";
+        $aliases = safe_json_decode((string)($p['aliases'] ?? ''), []);
+        if (is_array($aliases) && $aliases) { $ctx .= 'Alias: ' . implode(', ', array_map('strval', array_slice($aliases, 0, 20))) . "\n"; }
+        if (!empty($p['first_active'])) { $ctx .= 'Primera actividad: ' . $p['first_active'] . "\n"; }
+        if (!empty($p['summary'])) { $ctx .= "\nRESUMEN:\n" . $this->ctxClip((string)$p['summary'], 1500) . "\n"; }
+        if (!empty($p['description'])) { $ctx .= "\nDESCRIPCIÓN:\n" . $this->ctxClip((string)$p['description'], 3000) . "\n"; }
+        if (!empty($p['tradecraft'])) { $ctx .= "\nTRADECRAFT:\n" . $this->ctxClip((string)$p['tradecraft'], 3000) . "\n"; }
+        if ($iocs) {
+            $lines = [];
+            foreach ($iocs as $i) { $lines[] = '- [' . $i['ioc_type'] . '] ' . $this->ctxClip((string)$i['ioc_value'], 100); }
+            $ctx .= "\nINDICADORES (" . count($iocs) . "):\n" . implode("\n", $lines) . "\n";
+        }
+
+        $instruction = trim($instruction) ?: 'Analiza este perfil de amenaza y resume lo más relevante.';
+        $system = 'Eres un analista de threat intelligence senior. Responde SIEMPRE en español y en Markdown, basándote EXCLUSIVAMENTE en los datos del perfil; no inventes. Sé concreto y accionable.';
+        $user = "DATOS DEL PERFIL:\n\n{$ctx}\n\nTAREA: {$instruction}";
+        if (trim($question) !== '') { $user .= "\n\nPREGUNTA DEL ANALISTA: " . trim($question); }
+
+        return $this->chat($system, $user, ['max_tokens' => 2000], $llmProfileId);
+    }
+
+    public function analyzeIndicators(int $tenantId, string $instruction, string $question = '', array $filters = [], ?int $llmProfileId = null): array
+    {
+        $where = ['tenant_id = ?'];
+        $params = [$tenantId];
+        if (!empty($filters['type'])) { $where[] = 'ioc_type = ?'; $params[] = $filters['type']; }
+        if (!empty($filters['search'])) { $where[] = 'ioc_value LIKE ?'; $params[] = '%' . $filters['search'] . '%'; }
+        $params[] = 200;
+        $iocs = Database::fetchAll("SELECT ioc_type, ioc_value, severity FROM ti_iocs WHERE " . implode(' AND ', $where) . " ORDER BY fetched_at DESC LIMIT ?", $params);
+
+        $lines = [];
+        foreach ($iocs as $i) { $lines[] = '- [' . $i['ioc_type'] . '] ' . $this->ctxClip((string)$i['ioc_value'], 120) . (!empty($i['severity']) ? ' (' . $i['severity'] . ')' : ''); }
+        $ctx = 'INDICADORES (mostrando ' . count($iocs) . '):' . "\n" . ($lines ? implode("\n", $lines) : '(sin indicadores con esos filtros)');
+
+        $instruction = trim($instruction) ?: 'Analiza estos indicadores y resume lo más relevante.';
+        $system = 'Eres un analista de threat intelligence senior. Responde SIEMPRE en español y en Markdown, basándote EXCLUSIVAMENTE en los indicadores proporcionados; no inventes.';
+        $user = "DATOS:\n\n{$ctx}\n\nTAREA: {$instruction}";
+        if (trim($question) !== '') { $user .= "\n\nPREGUNTA DEL ANALISTA: " . trim($question); }
+
+        return $this->chat($system, $user, ['max_tokens' => 2000], $llmProfileId);
+    }
+
+    public function analyzeProfileEndpoint(array $params = []): void
+    {
+        Csrf::validateOrFail();
+        $input = json_decode(file_get_contents('php://input'), true) ?? $_POST;
+        $instruction = '';
+        $actionId = (int)($input['action_id'] ?? 0);
+        if ($actionId > 0) { $a = llm_action_get($actionId); if ($a) { $instruction = (string)$a['prompt']; } }
+        json_response($this->analyzeProfile(
+            (int)($params['id'] ?? 0),
+            $instruction,
+            (string)($input['question'] ?? ''),
+            $this->resolveProfile($input, 'analyze_tenant')
+        ));
+    }
+
+    public function analyzeIndicatorsEndpoint(array $params = []): void
+    {
+        Csrf::validateOrFail();
+        $input = json_decode(file_get_contents('php://input'), true) ?? $_POST;
+        $instruction = '';
+        $actionId = (int)($input['action_id'] ?? 0);
+        if ($actionId > 0) { $a = llm_action_get($actionId); if ($a) { $instruction = (string)$a['prompt']; } }
+        json_response($this->analyzeIndicators(
+            (int)($input['tenant_id'] ?? 0),
+            $instruction,
+            (string)($input['question'] ?? ''),
+            ['type' => (string)($input['type'] ?? ''), 'search' => (string)($input['search'] ?? '')],
+            $this->resolveProfile($input, 'analyze_tenant')
+        ));
+    }
+
     public function routes(): array
     {
         return [
             ['method' => 'GET',  'pattern' => '',                        'handler' => [$this, 'index']],
             ['method' => 'POST', 'pattern' => 'chat',                    'handler' => [$this, 'chatEndpoint']],
             ['method' => 'POST', 'pattern' => 'analyze-tenant',          'handler' => [$this, 'analyzeTenantEndpoint']],
+            ['method' => 'POST', 'pattern' => 'analyze-profile/{id}',    'handler' => [$this, 'analyzeProfileEndpoint']],
+            ['method' => 'POST', 'pattern' => 'analyze-indicators',      'handler' => [$this, 'analyzeIndicatorsEndpoint']],
             ['method' => 'POST', 'pattern' => 'actions/save',            'handler' => [$this, 'actionsSaveEndpoint']],
             ['method' => 'POST', 'pattern' => 'actions/delete',          'handler' => [$this, 'actionsDeleteEndpoint']],
             ['method' => 'POST', 'pattern' => 'actions/restore',         'handler' => [$this, 'actionsRestoreEndpoint']],
@@ -900,6 +986,7 @@ class Module_Llm extends BaseModule
             'prompt'    => $prompt,
             'position'  => (int)($input['position'] ?? 0),
             'is_active' => $input['is_active'] ?? '',
+            'scope'     => trim((string)($input['scope'] ?? '')) ?: 'tenant',
         ], ((int)($input['id'] ?? 0)) ?: null);
 
         log_activity('llm.action_saved', ['action_id' => $id]);
@@ -928,7 +1015,9 @@ class Module_Llm extends BaseModule
     {
         Auth::requireAdmin();
         Csrf::validateOrFail();
-        Database::resetDefaultActions();
+        $input = json_decode(file_get_contents('php://input'), true) ?? $_POST;
+        $scope = trim((string)($input['scope'] ?? '')) ?: 'tenant';
+        Database::resetDefaultActions($scope);
         json_response(['success' => true]);
     }
 

@@ -670,11 +670,18 @@ class Module_ThreatIntelligence extends BaseModule
         $indicators = Database::fetchAll("SELECT * FROM ti_iocs WHERE profile_id = ? ORDER BY ioc_type, ioc_value LIMIT 3000", [$id]);
         $tenant = TenantManager::getById((int)$profile['tenant_id']);
 
+        $scope = in_array((string)($profile['kind'] ?? ''), ['actor', 'tool'], true) ? (string)$profile['kind'] : 'actor';
+
         echo $this->page('profile', [
             'module'     => $this,
             'profile'    => $profile,
             'indicators' => $indicators,
             'tenant'     => $tenant,
+            'actions'           => llm_actions_list(true, $scope),
+            'actionsEditorList' => llm_actions_list(false, $scope),
+            'actionScope'       => $scope,
+            'profiles'          => llm_profile_list(),
+            'defaultProfileId'  => (llm_profile_default()['id'] ?? null),
         ]);
     }
 
@@ -778,6 +785,11 @@ class Module_ThreatIntelligence extends BaseModule
             'filters'        => $filters,
             'iocs'           => $data,
             'types'          => $types,
+            'actions'           => llm_actions_list(true, 'indicator'),
+            'actionsEditorList' => llm_actions_list(false, 'indicator'),
+            'actionScope'       => 'indicator',
+            'profiles'          => llm_profile_list(),
+            'defaultProfileId'  => (llm_profile_default()['id'] ?? null),
         ]);
     }
 
