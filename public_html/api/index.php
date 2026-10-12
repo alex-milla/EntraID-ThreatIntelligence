@@ -158,10 +158,11 @@ $router->group('/api/llm', function (Router $r) {
     $r->get('status', function () {
         apiRequireAuth();
         $module = ModuleManager::get('llm');
+        $cfg = $module->cfg();
         json_response([
             'configured' => $module->isConfigured(),
-            'provider'   => LLM_PROVIDER ?: null,
-            'model'      => LLM_MODEL ?: null,
+            'provider'   => $cfg['provider'] ?: null,
+            'model'      => $cfg['model'] ?: null,
         ]);
     });
 

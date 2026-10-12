@@ -40,11 +40,29 @@ class Module_Llm extends BaseModule
     }
 
     /**
+     * Configuración efectiva: primero la guardada en la BD (Admin → APIs),
+     * con fallback a las constantes de .env. Así no rompe instalaciones que
+     * sigan configurando el LLM por .env.
+     */
+    public function cfg(): array
+    {
+        return llm_config();
+    }
+
+    /**
      * Verifica si el módulo está configurado.
      */
     public function isConfigured(): bool
     {
-        return !empty(LLM_PROVIDER) && !empty(LLM_API_KEY);
+        $c = $this->cfg();
+        if ($c['provider'] === '') {
+            return false;
+        }
+        // Ollama y endpoints locales no requieren API key
+        if (in_array($c['provider'], ['ollama'], true)) {
+            return true;
+        }
+        return $c['api_key'] !== '';
     }
 
     /**
@@ -53,19 +71,51 @@ class Module_Llm extends BaseModule
     public function chat(string $systemPrompt, string $userPrompt, array $options = []): array
     {
         if (!$this->isConfigured()) {
-            return ['success' => false, 'error' => 'LLM no configurado. Define LLM_PROVIDER y LLM_API_KEY en .env'];
+            return ['success' => false, 'error' => 'LLM no configurado. Configúralo en Admin → APIs (o en .env).'];
         }
 
-        $provider = strtolower(LLM_PROVIDER);
+        $cfg = $this->cfg();
 
         try {
-            return match ($provider) {
-                'openai'    => $this->callOpenAI($systemPrompt, $userPrompt, $options),
-                'anthropic' => $this->callAnthropic($systemPrompt, $userPrompt, $options),
-                'ollama'    => $this->callOllama($systemPrompt, $userPrompt, $options),
-                'azure'     => $this->callAzure($systemPrompt, $userPrompt, $options),
-                default     => ['success' => false, 'error' => "Proveedor no soportado: $provider"],
-            };
+            return $this->dispatch($cfg, $systemPrompt, $userPrompt, $options);
+        } catch (Throwable $e) {
+            return ['success' => false, 'error' => $e->getMessage()];
+        }
+    }
+
+    /**
+     * Enruta la petición al proveedor configurado.
+     */
+    private function dispatch(array $cfg, string $system, string $user, array $options): array
+    {
+        return match ($cfg['provider']) {
+            'openai'    => $this->callOpenAI($cfg, $system, $user, $options),
+            'anthropic' => $this->callAnthropic($cfg, $system, $user, $options),
+            'ollama'    => $this->callOllama($cfg, $system, $user, $options),
+            'azure'     => $this->callAzure($cfg, $system, $user, $options),
+            default     => ['success' => false, 'error' => 'Proveedor no soportado: ' . $cfg['provider']],
+        };
+    }
+
+    /**
+     * Prueba la conexión con el proveedor (config actual o los valores dados).
+     * Usado por el panel Admin → APIs.
+     */
+    public function testConnection(array $override = []): array
+    {
+        $cfg = array_merge($this->cfg(), $override);
+        if (empty($cfg['provider'])) {
+            return ['success' => false, 'error' => 'Falta seleccionar un proveedor'];
+        }
+        if ($cfg['provider'] !== 'ollama' && empty($cfg['api_key'])) {
+            return ['success' => false, 'error' => 'Falta la API key'];
+        }
+        try {
+            $res = $this->dispatch($cfg, 'Eres un asistente.', 'ping', ['max_tokens' => 5]);
+            if (!empty($res['success'])) {
+                return ['success' => true, 'message' => 'Conexión correcta con ' . $cfg['provider'] . ' (' . ($res['model'] ?? $cfg['model']) . ')'];
+            }
+            return $res;
         } catch (Throwable $e) {
             return ['success' => false, 'error' => $e->getMessage()];
         }
@@ -75,10 +125,10 @@ class Module_Llm extends BaseModule
     // Proveedores LLM
     // ============================================================
 
-    private function callOpenAI(string $system, string $user, array $options): array
+    private function callOpenAI(array $cfg, string $system, string $user, array $options): array
     {
-        $url = LLM_API_URL ?: 'https://api.openai.com/v1/chat/completions';
-        $model = LLM_MODEL ?: 'gpt-4o-mini';
+        $url = $cfg['api_url'] ?: 'https://api.openai.com/v1/chat/completions';
+        $model = $cfg['model'] ?: 'gpt-4o-mini';
 
         $body = json_encode([
             'model'       => $model,
@@ -86,12 +136,12 @@ class Module_Llm extends BaseModule
                 ['role' => 'system', 'content' => $system],
                 ['role' => 'user',   'content' => $user],
             ],
-            'max_tokens'  => $options['max_tokens'] ?? LLM_MAX_TOKENS,
+            'max_tokens'  => $options['max_tokens'] ?? $cfg['max_tokens'],
             'temperature' => $options['temperature'] ?? 0.3,
         ]);
 
         $response = $this->httpPost($url, $body, [
-            'Authorization: Bearer ' . LLM_API_KEY,
+            'Authorization: Bearer ' . $cfg['api_key'],
             'Content-Type: application/json',
         ]);
 
@@ -103,14 +153,14 @@ class Module_Llm extends BaseModule
         return ['success' => true, 'content' => $content, 'model' => $model];
     }
 
-    private function callAnthropic(string $system, string $user, array $options): array
+    private function callAnthropic(array $cfg, string $system, string $user, array $options): array
     {
-        $url = LLM_API_URL ?: 'https://api.anthropic.com/v1/messages';
-        $model = LLM_MODEL ?: 'claude-3-5-sonnet-20241022';
+        $url = $cfg['api_url'] ?: 'https://api.anthropic.com/v1/messages';
+        $model = $cfg['model'] ?: 'claude-3-5-sonnet-20241022';
 
         $body = json_encode([
             'model'       => $model,
-            'max_tokens'  => $options['max_tokens'] ?? LLM_MAX_TOKENS,
+            'max_tokens'  => $options['max_tokens'] ?? $cfg['max_tokens'],
             'system'      => $system,
             'messages'    => [
                 ['role' => 'user', 'content' => $user],
@@ -118,7 +168,7 @@ class Module_Llm extends BaseModule
         ]);
 
         $response = $this->httpPost($url, $body, [
-            'x-api-key: ' . LLM_API_KEY,
+            'x-api-key: ' . $cfg['api_key'],
             'anthropic-version: 2023-06-01',
             'Content-Type: application/json',
         ]);
@@ -131,10 +181,10 @@ class Module_Llm extends BaseModule
         return ['success' => true, 'content' => $content, 'model' => $model];
     }
 
-    private function callOllama(string $system, string $user, array $options): array
+    private function callOllama(array $cfg, string $system, string $user, array $options): array
     {
-        $url = rtrim(LLM_API_URL ?: 'http://localhost:11434', '/') . '/api/chat';
-        $model = LLM_MODEL ?: 'llama3.1';
+        $url = rtrim($cfg['api_url'] ?: 'http://localhost:11434', '/') . '/api/chat';
+        $model = $cfg['model'] ?: 'llama3.1';
 
         $body = json_encode([
             'model'    => $model,
@@ -144,7 +194,7 @@ class Module_Llm extends BaseModule
             ],
             'stream'   => false,
             'options'  => [
-                'num_predict' => $options['max_tokens'] ?? LLM_MAX_TOKENS,
+                'num_predict' => $options['max_tokens'] ?? $cfg['max_tokens'],
             ],
         ]);
 
@@ -158,21 +208,21 @@ class Module_Llm extends BaseModule
         return ['success' => true, 'content' => $content, 'model' => $model];
     }
 
-    private function callAzure(string $system, string $user, array $options): array
+    private function callAzure(array $cfg, string $system, string $user, array $options): array
     {
-        $url = rtrim(LLM_API_URL, '/') . '/openai/deployments/' . LLM_MODEL . '/chat/completions?api-version=2024-02-15-preview';
+        $url = rtrim($cfg['api_url'], '/') . '/openai/deployments/' . $cfg['model'] . '/chat/completions?api-version=2024-02-15-preview';
 
         $body = json_encode([
             'messages'    => [
                 ['role' => 'system', 'content' => $system],
                 ['role' => 'user',   'content' => $user],
             ],
-            'max_tokens'  => $options['max_tokens'] ?? LLM_MAX_TOKENS,
+            'max_tokens'  => $options['max_tokens'] ?? $cfg['max_tokens'],
             'temperature' => $options['temperature'] ?? 0.3,
         ]);
 
         $response = $this->httpPost($url, $body, [
-            'api-key: ' . LLM_API_KEY,
+            'api-key: ' . $cfg['api_key'],
             'Content-Type: application/json',
         ]);
 
@@ -181,7 +231,7 @@ class Module_Llm extends BaseModule
             return ['success' => false, 'error' => 'Respuesta vacía del modelo', 'raw' => $response];
         }
 
-        return ['success' => true, 'content' => $content, 'model' => LLM_MODEL];
+        return ['success' => true, 'content' => $content, 'model' => $cfg['model']];
     }
 
     // ============================================================
@@ -292,11 +342,12 @@ class Module_Llm extends BaseModule
     public function index(array $params = []): void
     {
         $tenants = TenantManager::getActive();
+        $cfg = $this->cfg();
         echo $this->page('index', [
             'module' => $this, 'tenants' => $tenants,
             'configured' => $this->isConfigured(),
-            'provider' => LLM_PROVIDER ?: 'no configurado',
-            'model' => LLM_MODEL ?: '—',
+            'provider' => $cfg['provider'] ?: 'no configurado',
+            'model' => $cfg['model'] ?: '—',
         ]);
     }
 
@@ -333,10 +384,11 @@ class Module_Llm extends BaseModule
 
     public function getStatus(array $params = []): void
     {
+        $cfg = $this->cfg();
         json_response([
             'configured' => $this->isConfigured(),
-            'provider'   => LLM_PROVIDER ?: null,
-            'model'      => LLM_MODEL ?: null,
+            'provider'   => $cfg['provider'] ?: null,
+            'model'      => $cfg['model'] ?: null,
         ]);
     }
 }

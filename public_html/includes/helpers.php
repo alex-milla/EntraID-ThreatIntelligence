@@ -336,3 +336,69 @@ if (!function_exists('log_activity')) {
         file_put_contents($logFile, json_encode($entry, JSON_UNESCAPED_SLASHES) . "\n", FILE_APPEND | LOCK_EX);
     }
 }
+
+if (!function_exists('setting_get')) {
+    /**
+     * Lee un valor de la tabla `settings`. Si está marcado como cifrado,
+     * lo descifra con AES-256. Devuelve $default si no existe o está vacío.
+     */
+    function setting_get(string $key, mixed $default = null): mixed
+    {
+        try {
+            $row = Database::fetchOne(
+                "SELECT setting_value, is_encrypted FROM settings WHERE setting_key = ?",
+                [$key]
+            );
+        } catch (Throwable $e) {
+            return $default;
+        }
+        if (!$row) {
+            return $default;
+        }
+        $val = $row['setting_value'];
+        if (!empty($row['is_encrypted']) && $val !== null && $val !== '') {
+            try {
+                $val = Encryption::decryptCombined($val);
+            } catch (Throwable $e) {
+                return $default;
+            }
+        }
+        return ($val === null || $val === '') ? $default : $val;
+    }
+}
+
+if (!function_exists('setting_set')) {
+    /**
+     * Guarda (INSERT OR REPLACE) un valor en la tabla `settings`.
+     * Si $encrypted, se cifra con AES-256 (recomendado para API keys).
+     */
+    function setting_set(string $key, ?string $value, bool $encrypted = false): void
+    {
+        $stored = ($value === null) ? '' : $value;
+        if ($encrypted && $stored !== '') {
+            $stored = Encryption::encryptCombined($stored);
+        }
+        Database::query(
+            "INSERT OR REPLACE INTO settings (setting_key, setting_value, is_encrypted, updated_at)
+             VALUES (?, ?, ?, datetime('now'))",
+            [$key, $stored, $encrypted ? 1 : 0]
+        );
+    }
+}
+
+if (!function_exists('llm_config')) {
+    /**
+     * Configuración efectiva del LLM: primero la guardada en la BD
+     * (Admin → APIs), con fallback a las constantes de .env.
+     */
+    function llm_config(): array
+    {
+        return [
+            'provider'   => strtolower((string)(setting_get('llm_provider') ?? LLM_PROVIDER)),
+            'api_key'    => (string)(setting_get('llm_api_key') ?? LLM_API_KEY),
+            'api_url'    => (string)(setting_get('llm_api_url') ?? LLM_API_URL),
+            'model'      => (string)(setting_get('llm_model') ?? LLM_MODEL),
+            'max_tokens' => (int)(setting_get('llm_max_tokens') ?? LLM_MAX_TOKENS),
+        ];
+    }
+}

@@ -319,11 +319,13 @@ class Module_Reports extends BaseModule
      */
     public function getReports(int $tenantId = 0, int $page = 1, int $perPage = 20): array
     {
-        $where = $tenantId ? 'WHERE tenant_id = ?' : '';
+        // La consulta hace JOIN con tenants (que también tiene columna tenant_id),
+        // así que hay que cualificar con "r." para evitar "ambiguous column name".
+        $where = $tenantId ? 'WHERE r.tenant_id = ?' : '';
         $params = $tenantId ? [$tenantId] : [];
         $offset = ($page - 1) * $perPage;
 
-        $total = (int)Database::fetchOne("SELECT COUNT(*) as cnt FROM reports $where", $params)['cnt'];
+        $total = (int)Database::fetchOne("SELECT COUNT(*) as cnt FROM reports r $where", $params)['cnt'];
         $params[] = $perPage;
         $params[] = $offset;
 

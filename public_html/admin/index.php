@@ -505,6 +505,90 @@ class AdminController
     }
 
     /**
+     * Panel de configuración de APIs (LLM: OpenAI, Anthropic, Azure, Ollama, Gemini).
+     */
+    public static function apis(): void
+    {
+        Auth::requireAdmin();
+
+        $success = flash('success');
+        $error = flash('error');
+        $cfg = llm_config();
+        $keySet = $cfg['api_key'] !== '';
+
+        require VIEWS_PATH . '/layout/header.php';
+        require VIEWS_PATH . '/layout/sidebar.php';
+        require VIEWS_PATH . '/admin/apis.php';
+        require VIEWS_PATH . '/layout/footer.php';
+    }
+
+    /**
+     * Guarda la configuración de APIs.
+     * La API key se guarda cifrada (AES-256) y solo se actualiza si se envía.
+     */
+    public static function apisSave(): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        $allowed = ['', 'openai', 'anthropic', 'azure', 'ollama', 'gemini', 'custom'];
+        $provider = strtolower(trim((string)($_POST['llm_provider'] ?? '')));
+        if (!in_array($provider, $allowed, true)) {
+            $provider = '';
+        }
+
+        setting_set('llm_provider', $provider);
+        setting_set('llm_api_url', trim((string)($_POST['llm_api_url'] ?? '')));
+        setting_set('llm_model', trim((string)($_POST['llm_model'] ?? '')));
+        setting_set('llm_max_tokens', (string)max(1, min(128000, (int)($_POST['llm_max_tokens'] ?? 2048))));
+
+        // La API key nunca se muestra en el formulario: solo se actualiza si viene una nueva,
+        // salvo que se marque explícitamente "borrar".
+        $key = trim((string)($_POST['llm_api_key'] ?? ''));
+        $clear = !empty($_POST['llm_api_key_clear']);
+        if ($key !== '' && ENCRYPTION_KEY === '') {
+            flash('error', 'No se puede guardar la API key: falta ENCRYPTION_KEY en el .env.');
+            redirect(base_url('admin/apis'));
+        }
+        if ($key !== '') {
+            setting_set('llm_api_key', $key, true);
+        } elseif ($clear) {
+            setting_set('llm_api_key', '', true);
+        }
+
+        log_activity('settings.apis_saved', ['provider' => $provider]);
+        flash('success', 'Configuración de APIs guardada correctamente');
+        redirect(base_url('admin/apis'));
+    }
+
+    /**
+     * Prueba la conexión con el proveedor LLM configurado (respuesta JSON).
+     */
+    public static function apisTest(): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        $input = json_decode(file_get_contents('php://input'), true) ?? $_POST;
+        $module = ModuleManager::get('llm');
+        if (!$module) {
+            json_response(['success' => false, 'error' => 'El módulo LLM no está activo'], 400);
+        }
+
+        $override = [];
+        $provider = strtolower(trim((string)($input['llm_provider'] ?? '')));
+        if ($provider !== '') { $override['provider'] = $provider; }
+        $url = trim((string)($input['llm_api_url'] ?? ''));
+        if ($url !== '') { $override['api_url'] = $url; }
+        $model = trim((string)($input['llm_model'] ?? ''));
+        if ($model !== '') { $override['model'] = $model; }
+        $key = trim((string)($input['llm_api_key'] ?? ''));
+        if ($key !== '') { $override['api_key'] = $key; }
+
+        json_response($module->testConnection($override));
+    }
+
+    /**
      * Actualizaciones del sistema desde GitHub (solo admin).
      * GET: estado (versión instalada vs última release, backups).
      * POST: install / restore (CSRF + backup automático + PRG).
@@ -642,6 +726,7 @@ $adminRoutes = [
         'user/edit'        => 'userEdit',
         'modules'          => 'modules',
         'settings'         => 'settings',
+        'apis'             => 'apis',
         'updates'          => 'updates',
         'change-password'  => 'changePassword',
     ],
@@ -655,6 +740,8 @@ $adminRoutes = [
         'user/edit'        => 'userEdit',
         'module/toggle'    => 'moduleToggle',
         'settings/save'    => 'settingsSave',
+        'apis/save'        => 'apisSave',
+        'apis/test'        => 'apisTest',
         'updates'          => 'updates',
         'change-password'  => 'changePassword',
     ],

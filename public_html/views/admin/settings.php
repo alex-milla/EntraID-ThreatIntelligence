@@ -48,26 +48,30 @@ foreach ($flashData as $type => $msg):
     </div>
 
     <!-- LLM -->
+    <?php $llm = llm_config(); $llmKeySet = $llm['api_key'] !== ''; ?>
     <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-6">
-        <h2 class="text-lg font-semibold mb-4">Integración LLM</h2>
+        <div class="flex items-center justify-between mb-4">
+            <h2 class="text-lg font-semibold">Integración LLM</h2>
+            <a href="<?= base_url('admin/apis') ?>" class="text-sm text-brand-600 dark:text-brand-400 hover:underline">Configurar</a>
+        </div>
         <div class="space-y-3 text-sm">
             <div class="flex justify-between">
                 <span class="text-gray-500">Proveedor</span>
-                <span class="font-medium"><?= e(LLM_PROVIDER ?: 'No configurado') ?></span>
+                <span class="font-medium"><?= e($llm['provider'] ?: 'No configurado') ?></span>
             </div>
             <div class="flex justify-between">
                 <span class="text-gray-500">Modelo</span>
-                <span class="font-medium"><?= e(LLM_MODEL ?: '—') ?></span>
+                <span class="font-medium"><?= e($llm['model'] ?: '—') ?></span>
             </div>
             <div class="flex justify-between">
                 <span class="text-gray-500">API Key</span>
-                <span class="font-medium <?= empty(LLM_API_KEY) ? 'text-gray-400' : 'text-green-600' ?>">
-                    <?= empty(LLM_API_KEY) ? 'No configurada' : '••••••••' ?>
+                <span class="font-medium <?= $llmKeySet ? 'text-green-600' : 'text-gray-400' ?>">
+                    <?= $llmKeySet ? '••••••••' : 'No configurada' ?>
                 </span>
             </div>
         </div>
         <p class="text-xs text-gray-400 mt-4">
-            Configura el LLM editando el archivo <code class="font-mono">.env</code>. Los valores sensibles deben ir ahí, nunca en la BD en texto plano.
+            Se configura en <a href="<?= base_url('admin/apis') ?>" class="text-brand-600 dark:text-brand-400 hover:underline">Admin → APIs</a> (guardado cifrado) o, como fallback, en el archivo <code class="font-mono">.env</code>.
         </p>
     </div>
 
