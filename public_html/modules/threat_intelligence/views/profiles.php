@@ -27,8 +27,7 @@ $tabOff = 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-
         </div>
         <button type="submit" class="px-4 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-muted-dark text-sm font-medium rounded-lg transition-colors">Filtrar</button>
         <?php if (!empty($selectedTenant)): ?>
-            <button type="button" onclick="syncProfiles()" class="px-4 py-2 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-muted-dark text-sm font-medium rounded-lg transition-colors">Sincronizar perfiles</button>
-            <button type="button" onclick="syncIndicators()" class="px-4 py-2 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-muted-dark text-sm font-medium rounded-lg transition-colors">Sincronizar indicadores</button>
+            <button type="button" onclick="runTiSync()" class="px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors">Sincronizar</button>
         <?php endif; ?>
     </form>
 </div>
@@ -78,21 +77,4 @@ $tabOff = 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-
     <?php endif; ?>
 </div>
 
-<script>
-var TI_TENANT = <?= (int)$selectedTenant ?>;
-function syncProfiles() {
-    toast('Sincronizando perfiles…', 'info');
-    api('POST', '<?= base_url('modules/threat_intelligence/sync') ?>/' + TI_TENANT, {})
-        .then(function(r) { if (r.success) { toast('Sincronizado: ' + (r.records || 0) + ' registros', 'success'); setTimeout(function(){ location.reload(); }, 1500); } else { toast(r.error || 'Error', 'error'); } })
-        .catch(function() { toast('Error de conexión', 'error'); });
-}
-function syncIndicators() {
-    toast('Cosechando indicadores de perfiles…', 'info');
-    api('POST', '<?= base_url('modules/threat_intelligence/sync-indicators') ?>/' + TI_TENANT, {})
-        .then(function(r) {
-            if (r.success) { toast('Perfiles: ' + (r.profiles || 0) + ' · indicadores: ' + (r.indicators || 0) + (r.errors ? ' (' + r.errors + ' con error)' : ''), 'success'); setTimeout(function(){ location.reload(); }, 1800); }
-            else { toast(r.error || 'Error', 'error'); }
-        })
-        .catch(function() { toast('Error de conexión', 'error'); });
-}
-</script>
+<?php if (!empty($selectedTenant)) { require VIEWS_PATH . '/partials/ti_sync.php'; } ?>

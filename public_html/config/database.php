@@ -192,9 +192,19 @@ class Database
             countries TEXT,
             first_active TEXT,
             raw_data TEXT,
+            indicators_synced_at TEXT,
             fetched_at TEXT NOT NULL DEFAULT (datetime('now')),
             UNIQUE(tenant_id, profile_id)
         )");
+
+        // Migración: columna indicators_synced_at en instalaciones antiguas
+        $profCols = [];
+        foreach ($db->query("PRAGMA table_info(ti_intel_profiles)") as $c) {
+            $profCols[$c['name']] = true;
+        }
+        if (!isset($profCols['indicators_synced_at'])) {
+            $db->exec("ALTER TABLE ti_intel_profiles ADD COLUMN indicators_synced_at TEXT");
+        }
 
         $db->exec("CREATE TABLE IF NOT EXISTS incidents (
             id INTEGER PRIMARY KEY AUTOINCREMENT,

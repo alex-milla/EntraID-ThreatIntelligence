@@ -25,6 +25,10 @@ function ti_q(array $extra, int $tenant, array $filters): string {
     <p class="text-xs text-gray-400 mt-1"><?= number_format((int)($iocs['total'] ?? 0)) ?> IOCs · <?= count($types) ?> tipos</p>
 </div>
 
+<div class="mb-4 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950 px-4 py-2.5">
+    <p class="text-xs text-amber-700 dark:text-amber-300">Se muestran los indicadores <strong>ingeridos</strong> (artículos + perfiles). El portal de Microsoft incluye además el <strong>feed global</strong> de indicadores, que la API de Graph no expone.</p>
+</div>
+
 <!-- Filtros -->
 <form method="GET" class="mb-4 flex flex-wrap items-center gap-2">
     <select name="tenant" onchange="this.form.submit()" class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm">

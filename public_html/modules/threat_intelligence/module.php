@@ -40,16 +40,8 @@ class Module_ThreatIntelligence extends BaseModule
         $errors = [];
 
         try {
-            // 1. Obtener artículos recientes (últimos 30 días)
-            $articles = $client->graphGet('security/threatIntelligence/articles', [
-                '$select' => 'id,title,createdDateTime,lastUpdatedDateTime',
-            ]);
-
-            $since = time() - (30 * 86400);
-            $recent = array_filter($articles['value'] ?? [], function ($a) use ($since) {
-                $date = $a['lastUpdatedDateTime'] ?? $a['createdDateTime'] ?? null;
-                return $date && strtotime($date) >= $since;
-            });
+            // 1. Artículos recientes (hasta 90 días: lo que expone la API)
+            $recent = $this->fetchRecentArticles($client);
 
             foreach ($recent as $article) {
                 try {
@@ -715,6 +707,171 @@ class Module_ThreatIntelligence extends BaseModule
     }
 
     // ============================================================
+    // Sincronización por pasos (con progreso)
+    // ============================================================
+
+    /** Lista de artículos de TI de los últimos 90 días (con paginación). */
+    private function fetchRecentArticles(GraphClient $client): array
+    {
+        $all = $client->graphGetAll('security/threatIntelligence/articles', [
+            '$select' => 'id,title,createdDateTime,lastUpdatedDateTime',
+        ]);
+        $since = time() - (90 * 86400);
+        return array_values(array_filter($all, function ($a) use ($since) {
+            $date = $a['lastUpdatedDateTime'] ?? $a['createdDateTime'] ?? null;
+            return $date && strtotime($date) >= $since;
+        }));
+    }
+
+    /** Paso de artículos: procesa [cursor, cursor+batch) omitiendo los que no cambiaron. */
+    public function syncStepArticles(GraphClient $client, int $tenantId, int $cursor, int $batch): array
+    {
+        $recent = $this->fetchRecentArticles($client);
+        $total = count($recent);
+        $end = min($cursor + $batch, $total);
+        $added = 0;
+        $skipped = 0;
+
+        for ($k = $cursor; $k < $end; $k++) {
+            $aid = (string)($recent[$k]['id'] ?? '');
+            if ($aid === '') { continue; }
+            $lastUpd = (string)($recent[$k]['lastUpdatedDateTime'] ?? '');
+
+            $existing = Database::fetchOne("SELECT last_updated FROM ti_articles WHERE tenant_id = ? AND article_id = ?", [$tenantId, $aid]);
+            if ($existing && (string)($existing['last_updated'] ?? '') === $lastUpd && $lastUpd !== '') {
+                $skipped++;
+                continue;
+            }
+
+            try {
+                $full = $client->graphGet('security/threatIntelligence/articles/' . $aid);
+                Database::query(
+                    "INSERT OR REPLACE INTO ti_articles
+                     (tenant_id, article_id, title, created_date, last_updated, summary, body, tags, is_featured, fetched_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))",
+                    [
+                        $tenantId,
+                        $aid,
+                        $full['title'] ?? ($recent[$k]['title'] ?? 'Sin título'),
+                        $full['createdDateTime'] ?? null,
+                        $full['lastUpdatedDateTime'] ?? null,
+                        $full['summary']['content'] ?? null,
+                        $full['body']['content'] ?? null,
+                        json_encode($full['tags'] ?? []),
+                        !empty($full['isFeatured']) ? 1 : 0,
+                    ]
+                );
+                $this->syncArticleIocs($client, $tenantId, $aid);
+                $added++;
+            } catch (Throwable $e) { /* skip */ }
+        }
+
+        return ['success' => true, 'phase' => 'articles', 'processed' => $end, 'total' => $total, 'cursor' => $end, 'done' => $end >= $total, 'added' => $added, 'skipped' => $skipped];
+    }
+
+    /** Paso de perfiles (threat actors / tools): upsert en una sola llamada. */
+    public function syncStepProfiles(GraphClient $client, int $tenantId, int $cursor, int $batch): array
+    {
+        $count = $this->syncIntelProfiles($client, $tenantId);
+        return ['success' => true, 'phase' => 'profiles', 'processed' => $count, 'total' => $count, 'cursor' => $count, 'done' => true, 'added' => $count, 'skipped' => 0];
+    }
+
+    /** Paso de indicadores por perfil: procesa [cursor, cursor+batch) omitiendo los recientes (<24 h). */
+    public function syncStepProfileIndicators(GraphClient $client, int $tenantId, int $cursor, int $batch, int $perProfile = 1000): array
+    {
+        $profiles = Database::fetchAll("SELECT id, profile_id, indicators_synced_at FROM ti_intel_profiles WHERE tenant_id = ? ORDER BY id", [$tenantId]);
+        $total = count($profiles);
+        $end = min($cursor + $batch, $total);
+        $added = 0;
+        $skipped = 0;
+
+        for ($k = $cursor; $k < $end; $k++) {
+            $p = $profiles[$k];
+            $synced = (string)($p['indicators_synced_at'] ?? '');
+            if ($synced !== '' && ($ts = strtotime($synced)) !== false && (time() - $ts) < 86400) {
+                $skipped++;
+                continue;
+            }
+
+            try {
+                $iocs = $client->graphGetAll("security/threatIntelligence/intelProfiles/{$p['profile_id']}/indicators");
+            } catch (Throwable $e) { $skipped++; continue; }
+
+            $n = 0;
+            foreach ($iocs as $ioc) {
+                if ($n >= $perProfile) { break; }
+                $artifact = $ioc['artifact'] ?? [];
+                $value = $this->extractIocValue($artifact);
+                $iocType = $this->mapIocType($artifact, $value);
+                try {
+                    Database::query(
+                        "INSERT OR REPLACE INTO ti_iocs
+                         (tenant_id, profile_id, article_id, ioc_id, ioc_type, ioc_value, source, description, severity, first_seen, last_seen, fetched_at)
+                         VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))",
+                        [
+                            $tenantId,
+                            (int)$p['id'],
+                            $ioc['id'] ?? md5($iocType . '|' . $value),
+                            $iocType,
+                            $value,
+                            $ioc['source'] ?? null,
+                            $ioc['description'] ?? null,
+                            $ioc['severity'] ?? null,
+                            $ioc['firstSeenDateTime'] ?? null,
+                            $ioc['lastSeenDateTime'] ?? null,
+                        ]
+                    );
+                    $n++;
+                } catch (Throwable $e) { /* skip */ }
+            }
+            Database::query("UPDATE ti_intel_profiles SET indicators_synced_at = datetime('now') WHERE id = ?", [(int)$p['id']]);
+            $added++;
+        }
+
+        if ($end >= $total) {
+            setting_set('ti_last_sync_' . $tenantId, gmdate('c'));
+        }
+
+        return ['success' => true, 'phase' => 'profile_indicators', 'processed' => $end, 'total' => $total, 'cursor' => $end, 'done' => $end >= $total, 'added' => $added, 'skipped' => $skipped];
+    }
+
+    /** Endpoint de sincronización por pasos (articles / profiles / profile_indicators). */
+    public function syncRun(array $params = []): void
+    {
+        Csrf::validateOrFail();
+        $tenantId = (int)($params['tenantId'] ?? 0);
+        $input = json_decode(file_get_contents('php://input'), true) ?? $_POST;
+        $phase = (string)($input['phase'] ?? 'articles');
+        $cursor = max(0, (int)($input['cursor'] ?? 0));
+        $batch = max(1, min(25, (int)($input['batch'] ?? 8)));
+
+        $missing = $this->missingPermissions($tenantId);
+        if (!empty($missing)) {
+            json_response(['success' => false, 'skipped' => true, 'error' => 'El tenant no tiene los permisos: ' . implode(', ', $missing)]);
+        }
+
+        try {
+            $client = $this->getGraphClient($tenantId);
+        } catch (Throwable $e) {
+            json_response(['success' => false, 'error' => $e->getMessage()]);
+            return;
+        }
+
+        try {
+            $res = match ($phase) {
+                'profiles'           => $this->syncStepProfiles($client, $tenantId, $cursor, $batch),
+                'profile_indicators' => $this->syncStepProfileIndicators($client, $tenantId, $cursor, $batch),
+                default              => $this->syncStepArticles($client, $tenantId, $cursor, $batch),
+            };
+        } catch (Throwable $e) {
+            json_response(['success' => false, 'error' => $e->getMessage()]);
+            return;
+        }
+
+        json_response($res);
+    }
+
+    // ============================================================
     // Rutas del módulo
     // ============================================================
 
@@ -731,6 +888,7 @@ class Module_ThreatIntelligence extends BaseModule
             ['method' => 'GET', 'pattern' => 'profiles',            'handler' => [$this, 'profilesPage']],
             ['method' => 'GET', 'pattern' => 'profile/{id}',        'handler' => [$this, 'showProfilePage']],
             ['method' => 'POST','pattern' => 'sync/{tenantId}',    'handler' => [$this, 'triggerSync']],
+            ['method' => 'POST','pattern' => 'sync-run/{tenantId}', 'handler' => [$this, 'syncRun']],
             ['method' => 'POST','pattern' => 'sync-indicators/{tenantId}', 'handler' => [$this, 'triggerSyncIndicators']],
         ];
     }
