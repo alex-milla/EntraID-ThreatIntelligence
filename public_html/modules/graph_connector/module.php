@@ -33,12 +33,8 @@ class Module_GraphConnector extends BaseModule
 
     public function getNavItem(): ?array
     {
-        return [
-            'label' => 'Conexión Graph',
-            'url'   => base_url('modules/graph_connector'),
-            'icon'  => 'plug',
-            'group' => 'Configuración',
-        ];
+        // Se muestra como enlace dentro de "Administración" en el sidebar (solo admin).
+        return null;
     }
 
     /**
@@ -100,6 +96,7 @@ class Module_GraphConnector extends BaseModule
 
     public function index(array $params = []): void
     {
+        Auth::requireAdmin();
         $tenants = TenantManager::getAll();
         $data = ['module' => $this, 'tenants' => $tenants];
         echo $this->page('index', $data);
@@ -107,6 +104,7 @@ class Module_GraphConnector extends BaseModule
 
     public function testConnection(array $params = []): void
     {
+        Auth::requireAdmin();
         Csrf::validateOrFail();
         $tenantId = (int)($params['id'] ?? 0);
         $result = $this->testTenantConnection($tenantId);
@@ -115,6 +113,7 @@ class Module_GraphConnector extends BaseModule
 
     public function showOrganization(array $params = []): void
     {
+        Auth::requireAdmin();
         $tenantId = (int)($params['id'] ?? 0);
         $result = $this->getOrganizationInfo($tenantId);
         json_response($result);
@@ -122,6 +121,7 @@ class Module_GraphConnector extends BaseModule
 
     public function syncAllModules(array $params = []): void
     {
+        Auth::requireAdmin();
         Csrf::validateOrFail();
         $tenantId = (int)($params['id'] ?? 0);
         $results = ModuleManager::syncAll($tenantId);
@@ -196,6 +196,7 @@ class Module_GraphConnector extends BaseModule
 
     public function diagnoseEndpoint(array $params = []): void
     {
+        Auth::requireAdmin();
         Csrf::validateOrFail();
         json_response($this->diagnose((int)($params['id'] ?? 0)));
     }

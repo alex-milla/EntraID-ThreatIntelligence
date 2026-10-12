@@ -3,9 +3,15 @@
  * Vista índice del módulo Graph Connector.
  */
 ?>
-<div class="mb-6">
-    <h2 class="text-xl font-bold">Conexión Microsoft Graph</h2>
-    <p class="text-sm text-gray-500 mt-1">Prueba la conexión y sincroniza datos de cada tenant.</p>
+<div class="mb-6 flex items-start justify-between gap-3 flex-wrap">
+    <div>
+        <h2 class="text-xl font-bold">Conexión Microsoft Graph</h2>
+        <p class="text-sm text-gray-500 mt-1">Prueba la conexión y sincroniza datos de cada tenant. Las conexiones nuevas se crean en <strong>Admin → Tenants</strong>.</p>
+    </div>
+    <a href="<?= base_url('admin/tenant/edit') ?>" class="inline-flex items-center gap-2 px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+        Nuevo tenant
+    </a>
 </div>
 
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">

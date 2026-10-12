@@ -50,7 +50,7 @@ $pageTitle = 'Dashboard';
         <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
             <h2 class="text-sm font-semibold">Tenants</h2>
             <div class="flex items-center gap-3">
-                <?php if (!empty($tenants)): ?>
+                <?php if (!empty($tenants) && Auth::isAdmin()): ?>
                     <button type="button" onclick="openSync()" class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-brand-500 hover:bg-brand-600 text-white text-xs font-medium rounded-lg transition-colors">
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
                         Sincronizar
@@ -131,6 +131,7 @@ $pageTitle = 'Dashboard';
 </div>
 <?php endif; ?>
 
+<?php if (Auth::isAdmin()): ?>
 <!-- Modal + progreso de sincronización (Dashboard) -->
 <div id="sync-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 p-4">
     <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 w-full max-w-lg shadow-xl">
@@ -162,6 +163,7 @@ $pageTitle = 'Dashboard';
         <div id="sync-progress-bar" class="h-full bg-brand-500 transition-all" style="width:0%"></div>
     </div>
 </div>
+<?php endif; ?>
 
 <script>
 var SYNC_TENANTS = <?= json_encode(array_map(function ($t) {
