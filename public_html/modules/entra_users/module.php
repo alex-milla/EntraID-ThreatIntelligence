@@ -108,22 +108,48 @@ class Module_EntraUsers extends BaseModule
         }
     }
 
-    private function getSignIns(int $tenantId, string $id, int $days = 30, int $top = 100): array
+    private function getSignIns(int $tenantId, string $id, int $days = 7, int $top = 100): array
     {
         try {
             $client = $this->getGraphClient($tenantId);
-            $esc = str_replace("'", "''", $id);
-            $since = gmdate('Y-m-d\TH:i:s\Z', time() - ($days * 86400));
-            $res = $client->graphGet('auditLogs/signIns', [
-                '$filter' => "userId eq '$esc' and createdDateTime ge $since",
-                '$top'    => $top,
-            ]);
-            $signIns = $res['value'] ?? [];
-            usort($signIns, fn($a, $b) => strcmp((string)($b['createdDateTime'] ?? ''), (string)($a['createdDateTime'] ?? '')));
-            return ['success' => true, 'signIns' => $signIns];
         } catch (Throwable $e) {
-            return ['success' => false, 'error' => $e->getMessage(), 'signIns' => []];
+            return ['success' => false, 'error' => $e->getMessage(), 'signIns' => [], 'fallback' => false];
         }
+
+        $esc = str_replace("'", "''", $id);
+
+        // Intentos: primero con filtro de fecha (si procede), luego sin él.
+        $filters = [];
+        if ($days > 0) {
+            $since = gmdate('Y-m-d\TH:i:s\Z', time() - ($days * 86400));
+            $filters[] = "userId eq '$esc' and createdDateTime ge $since";
+        }
+        $filters[] = "userId eq '$esc'";
+
+        $anySuccess = false;
+        $lastError = null;
+
+        foreach ($filters as $i => $filter) {
+            try {
+                $res = $client->graphGet('auditLogs/signIns', [
+                    '$filter' => $filter,
+                    '$top'    => $top,
+                ]);
+                $anySuccess = true;
+                $signIns = $res['value'] ?? [];
+                if (!empty($signIns)) {
+                    usort($signIns, fn($a, $b) => strcmp((string)($b['createdDateTime'] ?? ''), (string)($a['createdDateTime'] ?? '')));
+                    return ['success' => true, 'signIns' => $signIns, 'fallback' => ($i > 0)];
+                }
+            } catch (Throwable $e) {
+                $lastError = $e->getMessage();
+            }
+        }
+
+        if (!$anySuccess && $lastError !== null) {
+            return ['success' => false, 'error' => $lastError, 'signIns' => [], 'fallback' => false];
+        }
+        return ['success' => true, 'signIns' => [], 'fallback' => false];
     }
 
     private function getRiskyUsers(int $tenantId): array
@@ -193,9 +219,9 @@ class Module_EntraUsers extends BaseModule
         $methods = $this->getAuthMethods($tenantId, $id);
         $mfa     = $this->getMfaRegistration($tenantId, $id);
 
-        $days = (int)($_GET['days'] ?? 30);
-        if (!in_array($days, [1, 7, 14, 30], true)) {
-            $days = 30;
+        $days = (int)($_GET['days'] ?? 7);
+        if (!in_array($days, [0, 1, 7, 14, 30], true)) {
+            $days = 7;
         }
         $signIns = $this->getSignIns($tenantId, $id, $days, 100);
         $risk    = $this->getUserRisk($tenantId, $id);
@@ -222,6 +248,7 @@ class Module_EntraUsers extends BaseModule
             'mfaError'     => $mfa['success'] ? null : $mfa['error'],
             'signIns'      => $signIns['signIns'],
             'signInsError' => $signIns['success'] ? null : $signIns['error'],
+            'signInsFallback' => $signIns['fallback'] ?? false,
             'days'         => $days,
             'risk'         => $risk['risk'],
             'riskError'    => $risk['success'] ? null : $risk['error'],

@@ -117,8 +117,8 @@ $methodsMap = [
             <h2 class="text-sm font-semibold">Inicios de sesión (<?= count($signIns) ?>)</h2>
             <div class="flex items-center gap-2 text-xs">
                 <span class="text-gray-400">Periodo:</span>
-                <?php foreach ([1 => '24 h', 7 => '7 días', 14 => '14 días', 30 => '30 días'] as $d => $lbl): ?>
-                    <a href="?tenant=<?= (int)$tenant['id'] ?>&days=<?= $d ?>" class="<?= (int)($days ?? 30) === $d ? 'font-semibold text-brand-500' : 'text-gray-500 hover:underline' ?>"><?= $lbl ?></a>
+                <?php foreach ([1 => '24 h', 7 => '7 días', 14 => '14 días', 30 => '30 días', 0 => 'Sin filtro'] as $d => $lbl): ?>
+                    <a href="?tenant=<?= (int)$tenant['id'] ?>&days=<?= $d ?>" class="<?= (int)($days ?? 7) === $d ? 'font-semibold text-brand-500' : 'text-gray-500 hover:underline' ?>"><?= $lbl ?></a>
                 <?php endforeach; ?>
             </div>
         </div>
@@ -135,6 +135,12 @@ $methodsMap = [
             </label>
         </div>
     </div>
+
+    <?php if (!empty($signInsFallback)): ?>
+        <div class="px-5 py-2 text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-800">
+            El filtro de fecha no devolvió resultados; mostrando los inicios de sesión más recientes.
+        </div>
+    <?php endif; ?>
 
     <?php if (!empty($signInsError)): ?>
         <div class="px-5 py-6 text-sm text-red-500">
