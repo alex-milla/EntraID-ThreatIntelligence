@@ -120,7 +120,13 @@ $navQs = 'tenant=' . (int)$article['tenant_id']
         </div>
 
         <div id="ai-panel" class="hidden bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-5">
-            <h2 class="text-sm font-semibold mb-3">Análisis IA</h2>
+            <div class="flex items-center justify-between mb-3">
+                <h2 class="text-sm font-semibold">Análisis IA</h2>
+                <div id="art-result-actions" class="hidden items-center gap-2">
+                    <button type="button" onclick="copyArtAnalysis()" class="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">Copiar</button>
+                    <button type="button" onclick="downloadArtAnalysis()" class="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">Descargar .md</button>
+                </div>
+            </div>
             <div id="ai-result" class="text-sm text-gray-700 dark:text-gray-200"></div>
         </div>
     </div>
@@ -130,6 +136,25 @@ $navQs = 'tenant=' . (int)$article['tenant_id']
 function esc(s) { var d = document.createElement('div'); d.textContent = s == null ? '' : s; return d.innerHTML; }
 
 function getAiProfile() { var s = document.getElementById('ai-profile'); return s ? parseInt(s.value, 10) : 0; }
+
+var ART_RAW = '';
+function setArtActions(show) {
+    var el = document.getElementById('art-result-actions');
+    if (!el) return;
+    if (show) { el.classList.remove('hidden'); el.classList.add('flex'); }
+    else { el.classList.add('hidden'); el.classList.remove('flex'); }
+}
+function copyArtAnalysis() {
+    if (!ART_RAW) return;
+    navigator.clipboard.writeText(ART_RAW).then(function () { toast('Copiado al portapapeles', 'success'); })
+        .catch(function () { toast('No se pudo copiar', 'error'); });
+}
+function downloadArtAnalysis() {
+    if (!ART_RAW) return;
+    var d = new Date();
+    var stamp = d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
+    downloadFile(ART_RAW, 'articulo-<?= (int)$article['id'] ?>-' + stamp + '.md', 'text/markdown');
+}
 
 function exportArticle(fmt) {
     var el = document.getElementById('export-msg');
@@ -157,10 +182,13 @@ function analyzeAI() {
     var panel = document.getElementById('ai-panel');
     var box = document.getElementById('ai-result');
     panel.classList.remove('hidden');
+    setArtActions(false);
     box.innerHTML = '<p class="text-sm text-gray-500">Analizando con IA…</p>';
     api('POST', '<?= base_url('modules/llm/extract-iocs') ?>', { article_id: <?= (int)$article['id'] ?>, profile_id: getAiProfile() })
         .then(function(res) {
             if (!res.success) { box.innerHTML = '<p class="text-sm text-red-500">' + esc(res.error || 'Error') + '</p>'; return; }
+            ART_RAW = res.content || '';
+            setArtActions(ART_RAW.trim() !== '');
             var p = res.parsed;
             if (!p) { box.innerHTML = '<div class="md-body">' + (res.content_html || esc(res.content || '')) + '</div>'; return; }
             var html = '<p class="whitespace-pre-wrap">' + esc(p.resumen || '') + '</p>';

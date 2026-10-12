@@ -135,6 +135,10 @@ if (!empty($incident['recommended_actions'])) {
                 </select>
                 <button type="button" onclick="analyzeIncidentAI()" id="btn-analyze-inc" class="w-full mt-3 px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors">Analizar con IA</button>
                 <p class="text-xs text-gray-400 mt-2">Manual: el análisis se genera solo al pulsar el botón. Los datos del incidente se envían al proveedor de IA.</p>
+                <div id="inc-result-actions" class="hidden items-center justify-end gap-2 mt-3">
+                    <button type="button" onclick="copyIncAnalysis()" class="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">Copiar</button>
+                    <button type="button" onclick="downloadIncAnalysis()" class="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">Descargar .md</button>
+                </div>
                 <div id="inc-ai-result" class="hidden md-body mt-4 border-t border-gray-100 dark:border-gray-700 pt-4"></div>
             <?php endif; ?>
         </div>
@@ -151,13 +155,16 @@ function analyzeIncidentAI() {
     btn.disabled = true;
     var prev = btn.innerHTML;
     btn.innerHTML = 'Analizando…';
+    setIncActions(false);
     box.classList.remove('hidden');
     box.innerHTML = '<div class="spinner mx-auto"></div>';
 
     api('POST', '<?= base_url('modules/llm/analyze-incident') ?>/<?= (int)$incident['id'] ?>', { profile_id: getIncAiProfile() })
         .then(function (res) {
             if (res.success) {
-                box.innerHTML = res.content_html || (res.content ? '<pre class="whitespace-pre-wrap text-sm">' + esc(res.content) + '</pre>' : '');
+                INC_RAW = res.content || '';
+                box.innerHTML = res.content_html || (INC_RAW ? '<pre class="whitespace-pre-wrap text-sm">' + esc(INC_RAW) + '</pre>' : '');
+                setIncActions(INC_RAW.trim() !== '');
             } else {
                 box.innerHTML = '<p class="text-sm text-red-500">' + esc(res.error || 'Error') + '</p>';
                 toast('Error: ' + (res.error || ''), 'error');
@@ -165,6 +172,25 @@ function analyzeIncidentAI() {
         })
         .catch(function () { box.innerHTML = '<p class="text-sm text-red-500">Error de conexión</p>'; })
         .finally(function () { btn.disabled = false; btn.innerHTML = prev; });
+}
+
+var INC_RAW = '';
+function setIncActions(show) {
+    var el = document.getElementById('inc-result-actions');
+    if (!el) return;
+    if (show) { el.classList.remove('hidden'); el.classList.add('flex'); }
+    else { el.classList.add('hidden'); el.classList.remove('flex'); }
+}
+function copyIncAnalysis() {
+    if (!INC_RAW) return;
+    navigator.clipboard.writeText(INC_RAW).then(function () { toast('Copiado al portapapeles', 'success'); })
+        .catch(function () { toast('No se pudo copiar', 'error'); });
+}
+function downloadIncAnalysis() {
+    if (!INC_RAW) return;
+    var d = new Date();
+    var stamp = d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
+    downloadFile(INC_RAW, 'incidente-<?= (int)$incident['id'] ?>-' + stamp + '.md', 'text/markdown');
 }
 
 function esc(s) { var d = document.createElement('div'); d.textContent = s == null ? '' : s; return d.innerHTML; }

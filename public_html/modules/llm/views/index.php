@@ -94,6 +94,10 @@
                 <?php endforeach; ?>
             <?php endif; ?>
         </div>
+        <div id="an-result-actions" class="hidden items-center justify-end gap-2 mb-2">
+            <button type="button" onclick="copyAnalysis()" class="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">Copiar</button>
+            <button type="button" onclick="downloadAnalysis()" class="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">Descargar .md</button>
+        </div>
         <div id="llm-response" class="md-body min-h-[240px] border-t border-gray-100 dark:border-gray-700 pt-4">
             <p class="text-gray-400">Elige un tenant, escribe una pregunta o pulsa una acción rápida.</p>
         </div>
@@ -247,19 +251,41 @@ function runAnalyze(payload) {
     var out = document.getElementById('llm-response');
     var st = document.getElementById('an-status');
     st.textContent = 'Analizando…';
+    setAnActions(false);
     out.innerHTML = '<div class="spinner mx-auto"></div>';
 
     api('POST', '<?= base_url('modules/llm/analyze-tenant') ?>', payload)
         .then(function(res) {
             st.textContent = '';
             if (res.success) {
+                AN_RAW = res.content || '';
                 out.innerHTML = res.content_html || esc(res.content);
+                setAnActions(AN_RAW.trim() !== '');
             } else {
                 out.innerHTML = '<p class="text-red-500">' + esc(res.error || 'Error') + '</p>';
                 toast('Error: ' + (res.error || ''), 'error');
             }
         })
         .catch(function() { st.textContent = ''; out.innerHTML = '<p class="text-red-500">Error de conexión</p>'; });
+}
+
+var AN_RAW = '';
+function setAnActions(show) {
+    var el = document.getElementById('an-result-actions');
+    if (!el) return;
+    if (show) { el.classList.remove('hidden'); el.classList.add('flex'); }
+    else { el.classList.add('hidden'); el.classList.remove('flex'); }
+}
+function copyAnalysis() {
+    if (!AN_RAW) return;
+    navigator.clipboard.writeText(AN_RAW).then(function () { toast('Copiado al portapapeles', 'success'); })
+        .catch(function () { toast('No se pudo copiar', 'error'); });
+}
+function downloadAnalysis() {
+    if (!AN_RAW) return;
+    var d = new Date();
+    var stamp = d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
+    downloadFile(AN_RAW, 'analisis-' + stamp + '.md', 'text/markdown');
 }
 
 function analyzeTenantAction(id) {
