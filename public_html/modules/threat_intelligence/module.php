@@ -364,12 +364,23 @@ class Module_ThreatIntelligence extends BaseModule
     }
 
     /**
-     * Rango de fechas activo (por defecto últimos 90 días; máximo 90 días).
+     * Rango de fechas por defecto: últimas 24 h (ayer → hoy).
+     * Con inputs de solo fecha, "24 h" equivale a la jornada actual.
+     */
+    private function defaultDateRange(): array
+    {
+        $to = gmdate('Y-m-d');
+        return ['from' => gmdate('Y-m-d', strtotime($to) - 86400), 'to' => $to];
+    }
+
+    /**
+     * Rango de fechas activo (por defecto últimas 24 h; máximo 90 días).
      */
     private function resolveDateRange(): array
     {
-        $to   = $_GET['to'] ?? gmdate('Y-m-d');
-        $from = $_GET['from'] ?? gmdate('Y-m-d', strtotime($to) - 90 * 86400);
+        $def  = $this->defaultDateRange();
+        $to   = $_GET['to'] ?? $def['to'];
+        $from = $_GET['from'] ?? $def['from'];
         $min  = gmdate('Y-m-d', strtotime($to) - 90 * 86400);
         if ($from < $min) {
             $from = $min; // límite de 90 días
@@ -938,11 +949,12 @@ class Module_ThreatIntelligence extends BaseModule
     {
         $tenants = TenantManager::getActive();
         $selectedTenant = (int)($_GET['tenant'] ?? ($tenants[0]['id'] ?? 0));
+        $def = $this->defaultDateRange();
         $filters = [
             'type'   => $_GET['type'] ?? '',
             'search' => $_GET['search'] ?? '',
-            'from'   => $_GET['from'] ?? '',
-            'to'     => $_GET['to'] ?? '',
+            'from'   => $_GET['from'] ?? $def['from'],
+            'to'     => $_GET['to'] ?? $def['to'],
             'sort'   => $_GET['sort'] ?? '',
         ];
         $page = max(1, (int)($_GET['page'] ?? 1));
