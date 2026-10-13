@@ -971,6 +971,8 @@ class Module_ThreatIntelligence extends BaseModule
             'iocs'           => $data,
             'types'          => $types,
             'profileCounts'  => $selectedTenant ? $this->getProfileCounts($selectedTenant) : ['actor' => 0, 'tool' => 0, 'other' => 0, 'total' => 0],
+            'dateDefaultFrom' => $def['from'],
+            'dateDefaultTo'   => $def['to'],
             'actions'           => llm_actions_list(true, 'indicator'),
             'actionsEditorList' => llm_actions_list(false, 'indicator'),
             'actionScope'       => 'indicator',
@@ -984,6 +986,7 @@ class Module_ThreatIntelligence extends BaseModule
         $tenants = TenantManager::getActive();
         $selectedTenant = (int)($_GET['tenant'] ?? ($tenants[0]['id'] ?? 0));
         $range = $this->resolveDateRange();
+        $def = $this->defaultDateRange();
         $q = trim((string)($_GET['q'] ?? ''));
         $tag = trim((string)($_GET['tag'] ?? ''));
         $sector = trim((string)($_GET['sector'] ?? ''));
@@ -1001,6 +1004,8 @@ class Module_ThreatIntelligence extends BaseModule
             'articles'       => $articles,
             'dateFrom'       => $range['from'],
             'dateTo'         => $range['to'],
+            'dateDefaultFrom' => $def['from'],
+            'dateDefaultTo'   => $def['to'],
             'q'              => $q,
             'tag'            => $tag,
             'tagOptions'     => $tagOptions,

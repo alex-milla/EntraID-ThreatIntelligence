@@ -53,8 +53,14 @@
                    class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
         </div>
         <button type="submit" class="px-3 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 text-sm font-medium rounded-lg transition-colors">Filtrar</button>
-        <?php if (($q ?? '') !== '' || ($tag ?? '') !== '' || ($sector ?? '') !== '' || ($dateFrom ?? '') !== '' || ($dateTo ?? '') !== ''): ?>
-            <a href="?tenant=<?= (int)$selectedTenant ?>" class="text-xs text-gray-500 hover:underline">Limpiar</a>
+        <?php
+        $tiDefFrom = $dateDefaultFrom ?? '';
+        $tiDefTo   = $dateDefaultTo ?? '';
+        $tiDatesCustom = (($dateFrom ?? '') !== $tiDefFrom) || (($dateTo ?? '') !== $tiDefTo);
+        ?>
+        <?php if (($q ?? '') !== '' || ($tag ?? '') !== '' || ($sector ?? '') !== '' || $tiDatesCustom): ?>
+            <?php $tiClearQs = http_build_query(array_filter(['tenant' => (int)$selectedTenant, 'from' => $tiDefFrom, 'to' => $tiDefTo], fn($v) => $v !== '' && $v !== null)); ?>
+            <a href="?<?= e($tiClearQs) ?>" class="text-xs text-gray-500 hover:underline">Limpiar</a>
         <?php endif; ?>
     </form>
     <div class="flex items-center gap-3 text-xs">

@@ -7,6 +7,11 @@ $rows = $iocs['data'] ?? [];
 $totalPages = (int)($iocs['totalPages'] ?? 1);
 $page = (int)($iocs['page'] ?? 1);
 
+// Rango por defecto (24 h) para poder restablecer y para detectar fechas personalizadas.
+$tiDefFrom = $dateDefaultFrom ?? '';
+$tiDefTo   = $dateDefaultTo ?? '';
+$tiCustomDates = (($filters['from'] ?? '') !== $tiDefFrom) || (($filters['to'] ?? '') !== $tiDefTo);
+
 function ti_q(array $extra, int $tenant, array $filters): string {
     $q = array_merge([
         'tenant' => $tenant,
@@ -71,8 +76,9 @@ function ti_q(array $extra, int $tenant, array $filters): string {
         </select>
     </div>
     <button type="submit" class="px-3 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 text-sm font-medium rounded-lg transition-colors">Filtrar</button>
-    <?php if (($filters['type'] ?? '') !== '' || ($filters['search'] ?? '') !== '' || ($filters['from'] ?? '') !== '' || ($filters['to'] ?? '') !== ''): ?>
-        <a href="<?= base_url('modules/threat_intelligence/iocs?tenant=' . $selectedTenant) ?>" class="text-xs text-gray-500 hover:underline">Limpiar</a>
+    <?php if (($filters['type'] ?? '') !== '' || ($filters['search'] ?? '') !== '' || ($filters['sort'] ?? '') !== '' || $tiCustomDates): ?>
+        <?php $tiClearQs = http_build_query(array_filter(['tenant' => (int)$selectedTenant, 'from' => $tiDefFrom, 'to' => $tiDefTo], fn($v) => $v !== '' && $v !== null)); ?>
+        <a href="?<?= e($tiClearQs) ?>" class="text-xs text-gray-500 hover:underline">Limpiar</a>
     <?php endif; ?>
 </form>
 
@@ -82,8 +88,8 @@ $chipBase = ['tenant' => $selectedTenant, 'type' => $filters['type'] ?? '', 'sea
 $chips = [];
 if (($filters['search'] ?? '') !== '') { $chipBase['search'] = ''; $chips[] = ['Valor: ' . $filters['search'], $chipBase]; $chipBase['search'] = $filters['search']; }
 if (($filters['type'] ?? '') !== '') { $c = $chipBase; $c['type'] = ''; $chips[] = ['Tipo: ' . $filters['type'], $c]; }
-if (($filters['from'] ?? '') !== '') { $c = $chipBase; $c['from'] = ''; $chips[] = ['Desde: ' . $filters['from'], $c]; }
-if (($filters['to'] ?? '') !== '') { $c = $chipBase; $c['to'] = ''; $chips[] = ['Hasta: ' . $filters['to'], $c]; }
+if (($filters['from'] ?? '') !== '' && ($filters['from'] ?? '') !== $tiDefFrom) { $c = $chipBase; $c['from'] = $tiDefFrom; $chips[] = ['Desde: ' . $filters['from'], $c]; }
+if (($filters['to'] ?? '') !== '' && ($filters['to'] ?? '') !== $tiDefTo) { $c = $chipBase; $c['to'] = $tiDefTo; $chips[] = ['Hasta: ' . $filters['to'], $c]; }
 ?>
 <?php if (!empty($chips)): ?>
 <div class="mb-4 flex flex-wrap items-center gap-2">
