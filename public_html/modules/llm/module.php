@@ -867,6 +867,63 @@ class Module_Llm extends BaseModule
         return $this->chat($system, $user, ['max_tokens' => 2000], $llmProfileId);
     }
 
+    /**
+     * Análisis IA de un artículo de Threat Intelligence (ámbito "article").
+     * Contexto rico (tags/MITRE, resumen, cuerpo, IOCs y sector del tenant) y
+     * salida en Markdown. Con $defang se ofuscan IP/dominio ([.]) en los IOCs.
+     */
+    public function analyzeArticle(int $id, string $instruction, string $question = '', bool $defang = false, ?int $llmProfileId = null): array
+    {
+        $a = Database::fetchOne("SELECT * FROM ti_articles WHERE id = ?", [$id]);
+        if (!$a) { return ['success' => false, 'error' => 'Artículo no encontrado']; }
+
+        $ctx = 'ARTÍCULO: ' . ($a['title'] ?? '') . "\n";
+        $date = $a['last_updated'] ?? $a['created_date'] ?? '';
+        if (!empty($date)) { $ctx .= 'Fecha: ' . substr((string)$date, 0, 10) . "\n"; }
+
+        $tags = safe_json_decode((string)($a['tags'] ?? ''), []);
+        if (is_array($tags) && $tags) {
+            $vals = [];
+            foreach ($tags as $t) {
+                $v = trim((string)(is_array($t) ? ($t['value'] ?? $t['name'] ?? '') : $t));
+                if ($v !== '') { $vals[] = $v; }
+            }
+            if ($vals) { $ctx .= 'Tags / MITRE: ' . implode(', ', array_slice($vals, 0, 40)) . "\n"; }
+        }
+
+        // Contexto de la organización (sector/industria) para prompts de cliente e impacto.
+        $tenant = TenantManager::getById((int)$a['tenant_id']);
+        if ($tenant) {
+            $org = [];
+            if (!empty($tenant['name']))     { $org[] = 'organización: ' . $tenant['name']; }
+            if (!empty($tenant['industry'])) { $org[] = 'sector/industria: ' . $tenant['industry']; }
+            if (!empty($tenant['country']))  { $org[] = 'país: ' . $tenant['country']; }
+            if ($org) { $ctx .= 'CONTEXTO DEL CLIENTE (' . implode(' · ', $org) . ")\n"; }
+        }
+
+        if (!empty($a['summary'])) { $ctx .= "\nRESUMEN:\n" . $this->ctxClip(strip_tags((string)$a['summary']), 3000) . "\n"; }
+        if (!empty($a['body']))    { $ctx .= "\nCUERPO:\n" . $this->ctxClip(strip_tags((string)$a['body']), 6000) . "\n"; }
+
+        $iocs = Database::fetchAll("SELECT ioc_type, ioc_value FROM ti_iocs WHERE article_id = ? ORDER BY ioc_type, ioc_value LIMIT 500", [$id]);
+        if ($iocs) {
+            $lines = [];
+            foreach ($iocs as $i) {
+                $val = (string)$i['ioc_value'];
+                if ($defang) { $val = defang_ioc($val, (string)$i['ioc_type']); }
+                $lines[] = '- [' . $i['ioc_type'] . '] ' . $this->ctxClip($val, 200);
+            }
+            $ctx .= "\nINDICADORES (" . count($iocs) . "):\n" . implode("\n", $lines) . "\n";
+        }
+
+        $instruction = trim($instruction) ?: 'Resume este artículo y destaca lo más relevante para nuestra organización.';
+        $system = 'Eres un analista de threat intelligence senior. Responde SIEMPRE en español y en Markdown. Usa EXCLUSIVAMENTE la información del artículo proporcionado; no inventes datos. Si algo no consta, dilo.';
+        $user = "DATOS DEL ARTÍCULO:\n\n{$ctx}\n\nTAREA: {$instruction}";
+        if ($defang) { $user .= "\n\nIMPORTANTE: al listar direcciones IP y dominios, ofusca el ÚLTIMO punto como \"[.]\" (defanging) para que el texto sea seguro de publicar."; }
+        if (trim($question) !== '') { $user .= "\n\nPREGUNTA DEL ANALISTA: " . trim($question); }
+
+        return $this->chat($system, $user, ['max_tokens' => 3000], $llmProfileId);
+    }
+
     public function analyzeProfileEndpoint(array $params = []): void
     {
         Csrf::validateOrFail();
@@ -898,6 +955,22 @@ class Module_Llm extends BaseModule
         ));
     }
 
+    public function analyzeArticleEndpoint(array $params = []): void
+    {
+        Csrf::validateOrFail();
+        $input = json_decode(file_get_contents('php://input'), true) ?? $_POST;
+        $instruction = '';
+        $actionId = (int)($input['action_id'] ?? 0);
+        if ($actionId > 0) { $a = llm_action_get($actionId); if ($a) { $instruction = (string)$a['prompt']; } }
+        json_response($this->analyzeArticle(
+            (int)($params['id'] ?? 0),
+            $instruction,
+            (string)($input['question'] ?? ''),
+            !empty($input['defang']),
+            $this->resolveProfile($input, 'analyze_article')
+        ));
+    }
+
     public function routes(): array
     {
         return [
@@ -906,6 +979,7 @@ class Module_Llm extends BaseModule
             ['method' => 'POST', 'pattern' => 'analyze-tenant',          'handler' => [$this, 'analyzeTenantEndpoint']],
             ['method' => 'POST', 'pattern' => 'analyze-profile/{id}',    'handler' => [$this, 'analyzeProfileEndpoint']],
             ['method' => 'POST', 'pattern' => 'analyze-indicators',      'handler' => [$this, 'analyzeIndicatorsEndpoint']],
+            ['method' => 'POST', 'pattern' => 'analyze-article/{id}',    'handler' => [$this, 'analyzeArticleEndpoint']],
             ['method' => 'POST', 'pattern' => 'actions/save',            'handler' => [$this, 'actionsSaveEndpoint']],
             ['method' => 'POST', 'pattern' => 'actions/delete',          'handler' => [$this, 'actionsDeleteEndpoint']],
             ['method' => 'POST', 'pattern' => 'actions/restore',         'handler' => [$this, 'actionsRestoreEndpoint']],

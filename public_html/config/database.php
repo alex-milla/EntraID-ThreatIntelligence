@@ -455,7 +455,7 @@ class Database
      */
     private static function registerDefaultActions(PDO $db): void
     {
-        foreach (['tenant', 'actor', 'tool', 'indicator'] as $scope) {
+        foreach (['tenant', 'actor', 'tool', 'indicator', 'article'] as $scope) {
             self::ensureScopeActions($db, $scope, self::defaultActionsForScope($scope));
         }
     }
@@ -489,6 +489,13 @@ class Database
                 ['Análisis de indicadores', 'Analiza los indicadores mostrados: clasifícalos por tipo, indica su relevancia/riesgo y posibles falsos positivos.'],
                 ['Prioriza accionables', 'Prioriza los indicadores más accionables y explica por qué, con el contexto disponible.'],
                 ['Bloqueo/detección', 'Propón cómo usar estos indicadores (bloqueo, reglas, búsquedas) y qué precauciones tomar para evitar falsos positivos.'],
+            ],
+            'article' => [
+                ['Resumen ejecutivo (cliente)', 'Redacta un RESUMEN EJECUTIVO para un cliente no técnico (150-250 palabras): qué ha ocurrido, a quién afecta y por qué es relevante, en lenguaje claro y sin jerga. Empieza con un titular de una línea. Basado SOLO en el artículo.'],
+                ['Indicadores accionables', 'Genera una TABLA Markdown de los indicadores del artículo con columnas: Tipo, Valor, Contexto y Acción recomendada (bloquear/detectar/monitorizar). Muestra las direcciones IP y los dominios con el ÚLTIMO punto como "[.]" (p. ej. 203.0.113[.]45, evil[.]com). Prioriza por riesgo y avisa de posibles falsos positivos. No inventes indicadores.'],
+                ['Nota divulgativa (publicación interna)', 'Redacta una NOTA DIVULGATIVA lista para publicación interna o blog, con esta estructura: Titular, Contexto, Qué ha pasado, Análisis, Implicaciones y Recomendaciones. Tono profesional y claro, 300-450 palabras, basado solo en el artículo.'],
+                ['Impacto para el cliente/sector', 'Analiza el IMPACTO para nuestra organización teniendo en cuenta nuestro sector (se indica en los datos): relevancia de la amenaza, activos o servicios potencialmente afectados, exposición y qué priorizar. Si faltan datos, indícalo explícitamente.'],
+                ['Mitigación y hardening', 'Propón un plan de MITIGACIÓN con medidas concretas y priorizadas (controles, configuraciones, segmentación, MFA, concienciación), ordenadas por impacto/esfuerzo, y señala las 3 más urgentes.'],
             ],
         ];
         return $sets[$scope] ?? [];

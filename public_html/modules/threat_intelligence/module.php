@@ -939,6 +939,9 @@ class Module_ThreatIntelligence extends BaseModule
             'sector'   => trim((string)($_GET['sector'] ?? '')),
             'profiles' => llm_profile_list(),
             'defaultProfileId' => (llm_profile_default()['id'] ?? null),
+            'actions'           => llm_actions_list(true, 'article'),
+            'actionsEditorList' => llm_actions_list(false, 'article'),
+            'actionScope'       => 'article',
         ]);
     }
 

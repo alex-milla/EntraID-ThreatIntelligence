@@ -525,6 +525,7 @@ class AdminController
             'extract_iocs'     => 'Extraer IOCs',
             'analyze_incident' => 'Analizar incidente',
             'analyze_tenant'   => 'Analizar tenant (Análisis IA)',
+            'analyze_article'  => 'Analizar artículo (Threat Intel)',
             'chat'             => 'Chat / Análisis IA',
         ];
         $taskProfiles = [];

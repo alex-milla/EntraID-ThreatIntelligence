@@ -50,18 +50,6 @@ $navQs = 'tenant=' . (int)$article['tenant_id']
     <button onclick="exportArticle('csv')" class="px-3 py-1.5 border border-gray-200 dark:border-gray-700 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">CSV</button>
     <button onclick="exportArticle('stix')" class="px-3 py-1.5 border border-gray-200 dark:border-gray-700 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">STIX 2.1</button>
     <button onclick="exportArticle('misp')" class="px-3 py-1.5 border border-gray-200 dark:border-gray-700 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">MISP</button>
-    <?php if (!empty($profiles)): ?>
-        <label class="text-xs text-gray-500 ml-1">IA:</label>
-        <select id="ai-profile" class="px-2 py-1 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-xs focus:ring-2 focus:ring-brand-500 outline-none">
-            <?php foreach ($profiles as $p): ?>
-                <option value="<?= (int)$p['id'] ?>" <?= (int)($defaultProfileId ?? 0) === (int)$p['id'] ? 'selected' : '' ?>><?= e($p['name']) ?><?= !empty($p['model']) ? ' · ' . e($p['model']) : '' ?></option>
-            <?php endforeach; ?>
-        </select>
-    <?php endif; ?>
-    <button onclick="analyzeAI()" class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-brand-500 hover:bg-brand-600 text-white text-xs font-medium rounded-lg transition-colors">
-        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
-        Analizar con IA
-    </button>
     <span id="export-msg" class="text-xs text-gray-500"></span>
 </div>
 
@@ -89,10 +77,15 @@ $navQs = 'tenant=' . (int)$article['tenant_id']
     <!-- Columna derecha: IOCs + IA -->
     <div class="lg:col-span-1 space-y-6">
         <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
-            <div class="px-4 py-3 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+            <div class="px-4 py-3 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between gap-2">
                 <h2 class="text-sm font-semibold">IOCs (<?= count($iocs) ?>)</h2>
                 <?php if (!empty($iocs)): ?>
-                    <button onclick="copyAll()" class="text-xs text-brand-500 hover:underline">Copiar todos</button>
+                    <div class="flex items-center gap-3">
+                        <label class="inline-flex items-center gap-1 text-[11px] text-gray-500 cursor-pointer" title="Ofusca IP y dominio con [.] para informes">
+                            <input type="checkbox" onchange="toggleIocDefang(this)" class="rounded border-gray-300 text-brand-500 focus:ring-brand-500"> [.] seguro
+                        </label>
+                        <button onclick="copyAll()" class="text-xs text-brand-500 hover:underline">Copiar todos</button>
+                    </div>
                 <?php endif; ?>
             </div>
             <?php if (empty($iocs)): ?>
@@ -105,7 +98,7 @@ $navQs = 'tenant=' . (int)$article['tenant_id']
                                 <span class="font-mono text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-gray-500"><?= e($ioc['ioc_type']) ?></span>
                                 <button onclick="copyIoc(this)" class="text-[11px] text-gray-400 hover:text-brand-500" title="Copiar">copiar</button>
                             </div>
-                            <p class="font-mono text-xs break-all mt-1" data-ioc="<?= e($ioc['ioc_value']) ?>"><?= e($ioc['ioc_value']) ?></p>
+                            <p class="font-mono text-xs break-all mt-1" data-ioc="<?= e($ioc['ioc_value']) ?>" data-ioc-defang="<?= e(defang_ioc((string)$ioc['ioc_value'], (string)$ioc['ioc_type'])) ?>"><?= e($ioc['ioc_value']) ?></p>
                             <?php if (!empty($ioc['severity']) || !empty($ioc['source'])): ?>
                                 <p class="text-[11px] text-gray-400 mt-0.5">
                                     <?php if (!empty($ioc['severity'])): ?><?= e($ioc['severity']) ?><?php endif; ?>
@@ -119,15 +112,44 @@ $navQs = 'tenant=' . (int)$article['tenant_id']
             <?php endif; ?>
         </div>
 
-        <div id="ai-panel" class="hidden bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-5">
+        <div id="ai-panel" class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-5">
             <div class="flex items-center justify-between mb-3">
-                <h2 class="text-sm font-semibold">Análisis IA</h2>
-                <div id="art-result-actions" class="hidden items-center gap-2">
-                    <button type="button" onclick="copyArtAnalysis()" class="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">Copiar</button>
-                    <button type="button" onclick="downloadArtAnalysis()" class="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">Descargar .md</button>
+                <h2 class="text-sm font-semibold">Análisis con IA</h2>
+                <div class="flex items-center gap-2">
+                    <?php if (Auth::isAdmin()): ?>
+                        <button type="button" onclick="scopeOpenEditor()" class="w-7 h-7 inline-flex items-center justify-center rounded-lg text-gray-400 hover:text-brand-500 hover:bg-gray-100 dark:hover:bg-gray-800 text-lg leading-none" title="Editar acciones">&#8942;</button>
+                    <?php endif; ?>
+                    <div id="art-result-actions" class="hidden items-center gap-2">
+                        <button type="button" onclick="copyArtAnalysis()" class="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">Copiar</button>
+                        <button type="button" onclick="downloadArtAnalysis()" class="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">Descargar .md</button>
+                    </div>
                 </div>
             </div>
-            <div id="ai-result" class="text-sm text-gray-700 dark:text-gray-200"></div>
+            <?php if (empty($profiles)): ?>
+                <p class="text-xs text-gray-400">No hay perfiles de IA configurados. Añádelos en <a href="<?= base_url('admin/apis') ?>" class="text-brand-500 hover:underline">Admin → APIs</a>.</p>
+            <?php else: ?>
+                <select id="ia-profile" class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm focus:ring-2 focus:ring-brand-500 outline-none mb-3">
+                    <?php foreach ($profiles as $p): ?>
+                        <option value="<?= (int)$p['id'] ?>" <?= (int)($defaultProfileId ?? 0) === (int)$p['id'] ? 'selected' : '' ?>><?= e($p['name']) ?><?= !empty($p['model']) ? ' · ' . e($p['model']) : '' ?></option>
+                    <?php endforeach; ?>
+                </select>
+                <?php if (!empty($actions)): ?>
+                    <div class="flex flex-wrap gap-2">
+                        <?php foreach ($actions as $ac): ?>
+                            <button type="button" onclick="analyzeArticleIA(<?= (int)$ac['id'] ?>)" class="inline-flex items-center px-3 py-1.5 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-muted-dark text-xs font-medium rounded-lg transition-colors"><?= e($ac['label']) ?></button>
+                        <?php endforeach; ?>
+                    </div>
+                <?php endif; ?>
+                <label class="inline-flex items-center gap-2 text-xs text-gray-500 mt-3 cursor-pointer" title="Ofusca IP y dominio con [.] en el informe generado">
+                    <input type="checkbox" id="ia-defang" class="rounded border-gray-300 text-brand-500 focus:ring-brand-500"> Defang [.] en el informe
+                </label>
+                <textarea id="ia-question" rows="2" placeholder="Pregunta libre (opcional)…" class="w-full mt-3 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm focus:ring-2 focus:ring-brand-500 outline-none"></textarea>
+                <div class="flex items-center gap-2 mt-2">
+                    <button type="button" onclick="analyzeArticleIA(0)" class="flex-1 px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors">Preguntar</button>
+                    <button type="button" onclick="analyzeAI()" class="px-3 py-2 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-muted-dark text-xs font-medium rounded-lg transition-colors" title="Extrae los IOCs del artículo en tabla estructurada">Extraer IOCs</button>
+                </div>
+                <div id="ai-result" class="hidden md-body mt-3 border-t border-gray-100 dark:border-gray-700 pt-3"></div>
+            <?php endif; ?>
         </div>
     </div>
 </div>
@@ -168,22 +190,59 @@ function exportArticle(fmt) {
     }).catch(function() { el.textContent = 'Error de conexión'; });
 }
 
+/* ---- Defang de IOCs ([.] seguro para informes) ---- */
+var IOC_DEFANG = false;
+function applyIocDefang() {
+    document.querySelectorAll('[data-ioc]').forEach(function (el) {
+        var v = IOC_DEFANG ? el.getAttribute('data-ioc-defang') : el.getAttribute('data-ioc');
+        el.textContent = (v == null) ? '' : v;
+    });
+}
+function toggleIocDefang(cb) { IOC_DEFANG = !!(cb && cb.checked); applyIocDefang(); }
+
 function copyIoc(btn) {
-    var val = btn.closest('div').parentElement.querySelector('[data-ioc]').getAttribute('data-ioc');
+    var el = btn.closest('div').parentElement.querySelector('[data-ioc]');
+    if (!el) return;
+    var val = IOC_DEFANG ? el.getAttribute('data-ioc-defang') : el.getAttribute('data-ioc');
     navigator.clipboard.writeText(val).then(function(){ btn.textContent = 'copiado'; setTimeout(function(){ btn.textContent = 'copiar'; }, 1200); });
 }
 
 function copyAll() {
-    var vals = Array.prototype.map.call(document.querySelectorAll('[data-ioc]'), function(el) { return el.getAttribute('data-ioc'); });
+    var vals = Array.prototype.map.call(document.querySelectorAll('[data-ioc]'), function(el) {
+        return IOC_DEFANG ? el.getAttribute('data-ioc-defang') : el.getAttribute('data-ioc');
+    });
     navigator.clipboard.writeText(vals.join('\n')).then(function(){ toast('Copiados ' + vals.length + ' IOCs', 'success'); });
 }
 
-function analyzeAI() {
-    var panel = document.getElementById('ai-panel');
+/* ---- Análisis con IA por acciones (ámbito Artículos) ---- */
+function analyzeArticleIA(actionId) {
+    var q = document.getElementById('ia-question');
+    var question = q ? q.value : '';
+    if (actionId === 0 && !question.trim()) { toast('Escribe una pregunta', 'warning'); return; }
     var box = document.getElementById('ai-result');
-    panel.classList.remove('hidden');
+    if (!box) return;
+    box.classList.remove('hidden');
     setArtActions(false);
-    box.innerHTML = '<p class="text-sm text-gray-500">Analizando con IA…</p>';
+    box.innerHTML = '<div class="spinner mx-auto"></div>';
+    var df = document.getElementById('ia-defang');
+    api('POST', '<?= base_url('modules/llm/analyze-article') ?>/<?= (int)$article['id'] ?>', {
+        action_id: actionId,
+        question: question,
+        profile_id: getAiProfile(),
+        defang: (df && df.checked) ? 1 : 0
+    }).then(function (res) {
+        if (res.success) { ART_RAW = res.content || ''; box.innerHTML = res.content_html || esc(res.content); setArtActions(ART_RAW.trim() !== ''); }
+        else { box.innerHTML = '<p class="text-sm text-red-500">' + esc(res.error || 'Error') + '</p>'; toast('Error: ' + (res.error || ''), 'error'); }
+    }).catch(function () { box.innerHTML = '<p class="text-sm text-red-500">Error de conexión</p>'; });
+}
+
+/* ---- Extracción estructurada de IOCs (JSON) ---- */
+function analyzeAI() {
+    var box = document.getElementById('ai-result');
+    if (!box) return;
+    box.classList.remove('hidden');
+    setArtActions(false);
+    box.innerHTML = '<div class="spinner mx-auto"></div>';
     api('POST', '<?= base_url('modules/llm/extract-iocs') ?>', { article_id: <?= (int)$article['id'] ?>, profile_id: getAiProfile() })
         .then(function(res) {
             if (!res.success) { box.innerHTML = '<p class="text-sm text-red-500">' + esc(res.error || 'Error') + '</p>'; return; }
@@ -203,3 +262,5 @@ function analyzeAI() {
         .catch(function() { box.innerHTML = '<p class="text-sm text-red-500">Error de conexión</p>'; });
 }
 </script>
+
+<?php if (Auth::isAdmin()) { require VIEWS_PATH . '/partials/llm_actions_editor.php'; } ?>

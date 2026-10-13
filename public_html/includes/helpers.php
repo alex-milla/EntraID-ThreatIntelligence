@@ -154,6 +154,29 @@ if (!function_exists('truncate')) {
     }
 }
 
+if (!function_exists('defang_ioc')) {
+    /**
+     * "Defanging" para informes seguros: en direcciones IP y dominios cambia el
+     * ÚLTIMO punto por "[.]" (p. ej. 203.0.113.45 -> 203.0.113[.]45,
+     * evil.example.com -> evil.example[.]com). El resto de tipos se devuelven igual.
+     */
+    function defang_ioc(string $value, string $type = ''): string
+    {
+        $value = trim($value);
+        if ($value === '') return $value;
+        $t = strtolower($type);
+        $isIp  = str_contains($t, 'ip') || (bool)filter_var($value, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4);
+        $isDom = str_contains($t, 'domain') || (bool)preg_match('/^([a-z0-9\-]+\.)+[a-z]{2,}$/i', $value);
+        if ($isIp || $isDom) {
+            $pos = strrpos($value, '.');
+            if ($pos !== false) {
+                return substr($value, 0, $pos) . '[.]' . substr($value, $pos + 1);
+            }
+        }
+        return $value;
+    }
+}
+
 if (!function_exists('severity_badge_class')) {
     /**
      * Devuelve clases CSS para un badge de severidad.
