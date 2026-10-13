@@ -3,7 +3,11 @@
  * Vista índice del módulo Threat Intelligence.
  */
 ?>
-<?php $tiActiveTab = 'reports'; require VIEWS_PATH . '/partials/ti_header.php'; ?>
+<?php
+$tiActiveTab = 'reports';
+$tiFilterQs = array_filter(['q' => $q ?? '', 'from' => $dateFrom ?? '', 'to' => $dateTo ?? ''], fn($v) => $v !== '' && $v !== null);
+require VIEWS_PATH . '/partials/ti_header.php';
+?>
 
 <div class="mb-6 space-y-3">
     <form method="GET" class="flex items-end gap-3 flex-wrap">

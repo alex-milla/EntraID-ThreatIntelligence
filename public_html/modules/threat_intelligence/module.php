@@ -538,10 +538,11 @@ class Module_ThreatIntelligence extends BaseModule
         foreach ($profiles as $p) {
             if (empty($p['id'])) { continue; }
             try {
+                $facets = ti_parse_targets(is_array($p['targets'] ?? null) ? $p['targets'] : []);
                 Database::query(
                     "INSERT OR REPLACE INTO ti_intel_profiles
-                     (tenant_id, profile_id, kind, title, summary, description, tradecraft, aliases, targets, countries, first_active, raw_data, fetched_at)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))",
+                     (tenant_id, profile_id, kind, title, summary, description, tradecraft, aliases, targets, industries, regions, countries, first_active, raw_data, fetched_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))",
                     [
                         $tenantId,
                         $p['id'],
@@ -552,6 +553,8 @@ class Module_ThreatIntelligence extends BaseModule
                         $p['tradecraft']['content'] ?? null,
                         json_encode($p['aliases'] ?? []),
                         json_encode($p['targets'] ?? []),
+                        json_encode($facets['industries'], JSON_UNESCAPED_UNICODE),
+                        json_encode($facets['regions'], JSON_UNESCAPED_UNICODE),
                         json_encode($p['countriesOrRegionsOfOrigin'] ?? []),
                         $p['firstActiveDateTime'] ?? null,
                         json_encode($p),
@@ -628,6 +631,18 @@ class Module_ThreatIntelligence extends BaseModule
             $params[] = '%' . $filters['search'] . '%';
             $params[] = '%' . $filters['search'] . '%';
         }
+        // Facetas: industria / región (varias por grupo, OR dentro de cada grupo)
+        foreach (['industry' => 'industries', 'region' => 'regions'] as $fk => $col) {
+            $vals = array_values(array_filter((array)($filters[$fk] ?? []), fn($v) => $v !== '' && $v !== null));
+            if ($vals) {
+                $or = [];
+                foreach ($vals as $v) {
+                    $or[] = $col . ' LIKE ?';
+                    $params[] = '%"' . $v . '"%';
+                }
+                $where[] = '(' . implode(' OR ', $or) . ')';
+            }
+        }
         $whereClause = implode(' AND ', $where);
         $offset = ($page - 1) * $perPage;
 
@@ -637,6 +652,47 @@ class Module_ThreatIntelligence extends BaseModule
         $rows = Database::fetchAll("SELECT * FROM ti_intel_profiles WHERE $whereClause ORDER BY title LIMIT ? OFFSET ?", $params);
 
         return ['data' => $rows, 'total' => $total, 'page' => $page, 'perPage' => $perPage, 'totalPages' => (int)ceil($total / $perPage)];
+    }
+
+    /**
+     * Rellena industries/regions de perfiles antiguos a partir de sus targets.
+     * Solo toca filas aún sin procesar (columnas NULL).
+     */
+    private function backfillProfileFacets(int $tenantId): void
+    {
+        $rows = Database::fetchAll(
+            "SELECT id, targets FROM ti_intel_profiles WHERE tenant_id = ? AND (industries IS NULL OR regions IS NULL)",
+            [$tenantId]
+        );
+        foreach ($rows as $r) {
+            $targets = safe_json_decode((string)($r['targets'] ?? ''), []);
+            $facets = ti_parse_targets(is_array($targets) ? $targets : []);
+            Database::query(
+                "UPDATE ti_intel_profiles SET industries = ?, regions = ? WHERE id = ?",
+                [json_encode($facets['industries'], JSON_UNESCAPED_UNICODE), json_encode($facets['regions'], JSON_UNESCAPED_UNICODE), (int)$r['id']]
+            );
+        }
+    }
+
+    /** Facetas de intel profiles: industrias y regiones con su nº de perfiles. */
+    public function getProfileFacets(int $tenantId): array
+    {
+        $rows = Database::fetchAll("SELECT industries, regions FROM ti_intel_profiles WHERE tenant_id = ?", [$tenantId]);
+        $ind = [];
+        $reg = [];
+        foreach ($rows as $r) {
+            foreach ((array)safe_json_decode((string)($r['industries'] ?? ''), []) as $v) {
+                $v = trim((string)$v);
+                if ($v !== '') { $ind[$v] = ($ind[$v] ?? 0) + 1; }
+            }
+            foreach ((array)safe_json_decode((string)($r['regions'] ?? ''), []) as $v) {
+                $v = trim((string)$v);
+                if ($v !== '') { $reg[$v] = ($reg[$v] ?? 0) + 1; }
+            }
+        }
+        arsort($ind);
+        arsort($reg);
+        return ['industries' => $ind, 'regions' => $reg];
     }
 
     /** Conteo de perfiles por tipo. */
@@ -655,13 +711,20 @@ class Module_ThreatIntelligence extends BaseModule
     {
         $tenants = TenantManager::getActive();
         $selectedTenant = (int)($_GET['tenant'] ?? ($tenants[0]['id'] ?? 0));
+        if ($selectedTenant) {
+            $this->backfillProfileFacets($selectedTenant);
+        }
+        $norm = function ($v) { return array_values(array_filter(array_map('strval', (array)$v), fn($x) => trim($x) !== '')); };
         $filters = [
-            'kind'   => trim((string)($_GET['kind'] ?? '')),
-            'search' => trim((string)($_GET['search'] ?? '')),
+            'kind'     => trim((string)($_GET['kind'] ?? '')),
+            'search'   => trim((string)($_GET['search'] ?? $_GET['q'] ?? '')),
+            'industry' => $norm($_GET['industry'] ?? []),
+            'region'   => $norm($_GET['region'] ?? []),
         ];
         $page = max(1, (int)($_GET['page'] ?? 1));
         $data = $selectedTenant ? $this->getProfiles($selectedTenant, $filters, $page, 50) : ['data' => [], 'total' => 0, 'page' => 1, 'perPage' => 50, 'totalPages' => 1];
         $counts = $selectedTenant ? $this->getProfileCounts($selectedTenant) : ['actor' => 0, 'tool' => 0, 'other' => 0, 'total' => 0];
+        $facets = $selectedTenant ? $this->getProfileFacets($selectedTenant) : ['industries' => [], 'regions' => []];
 
         echo $this->page('profiles', [
             'module'         => $this,
@@ -670,6 +733,7 @@ class Module_ThreatIntelligence extends BaseModule
             'filters'        => $filters,
             'profiles'       => $data,
             'counts'         => $counts,
+            'facets'         => $facets,
         ]);
     }
 
@@ -681,6 +745,17 @@ class Module_ThreatIntelligence extends BaseModule
             http_response_code(404);
             require VIEWS_PATH . '/errors/404.php';
             return;
+        }
+        // Backfill de facetas si el perfil es antiguo (aún sin industries/regions).
+        if ($profile['industries'] === null || $profile['regions'] === null) {
+            $targets = safe_json_decode((string)($profile['targets'] ?? ''), []);
+            $facets  = ti_parse_targets(is_array($targets) ? $targets : []);
+            $profile['industries'] = json_encode($facets['industries'], JSON_UNESCAPED_UNICODE);
+            $profile['regions']    = json_encode($facets['regions'], JSON_UNESCAPED_UNICODE);
+            Database::query(
+                "UPDATE ti_intel_profiles SET industries = ?, regions = ? WHERE id = ?",
+                [$profile['industries'], $profile['regions'], $id]
+            );
         }
         $indicators = Database::fetchAll("SELECT * FROM ti_iocs WHERE profile_id = ? ORDER BY ioc_type, ioc_value LIMIT 3000", [$id]);
         $tenant = TenantManager::getById((int)$profile['tenant_id']);
@@ -955,7 +1030,7 @@ class Module_ThreatIntelligence extends BaseModule
         $def = $this->defaultDateRange();
         $filters = [
             'type'   => $_GET['type'] ?? '',
-            'search' => $_GET['search'] ?? '',
+            'search' => trim((string)($_GET['search'] ?? $_GET['q'] ?? '')),
             'from'   => $_GET['from'] ?? $def['from'],
             'to'     => $_GET['to'] ?? $def['to'],
             'sort'   => $_GET['sort'] ?? '',

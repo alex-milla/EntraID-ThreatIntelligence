@@ -177,6 +177,47 @@ if (!function_exists('defang_ioc')) {
     }
 }
 
+if (!function_exists('ti_parse_targets')) {
+    /**
+     * Separa los "targets" de un intelProfile de Graph en industrias y regiones.
+     * Graph devuelve entradas tipo "Industry: SubIndustry" (p. ej.
+     * "Government Agencies & Services: Defense") y, en algunos perfiles, regiones.
+     *
+     * @return array{industries:string[],regions:string[]}
+     */
+    function ti_parse_targets(array $targets): array
+    {
+        static $regions = [
+            'central america and the caribbean', 'central asia', 'east asia', 'eastern europe',
+            'middle east', 'north africa', 'north america', 'northern europe', 'oceania',
+            'south america', 'sub-saharan africa', 'western europe', 'southern europe',
+            'south asia', 'southeast asia', 'central europe', 'africa', 'europe', 'asia',
+            'latin america', 'middle east and north africa',
+        ];
+        $industries = [];
+        $reg = [];
+        foreach ($targets as $t) {
+            $t = trim((string)(is_array($t) ? ($t['value'] ?? $t['name'] ?? '') : $t));
+            if ($t === '') {
+                continue;
+            }
+            if (str_contains($t, ':')) {
+                $ind = trim(explode(':', $t, 2)[0]);
+                if ($ind !== '') {
+                    $industries[$ind] = true;
+                }
+                continue;
+            }
+            if (in_array(strtolower($t), $regions, true)) {
+                $reg[$t] = true;
+            } else {
+                $industries[$t] = true;
+            }
+        }
+        return ['industries' => array_keys($industries), 'regions' => array_keys($reg)];
+    }
+}
+
 if (!function_exists('severity_badge_class')) {
     /**
      * Devuelve clases CSS para un badge de severidad.

@@ -10,6 +10,15 @@
  */
 $pc       = array_merge(['actor' => 0, 'tool' => 0, 'total' => 0], (array)($profileCounts ?? []));
 $tiActive = $tiActiveTab ?? 'reports';
+
+// Filtros que se propagan entre pestañas (los define cada vista).
+$tiFilterQs = array_filter((array)($tiFilterQs ?? []), fn($v) => $v !== '' && $v !== null && $v !== []);
+
+$tiTabUrl = function (string $path, array $extra = []) use ($selectedTenant, $tiFilterQs): string {
+    $params = array_merge(['tenant' => (int)$selectedTenant], $tiFilterQs, $extra);
+    return base_url($path) . '?' . http_build_query($params);
+};
+
 $tab      = 'px-3 py-2 text-sm font-medium border-b-2';
 $tabOn    = 'border-brand-500 text-brand-600 dark:text-brand-300';
 $tabOff   = 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300';
@@ -26,9 +35,9 @@ $tabOff   = 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:tex
     <?php endif; ?>
 
     <div class="flex flex-wrap items-center gap-1 border-b border-gray-200 dark:border-gray-700">
-        <a href="<?= base_url('modules/threat_intelligence?tenant=' . (int)$selectedTenant) ?>" class="<?= $tab ?> <?= $tiActive === 'reports' ? $tabOn : $tabOff ?>">Reports</a>
-        <a href="<?= base_url('modules/threat_intelligence/profiles?tenant=' . (int)$selectedTenant . '&kind=actor') ?>" class="<?= $tab ?> <?= $tiActive === 'actor' ? $tabOn : $tabOff ?>">Threat actors (<?= (int)($pc['actor'] ?? 0) ?>)</a>
-        <a href="<?= base_url('modules/threat_intelligence/profiles?tenant=' . (int)$selectedTenant . '&kind=tool') ?>" class="<?= $tab ?> <?= $tiActive === 'tool' ? $tabOn : $tabOff ?>">Tools (<?= (int)($pc['tool'] ?? 0) ?>)</a>
-        <a href="<?= base_url('modules/threat_intelligence/iocs?tenant=' . (int)$selectedTenant) ?>" class="<?= $tab ?> <?= $tiActive === 'indicators' ? $tabOn : $tabOff ?>">Indicators</a>
+        <a href="<?= e($tiTabUrl('modules/threat_intelligence')) ?>" class="<?= $tab ?> <?= $tiActive === 'reports' ? $tabOn : $tabOff ?>">Reports</a>
+        <a href="<?= e($tiTabUrl('modules/threat_intelligence/profiles', ['kind' => 'actor'])) ?>" class="<?= $tab ?> <?= $tiActive === 'actor' ? $tabOn : $tabOff ?>">Threat actors (<?= (int)($pc['actor'] ?? 0) ?>)</a>
+        <a href="<?= e($tiTabUrl('modules/threat_intelligence/profiles', ['kind' => 'tool'])) ?>" class="<?= $tab ?> <?= $tiActive === 'tool' ? $tabOn : $tabOff ?>">Tools (<?= (int)($pc['tool'] ?? 0) ?>)</a>
+        <a href="<?= e($tiTabUrl('modules/threat_intelligence/iocs')) ?>" class="<?= $tab ?> <?= $tiActive === 'indicators' ? $tabOn : $tabOff ?>">Indicators</a>
     </div>
 </div>

@@ -24,7 +24,11 @@ function ti_q(array $extra, int $tenant, array $filters): string {
     return http_build_query(array_filter($q, fn($v) => $v !== '' && $v !== null));
 }
 ?>
-<?php $tiActiveTab = 'indicators'; require VIEWS_PATH . '/partials/ti_header.php'; ?>
+<?php
+$tiActiveTab = 'indicators';
+$tiFilterQs = array_filter(['q' => $filters['search'] ?? '', 'from' => $filters['from'] ?? '', 'to' => $filters['to'] ?? ''], fn($v) => $v !== '' && $v !== null);
+require VIEWS_PATH . '/partials/ti_header.php';
+?>
 
 <div class="mb-4">
     <p class="text-xs text-gray-400"><?= number_format((int)($iocs['total'] ?? 0)) ?> IOCs · <?= count($types) ?> tipos</p>

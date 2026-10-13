@@ -5,6 +5,8 @@
 $aliases  = safe_json_decode((string)($profile['aliases'] ?? ''), []);
 $targets  = safe_json_decode((string)($profile['targets'] ?? ''), []);
 $countries = safe_json_decode((string)($profile['countries'] ?? ''), []);
+$industries = safe_json_decode((string)($profile['industries'] ?? ''), []);
+$regions    = safe_json_decode((string)($profile['regions'] ?? ''), []);
 $summaryHtml    = render_markdown((string)($profile['summary'] ?? ''));
 $descHtml       = render_markdown((string)($profile['description'] ?? ''));
 $tradecraftHtml = render_markdown((string)($profile['tradecraft'] ?? ''));
@@ -43,6 +45,22 @@ $countryLabel = function ($c) {
                 <div class="flex flex-wrap gap-1.5">
                     <?php foreach ($aliases as $a): ?><span class="inline-flex px-2 py-0.5 text-xs rounded-full bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300"><?= e($a) ?></span><?php endforeach; ?>
                 </div>
+            </div>
+        <?php endif; ?>
+
+        <?php if ((is_array($industries) && $industries) || (is_array($regions) && $regions)): ?>
+            <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-5">
+                <h3 class="text-sm font-semibold mb-2">Targeted industries / regions</h3>
+                <?php if (is_array($industries) && $industries): ?>
+                    <div class="flex flex-wrap gap-1.5 mb-2">
+                        <?php foreach ($industries as $ind): ?><span class="inline-flex px-2 py-0.5 text-xs rounded-full bg-brand-50 dark:bg-brand-950 text-brand-600 dark:text-brand-300"><?= e((string)$ind) ?></span><?php endforeach; ?>
+                    </div>
+                <?php endif; ?>
+                <?php if (is_array($regions) && $regions): ?>
+                    <div class="flex flex-wrap gap-1.5">
+                        <?php foreach ($regions as $rg): ?><span class="inline-flex px-2 py-0.5 text-xs rounded-full bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300"><?= e((string)$rg) ?></span><?php endforeach; ?>
+                    </div>
+                <?php endif; ?>
             </div>
         <?php endif; ?>
 
