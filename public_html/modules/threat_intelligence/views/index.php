@@ -3,26 +3,9 @@
  * Vista índice del módulo Threat Intelligence.
  */
 ?>
+<?php $tiActiveTab = 'reports'; require VIEWS_PATH . '/partials/ti_header.php'; ?>
+
 <div class="mb-6 space-y-3">
-    <!-- Sincronizar (encima de las pestañas, separado de los filtros) -->
-    <?php if (!empty($selectedTenant)): ?>
-        <div class="flex items-center">
-            <button type="button" onclick="runTiSync()" class="inline-flex items-center gap-2 px-3 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
-                Sincronizar
-            </button>
-        </div>
-    <?php endif; ?>
-
-    <!-- Pestañas (Reports / Threat actors / Tools / Indicators) -->
-    <?php $pc = $profileCounts ?? ['actor' => 0, 'tool' => 0, 'total' => 0]; ?>
-    <div class="flex flex-wrap items-center gap-1 border-b border-gray-200 dark:border-gray-700">
-        <a href="<?= base_url('modules/threat_intelligence?tenant=' . (int)$selectedTenant) ?>" class="px-3 py-2 text-sm font-medium border-b-2 border-brand-500 text-brand-600 dark:text-brand-300">Reports</a>
-        <a href="<?= base_url('modules/threat_intelligence/profiles?tenant=' . (int)$selectedTenant . '&kind=actor') ?>" class="px-3 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">Threat actors (<?= (int)($pc['actor'] ?? 0) ?>)</a>
-        <a href="<?= base_url('modules/threat_intelligence/profiles?tenant=' . (int)$selectedTenant . '&kind=tool') ?>" class="px-3 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">Tools (<?= (int)($pc['tool'] ?? 0) ?>)</a>
-        <a href="<?= base_url('modules/threat_intelligence/iocs?tenant=' . (int)$selectedTenant) ?>" class="px-3 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">Indicators</a>
-    </div>
-
     <form method="GET" class="flex items-end gap-3 flex-wrap">
         <div>
             <label class="block text-xs text-gray-500 mb-1">Tenant</label>

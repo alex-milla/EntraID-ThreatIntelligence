@@ -19,10 +19,10 @@ function ti_q(array $extra, int $tenant, array $filters): string {
     return http_build_query(array_filter($q, fn($v) => $v !== '' && $v !== null));
 }
 ?>
-<div class="mb-6">
-    <a href="<?= base_url('modules/threat_intelligence?tenant=' . $selectedTenant) ?>" class="text-xs text-brand-500 hover:underline">← Volver a Threat Intel</a>
-    <h1 class="text-xl font-semibold mt-2">Indicadores (IOCs)</h1>
-    <p class="text-xs text-gray-400 mt-1"><?= number_format((int)($iocs['total'] ?? 0)) ?> IOCs · <?= count($types) ?> tipos</p>
+<?php $tiActiveTab = 'indicators'; require VIEWS_PATH . '/partials/ti_header.php'; ?>
+
+<div class="mb-4">
+    <p class="text-xs text-gray-400"><?= number_format((int)($iocs['total'] ?? 0)) ?> IOCs · <?= count($types) ?> tipos</p>
 </div>
 
 <div class="mb-4 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950 px-4 py-2.5">
@@ -30,29 +30,47 @@ function ti_q(array $extra, int $tenant, array $filters): string {
 </div>
 
 <!-- Filtros -->
-<form method="GET" class="mb-4 flex flex-wrap items-center gap-2">
-    <select name="tenant" onchange="this.form.submit()" class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm">
-        <?php foreach ($tenants as $t): ?>
-            <option value="<?= $t['id'] ?>" <?= (int)$selectedTenant === (int)$t['id'] ? 'selected' : '' ?>><?= e($t['name']) ?></option>
-        <?php endforeach; ?>
-    </select>
-    <select name="type" class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm">
-        <option value="">Todos los tipos</option>
-        <?php foreach ($types as $ty): ?>
-            <option value="<?= e($ty['ioc_type']) ?>" <?= ($filters['type'] ?? '') === $ty['ioc_type'] ? 'selected' : '' ?>><?= e($ty['ioc_type']) ?> (<?= (int)$ty['cnt'] ?>)</option>
-        <?php endforeach; ?>
-    </select>
-    <input type="text" name="search" value="<?= e($filters['search'] ?? '') ?>" placeholder="Buscar valor…"
-           class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm w-56">
-    <input type="date" name="from" value="<?= e($filters['from'] ?? '') ?>" title="Actividad desde"
-           class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm">
-    <input type="date" name="to" value="<?= e($filters['to'] ?? '') ?>" title="Actividad hasta"
-           class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm">
-    <select name="sort" class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm">
-        <option value="" <?= ($filters['sort'] ?? '') === '' ? 'selected' : '' ?>>Orden: última actividad</option>
-        <option value="value" <?= ($filters['sort'] ?? '') === 'value' ? 'selected' : '' ?>>Orden: valor (A-Z)</option>
-    </select>
-    <button type="submit" class="px-3 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg">Filtrar</button>
+<form method="GET" class="mb-4 flex items-end gap-3 flex-wrap">
+    <div>
+        <label class="block text-xs text-gray-500 mb-1">Tenant</label>
+        <select name="tenant" onchange="this.form.submit()" class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+            <?php foreach ($tenants as $t): ?>
+                <option value="<?= $t['id'] ?>" <?= (int)$selectedTenant === (int)$t['id'] ? 'selected' : '' ?>><?= e($t['name']) ?></option>
+            <?php endforeach; ?>
+        </select>
+    </div>
+    <div>
+        <label class="block text-xs text-gray-500 mb-1">Tipo</label>
+        <select name="type" class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+            <option value="">Todos los tipos</option>
+            <?php foreach ($types as $ty): ?>
+                <option value="<?= e($ty['ioc_type']) ?>" <?= ($filters['type'] ?? '') === $ty['ioc_type'] ? 'selected' : '' ?>><?= e($ty['ioc_type']) ?> (<?= (int)$ty['cnt'] ?>)</option>
+            <?php endforeach; ?>
+        </select>
+    </div>
+    <div>
+        <label class="block text-xs text-gray-500 mb-1">Buscar</label>
+        <input type="text" name="search" value="<?= e($filters['search'] ?? '') ?>" placeholder="Buscar valor…"
+               class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none w-56">
+    </div>
+    <div>
+        <label class="block text-xs text-gray-500 mb-1">Desde</label>
+        <input type="date" name="from" value="<?= e($filters['from'] ?? '') ?>" title="Actividad desde"
+               class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+    </div>
+    <div>
+        <label class="block text-xs text-gray-500 mb-1">Hasta</label>
+        <input type="date" name="to" value="<?= e($filters['to'] ?? '') ?>" title="Actividad hasta"
+               class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+    </div>
+    <div>
+        <label class="block text-xs text-gray-500 mb-1">Orden</label>
+        <select name="sort" class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+            <option value="" <?= ($filters['sort'] ?? '') === '' ? 'selected' : '' ?>>Orden: última actividad</option>
+            <option value="value" <?= ($filters['sort'] ?? '') === 'value' ? 'selected' : '' ?>>Orden: valor (A-Z)</option>
+        </select>
+    </div>
+    <button type="submit" class="px-3 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 text-sm font-medium rounded-lg transition-colors">Filtrar</button>
     <?php if (($filters['type'] ?? '') !== '' || ($filters['search'] ?? '') !== '' || ($filters['from'] ?? '') !== '' || ($filters['to'] ?? '') !== ''): ?>
         <a href="<?= base_url('modules/threat_intelligence/iocs?tenant=' . $selectedTenant) ?>" class="text-xs text-gray-500 hover:underline">Limpiar</a>
     <?php endif; ?>
@@ -212,5 +230,7 @@ function copyAnalysisScope() { if (!SCOPE_REPORT) return; navigator.clipboard.wr
 function downloadAnalysisScope() { if (!SCOPE_REPORT) return; var d = new Date(); var s = d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0'); downloadFile(SCOPE_REPORT, 'indicadores-<?= (int)$selectedTenant ?>-' + s + '.md', 'text/markdown'); }
 function esc(s) { var d = document.createElement('div'); d.textContent = s == null ? '' : s; return d.innerHTML; }
 </script>
+
+<?php if (!empty($selectedTenant)) { require VIEWS_PATH . '/partials/ti_sync.php'; } ?>
 
 <?php if (Auth::isAdmin()) { require VIEWS_PATH . '/partials/llm_actions_editor.php'; } ?>

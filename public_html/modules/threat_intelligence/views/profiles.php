@@ -2,21 +2,13 @@
 /**
  * Vista: Intel Profiles (Threat actors y Tools).
  */
-$pc = $counts ?? ['actor' => 0, 'tool' => 0, 'other' => 0, 'total' => 0];
+$profileCounts = $counts ?? ['actor' => 0, 'tool' => 0, 'other' => 0, 'total' => 0];
 $kind = $filters['kind'] ?? '';
 $search = $filters['search'] ?? '';
-$tab = 'px-3 py-2 text-sm font-medium border-b-2';
-$tabOn = 'border-brand-500 text-brand-600 dark:text-brand-300';
-$tabOff = 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300';
+$tiActiveTab = ($kind === 'tool') ? 'tool' : 'actor';
+require VIEWS_PATH . '/partials/ti_header.php';
 ?>
 <div class="mb-6 space-y-3">
-    <div class="flex flex-wrap items-center gap-1 border-b border-gray-200 dark:border-gray-700">
-        <a href="<?= base_url('modules/threat_intelligence?tenant=' . (int)$selectedTenant) ?>" class="<?= $tab ?> <?= $tabOff ?>">Reports</a>
-        <a href="<?= base_url('modules/threat_intelligence/profiles?tenant=' . (int)$selectedTenant . '&kind=actor') ?>" class="<?= $tab ?> <?= $kind === 'actor' ? $tabOn : $tabOff ?>">Threat actors (<?= (int)($pc['actor'] ?? 0) ?>)</a>
-        <a href="<?= base_url('modules/threat_intelligence/profiles?tenant=' . (int)$selectedTenant . '&kind=tool') ?>" class="<?= $tab ?> <?= $kind === 'tool' ? $tabOn : $tabOff ?>">Tools (<?= (int)($pc['tool'] ?? 0) ?>)</a>
-        <a href="<?= base_url('modules/threat_intelligence/iocs?tenant=' . (int)$selectedTenant) ?>" class="<?= $tab ?> <?= $tabOff ?>">Indicators</a>
-    </div>
-
     <form method="GET" class="flex items-end gap-3 flex-wrap">
         <input type="hidden" name="tenant" value="<?= (int)$selectedTenant ?>">
         <input type="hidden" name="kind" value="<?= e($kind) ?>">
@@ -25,10 +17,7 @@ $tabOff = 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-
             <input type="text" name="search" value="<?= e($search) ?>" placeholder="Nombre, alias…"
                    class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none w-56">
         </div>
-        <button type="submit" class="px-4 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-muted-dark text-sm font-medium rounded-lg transition-colors">Filtrar</button>
-        <?php if (!empty($selectedTenant)): ?>
-            <button type="button" onclick="runTiSync()" class="px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors">Sincronizar</button>
-        <?php endif; ?>
+        <button type="submit" class="px-3 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 text-sm font-medium rounded-lg transition-colors">Filtrar</button>
     </form>
 </div>
 
@@ -37,7 +26,7 @@ $tabOff = 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-
         <h2 class="text-sm font-semibold">Intel profiles (<?= (int)($profiles['total'] ?? 0) ?>)</h2>
     </div>
     <?php if (empty($profiles['data'])): ?>
-        <p class="px-5 py-8 text-sm text-gray-500 text-center">Sin perfiles. Pulsa «Sincronizar perfiles» (o sincroniza el tenant).</p>
+        <p class="px-5 py-8 text-sm text-gray-500 text-center">Sin perfiles. Pulsa «Sincronizar todo» (arriba de las pestañas) para obtenerlos.</p>
     <?php else: ?>
         <div class="divide-y divide-gray-100 dark:divide-gray-700/50">
             <?php foreach ($profiles['data'] as $p): ?>

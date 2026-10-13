@@ -970,6 +970,7 @@ class Module_ThreatIntelligence extends BaseModule
             'filters'        => $filters,
             'iocs'           => $data,
             'types'          => $types,
+            'profileCounts'  => $selectedTenant ? $this->getProfileCounts($selectedTenant) : ['actor' => 0, 'tool' => 0, 'other' => 0, 'total' => 0],
             'actions'           => llm_actions_list(true, 'indicator'),
             'actionsEditorList' => llm_actions_list(false, 'indicator'),
             'actionScope'       => 'indicator',
