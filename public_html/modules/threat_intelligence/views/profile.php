@@ -23,7 +23,7 @@ $countryLabel = function ($c) {
             <h2 class="text-xl font-bold"><?= e($profile['title']) ?></h2>
             <p class="text-xs text-gray-400 mt-1">
                 <?= e(ucfirst((string)($profile['kind'] ?? ''))) ?>
-                <?php if (!empty($profile['first_active'])): ?> · Primera actividad: <?= e($profile['first_active']) ?><?php endif; ?>
+                <?php if (!empty($profile['first_active'])): ?> · Primera actividad: <?= e(substr((string)$profile['first_active'], 0, 10)) ?><?php endif; ?>
                 <?php if ($tenant): ?> · <?= e($tenant['name']) ?><?php endif; ?>
             </p>
         </div>

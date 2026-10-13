@@ -41,7 +41,7 @@ require VIEWS_PATH . '/partials/ti_header.php';
                             <p class="text-xs text-gray-400 mt-0.5">
                                 <?= e(ucfirst((string)($p['kind'] ?? ''))) ?>
                                 <?php if ($aliasesStr !== ''): ?> · <?= e(truncate($aliasesStr, 100)) ?><?php endif; ?>
-                                <?php if (!empty($p['first_active'])): ?> · desde <?= e($p['first_active']) ?><?php endif; ?>
+                                <?php if (!empty($p['first_active'])): ?> · desde <?= e(substr((string)$p['first_active'], 0, 10)) ?><?php endif; ?>
                             </p>
                         </div>
                         <?php if (($p['kind'] ?? '') === 'actor'): ?>
