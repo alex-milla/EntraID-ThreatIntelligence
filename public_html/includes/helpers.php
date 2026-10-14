@@ -434,6 +434,21 @@ if (!function_exists('is_ajax')) {
     }
 }
 
+if (!function_exists('release_session_lock')) {
+    /**
+     * Libera el bloqueo del fichero de sesión para que otras peticiones de la
+     * MISMA sesión no esperen durante tareas largas (sync de Graph, análisis
+     * IA…). Debe llamarse DESPUÉS de validar CSRF y de leer el usuario, y no
+     * debe escribirse en la sesión a partir de ahí.
+     */
+    function release_session_lock(): void
+    {
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            session_write_close();
+        }
+    }
+}
+
 if (!function_exists('client_ip')) {
     /**
      * Obtiene la IP del cliente de forma segura.

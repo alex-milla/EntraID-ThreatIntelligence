@@ -98,6 +98,8 @@ $dbTotal = (int)($db['size'] ?? 0) + (int)($db['wal'] ?? 0) + (int)($db['shm'] ?
             <div><dt class="text-xs text-gray-500">upload_max_filesize</dt><dd class="font-medium"><?= e($php['upload_max_filesize'] ?? '—') ?></dd></div>
             <div><dt class="text-xs text-gray-500">post_max_size</dt><dd class="font-medium"><?= e($php['post_max_size'] ?? '—') ?></dd></div>
             <div><dt class="text-xs text-gray-500">max_execution_time</dt><dd class="font-medium"><?= e($php['max_execution_time'] ?? '—') ?>s</dd></div>
+            <div><dt class="text-xs text-gray-500">SAPI</dt><dd class="font-medium font-mono text-xs"><?= e($php['sapi'] ?? '—') ?></dd></div>
+            <div><dt class="text-xs text-gray-500">fastcgi_finish_request</dt><dd class="font-medium"><?= !empty($php['fastcgi']) ? 'Sí' : 'No' ?></dd></div>
             <div><dt class="text-xs text-gray-500">Extensiones</dt><dd class="font-medium">
                 <?= !empty($php['curl']) ? 'curl ✔' : 'curl ✘' ?> ·
                 <?= !empty($php['mbstring']) ? 'mbstring ✔' : 'mbstring ✘' ?> ·

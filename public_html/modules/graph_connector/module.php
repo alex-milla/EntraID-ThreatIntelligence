@@ -106,6 +106,7 @@ class Module_GraphConnector extends BaseModule
     {
         Auth::requireAdmin();
         Csrf::validateOrFail();
+        release_session_lock();
         $tenantId = (int)($params['id'] ?? 0);
         $result = $this->testTenantConnection($tenantId);
         json_response($result);
@@ -114,6 +115,7 @@ class Module_GraphConnector extends BaseModule
     public function showOrganization(array $params = []): void
     {
         Auth::requireAdmin();
+        release_session_lock();
         $tenantId = (int)($params['id'] ?? 0);
         $result = $this->getOrganizationInfo($tenantId);
         json_response($result);
@@ -123,6 +125,7 @@ class Module_GraphConnector extends BaseModule
     {
         Auth::requireAdmin();
         Csrf::validateOrFail();
+        release_session_lock();
         $tenantId = (int)($params['id'] ?? 0);
         $results = ModuleManager::syncAll($tenantId);
         json_response(['success' => true, 'results' => $results]);
@@ -198,6 +201,7 @@ class Module_GraphConnector extends BaseModule
     {
         Auth::requireAdmin();
         Csrf::validateOrFail();
+        release_session_lock();
         json_response($this->diagnose((int)($params['id'] ?? 0)));
     }
 }

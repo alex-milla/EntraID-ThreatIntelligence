@@ -1055,6 +1055,7 @@ class Module_ThreatIntelligence extends BaseModule
     public function triggerSyncIndicators(array $params = []): void
     {
         Csrf::validateOrFail();
+        release_session_lock();
         $tenantId = (int)($params['tenantId'] ?? 0);
         $missing = $this->missingPermissions($tenantId);
         if (!empty($missing)) {
@@ -1293,6 +1294,7 @@ class Module_ThreatIntelligence extends BaseModule
     public function syncIndicatorsFullEndpoint(array $params = []): void
     {
         Csrf::validateOrFail();
+        release_session_lock();
         $tenantId = (int)($params['tenantId'] ?? 0);
         $input = json_decode(file_get_contents('php://input'), true) ?? $_POST;
         $cursor = max(0, (int)($input['cursor'] ?? 0));
@@ -1320,6 +1322,7 @@ class Module_ThreatIntelligence extends BaseModule
     public function syncRun(array $params = []): void
     {
         Csrf::validateOrFail();
+        release_session_lock();
         $tenantId = (int)($params['tenantId'] ?? 0);
         $input = json_decode(file_get_contents('php://input'), true) ?? $_POST;
         $phase = (string)($input['phase'] ?? 'articles');
@@ -1585,6 +1588,7 @@ class Module_ThreatIntelligence extends BaseModule
     public function triggerSync(array $params = []): void
     {
         Csrf::validateOrFail();
+        release_session_lock();
         $tenantId = (int)($params['tenantId'] ?? 0);
         $missing = $this->missingPermissions($tenantId);
         if (!empty($missing)) {

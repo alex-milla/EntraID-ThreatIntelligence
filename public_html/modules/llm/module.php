@@ -77,6 +77,10 @@ class Module_Llm extends BaseModule
      */
     public function chat(string $systemPrompt, string $userPrompt, array $options = [], ?int $profileId = null): array
     {
+        // Liberar el bloqueo de sesión: las llamadas al LLM pueden tardar y no
+        // deben impedir que el resto del portal siga respondiendo.
+        release_session_lock();
+
         if (!$this->isConfigured($profileId)) {
             return ['success' => false, 'error' => 'LLM no configurado. Configúralo en Admin → APIs.'];
         }

@@ -896,6 +896,8 @@ class AdminController
                 'upload_max_filesize' => (string)ini_get('upload_max_filesize'),
                 'post_max_size'       => (string)ini_get('post_max_size'),
                 'max_execution_time'  => (string)ini_get('max_execution_time'),
+                'sapi'                => function_exists('php_sapi_name') ? (string)php_sapi_name() : '—',
+                'fastcgi'             => function_exists('fastcgi_finish_request'),
                 'curl'                => function_exists('curl_init'),
                 'mbstring'            => function_exists('mb_strlen'),
                 'openssl'             => function_exists('openssl_encrypt'),
