@@ -278,3 +278,7 @@ define('TI_TARGET_REGION_EXTRAS', [
     'Latin America',
     'Middle East and North Africa',
 ]);
+
+// Ingesta inicial de indicadores de Threat Intelligence.
+define('TI_INDICATORS_FULL_LIMIT', 20000); // máximo total de la carga inicial
+define('TI_INDICATORS_FULL_DAYS', 90);     // solo indicadores con actividad reciente

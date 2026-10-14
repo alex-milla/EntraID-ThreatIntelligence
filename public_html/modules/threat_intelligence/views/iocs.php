@@ -30,8 +30,25 @@ $tiFilterQs = array_filter(['q' => $filters['search'] ?? '', 'from' => $filters[
 require VIEWS_PATH . '/partials/ti_header.php';
 ?>
 
-<div class="mb-4">
-    <p class="text-xs text-gray-400"><?= number_format((int)($iocs['total'] ?? 0)) ?> IOCs · <?= count($types) ?> tipos</p>
+<div class="mb-4 flex items-center justify-between gap-3 flex-wrap">
+    <p class="text-xs text-gray-400">
+        <span class="text-gray-600 dark:text-gray-300 font-medium"><?= number_format((int)($iocs['total'] ?? 0)) ?></span> indicadores únicos · <?= count($types) ?> tipos · últimos <?= (int)TI_INDICATORS_FULL_DAYS ?> días
+    </p>
+    <?php if (!empty($selectedTenant)): ?>
+        <button type="button" onclick="runIndicatorsFull()" title="Descarga todos los indicadores de los perfiles (hasta <?= number_format((int)TI_INDICATORS_FULL_LIMIT) ?>, últimos <?= (int)TI_INDICATORS_FULL_DAYS ?> días)"
+                class="inline-flex items-center gap-2 px-3 py-1.5 border border-gray-200 dark:border-gray-700 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+            Cargar indicadores (<?= (int)TI_INDICATORS_FULL_DAYS ?> días)
+        </button>
+    <?php endif; ?>
+</div>
+
+<div id="ioc-full-progress" class="hidden mb-4 bg-white dark:bg-surface-dark border border-gray-200 dark:border-gray-700 rounded-xl p-4">
+    <p class="text-sm font-medium mb-2">Cargando indicadores…</p>
+    <div class="h-2 w-full bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
+        <div id="ioc-full-bar" class="h-full bg-brand-500 transition-all" style="width:0%"></div>
+    </div>
+    <p id="ioc-full-text" class="text-xs text-gray-400 mt-1.5"></p>
 </div>
 
 <div class="mb-4 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950 px-4 py-2.5">
@@ -49,6 +66,11 @@ require VIEWS_PATH . '/partials/ti_header.php';
         </select>
     </div>
     <div>
+        <label class="block text-xs text-gray-500 mb-1">Buscar</label>
+        <input type="text" name="search" value="<?= e($filters['search'] ?? '') ?>" placeholder="Dominio, IP, hash… p. ej. workers.dev"
+               class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none w-72">
+    </div>
+    <div>
         <label class="block text-xs text-gray-500 mb-1">Tipo</label>
         <select name="type" class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
             <option value="">Todos los tipos</option>
@@ -56,11 +78,6 @@ require VIEWS_PATH . '/partials/ti_header.php';
                 <option value="<?= e($ty['ioc_type']) ?>" <?= ($filters['type'] ?? '') === $ty['ioc_type'] ? 'selected' : '' ?>><?= e($ty['ioc_type']) ?> (<?= (int)$ty['cnt'] ?>)</option>
             <?php endforeach; ?>
         </select>
-    </div>
-    <div>
-        <label class="block text-xs text-gray-500 mb-1">Buscar</label>
-        <input type="text" name="search" value="<?= e($filters['search'] ?? '') ?>" placeholder="Buscar valor…"
-               class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none w-56">
     </div>
     <div>
         <label class="block text-xs text-gray-500 mb-1">Desde</label>
@@ -169,7 +186,7 @@ if (($filters['to'] ?? '') !== '' && ($filters['to'] ?? '') !== $tiDefTo) { $c =
                 <?php foreach ($rows as $ioc): ?>
                     <tr class="hover:bg-gray-50 dark:hover:bg-gray-800/50">
                         <td class="px-4 py-2"><span class="font-mono text-xs px-2 py-0.5 rounded bg-gray-100 dark:bg-gray-800"><?= e($ioc['ioc_type']) ?></span></td>
-                        <td class="px-4 py-2 font-mono text-xs break-all" data-ioc="<?= e($ioc['ioc_value']) ?>"><?= e($ioc['ioc_value']) ?></td>
+                        <td class="px-4 py-2 font-mono text-xs break-all" data-ioc="<?= e($ioc['ioc_value']) ?>"><?= e($ioc['ioc_value']) ?><?php if ((int)($ioc['occurrences'] ?? 1) > 1): ?> <span class="text-[10px] text-gray-400" title="Visto <?= (int)$ioc['occurrences'] ?> veces (varios perfiles)">×<?= (int)$ioc['occurrences'] ?></span><?php endif; ?></td>
                         <td class="px-4 py-2 text-xs text-gray-500"><?= e($ioc['severity'] ?? '—') ?></td>
                         <td class="px-4 py-2 text-xs text-gray-500"><?= e($ioc['first_seen'] ? substr((string)$ioc['first_seen'], 0, 10) : '—') ?></td>
                         <td class="px-4 py-2 text-xs text-gray-500"><?= e($ioc['last_seen'] ? substr((string)$ioc['last_seen'], 0, 10) : '—') ?></td>
@@ -239,6 +256,41 @@ function analyzeIndicatorsIA(actionId) {
 function copyAnalysisScope() { if (!SCOPE_REPORT) return; navigator.clipboard.writeText(SCOPE_REPORT).then(function () { toast('Copiado al portapapeles', 'success'); }).catch(function () { toast('No se pudo copiar', 'error'); }); }
 function downloadAnalysisScope() { if (!SCOPE_REPORT) return; var d = new Date(); var s = d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0'); downloadFile(SCOPE_REPORT, 'indicadores-<?= (int)$selectedTenant ?>-' + s + '.md', 'text/markdown'); }
 function esc(s) { var d = document.createElement('div'); d.textContent = s == null ? '' : s; return d.innerHTML; }
+
+/* ---- Carga inicial de indicadores (perfiles, últimos 90 días) ---- */
+function runIndicatorsFull() {
+    var tenant = <?= (int)$selectedTenant ?>;
+    if (!tenant) { toast('Selecciona un tenant', 'warning'); return; }
+    var prog = document.getElementById('ioc-full-progress');
+    var bar = document.getElementById('ioc-full-bar');
+    var txt = document.getElementById('ioc-full-text');
+    if (!prog) return;
+    prog.classList.remove('hidden');
+    bar.style.width = '0%';
+    var cursor = 0, added = 0;
+    function step() {
+        api('POST', '<?= base_url('modules/threat_intelligence/sync-indicators-full') ?>/' + tenant, { cursor: cursor, batch: 8 })
+            .then(function (res) {
+                if (!res || !res.success) { prog.classList.add('hidden'); toast((res && res.error) ? res.error : 'Error al cargar indicadores', 'error'); return; }
+                added += (res.added || 0);
+                cursor = res.cursor || 0;
+                var frac = res.total > 0 ? (res.processed / res.total) : 1;
+                if (frac > 1) { frac = 1; }
+                bar.style.width = Math.round(frac * 100) + '%';
+                txt.textContent = res.processed + ' / ' + res.total + ' perfiles · +' + added + ' indicadores · ' + (res.stored || 0) + '/' + (res.limit || 0);
+                if (res.done) {
+                    bar.style.width = '100%';
+                    txt.textContent = 'Completado · +' + added + ' indicadores' + (res.limitReached ? ' (tope alcanzado)' : '');
+                    toast('Indicadores cargados (' + added + ')', 'success');
+                    setTimeout(function () { location.reload(); }, 1500);
+                } else {
+                    step();
+                }
+            })
+            .catch(function () { prog.classList.add('hidden'); toast('Error de conexión', 'error'); });
+    }
+    step();
+}
 </script>
 
 <?php if (!empty($selectedTenant)) { require VIEWS_PATH . '/partials/ti_sync.php'; } ?>

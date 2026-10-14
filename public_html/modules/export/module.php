@@ -392,8 +392,9 @@ class Module_Export extends BaseModule
             $params[] = $filters['type'];
         }
         if (!empty($filters['search'])) {
-            $where[] = 'ioc_value LIKE ?';
-            $params[] = '%' . $filters['search'] . '%';
+            $like = '%' . $filters['search'] . '%';
+            $where[] = '(ioc_value LIKE ? OR description LIKE ? OR source LIKE ?)';
+            array_push($params, $like, $like, $like);
         }
         if (!empty($filters['from'])) {
             $where[] = 'date(COALESCE(last_seen, first_seen, fetched_at)) >= ?';
@@ -407,18 +408,29 @@ class Module_Export extends BaseModule
             $where[] = 'article_id = ?';
             $params[] = (int)$filters['article_id'];
         }
-        if (!empty($filters['limit'])) {
-            $params[] = (int)$filters['limit'];
-            return Database::fetchAll(
-                "SELECT * FROM ti_iocs WHERE " . implode(' AND ', $where) . " ORDER BY fetched_at DESC LIMIT ?",
-                $params
-            );
+        $whereClause = implode(' AND ', $where);
+
+        // Export por artículo: tal cual (son los IOCs de ese artículo).
+        if (!empty($filters['article_id'])) {
+            if (!empty($filters['limit'])) {
+                $params[] = (int)$filters['limit'];
+                return Database::fetchAll("SELECT * FROM ti_iocs WHERE $whereClause ORDER BY fetched_at DESC LIMIT ?", $params);
+            }
+            return Database::fetchAll("SELECT * FROM ti_iocs WHERE $whereClause ORDER BY fetched_at DESC", $params);
         }
 
-        return Database::fetchAll(
-            "SELECT * FROM ti_iocs WHERE " . implode(' AND ', $where) . " ORDER BY fetched_at DESC",
-            $params
-        );
+        // Export global: sin duplicados (una fila por tipo+valor).
+        $sql = "SELECT MIN(id) AS id, ioc_type, ioc_value, MAX(source) AS source, MAX(description) AS description,
+                       MAX(severity) AS severity, MIN(first_seen) AS first_seen, MAX(last_seen) AS last_seen,
+                       MAX(article_id) AS article_id, MAX(profile_id) AS profile_id, MAX(fetched_at) AS fetched_at
+                FROM ti_iocs WHERE $whereClause
+                GROUP BY ioc_type, ioc_value
+                ORDER BY fetched_at DESC";
+        if (!empty($filters['limit'])) {
+            $params[] = (int)$filters['limit'];
+            $sql .= " LIMIT ?";
+        }
+        return Database::fetchAll($sql, $params);
     }
 
     /**

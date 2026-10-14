@@ -483,6 +483,17 @@ class Module_ThreatIntelligence extends BaseModule
     }
 
     /**
+     * Rango por defecto de la pestaña Indicators: últimos TI_INDICATORS_FULL_DAYS
+     * días (90 por defecto).
+     */
+    private function defaultIocDateRange(): array
+    {
+        $days = max(1, (int)TI_INDICATORS_FULL_DAYS);
+        $to = gmdate('Y-m-d');
+        return ['from' => gmdate('Y-m-d', strtotime($to) - $days * 86400), 'to' => $to];
+    }
+
+    /**
      * Rango de fechas activo (por defecto últimas 24 h; máximo 90 días).
      */
     private function resolveDateRange(): array
@@ -576,7 +587,9 @@ class Module_ThreatIntelligence extends BaseModule
     }
 
     /**
-     * Obtiene IOCs de un tenant con filtros.
+     * Obtiene IOCs de un tenant con filtros. Los resultados van SIN DUPLICADOS:
+     * se agrupa por tipo+valor (un indicador puede venir de varios perfiles).
+     * La búsqueda abarca valor, descripción y fuente.
      */
     public function getIocs(int $tenantId, array $filters = [], int $page = 1, int $perPage = 50): array
     {
@@ -588,8 +601,9 @@ class Module_ThreatIntelligence extends BaseModule
             $params[] = $filters['type'];
         }
         if (!empty($filters['search'])) {
-            $where[] = 'ioc_value LIKE ?';
-            $params[] = '%' . $filters['search'] . '%';
+            $like = '%' . $filters['search'] . '%';
+            $where[] = '(ioc_value LIKE ? OR description LIKE ? OR source LIKE ?)';
+            array_push($params, $like, $like, $like);
         }
         if (!empty($filters['from'])) {
             $where[] = 'date(COALESCE(last_seen, first_seen, fetched_at)) >= ?';
@@ -605,10 +619,11 @@ class Module_ThreatIntelligence extends BaseModule
 
         $orderBy = (($filters['sort'] ?? '') === 'value')
             ? 'ioc_value ASC'
-            : 'COALESCE(last_seen, first_seen, fetched_at) DESC';
+            : 'COALESCE(MAX(last_seen), MAX(first_seen), MAX(fetched_at)) DESC';
 
+        // Total de valores únicos (sin duplicados).
         $total = (int)Database::fetchOne(
-            "SELECT COUNT(*) as cnt FROM ti_iocs WHERE $whereClause",
+            "SELECT COUNT(*) as cnt FROM (SELECT 1 FROM ti_iocs WHERE $whereClause GROUP BY ioc_type, ioc_value)",
             $params
         )['cnt'];
 
@@ -616,7 +631,15 @@ class Module_ThreatIntelligence extends BaseModule
         $params[] = $offset;
 
         $iocs = Database::fetchAll(
-            "SELECT * FROM ti_iocs WHERE $whereClause ORDER BY $orderBy LIMIT ? OFFSET ?",
+            "SELECT MIN(id) AS id, ioc_type, ioc_value,
+                    MAX(severity) AS severity, MIN(first_seen) AS first_seen,
+                    MAX(last_seen) AS last_seen, MAX(description) AS description,
+                    MAX(source) AS source, MAX(article_id) AS article_id,
+                    MAX(profile_id) AS profile_id, COUNT(*) AS occurrences
+             FROM ti_iocs WHERE $whereClause
+             GROUP BY ioc_type, ioc_value
+             ORDER BY $orderBy
+             LIMIT ? OFFSET ?",
             $params
         );
 
@@ -630,12 +653,12 @@ class Module_ThreatIntelligence extends BaseModule
     }
 
     /**
-     * Obtiene estadísticas de IOCs por tipo.
+     * Obtiene estadísticas de IOCs por tipo (valores únicos, sin duplicados).
      */
     public function getIocStats(int $tenantId): array
     {
         return Database::fetchAll(
-            "SELECT ioc_type, COUNT(*) as cnt FROM ti_iocs WHERE tenant_id = ? GROUP BY ioc_type ORDER BY cnt DESC",
+            "SELECT ioc_type, COUNT(DISTINCT ioc_value) as cnt FROM ti_iocs WHERE tenant_id = ? GROUP BY ioc_type ORDER BY cnt DESC",
             [$tenantId]
         );
     }
@@ -1184,6 +1207,115 @@ class Module_ThreatIntelligence extends BaseModule
         return ['success' => true, 'phase' => 'profile_indicators', 'processed' => $end, 'total' => $total, 'cursor' => $end, 'done' => $end >= $total, 'added' => $added, 'skipped' => $skipped];
     }
 
+    /**
+     * Carga INICIAL de indicadores: recorre todos los intel profiles y guarda
+     * los indicadores con actividad en los últimos TI_INDICATORS_FULL_DAYS días,
+     * hasta un máximo total de TI_INDICATORS_FULL_LIMIT. Por pasos (con progreso).
+     */
+    public function syncIndicatorsFull(GraphClient $client, int $tenantId, int $cursor = 0, int $batch = 8): array
+    {
+        $limit  = max(1, (int)TI_INDICATORS_FULL_LIMIT);
+        $days   = max(1, (int)TI_INDICATORS_FULL_DAYS);
+        $cutoff = time() - $days * 86400;
+
+        $profiles = Database::fetchAll("SELECT id, profile_id FROM ti_intel_profiles WHERE tenant_id = ? ORDER BY id", [$tenantId]);
+        $total = count($profiles);
+        $end = min($cursor + $batch, $total);
+
+        // Indicadores ya almacenados (para respetar el tope global de la carga).
+        $stored = (int)(Database::fetchOne("SELECT COUNT(*) c FROM ti_iocs WHERE tenant_id = ?", [$tenantId])['c'] ?? 0);
+
+        $added = 0;
+        $skipped = 0;
+        $limitReached = false;
+
+        for ($k = $cursor; $k < $end; $k++) {
+            if ($stored + $added >= $limit) { $limitReached = true; break; }
+            $p = $profiles[$k];
+            try {
+                $iocs = $client->graphGetAll("security/threatIntelligence/intelProfiles/{$p['profile_id']}/indicators");
+            } catch (Throwable $e) { $skipped++; continue; }
+
+            foreach ($iocs as $ioc) {
+                if ($stored + $added >= $limit) { $limitReached = true; break; }
+                // Solo indicadores con actividad en la ventana (si tienen fecha).
+                $date = $ioc['lastSeenDateTime'] ?? $ioc['firstSeenDateTime'] ?? null;
+                if ($date !== null) {
+                    $ts = strtotime((string)$date);
+                    if ($ts !== false && $ts < $cutoff) { $skipped++; continue; }
+                }
+                $artifact = $ioc['artifact'] ?? [];
+                $value = $this->extractIocValue($artifact);
+                $iocType = $this->mapIocType($artifact, $value);
+                try {
+                    Database::query(
+                        "INSERT OR REPLACE INTO ti_iocs
+                         (tenant_id, profile_id, article_id, ioc_id, ioc_type, ioc_value, source, description, severity, first_seen, last_seen, fetched_at)
+                         VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))",
+                        [
+                            $tenantId,
+                            (int)$p['id'],
+                            $ioc['id'] ?? md5($iocType . '|' . $value),
+                            $iocType,
+                            $value,
+                            $ioc['source'] ?? null,
+                            $ioc['description'] ?? null,
+                            $ioc['severity'] ?? null,
+                            $ioc['firstSeenDateTime'] ?? null,
+                            $ioc['lastSeenDateTime'] ?? null,
+                        ]
+                    );
+                    $added++;
+                } catch (Throwable $e) { /* skip */ }
+            }
+        }
+
+        if ($end >= $total) {
+            setting_set('ti_last_sync_' . $tenantId, gmdate('c'));
+        }
+
+        return [
+            'success'      => true,
+            'phase'        => 'indicators_full',
+            'processed'    => $end,
+            'total'        => $total,
+            'cursor'       => $end,
+            'done'         => ($end >= $total) || $limitReached,
+            'added'        => $added,
+            'skipped'      => $skipped,
+            'stored'       => $stored + $added,
+            'limit'        => $limit,
+            'limitReached' => $limitReached,
+        ];
+    }
+
+    /** Endpoint de la carga inicial de indicadores (por pasos, con progreso). */
+    public function syncIndicatorsFullEndpoint(array $params = []): void
+    {
+        Csrf::validateOrFail();
+        $tenantId = (int)($params['tenantId'] ?? 0);
+        $input = json_decode(file_get_contents('php://input'), true) ?? $_POST;
+        $cursor = max(0, (int)($input['cursor'] ?? 0));
+        $batch = max(1, min(25, (int)($input['batch'] ?? 8)));
+
+        $missing = $this->missingPermissions($tenantId);
+        if (!empty($missing)) {
+            json_response(['success' => false, 'skipped' => true, 'error' => 'El tenant no tiene los permisos: ' . implode(', ', $missing)]);
+        }
+        try {
+            $client = $this->getGraphClient($tenantId);
+        } catch (Throwable $e) {
+            json_response(['success' => false, 'error' => $e->getMessage()]);
+            return;
+        }
+
+        try {
+            json_response($this->syncIndicatorsFull($client, $tenantId, $cursor, $batch));
+        } catch (Throwable $e) {
+            json_response(['success' => false, 'error' => $e->getMessage()]);
+        }
+    }
+
     /** Endpoint de sincronización por pasos (articles / profiles / profile_indicators). */
     public function syncRun(array $params = []): void
     {
@@ -1240,6 +1372,7 @@ class Module_ThreatIntelligence extends BaseModule
             ['method' => 'POST','pattern' => 'sync/{tenantId}',    'handler' => [$this, 'triggerSync']],
             ['method' => 'POST','pattern' => 'sync-run/{tenantId}', 'handler' => [$this, 'syncRun']],
             ['method' => 'POST','pattern' => 'sync-indicators/{tenantId}', 'handler' => [$this, 'triggerSyncIndicators']],
+            ['method' => 'POST','pattern' => 'sync-indicators-full/{tenantId}', 'handler' => [$this, 'syncIndicatorsFullEndpoint']],
         ];
     }
 
@@ -1314,7 +1447,7 @@ class Module_ThreatIntelligence extends BaseModule
     {
         $tenants = TenantManager::getActive();
         $selectedTenant = (int)($_GET['tenant'] ?? ($tenants[0]['id'] ?? 0));
-        $def = $this->defaultDateRange();
+        $def = $this->defaultIocDateRange();
         $filters = [
             'type'   => $_GET['type'] ?? '',
             'search' => trim((string)($_GET['search'] ?? $_GET['q'] ?? '')),
