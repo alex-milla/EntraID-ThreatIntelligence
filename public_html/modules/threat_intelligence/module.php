@@ -1376,6 +1376,7 @@ class Module_ThreatIntelligence extends BaseModule
             'skipped'   => (int)$j['skipped'],
             'message'   => $j['message'],
             'done'      => in_array((string)$j['status'], ['done', 'error', 'cancelled'], true),
+            'age'       => max(0, time() - $this->dbTime($j['updated_at'] ?? '')),
             'base_url'  => (string)($j['base_url'] ?? ''),
             'token'     => (string)$j['token'],
         ];
@@ -1592,6 +1593,23 @@ class Module_ThreatIntelligence extends BaseModule
         json_response($state);
     }
 
+    /** Endpoint: job activo más reciente de cualquier tenant (badge global). */
+    public function jobActiveAnyEndpoint(array $params = []): void
+    {
+        $j = Database::fetchOne(
+            "SELECT j.*, t.name AS tenant_name
+             FROM sync_jobs j JOIN tenants t ON t.id = j.tenant_id
+             WHERE j.status IN ('queued','running') ORDER BY j.updated_at DESC LIMIT 1"
+        );
+        if (!$j) {
+            json_response(['success' => true, 'active' => false]);
+        }
+        $state = $this->jobStatePublic((int)$j['id']);
+        $state['active'] = true;
+        $state['tenant'] = (string)($j['tenant_name'] ?? '');
+        json_response($state);
+    }
+
     /** Endpoint: estado de un job (con auto-sanado si está atascado). */
     public function jobStatusEndpoint(array $params = []): void
     {
@@ -1682,6 +1700,7 @@ class Module_ThreatIntelligence extends BaseModule
             ['method' => 'POST','pattern' => 'sync-indicators/{tenantId}', 'handler' => [$this, 'triggerSyncIndicators']],
             ['method' => 'POST','pattern' => 'sync-indicators-full/{tenantId}', 'handler' => [$this, 'syncIndicatorsFullEndpoint']],
             ['method' => 'POST','pattern' => 'job-start/{tenantId}',        'handler' => [$this, 'jobStartEndpoint']],
+            ['method' => 'GET', 'pattern' => 'job-active-any',             'handler' => [$this, 'jobActiveAnyEndpoint']],
             ['method' => 'GET', 'pattern' => 'job-active/{tenantId}',       'handler' => [$this, 'jobActiveEndpoint']],
             ['method' => 'GET', 'pattern' => 'job-status/{jobId}',          'handler' => [$this, 'jobStatusEndpoint']],
             ['method' => 'POST','pattern' => 'job-cancel/{jobId}',          'handler' => [$this, 'jobCancelEndpoint']],

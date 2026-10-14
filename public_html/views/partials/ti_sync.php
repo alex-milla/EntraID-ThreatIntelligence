@@ -103,19 +103,49 @@ function tiBgRender(st) {
         setTimeout(function () { location.reload(); }, 1600);
     }
 }
+var tiBgFallback = false;
+function tiBgUseClassic(jobId, msg) {
+    if (tiBgFallback) return;
+    tiBgFallback = true;
+    if (msg) { toast(msg, 'warning'); }
+    var go = function () {
+        var p = document.getElementById('ti-bg-progress'); if (p) p.classList.add('hidden');
+        runTiSync();
+    };
+    if (jobId) {
+        api('POST', TI_BG_BASE + '/job-cancel/' + jobId, {}).then(go).catch(go);
+    } else { go(); }
+}
 function tiBgPoll(jobId) {
     api('GET', TI_BG_BASE + '/job-status/' + jobId).then(function (st) {
-        if (st && st.success) { tiBgRender(st); if (!st.done) { tiBgTimer = setTimeout(function () { tiBgPoll(jobId); }, 3000); } }
-        else { var p = document.getElementById('ti-bg-progress'); if (p) p.classList.add('hidden'); }
+        if (st && st.success) {
+            tiBgRender(st);
+            if (st.done) { return; }
+            // Respaldo automático: si el job no avanza en ~60 s, modo clásico.
+            if (!tiBgFallback && (st.age || 0) > 60) {
+                tiBgUseClassic(jobId, 'El 2º plano no arrancó; usando el modo clásico');
+                return;
+            }
+            tiBgTimer = setTimeout(function () { tiBgPoll(jobId); }, 3000);
+        } else {
+            var p = document.getElementById('ti-bg-progress'); if (p) p.classList.add('hidden');
+        }
     }).catch(function () { tiBgTimer = setTimeout(function () { tiBgPoll(jobId); }, 5000); });
 }
-function startTiBackgroundSync() {
+function startTiSync() {
     if (!TI_BG_TENANT) { toast('Selecciona un tenant', 'warning'); return; }
+    tiBgFallback = false;
     var cancel = document.getElementById('ti-bg-cancel'); if (cancel) cancel.classList.remove('hidden');
     api('POST', TI_BG_BASE + '/job-start/' + TI_BG_TENANT, { type: 'ti_full' }).then(function (res) {
-        if (res && res.success) { toast('Sincronización en 2º plano iniciada', 'success'); tiBgPoll(res.job_id); }
-        else { toast((res && res.error) ? res.error : 'Error', 'error'); }
-    }).catch(function () { toast('Error de conexión', 'error'); });
+        if (res && res.success) {
+            toast('Sincronización iniciada', 'success');
+            tiBgRender({ id: res.job_id, phase: '…', added: 0, skipped: 0 });
+            tiBgPoll(res.job_id);
+        } else {
+            toast((res && res.error) ? res.error : '2º plano no disponible; modo clásico', 'warning');
+            runTiSync();
+        }
+    }).catch(function () { toast('2º plano no disponible; modo clásico', 'warning'); runTiSync(); });
 }
 function tiBgCancel() {
     var prog = document.getElementById('ti-bg-progress');

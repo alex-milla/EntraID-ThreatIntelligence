@@ -50,6 +50,12 @@ foreach ($navModules as $item) {
                    class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors <?= $isActive ? 'bg-brand-50 dark:bg-brand-950 text-brand-700 dark:text-brand-300' : 'text-gray-600 dark:text-gray-400 hover:bg-muted-light dark:hover:bg-muted-dark' ?>">
                     <?= getModuleIcon($item['icon']) ?>
                     <?= e($item['label']) ?>
+                    <?php if (str_contains((string)$item['url'], 'threat_intelligence')): ?>
+                        <span id="ti-sync-badge" class="ml-auto items-center gap-1 text-[10px] font-medium text-brand-600 dark:text-brand-300" style="display:none" title="Sincronización en curso">
+                            <svg class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path></svg>
+                            <span id="ti-sync-badge-pct">0%</span>
+                        </span>
+                    <?php endif; ?>
                 </a>
             <?php endforeach; ?>
         <?php endforeach; ?>
