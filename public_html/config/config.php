@@ -287,3 +287,4 @@ define('TI_INDICATORS_FULL_DAYS', 90);     // solo indicadores con actividad rec
 define('SYNC_JOB_BUDGET', 35);        // segundos de trabajo por ejecución del worker
 define('SYNC_JOB_MAX_SECONDS', 1800); // tope total de un job (30 min)
 define('SYNC_JOB_STALE', 90);         // segundos sin actualizar => se relanza el worker
+define('SYNC_JOB_WATCHDOG', 300);     // segundos sin avanzar => el job se marca como error

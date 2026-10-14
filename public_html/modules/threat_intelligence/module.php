@@ -1604,6 +1604,18 @@ class Module_ThreatIntelligence extends BaseModule
         if (!$j) {
             json_response(['success' => true, 'active' => false]);
         }
+
+        // Watchdog: un job activo que lleva demasiado tiempo sin avanzar se marca
+        // como error (evita que quede "colgado" indefinidamente sin navegador).
+        $age = max(0, time() - $this->dbTime($j['updated_at'] ?? ''));
+        if ($age > (int)SYNC_JOB_WATCHDOG) {
+            Database::query(
+                "UPDATE sync_jobs SET status='error', message='Interrumpido (sin progreso)', finished_at=datetime('now'), updated_at=datetime('now') WHERE id=?",
+                [(int)$j['id']]
+            );
+            json_response(['success' => true, 'active' => false]);
+        }
+
         $state = $this->jobStatePublic((int)$j['id']);
         $state['active'] = true;
         $state['tenant'] = (string)($j['tenant_name'] ?? '');
