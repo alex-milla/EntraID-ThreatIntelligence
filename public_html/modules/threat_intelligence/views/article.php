@@ -1,19 +1,30 @@
 <?php
 /**
  * Vista: detalle de un artículo de Threat Intelligence.
- * Variables: $module, $article, $iocs, $tenant
+ * Variables: $module, $article, $iocs, $tenant, $articleState, $hasTranslation, $translationHtml
  */
 $tags = safe_json_decode($article['tags'] ?? '[]', []);
 $summaryHtml = render_markdown((string)($article['summary'] ?? ''));
 $bodyHtml    = render_markdown((string)($article['body'] ?? ''));
+
+$unread  = empty($articleState['is_read']);
+$fav     = !empty($articleState['is_favorite']);
+$created = $article['created_date'] ?? null;
+$updated = $article['last_updated'] ?? null;
+$showUpdated = $created && $updated && substr((string)$updated, 0, 19) !== substr((string)$created, 0, 19);
+$isNew24 = $created && (strtotime((string)$created) !== false) && (strtotime((string)$created) >= time() - 86400);
 ?>
 <div class="mb-5">
     <a href="<?= base_url('modules/threat_intelligence') ?>" class="text-xs text-brand-500 hover:underline">← Volver</a>
-    <h1 class="text-xl font-semibold mt-2"><?= e($article['title']) ?></h1>
+    <div class="flex items-center gap-2 mt-2">
+        <span id="art-new" class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-brand-500 text-white <?= $unread ? '' : 'hidden' ?>">New</span>
+        <?php if ($isNew24): ?><span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300" title="Publicado en las últimas 24 h">24 h</span><?php endif; ?>
+        <h1 class="text-xl font-semibold"><?= e($article['title']) ?></h1>
+    </div>
     <p class="text-xs text-gray-400 mt-1">
         <?= e($tenant['name'] ?? '') ?> ·
-        <?= format_date($article['last_updated'] ?? $article['created_date']) ?>
-        · <?= time_ago($article['fetched_at']) ?>
+        Publicado el <?= format_date($created ?: $updated) ?>
+        <?php if ($showUpdated): ?> · actualizado el <?= format_date($updated) ?><?php endif; ?>
     </p>
     <?php if (!empty($tags) && is_array($tags)): ?>
         <div class="flex flex-wrap gap-1 mt-2">
@@ -25,6 +36,20 @@ $bodyHtml    = render_markdown((string)($article['body'] ?? ''));
     <?php endif; ?>
 </div>
 
+<!-- Estado de triaje: leído / favorito -->
+<div class="mb-4 flex flex-wrap items-center gap-2">
+    <button type="button" id="btn-read" onclick="tiReadToggle()"
+            class="inline-flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 dark:border-gray-700 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+        <span id="btn-read-label"><?= $unread ? 'Confirmar como leído' : 'Dejar sin leer' ?></span>
+    </button>
+    <button type="button" id="btn-fav" onclick="tiFavToggle()"
+            class="inline-flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 dark:border-gray-700 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors <?= $fav ? 'text-amber-500' : '' ?>">
+        <span id="btn-fav-label"><?= $fav ? '★ Favorito' : '☆ Añadir a favoritos' ?></span>
+    </button>
+    <span id="state-msg" class="text-xs text-gray-400"></span>
+</div>
+
 <!-- Navegación anterior / siguiente -->
 <?php
 $navQs = 'tenant=' . (int)$article['tenant_id']
@@ -33,6 +58,8 @@ $navQs = 'tenant=' . (int)$article['tenant_id']
     . '&q=' . urlencode($q ?? '')
     . '&tag=' . urlencode($tag ?? '')
     . '&sector=' . urlencode($sector ?? '');
+if (!empty($_GET['only_unread']))    { $navQs .= '&only_unread=1'; }
+if (!empty($_GET['only_favorites'])) { $navQs .= '&only_favorites=1'; }
 ?>
 <div class="mb-4 flex items-center justify-between">
     <?php if (!empty($prevId)): ?>
@@ -71,6 +98,23 @@ $navQs = 'tenant=' . (int)$article['tenant_id']
                     <p class="mt-3 text-sm text-gray-500">(sin cuerpo)</p>
                 <?php endif; ?>
             </details>
+        </div>
+
+        <!-- Traducción IA al español -->
+        <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-5">
+            <div class="flex items-center justify-between gap-3">
+                <h2 class="text-sm font-semibold">Traducción al español (IA)</h2>
+                <div class="flex items-center gap-2">
+                    <button type="button" id="btn-translate" onclick="tiTranslate()"
+                            class="inline-flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 dark:border-gray-700 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">
+                        <?= $hasTranslation ? 'Ver traducción' : 'Traducir al español' ?>
+                    </button>
+                    <button type="button" id="btn-translation-hide" onclick="tiTranslationHide()"
+                            class="hidden px-3 py-1.5 border border-gray-200 dark:border-gray-700 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">Ver original</button>
+                </div>
+            </div>
+            <div id="translation-body" class="md-body mt-3 <?= $hasTranslation ? '' : 'hidden' ?>"><?= $translationHtml ?? '' ?></div>
+            <p id="translation-msg" class="text-xs text-gray-400 mt-2"><?= $hasTranslation ? 'Traducción guardada (se reutiliza hasta que cambie el artículo o pasen 90 días).' : '' ?></p>
         </div>
     </div>
 
@@ -159,6 +203,66 @@ function esc(s) { var d = document.createElement('div'); d.textContent = s == nu
 
 function getAiProfile() { var s = document.getElementById('ai-profile'); return s ? parseInt(s.value, 10) : 0; }
 
+/* ---- Estado de triaje: leído / favorito ---- */
+var ART_READ = <?= $unread ? 'false' : 'true' ?>;
+var ART_FAV  = <?= $fav ? 'true' : 'false' ?>;
+function tiStateApply(st) {
+    ART_READ = !!st.is_read;
+    ART_FAV  = !!st.is_favorite;
+    var rl = document.getElementById('btn-read-label'); if (rl) rl.textContent = ART_READ ? 'Dejar sin leer' : 'Confirmar como leído';
+    var fl = document.getElementById('btn-fav-label');  if (fl) fl.textContent = ART_FAV ? '★ Favorito' : '☆ Añadir a favoritos';
+    var fb = document.getElementById('btn-fav'); if (fb) fb.classList.toggle('text-amber-500', ART_FAV);
+    var nb = document.getElementById('art-new'); if (nb) nb.classList.toggle('hidden', ART_READ);
+    var msg = document.getElementById('state-msg'); if (msg) { msg.textContent = ART_READ ? 'Marcado como leído' : 'Marcado como sin leer'; setTimeout(function(){ if (msg.textContent) msg.textContent = ''; }, 2500); }
+}
+function tiStateSend(payload) {
+    api('POST', '<?= base_url('modules/threat_intelligence/article') ?>/<?= (int)$article['id'] ?>/state', payload)
+        .then(function (res) { if (res && res.success) { tiStateApply(res); } else { toast((res && res.error) ? res.error : 'Error', 'error'); } })
+        .catch(function () { toast('Error de conexión', 'error'); });
+}
+function tiReadToggle() { tiStateSend({ is_read: ART_READ ? 0 : 1 }); }
+function tiFavToggle()  { tiStateSend({ is_favorite: ART_FAV ? 0 : 1 }); }
+
+/* ---- Traducción IA (con caché en servidor) ---- */
+var ART_HAS_TRANSLATION = <?= $hasTranslation ? 'true' : 'false' ?>;
+function tiTranslationShow() {
+    var box = document.getElementById('translation-body'); if (box) box.classList.remove('hidden');
+    var hb = document.getElementById('btn-translation-hide'); if (hb) hb.classList.remove('hidden');
+}
+function tiTranslationHide() {
+    var box = document.getElementById('translation-body'); if (box) box.classList.add('hidden');
+    var hb = document.getElementById('btn-translation-hide'); if (hb) hb.classList.add('hidden');
+}
+function tiTranslate() {
+    var btn = document.getElementById('btn-translate');
+    var box = document.getElementById('translation-body');
+    var msg = document.getElementById('translation-msg');
+    if (!btn || !box) return;
+    if (ART_HAS_TRANSLATION) { tiTranslationShow(); if (msg) msg.textContent = 'Traducción guardada.'; return; }
+    var old = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Traduciendo…';
+    box.classList.remove('hidden'); box.innerHTML = '<div class="spinner mx-auto"></div>'; if (msg) msg.textContent = '';
+    api('POST', '<?= base_url('modules/llm/translate-article') ?>/<?= (int)$article['id'] ?>', { profile_id: getAiProfile() })
+        .then(function (res) {
+            btn.disabled = false;
+            if (res && res.success) {
+                ART_HAS_TRANSLATION = true;
+                box.innerHTML = res.content_html || esc(res.content || '');
+                btn.textContent = 'Ver traducción';
+                tiTranslationShow();
+                if (msg) msg.textContent = res.cached ? 'Traducción guardada.' : 'Traducción generada y guardada.';
+            } else {
+                box.classList.add('hidden');
+                btn.textContent = old;
+                if (msg) msg.textContent = '';
+                toast((res && res.error) ? res.error : 'Error al traducir', 'error');
+            }
+        })
+        .catch(function () { btn.disabled = false; btn.textContent = old; box.classList.add('hidden'); toast('Error de conexión', 'error'); });
+}
+</script>
+
+<script>
 var ART_RAW = '';
 function setArtActions(show) {
     var el = document.getElementById('art-result-actions');

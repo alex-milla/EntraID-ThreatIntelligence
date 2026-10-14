@@ -214,6 +214,32 @@ class Database
             $db->exec("ALTER TABLE ti_intel_profiles ADD COLUMN regions TEXT");
         }
 
+        // Estado por usuario de cada artículo de TI (leído / favorito).
+        // Se apoya en ti_articles.id, que desde v0.2.5.49 es estable (upsert,
+        // no REPLACE, para no borrar en cascada los IOCs ni perder el estado).
+        $db->exec("CREATE TABLE IF NOT EXISTS ti_article_state (
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            article_id INTEGER NOT NULL REFERENCES ti_articles(id) ON DELETE CASCADE,
+            is_read INTEGER NOT NULL DEFAULT 0,
+            read_at TEXT,
+            is_favorite INTEGER NOT NULL DEFAULT 0,
+            favorite_at TEXT,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (user_id, article_id)
+        )");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_ti_article_state_article ON ti_article_state(article_id)");
+
+        // Caché de traducciones IA de artículos (con caducidad lógica de 90 días).
+        $db->exec("CREATE TABLE IF NOT EXISTS ti_article_translations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            article_id INTEGER NOT NULL REFERENCES ti_articles(id) ON DELETE CASCADE,
+            lang TEXT NOT NULL DEFAULT 'es',
+            content TEXT,
+            source_updated TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(article_id, lang)
+        )");
+
         $db->exec("CREATE TABLE IF NOT EXISTS incidents (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,

@@ -526,6 +526,7 @@ class AdminController
             'analyze_incident' => 'Analizar incidente',
             'analyze_tenant'   => 'Analizar tenant (Análisis IA)',
             'analyze_article'  => 'Analizar artículo (Threat Intel)',
+            'translate_article'=> 'Traducir artículo (Threat Intel)',
             'chat'             => 'Chat / Análisis IA',
         ];
         $taskProfiles = [];

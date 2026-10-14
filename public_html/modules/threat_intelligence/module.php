@@ -50,9 +50,18 @@ class Module_ThreatIntelligence extends BaseModule
 
                     // 3. Guardar artículo
                     Database::query(
-                        "INSERT OR REPLACE INTO ti_articles
+                        "INSERT INTO ti_articles
                          (tenant_id, article_id, title, created_date, last_updated, summary, body, tags, is_featured, fetched_at)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))",
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                         ON CONFLICT(tenant_id, article_id) DO UPDATE SET
+                            title = excluded.title,
+                            created_date = excluded.created_date,
+                            last_updated = excluded.last_updated,
+                            summary = excluded.summary,
+                            body = excluded.body,
+                            tags = excluded.tags,
+                            is_featured = excluded.is_featured,
+                            fetched_at = datetime('now')",
                         [
                             $tenantId,
                             $article['id'],
@@ -267,16 +276,21 @@ class Module_ThreatIntelligence extends BaseModule
     /**
      * Obtiene artículos de un tenant con paginación y filtro por fechas.
      */
-    public function getArticles(int $tenantId, int $page = 1, int $perPage = 20, array $filters = []): array
+    public function getArticles(int $tenantId, int $page = 1, int $perPage = 20, array $filters = [], ?int $userId = null): array
     {
+        // La recencia se decide por la FECHA DE PUBLICACIÓN (created_date), no por
+        // la última modificación: así un artículo antiguo re-actualizado no
+        // aparece como si fuera de las últimas 24 h.
+        $dateExpr = 'COALESCE(a.created_date, a.last_updated)';
+
         $where = ['a.tenant_id = ?'];
         $params = [$tenantId];
         if (!empty($filters['from'])) {
-            $where[] = "substr(COALESCE(a.last_updated, a.created_date), 1, 10) >= ?";
+            $where[] = "substr($dateExpr, 1, 10) >= ?";
             $params[] = $filters['from'];
         }
         if (!empty($filters['to'])) {
-            $where[] = "substr(COALESCE(a.last_updated, a.created_date), 1, 10) <= ?";
+            $where[] = "substr($dateExpr, 1, 10) <= ?";
             $params[] = $filters['to'];
         }
         if (!empty($filters['q'])) {
@@ -305,26 +319,44 @@ class Module_ThreatIntelligence extends BaseModule
                 $where[] = '(' . implode(' OR ', $or) . ')';
             }
         }
+
+        // Estado leído/favorito del usuario actual (opcional).
+        $stateJoin = '';
+        $joinParams = [];
+        $stateSelect = '0 as is_read, 0 as is_favorite';
+        if ($userId !== null && $userId > 0) {
+            $stateJoin = ' LEFT JOIN ti_article_state s ON s.article_id = a.id AND s.user_id = ?';
+            $joinParams[] = $userId;
+            $stateSelect = 'COALESCE(s.is_read, 0) as is_read, COALESCE(s.is_favorite, 0) as is_favorite';
+            if (!empty($filters['only_unread'])) {
+                $where[] = 'COALESCE(s.is_read, 0) = 0';
+            }
+            if (!empty($filters['only_favorites'])) {
+                $where[] = 'COALESCE(s.is_favorite, 0) = 1';
+            }
+        }
+
         $whereClause = implode(' AND ', $where);
         $offset = ($page - 1) * $perPage;
 
         $total = (int)Database::fetchOne(
-            "SELECT COUNT(*) as cnt FROM ti_articles a WHERE $whereClause",
-            $params
+            "SELECT COUNT(*) as cnt FROM ti_articles a $stateJoin WHERE $whereClause",
+            array_merge($joinParams, $params)
         )['cnt'];
 
         $params[] = $perPage;
         $params[] = $offset;
 
         $articles = Database::fetchAll(
-            "SELECT a.*, COUNT(i.id) as ioc_count
+            "SELECT a.*, $stateSelect, COUNT(i.id) as ioc_count
              FROM ti_articles a
+             $stateJoin
              LEFT JOIN ti_iocs i ON a.id = i.article_id AND i.tenant_id = a.tenant_id
              WHERE $whereClause
              GROUP BY a.id
-             ORDER BY a.last_updated DESC
+             ORDER BY $dateExpr DESC
              LIMIT ? OFFSET ?",
-            $params
+            array_merge($joinParams, $params)
         );
 
         return [
@@ -364,6 +396,83 @@ class Module_ThreatIntelligence extends BaseModule
     }
 
     /**
+     * Nº de artículos sin leer y favoritos del usuario para un tenant.
+     */
+    public function getArticleStateCounts(int $tenantId, ?int $userId): array
+    {
+        if ($userId === null || $userId <= 0) {
+            return ['unread' => 0, 'favorites' => 0];
+        }
+        $row = Database::fetchOne(
+            "SELECT
+                SUM(CASE WHEN COALESCE(s.is_read, 0) = 0 THEN 1 ELSE 0 END) AS unread,
+                SUM(CASE WHEN COALESCE(s.is_favorite, 0) = 1 THEN 1 ELSE 0 END) AS favorites
+             FROM ti_articles a
+             LEFT JOIN ti_article_state s ON s.article_id = a.id AND s.user_id = ?
+             WHERE a.tenant_id = ?",
+            [$userId, $tenantId]
+        );
+        return [
+            'unread'    => (int)($row['unread'] ?? 0),
+            'favorites' => (int)($row['favorites'] ?? 0),
+        ];
+    }
+
+    /**
+     * Marca/desmarca un artículo como leído y/o favorito para el usuario actual.
+     * Es un merge: lo que no se envía se conserva.
+     */
+    public function setArticleState(array $params = []): void
+    {
+        Csrf::validateOrFail();
+        $id = (int)($params['id'] ?? 0);
+        $article = Database::fetchOne("SELECT id FROM ti_articles WHERE id = ?", [$id]);
+        if (!$article) {
+            json_response(['success' => false, 'error' => 'Artículo no encontrado']);
+        }
+        $userId = (int)(Auth::id() ?? 0);
+        if ($userId <= 0) {
+            json_response(['success' => false, 'error' => 'Sesión no válida']);
+        }
+
+        $input = json_decode(file_get_contents('php://input'), true);
+        if (!is_array($input)) { $input = $_POST; }
+
+        $current = Database::fetchOne(
+            "SELECT is_read, read_at, is_favorite, favorite_at FROM ti_article_state WHERE user_id = ? AND article_id = ?",
+            [$userId, $id]
+        ) ?: ['is_read' => 0, 'read_at' => null, 'is_favorite' => 0, 'favorite_at' => null];
+
+        $isRead = array_key_exists('is_read', $input)
+            ? (!empty($input['is_read']) ? 1 : 0)
+            : (int)$current['is_read'];
+        $isFav = array_key_exists('is_favorite', $input)
+            ? (!empty($input['is_favorite']) ? 1 : 0)
+            : (int)$current['is_favorite'];
+
+        $readAt = $isRead ? ($current['read_at'] ?: gmdate('Y-m-d H:i:s')) : null;
+        $favAt  = $isFav  ? ($current['favorite_at'] ?: gmdate('Y-m-d H:i:s')) : null;
+
+        Database::query(
+            "INSERT INTO ti_article_state (user_id, article_id, is_read, read_at, is_favorite, favorite_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+             ON CONFLICT(user_id, article_id) DO UPDATE SET
+                is_read = excluded.is_read,
+                read_at = excluded.read_at,
+                is_favorite = excluded.is_favorite,
+                favorite_at = excluded.favorite_at,
+                updated_at = datetime('now')",
+            [$userId, $id, $isRead, $readAt, $isFav, $favAt]
+        );
+
+        json_response([
+            'success'     => true,
+            'is_read'     => $isRead,
+            'is_favorite' => $isFav,
+        ]);
+    }
+
+    /**
      * Rango de fechas por defecto: últimas 24 h (ayer → hoy).
      * Con inputs de solo fecha, "24 h" equivale a la jornada actual.
      */
@@ -394,17 +503,28 @@ class Module_ThreatIntelligence extends BaseModule
     /**
      * Artículo anterior (más reciente) o siguiente (más antiguo) dentro del tenant y rango.
      */
-    private function adjacentArticle(string $dir, array $article): ?int
+    private function adjacentArticle(string $dir, array $article, ?int $userId = null): ?int
     {
         $tenantId = (int)$article['tenant_id'];
-        $key = $article['last_updated'] ?? $article['created_date'];
+        // Clave de orden = fecha de publicación (coherente con la lista y el filtro).
+        $dateExpr = 'COALESCE(created_date, last_updated)';
+        $key = $article['created_date'] ?? $article['last_updated'] ?? null;
         $range = $this->resolveDateRange();
 
-        $params = [$tenantId, $key];
+        $onlyUnread = !empty($_GET['only_unread']);
+        $onlyFav    = !empty($_GET['only_favorites']);
+        $stateJoin = '';
+        $joinParams = [];
+        if ($userId !== null && $userId > 0 && ($onlyUnread || $onlyFav)) {
+            $stateJoin = ' LEFT JOIN ti_article_state s ON s.article_id = ti_articles.id AND s.user_id = ?';
+            $joinParams[] = $userId;
+        }
+
+        $params = array_merge($joinParams, [$tenantId, $key]);
         $rangeSql = '';
-        $rangeSql .= " AND substr(COALESCE(last_updated, created_date), 1, 10) >= ?";
+        $rangeSql .= " AND substr($dateExpr, 1, 10) >= ?";
         $params[] = $range['from'];
-        $rangeSql .= " AND substr(COALESCE(last_updated, created_date), 1, 10) <= ?";
+        $rangeSql .= " AND substr($dateExpr, 1, 10) <= ?";
         $params[] = $range['to'];
 
         $q = trim((string)($_GET['q'] ?? ''));
@@ -436,22 +556,22 @@ class Module_ThreatIntelligence extends BaseModule
                 $rangeSql .= ' AND (' . implode(' OR ', $or) . ')';
             }
         }
-
-        if ($dir === 'prev') {
-            $row = Database::fetchOne(
-                "SELECT id FROM ti_articles
-                 WHERE tenant_id = ? AND COALESCE(last_updated, created_date) > ? $rangeSql
-                 ORDER BY COALESCE(last_updated, created_date) ASC LIMIT 1",
-                $params
-            );
-        } else {
-            $row = Database::fetchOne(
-                "SELECT id FROM ti_articles
-                 WHERE tenant_id = ? AND COALESCE(last_updated, created_date) < ? $rangeSql
-                 ORDER BY COALESCE(last_updated, created_date) DESC LIMIT 1",
-                $params
-            );
+        if ($userId !== null && $userId > 0 && $onlyUnread) {
+            $rangeSql .= ' AND COALESCE(s.is_read, 0) = 0';
         }
+        if ($userId !== null && $userId > 0 && $onlyFav) {
+            $rangeSql .= ' AND COALESCE(s.is_favorite, 0) = 1';
+        }
+
+        $cmp = ($dir === 'prev') ? '>' : '<';
+        $ord = ($dir === 'prev') ? 'ASC' : 'DESC';
+        $row = Database::fetchOne(
+            "SELECT ti_articles.id FROM ti_articles
+             $stateJoin
+             WHERE tenant_id = ? AND $dateExpr $cmp ? $rangeSql
+             ORDER BY $dateExpr $ord LIMIT 1",
+            $params
+        );
         return $row ? (int)$row['id'] : null;
     }
 
@@ -540,9 +660,23 @@ class Module_ThreatIntelligence extends BaseModule
             try {
                 $facets = ti_parse_targets(is_array($p['targets'] ?? null) ? $p['targets'] : []);
                 Database::query(
-                    "INSERT OR REPLACE INTO ti_intel_profiles
+                    "INSERT INTO ti_intel_profiles
                      (tenant_id, profile_id, kind, title, summary, description, tradecraft, aliases, targets, industries, regions, countries, first_active, raw_data, fetched_at)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))",
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                     ON CONFLICT(tenant_id, profile_id) DO UPDATE SET
+                        kind = excluded.kind,
+                        title = excluded.title,
+                        summary = excluded.summary,
+                        description = excluded.description,
+                        tradecraft = excluded.tradecraft,
+                        aliases = excluded.aliases,
+                        targets = excluded.targets,
+                        industries = excluded.industries,
+                        regions = excluded.regions,
+                        countries = excluded.countries,
+                        first_active = excluded.first_active,
+                        raw_data = excluded.raw_data,
+                        fetched_at = datetime('now')",
                     [
                         $tenantId,
                         $p['id'],
@@ -832,9 +966,18 @@ class Module_ThreatIntelligence extends BaseModule
             try {
                 $full = $client->graphGet('security/threatIntelligence/articles/' . $aid);
                 Database::query(
-                    "INSERT OR REPLACE INTO ti_articles
+                    "INSERT INTO ti_articles
                      (tenant_id, article_id, title, created_date, last_updated, summary, body, tags, is_featured, fetched_at)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))",
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                     ON CONFLICT(tenant_id, article_id) DO UPDATE SET
+                        title = excluded.title,
+                        created_date = excluded.created_date,
+                        last_updated = excluded.last_updated,
+                        summary = excluded.summary,
+                        body = excluded.body,
+                        tags = excluded.tags,
+                        is_featured = excluded.is_featured,
+                        fetched_at = datetime('now')",
                     [
                         $tenantId,
                         $aid,
@@ -973,6 +1116,7 @@ class Module_ThreatIntelligence extends BaseModule
             ['method' => 'GET', 'pattern' => 'stats',               'handler' => [$this, 'getStats']],
             ['method' => 'GET', 'pattern' => 'profiles',            'handler' => [$this, 'profilesPage']],
             ['method' => 'GET', 'pattern' => 'profile/{id}',        'handler' => [$this, 'showProfilePage']],
+            ['method' => 'POST','pattern' => 'article/{id}/state',  'handler' => [$this, 'setArticleState']],
             ['method' => 'POST','pattern' => 'sync/{tenantId}',    'handler' => [$this, 'triggerSync']],
             ['method' => 'POST','pattern' => 'sync-run/{tenantId}', 'handler' => [$this, 'syncRun']],
             ['method' => 'POST','pattern' => 'sync-indicators/{tenantId}', 'handler' => [$this, 'triggerSyncIndicators']],
@@ -997,8 +1141,28 @@ class Module_ThreatIntelligence extends BaseModule
         );
         $tenant = TenantManager::getById((int)$article['tenant_id']);
         $range = $this->resolveDateRange();
-        $prevId = $this->adjacentArticle('prev', $article);
-        $nextId = $this->adjacentArticle('next', $article);
+        $userId = (int)(Auth::id() ?? 0);
+        $prevId = $this->adjacentArticle('prev', $article, $userId ?: null);
+        $nextId = $this->adjacentArticle('next', $article, $userId ?: null);
+
+        $state = $userId > 0
+            ? Database::fetchOne("SELECT is_read, is_favorite, read_at, favorite_at FROM ti_article_state WHERE user_id = ? AND article_id = ?", [$userId, $id])
+            : null;
+
+        // Traducción cacheada: válida si el artículo no cambió desde que se tradujo
+        // y tiene menos de 90 días (caducidad acordada).
+        $translationHtml = null;
+        $hasTranslation = false;
+        $cached = Database::fetchOne("SELECT content, source_updated, created_at FROM ti_article_translations WHERE article_id = ? AND lang = 'es'", [$id]);
+        if ($cached) {
+            $fresh  = (string)($cached['source_updated'] ?? '') === (string)($article['last_updated'] ?? '');
+            $ts     = strtotime((string)$cached['created_at']);
+            $notOld = ($ts !== false) && (time() - $ts) < 90 * 86400;
+            if ($fresh && $notOld && trim((string)$cached['content']) !== '') {
+                $hasTranslation  = true;
+                $translationHtml = render_markdown((string)$cached['content']);
+            }
+        }
 
         echo $this->page('article', [
             'module'   => $this,
@@ -1012,6 +1176,9 @@ class Module_ThreatIntelligence extends BaseModule
             'q'        => trim((string)($_GET['q'] ?? '')),
             'tag'      => trim((string)($_GET['tag'] ?? '')),
             'sector'   => trim((string)($_GET['sector'] ?? '')),
+            'articleState'    => $state,
+            'hasTranslation'  => $hasTranslation,
+            'translationHtml' => $translationHtml,
             'profiles' => llm_profile_list(),
             'defaultProfileId' => (llm_profile_default()['id'] ?? null),
             'actions'           => llm_actions_list(true, 'article'),
@@ -1068,11 +1235,18 @@ class Module_ThreatIntelligence extends BaseModule
         $q = trim((string)($_GET['q'] ?? ''));
         $tag = trim((string)($_GET['tag'] ?? ''));
         $sector = trim((string)($_GET['sector'] ?? ''));
-        $filters = array_merge($range, ['q' => $q, 'tag' => $tag, 'sector' => $sector]);
+        $onlyUnread = !empty($_GET['only_unread']) ? 1 : 0;
+        $onlyFavorites = !empty($_GET['only_favorites']) ? 1 : 0;
+        $userId = (int)(Auth::id() ?? 0);
+        $filters = array_merge($range, [
+            'q' => $q, 'tag' => $tag, 'sector' => $sector,
+            'only_unread' => $onlyUnread, 'only_favorites' => $onlyFavorites,
+        ]);
         $stats = $selectedTenant ? $this->getIocStats($selectedTenant) : [];
-        $articles = $selectedTenant ? $this->getArticles($selectedTenant, 1, 50, $filters) : ['data' => []];
+        $articles = $selectedTenant ? $this->getArticles($selectedTenant, 1, 50, $filters, $userId ?: null) : ['data' => []];
         $tagOptions = $selectedTenant ? $this->getArticleTags($selectedTenant) : [];
         $mySector = $selectedTenant ? $this->tenantSectorKey($selectedTenant) : null;
+        $stateCounts = $selectedTenant ? $this->getArticleStateCounts($selectedTenant, $userId ?: null) : ['unread' => 0, 'favorites' => 0];
 
         echo $this->page('index', [
             'module'         => $this,
@@ -1090,6 +1264,9 @@ class Module_ThreatIntelligence extends BaseModule
             'sectors'        => array_keys(SECTORS),
             'sector'         => $sector,
             'mySector'       => $mySector,
+            'onlyUnread'     => $onlyUnread,
+            'onlyFavorites'  => $onlyFavorites,
+            'stateCounts'    => $stateCounts,
             'profileCounts'  => $selectedTenant ? $this->getProfileCounts($selectedTenant) : ['actor' => 0, 'tool' => 0, 'other' => 0, 'total' => 0],
         ]);
     }
@@ -1116,7 +1293,8 @@ class Module_ThreatIntelligence extends BaseModule
     {
         $tenantId = (int)($_GET['tenant'] ?? 0);
         $page = (int)($_GET['page'] ?? 1);
-        json_response($this->getArticles($tenantId, $page));
+        $userId = (int)(Auth::id() ?? 0);
+        json_response($this->getArticles($tenantId, $page, 20, [], $userId ?: null));
     }
 
     public function showArticle(array $params = []): void

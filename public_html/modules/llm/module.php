@@ -924,6 +924,89 @@ class Module_Llm extends BaseModule
         return $this->chat($system, $user, ['max_tokens' => 3000], $llmProfileId);
     }
 
+    /**
+     * Traduce un artículo de Threat Intelligence al español con IA.
+     * Cachea el resultado (Markdown) en ti_article_translations y lo reutiliza
+     * mientras el artículo no cambie y la caché tenga menos de 90 días.
+     */
+    public function translateArticle(int $id, ?int $profileId = null): array
+    {
+        $a = Database::fetchOne("SELECT * FROM ti_articles WHERE id = ?", [$id]);
+        if (!$a) { return ['success' => false, 'error' => 'Artículo no encontrado']; }
+
+        // ¿Hay traducción cacheada y vigente?
+        try {
+            $cached = Database::fetchOne(
+                "SELECT content, source_updated, created_at FROM ti_article_translations WHERE article_id = ? AND lang = 'es'",
+                [$id]
+            );
+        } catch (Throwable $e) {
+            $cached = null;
+        }
+        if ($cached) {
+            $fresh  = (string)($cached['source_updated'] ?? '') === (string)($a['last_updated'] ?? '');
+            $ts     = strtotime((string)$cached['created_at']);
+            $notOld = ($ts !== false) && (time() - $ts) < 90 * 86400;
+            if ($fresh && $notOld && trim((string)$cached['content']) !== '') {
+                return [
+                    'success'      => true,
+                    'content'      => (string)$cached['content'],
+                    'content_html' => render_markdown((string)$cached['content']),
+                    'cached'       => true,
+                ];
+            }
+        }
+
+        // Texto original (Markdown) con tope prudente de longitud.
+        $parts = [];
+        if (!empty($a['title']))   { $parts[] = '# ' . trim((string)$a['title']); }
+        if (!empty($a['summary'])) { $parts[] = trim((string)$a['summary']); }
+        if (!empty($a['body']))    { $parts[] = trim((string)$a['body']); }
+        $src = trim(implode("\n\n", $parts));
+        if ($src === '') {
+            return ['success' => false, 'error' => 'El artículo no tiene contenido para traducir'];
+        }
+        $src = $this->ctxClip($src, 12000);
+
+        $system = 'Eres un traductor profesional especializado en ciberseguridad. Traduce al ESPAÑOL (de España) el artículo que se te proporciona. Reglas: conserva el formato Markdown y la estructura (títulos, listas, tablas); NO traduzcas indicadores técnicos ni términos que deban permanecer literales (direcciones IP, dominios, URLs, hashes, nombres de malware/actores, comandos, código, identificadores CVE/MITRE); no añadas ni omitas información; no resumas. Devuelve ÚNICAMENTE la traducción en Markdown, sin comentarios adicionales.';
+        $user = "TEXTO ORIGINAL (Markdown):\n\n{$src}";
+
+        $res = $this->chat($system, $user, ['max_tokens' => 4000], $profileId);
+        if (empty($res['success'])) {
+            return $res;
+        }
+
+        $content = (string)($res['content'] ?? '');
+        try {
+            // Caducidad lógica de 90 días (purga oportunista).
+            Database::query("DELETE FROM ti_article_translations WHERE created_at < datetime('now', '-90 days')");
+            Database::query(
+                "INSERT INTO ti_article_translations (article_id, lang, content, source_updated, created_at)
+                 VALUES (?, 'es', ?, ?, datetime('now'))
+                 ON CONFLICT(article_id, lang) DO UPDATE SET
+                    content = excluded.content,
+                    source_updated = excluded.source_updated,
+                    created_at = datetime('now')",
+                [$id, $content, (string)($a['last_updated'] ?? '')]
+            );
+        } catch (Throwable $e) {
+            // La caché no es crítica: si falla, se devuelve la traducción igualmente.
+        }
+
+        $res['cached'] = false;
+        return $res;
+    }
+
+    public function translateArticleEndpoint(array $params = []): void
+    {
+        Csrf::validateOrFail();
+        $input = json_decode(file_get_contents('php://input'), true) ?? $_POST;
+        json_response($this->translateArticle(
+            (int)($params['id'] ?? 0),
+            $this->resolveProfile($input, 'translate_article')
+        ));
+    }
+
     public function analyzeProfileEndpoint(array $params = []): void
     {
         Csrf::validateOrFail();
@@ -980,6 +1063,7 @@ class Module_Llm extends BaseModule
             ['method' => 'POST', 'pattern' => 'analyze-profile/{id}',    'handler' => [$this, 'analyzeProfileEndpoint']],
             ['method' => 'POST', 'pattern' => 'analyze-indicators',      'handler' => [$this, 'analyzeIndicatorsEndpoint']],
             ['method' => 'POST', 'pattern' => 'analyze-article/{id}',    'handler' => [$this, 'analyzeArticleEndpoint']],
+            ['method' => 'POST', 'pattern' => 'translate-article/{id}',  'handler' => [$this, 'translateArticleEndpoint']],
             ['method' => 'POST', 'pattern' => 'actions/save',            'handler' => [$this, 'actionsSaveEndpoint']],
             ['method' => 'POST', 'pattern' => 'actions/delete',          'handler' => [$this, 'actionsDeleteEndpoint']],
             ['method' => 'POST', 'pattern' => 'actions/restore',         'handler' => [$this, 'actionsRestoreEndpoint']],
