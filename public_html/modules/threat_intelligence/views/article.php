@@ -118,9 +118,9 @@ if (!empty($_GET['only_favorites'])) { $navQs .= '&only_favorites=1'; }
         </div>
     </div>
 
-    <!-- Columna derecha: IOCs + IA -->
-    <div class="lg:col-span-1 space-y-6">
-        <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
+    <!-- Columna derecha: IA + IOCs (IA primero para no tener que bajar) -->
+    <div class="lg:col-span-1 flex flex-col gap-6">
+        <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden order-2">
             <div class="px-4 py-3 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between gap-2">
                 <h2 class="text-sm font-semibold">IOCs (<?= count($iocs) ?>)</h2>
                 <?php if (!empty($iocs)): ?>
@@ -135,7 +135,7 @@ if (!empty($_GET['only_favorites'])) { $navQs .= '&only_favorites=1'; }
             <?php if (empty($iocs)): ?>
                 <p class="px-4 py-6 text-sm text-gray-500 text-center">Este artículo no tiene IOCs.</p>
             <?php else: ?>
-                <div class="divide-y divide-gray-100 dark:divide-gray-700/50">
+                <div class="divide-y divide-gray-100 dark:divide-gray-700/50 max-h-[70vh] overflow-y-auto">
                     <?php foreach ($iocs as $ioc): ?>
                         <div class="px-4 py-2.5">
                             <div class="flex items-center justify-between gap-2">
@@ -156,7 +156,7 @@ if (!empty($_GET['only_favorites'])) { $navQs .= '&only_favorites=1'; }
             <?php endif; ?>
         </div>
 
-        <div id="ai-panel" class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-5">
+        <div id="ai-panel" class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-5 order-1">
             <div class="flex items-center justify-between mb-3">
                 <h2 class="text-sm font-semibold">Análisis con IA</h2>
                 <div class="flex items-center gap-2">
