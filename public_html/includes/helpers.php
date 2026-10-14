@@ -449,6 +449,37 @@ if (!function_exists('release_session_lock')) {
     }
 }
 
+if (!function_exists('background_request')) {
+    /**
+     * Lanza una petición HTTP "fire-and-forget" (no espera la respuesta) para
+     * encadenar trabajos en segundo plano. Devuelve true si consiguió abrir la
+     * conexión. No requiere curl (usa sockets).
+     */
+    function background_request(string $url): bool
+    {
+        $p = parse_url($url);
+        if (empty($p['host'])) {
+            return false;
+        }
+        $scheme = strtolower($p['scheme'] ?? 'http');
+        $host   = (string)$p['host'];
+        $port   = (int)($p['port'] ?? ($scheme === 'https' ? 443 : 80));
+        $path   = ($p['path'] ?? '/') . (isset($p['query']) ? '?' . $p['query'] : '');
+        $transport = ($scheme === 'https') ? 'ssl://' : '';
+
+        $fp = @fsockopen($transport . $host, $port, $errno, $errstr, 2.0);
+        if (!$fp) {
+            return false;
+        }
+        stream_set_blocking($fp, false);
+        $req = "GET $path HTTP/1.1\r\nHost: $host\r\nConnection: close\r\n"
+             . "User-Agent: EntraID-TI-Worker\r\nAccept: */*\r\n\r\n";
+        @fwrite($fp, $req);
+        @fclose($fp);
+        return true;
+    }
+}
+
 if (!function_exists('client_ip')) {
     /**
      * Obtiene la IP del cliente de forma segura.

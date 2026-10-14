@@ -240,6 +240,27 @@ class Database
             UNIQUE(article_id, lang)
         )");
 
+        // Sincronizaciones en segundo plano (job encadenado vía PHP-FPM).
+        $db->exec("CREATE TABLE IF NOT EXISTS sync_jobs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+            job_type TEXT NOT NULL DEFAULT 'ti_full',
+            status TEXT NOT NULL DEFAULT 'queued',
+            phase TEXT,
+            cursor INTEGER NOT NULL DEFAULT 0,
+            total INTEGER NOT NULL DEFAULT 0,
+            processed INTEGER NOT NULL DEFAULT 0,
+            added INTEGER NOT NULL DEFAULT 0,
+            skipped INTEGER NOT NULL DEFAULT 0,
+            message TEXT,
+            token TEXT NOT NULL,
+            base_url TEXT,
+            started_at TEXT,
+            finished_at TEXT,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_sync_jobs_tenant ON sync_jobs(tenant_id, status)");
+
         $db->exec("CREATE TABLE IF NOT EXISTS incidents (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,

@@ -1318,6 +1318,311 @@ class Module_ThreatIntelligence extends BaseModule
         }
     }
 
+    // ============================================================
+    // Sincronización en SEGUNDO PLANO (job encadenado vía PHP-FPM)
+    // ============================================================
+
+    /** Crea un job de sincronización si no hay otro activo para el tenant. */
+    public function startSyncJob(int $tenantId, string $type, string $baseUrl): array
+    {
+        $type = in_array($type, ['ti_full', 'indicators_full'], true) ? $type : 'ti_full';
+
+        $active = $this->getActiveJob($tenantId);
+        if ($active) {
+            return ['success' => true, 'job_id' => (int)$active['id'], 'token' => (string)$active['token'], 'existing' => true];
+        }
+
+        // Limpieza oportunista de jobs antiguos.
+        try {
+            Database::query("DELETE FROM sync_jobs WHERE finished_at IS NOT NULL AND finished_at < datetime('now', '-7 days')");
+        } catch (Throwable $e) { /* noop */ }
+
+        $token = bin2hex(random_bytes(32));
+        $phase = ($type === 'indicators_full') ? 'indicators_full' : 'articles';
+        $id = Database::insert(
+            "INSERT INTO sync_jobs (tenant_id, job_type, status, phase, token, base_url)
+             VALUES (?, ?, 'queued', ?, ?, ?)",
+            [$tenantId, $type, $phase, $token, $baseUrl]
+        );
+        return ['success' => true, 'job_id' => $id, 'token' => $token, 'existing' => false];
+    }
+
+    /** Job activo (queued/running) del tenant, o null. */
+    public function getActiveJob(int $tenantId): ?array
+    {
+        $j = Database::fetchOne(
+            "SELECT * FROM sync_jobs WHERE tenant_id = ? AND status IN ('queued','running') ORDER BY id DESC LIMIT 1",
+            [$tenantId]
+        );
+        return $j ?: null;
+    }
+
+    /** Estado completo del job (incluye token/base_url, para el worker). */
+    public function jobState(int $jobId): array
+    {
+        $j = Database::fetchOne("SELECT * FROM sync_jobs WHERE id = ?", [$jobId]);
+        if (!$j) {
+            return ['success' => false, 'error' => 'Job no encontrado'];
+        }
+        return [
+            'success'   => true,
+            'id'        => (int)$j['id'],
+            'status'    => (string)$j['status'],
+            'phase'     => (string)($j['phase'] ?? ''),
+            'cursor'    => (int)$j['cursor'],
+            'total'     => (int)$j['total'],
+            'processed' => (int)$j['processed'],
+            'added'     => (int)$j['added'],
+            'skipped'   => (int)$j['skipped'],
+            'message'   => $j['message'],
+            'done'      => in_array((string)$j['status'], ['done', 'error', 'cancelled'], true),
+            'base_url'  => (string)($j['base_url'] ?? ''),
+            'token'     => (string)$j['token'],
+        ];
+    }
+
+    /** Estado del job sin el token (para la UI). */
+    public function jobStatePublic(int $jobId): array
+    {
+        $s = $this->jobState($jobId);
+        unset($s['token'], $s['base_url']);
+        return $s;
+    }
+
+    private function jobStatusValue(int $jobId): string
+    {
+        $r = Database::fetchOne("SELECT status FROM sync_jobs WHERE id = ?", [$jobId]);
+        return $r ? (string)$r['status'] : 'error';
+    }
+
+    /** Convierte una fecha de SQLite (UTC, formato "Y-m-d H:i:s") a epoch. */
+    private function dbTime(?string $s): int
+    {
+        $s = trim((string)$s);
+        if ($s === '') {
+            return 0;
+        }
+        $ts = strtotime($s . ' UTC');
+        return $ts === false ? 0 : $ts;
+    }
+
+    private function finishJob(int $jobId, string $status, ?string $message = null): void
+    {
+        Database::query(
+            "UPDATE sync_jobs SET status = ?, message = ?, finished_at = datetime('now'), updated_at = datetime('now') WHERE id = ?",
+            [$status, $message, $jobId]
+        );
+    }
+
+    private function absoluteBaseUrl(): string
+    {
+        $base = defined('APP_URL') ? (string)APP_URL : '';
+        if ($base === '') {
+            $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+                || (strtolower((string)($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '')) === 'https');
+            $base = ($https ? 'https' : 'http') . '://' . ($_SERVER['HTTP_HOST'] ?? 'localhost');
+        }
+        return rtrim($base, '/');
+    }
+
+    private function jobWorkerUrl(int $jobId, string $token, string $baseUrl): string
+    {
+        return rtrim($baseUrl, '/') . '/sync-worker.php?job=' . $jobId . '&token=' . rawurlencode($token);
+    }
+
+    /**
+     * Ejecuta un tramo del job (con presupuesto de tiempo). Devuelve el estado.
+     * El encadenado (siguiente tramo) lo hace el worker o el auto-sanado.
+     */
+    public function runSyncJob(int $jobId, string $token, ?GraphClient $client = null): array
+    {
+        $job = Database::fetchOne("SELECT * FROM sync_jobs WHERE id = ?", [$jobId]);
+        if (!$job) {
+            return ['success' => false, 'error' => 'Job no encontrado', 'done' => true];
+        }
+        if (!hash_equals((string)($job['token'] ?? ''), $token)) {
+            return ['success' => false, 'error' => 'No autorizado', 'done' => true];
+        }
+        if (in_array((string)$job['status'], ['done', 'error', 'cancelled'], true)) {
+            return $this->jobState($jobId);
+        }
+
+        $started = $this->dbTime($job['started_at'] ?: $job['updated_at']);
+        if ($started > 0 && (time() - $started) > (int)SYNC_JOB_MAX_SECONDS) {
+            $this->finishJob($jobId, 'error', 'Tiempo máximo del job alcanzado');
+            return $this->jobState($jobId);
+        }
+
+        Database::query(
+            "UPDATE sync_jobs SET status = 'running', started_at = COALESCE(started_at, datetime('now')), updated_at = datetime('now') WHERE id = ?",
+            [$jobId]
+        );
+
+        $tenantId = (int)$job['tenant_id'];
+        if ($client === null) {
+            try {
+                $client = $this->getGraphClient($tenantId);
+            } catch (Throwable $e) {
+                $this->finishJob($jobId, 'error', $e->getMessage());
+                return $this->jobState($jobId);
+            }
+        }
+
+        $deadline = microtime(true) + (float)SYNC_JOB_BUDGET;
+        $type = (string)$job['job_type'];
+
+        if ($type === 'indicators_full') {
+            $cursor    = (int)$job['cursor'];
+            $totAdded  = (int)$job['added'];
+            $totSkipped = (int)$job['skipped'];
+            $total = (int)$job['total'];
+            $done = false; $limitReached = false;
+
+            while (microtime(true) < $deadline) {
+                if ($this->jobStatusValue($jobId) !== 'running') { return $this->jobState($jobId); }
+                $r = $this->syncIndicatorsFull($client, $tenantId, $cursor, 6);
+                $cursor = (int)($r['cursor'] ?? $cursor);
+                $total  = (int)($r['total'] ?? $total);
+                $totAdded   += (int)($r['added'] ?? 0);
+                $totSkipped += (int)($r['skipped'] ?? 0);
+                Database::query(
+                    "UPDATE sync_jobs SET phase='indicators_full', cursor=?, total=?, processed=?, added=?, skipped=?, updated_at=datetime('now') WHERE id=?",
+                    [$cursor, $total, $cursor, $totAdded, $totSkipped, $jobId]
+                );
+                if (!empty($r['done'])) { $done = true; $limitReached = !empty($r['limitReached']); break; }
+                if ($total === 0) { $done = true; break; }
+            }
+            if ($done) { $this->finishJob($jobId, 'done', $limitReached ? 'Tope de indicadores alcanzado' : null); }
+            return $this->jobState($jobId);
+        }
+
+        // ti_full: articles -> profiles -> profile_indicators
+        $phase = (string)($job['phase'] ?: 'articles');
+        $cursor = (int)$job['cursor'];
+        $totAdded = (int)$job['added'];
+        $totSkipped = (int)$job['skipped'];
+        $total = (int)$job['total'];
+        $processed = (int)$job['processed'];
+        $done = false;
+
+        while (microtime(true) < $deadline) {
+            if ($this->jobStatusValue($jobId) !== 'running') { return $this->jobState($jobId); }
+            if ($phase === 'articles') {
+                $r = $this->syncStepArticles($client, $tenantId, $cursor, 6);
+                $total = (int)($r['total'] ?? 0); $processed = (int)($r['processed'] ?? 0);
+                $totAdded += (int)($r['added'] ?? 0); $totSkipped += (int)($r['skipped'] ?? 0);
+                if (!empty($r['done'])) { $phase = 'profiles'; $cursor = 0; $total = 0; $processed = 0; }
+                else { $cursor = (int)($r['cursor'] ?? 0); }
+            } elseif ($phase === 'profiles') {
+                $r = $this->syncStepProfiles($client, $tenantId, 0, 1);
+                $totAdded += (int)($r['added'] ?? 0);
+                $phase = 'profile_indicators'; $cursor = 0; $total = 0; $processed = 0;
+            } else {
+                $r = $this->syncStepProfileIndicators($client, $tenantId, $cursor, 6);
+                $total = (int)($r['total'] ?? 0); $processed = (int)($r['processed'] ?? 0);
+                $totAdded += (int)($r['added'] ?? 0); $totSkipped += (int)($r['skipped'] ?? 0);
+                if (!empty($r['done'])) { $done = true; }
+                else { $cursor = (int)($r['cursor'] ?? 0); }
+            }
+            Database::query(
+                "UPDATE sync_jobs SET phase=?, cursor=?, total=?, processed=?, added=?, skipped=?, updated_at=datetime('now') WHERE id=?",
+                [$phase, $cursor, $total, $processed, $totAdded, $totSkipped, $jobId]
+            );
+            if ($done) { break; }
+        }
+        if ($done) { $this->finishJob($jobId, 'done', null); }
+        return $this->jobState($jobId);
+    }
+
+    /** Endpoint: arranca un job en segundo plano. */
+    public function jobStartEndpoint(array $params = []): void
+    {
+        Csrf::validateOrFail();
+        release_session_lock();
+        $tenantId = (int)($params['tenantId'] ?? 0);
+        $input = json_decode(file_get_contents('php://input'), true) ?? $_POST;
+        $type = (string)($input['type'] ?? 'ti_full');
+
+        header('Content-Type: application/json; charset=utf-8');
+        $missing = $this->missingPermissions($tenantId);
+        if (!empty($missing)) {
+            echo json_encode(['success' => false, 'error' => 'El tenant no tiene los permisos: ' . implode(', ', $missing)]);
+            exit;
+        }
+
+        $base = $this->absoluteBaseUrl();
+        $res = $this->startSyncJob($tenantId, $type, $base);
+        $jobId = (int)$res['job_id'];
+        $token = (string)$res['token'];
+
+        echo json_encode(['success' => true, 'job_id' => $jobId, 'existing' => !empty($res['existing'])]);
+
+        // Responder ya al navegador y continuar en segundo plano (PHP-FPM).
+        if (function_exists('fastcgi_finish_request')) {
+            fastcgi_finish_request();
+        } else {
+            if (ob_get_level() > 0) { @ob_end_flush(); }
+            @flush();
+        }
+
+        // Primer tramo inline (garantiza avance aunque el loopback estuviera
+        // bloqueado); el resto se encadena por el worker.
+        if (empty($res['existing'])) {
+            @set_time_limit(0);
+            $state = [];
+            try {
+                $state = $this->runSyncJob($jobId, $token);
+            } catch (Throwable $e) { /* el worker reintentará */ }
+            if (empty($state['done'])) {
+                background_request($this->jobWorkerUrl($jobId, $token, $base));
+            }
+        }
+    }
+
+    /** Endpoint: job activo del tenant (para reanudar el panel al recargar). */
+    public function jobActiveEndpoint(array $params = []): void
+    {
+        $tenantId = (int)($params['tenantId'] ?? 0);
+        $j = $this->getActiveJob($tenantId);
+        if (!$j) {
+            json_response(['success' => true, 'active' => false]);
+        }
+        $state = $this->jobStatePublic((int)$j['id']);
+        $state['active'] = true;
+        json_response($state);
+    }
+
+    /** Endpoint: estado de un job (con auto-sanado si está atascado). */
+    public function jobStatusEndpoint(array $params = []): void
+    {
+        $jobId = (int)($params['jobId'] ?? 0);
+        $j = Database::fetchOne("SELECT * FROM sync_jobs WHERE id = ?", [$jobId]);
+        if (!$j) {
+            json_response(['success' => false, 'error' => 'Job no encontrado']);
+        }
+        if (in_array((string)$j['status'], ['queued', 'running'], true)) {
+            $upd = $this->dbTime($j['updated_at']);
+            if ($upd > 0 && (time() - $upd) > (int)SYNC_JOB_STALE) {
+                background_request($this->jobWorkerUrl($jobId, (string)$j['token'], (string)$j['base_url']));
+            }
+        }
+        $state = $this->jobStatePublic($jobId);
+        $state['active'] = !$state['done'];
+        json_response($state);
+    }
+
+    /** Endpoint: cancela un job. */
+    public function jobCancelEndpoint(array $params = []): void
+    {
+        Csrf::validateOrFail();
+        $jobId = (int)($params['jobId'] ?? 0);
+        Database::query(
+            "UPDATE sync_jobs SET status='cancelled', finished_at=datetime('now'), updated_at=datetime('now') WHERE id=? AND status IN ('queued','running')",
+            [$jobId]
+        );
+        json_response(['success' => true]);
+    }
+
     /** Endpoint de sincronización por pasos (articles / profiles / profile_indicators). */
     public function syncRun(array $params = []): void
     {
@@ -1376,6 +1681,10 @@ class Module_ThreatIntelligence extends BaseModule
             ['method' => 'POST','pattern' => 'sync-run/{tenantId}', 'handler' => [$this, 'syncRun']],
             ['method' => 'POST','pattern' => 'sync-indicators/{tenantId}', 'handler' => [$this, 'triggerSyncIndicators']],
             ['method' => 'POST','pattern' => 'sync-indicators-full/{tenantId}', 'handler' => [$this, 'syncIndicatorsFullEndpoint']],
+            ['method' => 'POST','pattern' => 'job-start/{tenantId}',        'handler' => [$this, 'jobStartEndpoint']],
+            ['method' => 'GET', 'pattern' => 'job-active/{tenantId}',       'handler' => [$this, 'jobActiveEndpoint']],
+            ['method' => 'GET', 'pattern' => 'job-status/{jobId}',          'handler' => [$this, 'jobStatusEndpoint']],
+            ['method' => 'POST','pattern' => 'job-cancel/{jobId}',          'handler' => [$this, 'jobCancelEndpoint']],
         ];
     }
 

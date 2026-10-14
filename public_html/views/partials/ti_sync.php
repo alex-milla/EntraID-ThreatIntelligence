@@ -12,6 +12,19 @@ $tiSyncTenant = (int)($selectedTenant ?? 0);
     </div>
     <p id="ti-sync-text" class="text-xs text-gray-400 mt-1.5"></p>
 </div>
+
+<div id="ti-bg-progress" class="hidden fixed bottom-4 right-4 z-50 w-full max-w-md bg-white dark:bg-surface-dark border border-gray-200 dark:border-gray-700 rounded-xl shadow-lg p-4" data-job="">
+    <div class="flex items-center justify-between mb-2">
+        <p class="text-sm font-medium">Sincronización en 2º plano</p>
+        <button type="button" id="ti-bg-cancel" onclick="tiBgCancel()" class="text-xs text-red-500 hover:underline">Cancelar</button>
+    </div>
+    <p class="text-xs text-gray-500 mb-1">Fase: <span id="ti-bg-phase">—</span></p>
+    <div class="h-2 w-full bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
+        <div id="ti-bg-bar" class="h-full bg-brand-500 transition-all" style="width:0%"></div>
+    </div>
+    <p id="ti-bg-text" class="text-xs text-gray-400 mt-1.5"></p>
+    <p class="text-[11px] text-gray-400 mt-1">Puedes seguir navegando o cerrar esta pestaña: el trabajo continúa en el servidor.</p>
+</div>
 <script>
 function runTiSync() {
     var tenant = <?= $tiSyncTenant ?>;
@@ -60,4 +73,60 @@ function runTiSync() {
     }
     runPhase();
 }
+
+/* ============================================================
+   Sincronización en SEGUNDO PLANO (job en el servidor)
+   ============================================================ */
+var TI_BG_TENANT = <?= (int)($tiSyncTenant ?? 0) ?>;
+var TI_BG_BASE = '<?= base_url('modules/threat_intelligence') ?>';
+var tiBgTimer = null;
+
+function tiBgRender(st) {
+    var prog = document.getElementById('ti-bg-progress');
+    var bar = document.getElementById('ti-bg-bar');
+    var txt = document.getElementById('ti-bg-text');
+    var ph = document.getElementById('ti-bg-phase');
+    var cancel = document.getElementById('ti-bg-cancel');
+    if (!prog) return;
+    prog.classList.remove('hidden');
+    if (st.id) prog.setAttribute('data-job', st.id);
+    if (ph) ph.textContent = st.phase || '—';
+    var frac = st.total > 0 ? (st.processed / st.total) : (st.done ? 1 : 0);
+    if (frac > 1) frac = 1;
+    if (bar) bar.style.width = Math.round(frac * 100) + '%';
+    if (txt) txt.textContent = (st.processed || 0) + (st.total ? ' / ' + st.total : '') + ' · +' + (st.added || 0) + ' · omitidos ' + (st.skipped || 0) + (st.message ? ' · ' + st.message : '');
+    if (st.done) {
+        if (cancel) cancel.classList.add('hidden');
+        if (tiBgTimer) { clearTimeout(tiBgTimer); tiBgTimer = null; }
+        var ok = (st.status === 'done');
+        toast(ok ? 'Sincronización en 2º plano completada' : ('Sincronización ' + (st.status || 'finalizada')), ok ? 'success' : 'warning');
+        setTimeout(function () { location.reload(); }, 1600);
+    }
+}
+function tiBgPoll(jobId) {
+    api('GET', TI_BG_BASE + '/job-status/' + jobId).then(function (st) {
+        if (st && st.success) { tiBgRender(st); if (!st.done) { tiBgTimer = setTimeout(function () { tiBgPoll(jobId); }, 3000); } }
+        else { var p = document.getElementById('ti-bg-progress'); if (p) p.classList.add('hidden'); }
+    }).catch(function () { tiBgTimer = setTimeout(function () { tiBgPoll(jobId); }, 5000); });
+}
+function startTiBackgroundSync() {
+    if (!TI_BG_TENANT) { toast('Selecciona un tenant', 'warning'); return; }
+    var cancel = document.getElementById('ti-bg-cancel'); if (cancel) cancel.classList.remove('hidden');
+    api('POST', TI_BG_BASE + '/job-start/' + TI_BG_TENANT, { type: 'ti_full' }).then(function (res) {
+        if (res && res.success) { toast('Sincronización en 2º plano iniciada', 'success'); tiBgPoll(res.job_id); }
+        else { toast((res && res.error) ? res.error : 'Error', 'error'); }
+    }).catch(function () { toast('Error de conexión', 'error'); });
+}
+function tiBgCancel() {
+    var prog = document.getElementById('ti-bg-progress');
+    var jid = prog ? parseInt(prog.getAttribute('data-job') || '0', 10) : 0;
+    if (!jid) return;
+    api('POST', TI_BG_BASE + '/job-cancel/' + jid, {}).then(function () { toast('Cancelada', 'success'); setTimeout(function () { location.reload(); }, 800); });
+}
+(function () {
+    if (!TI_BG_TENANT) return;
+    api('GET', TI_BG_BASE + '/job-active/' + TI_BG_TENANT).then(function (st) {
+        if (st && st.success && st.active) { tiBgRender(st); tiBgPoll(st.id); }
+    });
+})();
 </script>

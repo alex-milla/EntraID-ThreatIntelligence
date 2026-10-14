@@ -282,3 +282,8 @@ define('TI_TARGET_REGION_EXTRAS', [
 // Ingesta inicial de indicadores de Threat Intelligence.
 define('TI_INDICATORS_FULL_LIMIT', 20000); // máximo total de la carga inicial
 define('TI_INDICATORS_FULL_DAYS', 90);     // solo indicadores con actividad reciente
+
+// Sincronización en segundo plano (job encadenado vía PHP-FPM).
+define('SYNC_JOB_BUDGET', 35);        // segundos de trabajo por ejecución del worker
+define('SYNC_JOB_MAX_SECONDS', 1800); // tope total de un job (30 min)
+define('SYNC_JOB_STALE', 90);         // segundos sin actualizar => se relanza el worker
