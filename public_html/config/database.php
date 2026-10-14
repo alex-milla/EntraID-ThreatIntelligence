@@ -261,6 +261,20 @@ class Database
         )");
         $db->exec("CREATE INDEX IF NOT EXISTS idx_sync_jobs_tenant ON sync_jobs(tenant_id, status)");
 
+        // Registro de intentos de acceso (seguridad / detección de fuerza bruta).
+        $db->exec("CREATE TABLE IF NOT EXISTS login_attempts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT,
+            user_id INTEGER,
+            ip TEXT,
+            user_agent TEXT,
+            success INTEGER NOT NULL DEFAULT 0,
+            reason TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_login_attempts_created ON login_attempts(created_at)");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_login_attempts_ip ON login_attempts(ip, created_at)");
+
         $db->exec("CREATE TABLE IF NOT EXISTS incidents (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,

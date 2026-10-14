@@ -68,6 +68,7 @@ class AdminController
             $password = $_POST['password'] ?? '';
 
             if (empty($username) || empty($password)) {
+                Auth::recordLogin((string)$username, null, false, 'empty');
                 flash('error', 'Todos los campos son obligatorios');
                 set_old_input(['username' => $username]);
                 redirect(base_url('admin/login'));
@@ -806,6 +807,83 @@ class AdminController
     }
 
     /**
+     * Panel de Seguridad: intentos de acceso y detección de fuerza bruta.
+     */
+    public static function security(): void
+    {
+        Auth::requireAdmin();
+
+        // Purga de registros antiguos (retención).
+        try {
+            Database::query("DELETE FROM login_attempts WHERE created_at < datetime('now', ?)", ['-' . (int)LOGIN_RETENTION_DAYS . ' days']);
+        } catch (Throwable $e) { /* noop */ }
+
+        $filters = [
+            'result' => (string)($_GET['result'] ?? ''),   // '' | 'ok' | 'fail'
+            'user'   => trim((string)($_GET['user'] ?? '')),
+            'ip'     => trim((string)($_GET['ip'] ?? '')),
+            'from'   => trim((string)($_GET['from'] ?? '')),
+            'to'     => trim((string)($_GET['to'] ?? '')),
+        ];
+        $page = max(1, (int)($_GET['page'] ?? 1));
+        $perPage = 50;
+
+        $where = ['1=1'];
+        $params = [];
+        if ($filters['result'] === 'ok')   { $where[] = 'success = 1'; }
+        if ($filters['result'] === 'fail') { $where[] = 'success = 0'; }
+        if ($filters['user'] !== '') { $where[] = 'username LIKE ?'; $params[] = '%' . $filters['user'] . '%'; }
+        if ($filters['ip'] !== '')   { $where[] = 'ip LIKE ?'; $params[] = '%' . $filters['ip'] . '%'; }
+        if ($filters['from'] !== '') { $where[] = 'date(created_at) >= ?'; $params[] = $filters['from']; }
+        if ($filters['to'] !== '')   { $where[] = 'date(created_at) <= ?'; $params[] = $filters['to']; }
+        $whereClause = implode(' AND ', $where);
+
+        $total = (int)(Database::fetchOne("SELECT COUNT(*) c FROM login_attempts WHERE $whereClause", $params)['c'] ?? 0);
+        $offset = ($page - 1) * $perPage;
+        $listParams = $params;
+        $listParams[] = $perPage;
+        $listParams[] = $offset;
+        $attempts = Database::fetchAll(
+            "SELECT * FROM login_attempts WHERE $whereClause ORDER BY id DESC LIMIT ? OFFSET ?",
+            $listParams
+        );
+
+        // Resumen (24 h).
+        $summary = Database::fetchOne(
+            "SELECT COUNT(*) AS total,
+                    SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) AS failed,
+                    SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) AS ok
+             FROM login_attempts WHERE created_at >= datetime('now', '-1 day')"
+        ) ?? ['total' => 0, 'failed' => 0, 'ok' => 0];
+
+        // IPs sospechosas: fallos en la ventana >= umbral.
+        $windowMod = '-' . (int)LOGIN_BRUTE_WINDOW_MIN . ' minutes';
+        $threshold = (int)LOGIN_BRUTE_THRESHOLD;
+        $suspects = Database::fetchAll(
+            "SELECT ip, COUNT(*) AS fails, COUNT(DISTINCT username) AS users, MAX(created_at) AS last_seen
+             FROM login_attempts
+             WHERE success = 0 AND created_at >= datetime('now', ?)
+             GROUP BY ip HAVING fails >= $threshold ORDER BY fails DESC LIMIT 20",
+            [$windowMod]
+        );
+
+        // Usuarios más atacados (24 h).
+        $topUsers = Database::fetchAll(
+            "SELECT username, COUNT(*) AS fails
+             FROM login_attempts
+             WHERE success = 0 AND username IS NOT NULL AND created_at >= datetime('now', '-1 day')
+             GROUP BY username ORDER BY fails DESC LIMIT 10"
+        );
+
+        $totalPages = max(1, (int)ceil($total / $perPage));
+
+        require VIEWS_PATH . '/layout/header.php';
+        require VIEWS_PATH . '/layout/sidebar.php';
+        require VIEWS_PATH . '/admin/security.php';
+        require VIEWS_PATH . '/layout/footer.php';
+    }
+
+    /**
      * Panel de Almacenamiento: ocupación de la BD, del disco del hosting y PHP.
      */
     public static function storage(): void
@@ -954,6 +1032,7 @@ $adminRoutes = [
         'modules'          => 'modules',
         'settings'         => 'settings',
         'storage'          => 'storage',
+        'security'         => 'security',
         'apis'             => 'apis',
         'updates'          => 'updates',
         'change-password'  => 'changePassword',

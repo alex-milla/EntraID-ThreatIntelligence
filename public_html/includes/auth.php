@@ -16,18 +16,23 @@ class Auth
      */
     public static function attempt(string $username, string $password): bool
     {
+        $username = trim($username);
         $user = Database::fetchOne(
             "SELECT * FROM users WHERE username = ? OR email = ? LIMIT 1",
-            [trim($username), trim($username)]
+            [$username, $username]
         );
 
         if (!$user) {
             // Delay para prevenir timing attacks
             usleep(random_int(100000, 300000));
+            self::recordLogin($username, null, false, 'no_user');
             return false;
         }
 
         if (!Encryption::verifyPassword($password, $user['password_hash'])) {
+            // Retardo también en contraseña incorrecta (no filtrar por tiempos)
+            usleep(random_int(100000, 300000));
+            self::recordLogin($username, (int)$user['id'], false, 'bad_credentials');
             return false;
         }
 
@@ -49,8 +54,34 @@ class Auth
             'role'         => $user['role'],
         ]);
 
+        self::recordLogin($username, (int)$user['id'], true, 'ok');
         log_activity('auth.login', ['username' => $user['username']]);
         return true;
+    }
+
+    /**
+     * Registra un intento de acceso (éxito o fallo) para la auditoría de
+     * seguridad. No es crítico: si falla, no debe romper el login.
+     */
+    public static function recordLogin(string $username, ?int $userId, bool $success, string $reason): void
+    {
+        try {
+            $username = trim($username);
+            Database::query(
+                "INSERT INTO login_attempts (username, user_id, ip, user_agent, success, reason)
+                 VALUES (?, ?, ?, ?, ?, ?)",
+                [
+                    $username !== '' ? substr($username, 0, 190) : null,
+                    $userId,
+                    client_ip(),
+                    substr((string)($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 255),
+                    $success ? 1 : 0,
+                    substr($reason, 0, 40),
+                ]
+            );
+        } catch (Throwable $e) {
+            // La auditoría no debe impedir el acceso
+        }
     }
 
     /**

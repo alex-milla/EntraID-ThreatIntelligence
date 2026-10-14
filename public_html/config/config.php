@@ -288,3 +288,8 @@ define('SYNC_JOB_BUDGET', 35);        // segundos de trabajo por ejecución del 
 define('SYNC_JOB_MAX_SECONDS', 1800); // tope total de un job (30 min)
 define('SYNC_JOB_STALE', 90);         // segundos sin actualizar => se relanza el worker
 define('SYNC_JOB_WATCHDOG', 300);     // segundos sin avanzar => el job se marca como error
+
+// Seguridad de accesos (detección de fuerza bruta).
+define('LOGIN_BRUTE_THRESHOLD', 10);  // fallos por IP en la ventana => IP sospechosa
+define('LOGIN_BRUTE_WINDOW_MIN', 60); // ventana de detección (minutos)
+define('LOGIN_RETENTION_DAYS', 90);   // retención de los registros de acceso
