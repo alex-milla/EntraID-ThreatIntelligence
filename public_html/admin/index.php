@@ -136,6 +136,28 @@ class AdminController
             $tenantStats[$t['id']] = TenantManager::getStats($t['id']);
         }
 
+        // Sector a priorizar (tenant activo, últimas 24 h) — información general.
+        $sectorPriority = null;
+        $priorityTenant = null;
+        foreach ($tenants as $t) {
+            if (!empty($t['is_active'])) { $priorityTenant = $t; break; }
+        }
+        if ($priorityTenant && class_exists('Module_ThreatIntelligence')) {
+            $tiModule = ModuleManager::get('threat_intelligence');
+            if ($tiModule instanceof Module_ThreatIntelligence) {
+                try {
+                    $to   = gmdate('Y-m-d');
+                    $from = gmdate('Y-m-d', strtotime($to) - 86400);
+                    $st   = $tiModule->getSectorStats((int)$priorityTenant['id'], ['from' => $from, 'to' => $to]);
+                    if (!empty($st['total'])) {
+                        $sectorPriority = ['tenant' => $priorityTenant, 'stats' => $st, 'from' => $from, 'to' => $to];
+                    }
+                } catch (Throwable $e) {
+                    $sectorPriority = null;
+                }
+            }
+        }
+
         require VIEWS_PATH . '/layout/header.php';
         require VIEWS_PATH . '/layout/sidebar.php';
         require VIEWS_PATH . '/admin/dashboard.php';

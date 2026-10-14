@@ -57,7 +57,7 @@ require VIEWS_PATH . '/partials/ti_header.php';
         <div class="flex flex-wrap items-center gap-1.5">
             <span class="text-[11px] text-gray-400 mr-1 shrink-0">Industrias:</span>
             <?php foreach ($facets['industries'] as $name => $cnt): $on = in_array((string)$name, $selInd, true); ?>
-                <a href="?<?= e(ti_toggle_target($facetBase, 'industry', (string)$name)) ?>" title="Filtrar por industria" class="inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded-full border <?= $on ? 'bg-brand-500 border-brand-500 text-white' : 'border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800' ?>"><?= e((string)$name) ?> <span class="opacity-70">(<?= (int)$cnt ?>)</span></a>
+                <a href="?<?= e(ti_toggle_target($facetBase, 'industry', (string)$name)) ?>" title="Filtrar por industria" class="inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded-full border <?= $on ? 'bg-brand-500 border-brand-500 text-white' : 'border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800' ?><?= (!$on && (int)$cnt === 0) ? ' opacity-40' : '' ?>"><?= e((string)$name) ?> <span class="opacity-70">(<?= (int)$cnt ?>)</span></a>
             <?php endforeach; ?>
         </div>
         <?php endif; ?>
@@ -65,7 +65,7 @@ require VIEWS_PATH . '/partials/ti_header.php';
         <div class="flex flex-wrap items-center gap-1.5">
             <span class="text-[11px] text-gray-400 mr-1 shrink-0">Regiones:</span>
             <?php foreach ($facets['regions'] as $name => $cnt): $on = in_array((string)$name, $selReg, true); ?>
-                <a href="?<?= e(ti_toggle_target($facetBase, 'region', (string)$name)) ?>" title="Filtrar por región" class="inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded-full border <?= $on ? 'bg-brand-500 border-brand-500 text-white' : 'border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800' ?>"><?= e((string)$name) ?> <span class="opacity-70">(<?= (int)$cnt ?>)</span></a>
+                <a href="?<?= e(ti_toggle_target($facetBase, 'region', (string)$name)) ?>" title="Filtrar por región" class="inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded-full border <?= $on ? 'bg-brand-500 border-brand-500 text-white' : 'border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800' ?><?= (!$on && (int)$cnt === 0) ? ' opacity-40' : '' ?>"><?= e((string)$name) ?> <span class="opacity-70">(<?= (int)$cnt ?>)</span></a>
             <?php endforeach; ?>
         </div>
         <?php endif; ?>

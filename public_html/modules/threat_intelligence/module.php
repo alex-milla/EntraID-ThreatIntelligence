@@ -824,9 +824,128 @@ class Module_ThreatIntelligence extends BaseModule
                 if ($v !== '') { $reg[$v] = ($reg[$v] ?? 0) + 1; }
             }
         }
-        arsort($ind);
-        arsort($reg);
-        return ['industries' => $ind, 'regions' => $reg];
+
+        // Vocabulario canónico COMPLETO (con 0 donde no haya resultados), más
+        // los valores extra presentes. Orden: primero lo más afectado, luego el
+        // resto en el orden de la taxonomía (paridad con MDTI).
+        $build = function (array $counts, array $canonical): array {
+            $all = [];
+            foreach ($canonical as $name) { $all[$name] = (int)($counts[$name] ?? 0); }
+            foreach ($counts as $name => $cnt) {
+                if (!array_key_exists($name, $all)) { $all[$name] = (int)$cnt; }
+            }
+            $canonIdx = array_flip($canonical);
+            uksort($all, function ($a, $b) use ($all, $canonIdx) {
+                if ($all[$a] !== $all[$b]) { return $all[$b] <=> $all[$a]; }
+                return ($canonIdx[$a] ?? PHP_INT_MAX) <=> ($canonIdx[$b] ?? PHP_INT_MAX);
+            });
+            return $all;
+        };
+
+        return [
+            'industries' => $build($ind, TI_TARGET_INDUSTRIES),
+            'regions'    => $build($reg, TI_TARGET_REGIONS),
+        ];
+    }
+
+    /**
+     * Re-clasifica (una sola vez) industrias/regiones de los perfiles ya
+     * guardados con la taxonomía canónica MDTI. Idempotente vía settings.
+     */
+    private function ensureTargetsTaxonomyOnce(): void
+    {
+        try {
+            if ((string)setting_get('ti_targets_taxonomy_v2', '') === '1') {
+                return;
+            }
+            $rows = Database::fetchAll("SELECT id, targets FROM ti_intel_profiles");
+            foreach ($rows as $r) {
+                $targets = safe_json_decode((string)($r['targets'] ?? ''), []);
+                $facets  = ti_parse_targets(is_array($targets) ? $targets : []);
+                Database::query(
+                    "UPDATE ti_intel_profiles SET industries = ?, regions = ? WHERE id = ?",
+                    [json_encode($facets['industries'], JSON_UNESCAPED_UNICODE), json_encode($facets['regions'], JSON_UNESCAPED_UNICODE), (int)$r['id']]
+                );
+            }
+            setting_set('ti_targets_taxonomy_v2', '1');
+        } catch (Throwable $e) {
+            // No es crítico: se reintentará en la siguiente carga.
+        }
+    }
+
+    /**
+     * Estadística de sectores afectados dentro de un rango de fechas.
+     * Cuenta los artículos por sector (palabras clave de SECTORS) del rango,
+     * tenant y filtros q/tag. NO aplica el filtro `sector`. Un artículo puede
+     * contarse en varios sectores.
+     *
+     * @return array{total:int,sectors:array<int,array{sector:string,count:int,pct:int}>}
+     */
+    public function getSectorStats(int $tenantId, array $filters = []): array
+    {
+        $dateExpr = 'COALESCE(created_date, last_updated)';
+        $where = ['tenant_id = ?'];
+        $params = [$tenantId];
+        if (!empty($filters['from'])) {
+            $where[] = "substr($dateExpr, 1, 10) >= ?";
+            $params[] = $filters['from'];
+        }
+        if (!empty($filters['to'])) {
+            $where[] = "substr($dateExpr, 1, 10) <= ?";
+            $params[] = $filters['to'];
+        }
+        if (!empty($filters['q'])) {
+            $like = '%' . $filters['q'] . '%';
+            $where[] = "(title LIKE ? OR summary LIKE ? OR body LIKE ? OR tags LIKE ?)";
+            array_push($params, $like, $like, $like, $like);
+        }
+        if (!empty($filters['tag'])) {
+            $where[] = 'tags LIKE ?';
+            $params[] = '%' . $filters['tag'] . '%';
+        }
+        $whereClause = implode(' AND ', $where);
+
+        $total = (int)(Database::fetchOne("SELECT COUNT(*) AS c FROM ti_articles WHERE $whereClause", $params)['c'] ?? 0);
+
+        $sectorKeys = array_keys(SECTORS);
+        $counts = array_fill_keys($sectorKeys, 0);
+
+        if ($total > 0) {
+            $selects = [];
+            $selParams = [];
+            $i = 0;
+            foreach (SECTORS as $keywords) {
+                $or = [];
+                foreach ($keywords as $kw) {
+                    $like = '%' . $kw . '%';
+                    $or[] = 'title LIKE ?';   $selParams[] = $like;
+                    $or[] = 'summary LIKE ?'; $selParams[] = $like;
+                    $or[] = 'body LIKE ?';    $selParams[] = $like;
+                    $or[] = 'tags LIKE ?';    $selParams[] = $like;
+                }
+                $selects[] = 'SUM(CASE WHEN (' . implode(' OR ', $or) . ') THEN 1 ELSE 0 END) AS sector_' . $i;
+                $i++;
+            }
+            $row = Database::fetchOne(
+                'SELECT ' . implode(', ', $selects) . " FROM ti_articles WHERE $whereClause",
+                array_merge($selParams, $params)
+            ) ?? [];
+            foreach ($sectorKeys as $idx => $name) {
+                $counts[$name] = (int)($row['sector_' . $idx] ?? 0);
+            }
+        }
+
+        $out = [];
+        foreach ($counts as $name => $c) {
+            $out[] = [
+                'sector' => $name,
+                'count'  => $c,
+                'pct'    => $total > 0 ? (int)round($c * 100 / $total) : 0,
+            ];
+        }
+        usort($out, fn($a, $b) => ($b['count'] <=> $a['count']) ?: strcmp($a['sector'], $b['sector']));
+
+        return ['total' => $total, 'sectors' => $out];
     }
 
     /** Conteo de perfiles por tipo. */
@@ -846,6 +965,7 @@ class Module_ThreatIntelligence extends BaseModule
         $tenants = TenantManager::getActive();
         $selectedTenant = (int)($_GET['tenant'] ?? ($tenants[0]['id'] ?? 0));
         if ($selectedTenant) {
+            $this->ensureTargetsTaxonomyOnce();
             $this->backfillProfileFacets($selectedTenant);
         }
         $norm = function ($v) { return array_values(array_filter(array_map('strval', (array)$v), fn($x) => trim($x) !== '')); };
@@ -1247,6 +1367,9 @@ class Module_ThreatIntelligence extends BaseModule
         $tagOptions = $selectedTenant ? $this->getArticleTags($selectedTenant) : [];
         $mySector = $selectedTenant ? $this->tenantSectorKey($selectedTenant) : null;
         $stateCounts = $selectedTenant ? $this->getArticleStateCounts($selectedTenant, $userId ?: null) : ['unread' => 0, 'favorites' => 0];
+        $sectorStats = $selectedTenant
+            ? $this->getSectorStats($selectedTenant, ['from' => $range['from'], 'to' => $range['to'], 'q' => $q, 'tag' => $tag])
+            : ['total' => 0, 'sectors' => []];
 
         echo $this->page('index', [
             'module'         => $this,
@@ -1267,6 +1390,7 @@ class Module_ThreatIntelligence extends BaseModule
             'onlyUnread'     => $onlyUnread,
             'onlyFavorites'  => $onlyFavorites,
             'stateCounts'    => $stateCounts,
+            'sectorStats'    => $sectorStats,
             'profileCounts'  => $selectedTenant ? $this->getProfileCounts($selectedTenant) : ['actor' => 0, 'tool' => 0, 'other' => 0, 'total' => 0],
         ]);
     }

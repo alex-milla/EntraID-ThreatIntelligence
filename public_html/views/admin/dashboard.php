@@ -44,6 +44,42 @@ $pageTitle = 'Dashboard';
     </div>
 </div>
 
+<?php if (!empty($sectorPriority) && !empty($sectorPriority['stats']['sectors'])):
+    $sp    = $sectorPriority;
+    $spTop = $sp['stats']['sectors'][0] ?? null;
+    $spUrl = base_url('modules/threat_intelligence') . '?' . http_build_query(array_filter([
+        'tenant' => (int)$sp['tenant']['id'],
+        'from'   => (string)$sp['from'],
+        'to'     => (string)$sp['to'],
+        'sector' => $spTop ? (string)$spTop['sector'] : '',
+    ]));
+    $spList = array_values(array_filter($sp['stats']['sectors'], fn($s) => (int)$s['count'] > 0));
+?>
+<div class="mb-6 bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-5">
+    <div class="flex items-center justify-between gap-3 flex-wrap">
+        <div>
+            <p class="text-[11px] uppercase tracking-wide text-gray-400">Sector a priorizar (últimas 24 h) · <?= e($sp['tenant']['name']) ?></p>
+            <?php if ($spTop && (int)$spTop['count'] > 0): ?>
+                <p class="text-2xl font-bold text-brand-500 mt-1"><?= e((string)$spTop['sector']) ?></p>
+                <p class="text-xs text-gray-500 mt-0.5">El más afectado: <?= (int)$spTop['count'] ?> noticia<?= (int)$spTop['count'] === 1 ? '' : 's' ?> (<?= (int)$spTop['pct'] ?>% de <?= (int)$sp['stats']['total'] ?>)</p>
+            <?php else: ?>
+                <p class="text-sm text-gray-500 mt-1">Sin noticias en las últimas 24 h.</p>
+            <?php endif; ?>
+        </div>
+        <?php if ($spTop && (int)$spTop['count'] > 0): ?>
+            <a href="<?= e($spUrl) ?>" class="inline-flex items-center gap-2 px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors">Ver noticias de <?= e((string)$spTop['sector']) ?> →</a>
+        <?php endif; ?>
+    </div>
+    <?php if (count($spList) > 1): ?>
+        <div class="mt-4 flex flex-wrap gap-x-4 gap-y-1">
+            <?php foreach (array_slice($spList, 0, 6) as $s): ?>
+                <span class="text-xs text-gray-500"><?= e((string)$s['sector']) ?> <span class="font-semibold text-gray-700 dark:text-gray-200"><?= (int)$s['count'] ?></span></span>
+            <?php endforeach; ?>
+        </div>
+    <?php endif; ?>
+</div>
+<?php endif; ?>
+
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
     <!-- Tenants -->
     <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">

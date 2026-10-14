@@ -24,7 +24,64 @@ $tiStateUrl = function (array $extra) use ($tiBaseQs): string {
 };
 $chipOn  = 'inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-brand-500 text-white';
 $chipOff = 'inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700';
+
+// Estadística de sectores afectados en el rango activo.
+$sectorStats   = (array)($sectorStats ?? []);
+$sectorList    = array_values((array)($sectorStats['sectors'] ?? []));
+$sectorTotal   = (int)($sectorStats['total'] ?? 0);
+$sectorTop     = $sectorList[0] ?? null;
+$sectorIsDefault = (($dateFrom ?? '') === ($dateDefaultFrom ?? '')) && (($dateTo ?? '') === ($dateDefaultTo ?? ''));
+$sectorPeriodLabel = $sectorIsDefault ? 'hoy' : 'del periodo';
+$sectorMax = 0;
+foreach ($sectorList as $s) { $sectorMax = max($sectorMax, (int)($s['count'] ?? 0)); }
+$sectorUrl = function (string $sec) use ($tiBaseQs): string {
+    return '?' . http_build_query(array_filter(array_merge($tiBaseQs, ['sector' => $sec]), fn($v) => $v !== '' && $v !== null));
+};
 ?>
+
+<?php if (!empty($selectedTenant)): ?>
+<div class="mb-6 grid grid-cols-1 lg:grid-cols-3 gap-4">
+    <div class="bg-gradient-to-br from-brand-500 to-brand-600 text-white rounded-xl border border-brand-600 p-5 flex flex-col justify-between">
+        <div>
+            <p class="text-[11px] uppercase tracking-wide text-white/80">Sector a priorizar · <?= e($sectorPeriodLabel) ?></p>
+            <?php if ($sectorTop && (int)$sectorTop['count'] > 0): ?>
+                <p class="text-2xl font-bold mt-1"><?= e((string)$sectorTop['sector']) ?></p>
+                <p class="text-xs text-white/90 mt-1">El más afectado: <?= (int)$sectorTop['count'] ?> noticia<?= (int)$sectorTop['count'] === 1 ? '' : 's' ?> (<?= (int)$sectorTop['pct'] ?>% del total)</p>
+            <?php else: ?>
+                <p class="text-lg font-semibold mt-1">Sin noticias</p>
+                <p class="text-xs text-white/90 mt-1">No hay noticias en el periodo seleccionado.</p>
+            <?php endif; ?>
+        </div>
+        <?php if ($sectorTop && (int)$sectorTop['count'] > 0): ?>
+            <a href="<?= e($sectorUrl((string)$sectorTop['sector'])) ?>" class="mt-4 inline-flex items-center justify-center px-3 py-1.5 bg-white text-brand-600 text-xs font-semibold rounded-lg hover:bg-white/90 transition-colors">Ver noticias de <?= e((string)$sectorTop['sector']) ?> →</a>
+        <?php endif; ?>
+    </div>
+
+    <div class="lg:col-span-2 bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-5">
+        <div class="flex items-center justify-between mb-3 gap-2">
+            <h2 class="text-sm font-semibold">Sectores más afectados</h2>
+            <span class="text-[11px] text-gray-400 text-right"><?= (int)$sectorTotal ?> noticias · un artículo puede afectar a varios sectores</span>
+        </div>
+        <?php if ($sectorTotal === 0 || $sectorMax === 0): ?>
+            <p class="text-sm text-gray-500 py-4 text-center">Sin datos en el periodo seleccionado.</p>
+        <?php else: ?>
+            <div class="space-y-2">
+                <?php foreach ($sectorList as $s): $cnt = (int)$s['count']; if ($cnt === 0) { continue; } $w = max(4, (int)round($cnt * 100 / $sectorMax)); ?>
+                    <a href="<?= e($sectorUrl((string)$s['sector'])) ?>" class="block group" title="Filtrar por <?= e((string)$s['sector']) ?>">
+                        <div class="flex items-center justify-between text-xs mb-0.5">
+                            <span class="font-medium group-hover:text-brand-500"><?= e((string)$s['sector']) ?></span>
+                            <span class="text-gray-400"><?= $cnt ?> · <?= (int)$s['pct'] ?>%</span>
+                        </div>
+                        <div class="h-2 w-full bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
+                            <div class="h-full bg-brand-500 group-hover:bg-brand-600 transition-all" style="width:<?= $w ?>%"></div>
+                        </div>
+                    </a>
+                <?php endforeach; ?>
+            </div>
+        <?php endif; ?>
+    </div>
+</div>
+<?php endif; ?>
 
 <div class="mb-6 space-y-3">
     <form method="GET" class="flex items-end gap-3 flex-wrap">

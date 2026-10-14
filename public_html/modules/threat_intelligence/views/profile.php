@@ -4,6 +4,8 @@
  */
 $aliases  = safe_json_decode((string)($profile['aliases'] ?? ''), []);
 $targets  = safe_json_decode((string)($profile['targets'] ?? ''), []);
+$parsedTargets = ti_parse_targets(is_array($targets) ? $targets : []);
+$subindustries = $parsedTargets['subindustries'] ?? [];
 $countries = safe_json_decode((string)($profile['countries'] ?? ''), []);
 $industries = safe_json_decode((string)($profile['industries'] ?? ''), []);
 $regions    = safe_json_decode((string)($profile['regions'] ?? ''), []);
@@ -59,6 +61,14 @@ $countryLabel = function ($c) {
                 <?php if (is_array($regions) && $regions): ?>
                     <div class="flex flex-wrap gap-1.5">
                         <?php foreach ($regions as $rg): ?><span class="inline-flex px-2 py-0.5 text-xs rounded-full bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300"><?= e((string)$rg) ?></span><?php endforeach; ?>
+                    </div>
+                <?php endif; ?>
+                <?php if (is_array($subindustries) && $subindustries): ?>
+                    <div class="mt-3">
+                        <p class="text-[11px] text-gray-400 mb-1">Subsectores</p>
+                        <div class="flex flex-wrap gap-1.5">
+                            <?php foreach ($subindustries as $sub): ?><span class="inline-flex px-2 py-0.5 text-xs rounded-full bg-gray-50 dark:bg-gray-900 text-gray-500 dark:text-gray-400 border border-gray-200 dark:border-gray-700"><?= e((string)$sub) ?></span><?php endforeach; ?>
+                        </div>
                     </div>
                 <?php endif; ?>
             </div>

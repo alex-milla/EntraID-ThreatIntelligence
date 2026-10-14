@@ -177,44 +177,124 @@ if (!function_exists('defang_ioc')) {
     }
 }
 
+if (!function_exists('ti_normalize_target')) {
+    /**
+     * Normaliza un texto de "target" para compararlo de forma robusta:
+     * minúsculas, sin acentos y con espacios colapsados.
+     */
+    function ti_normalize_target(string $value): string
+    {
+        $value = trim($value);
+        if ($value === '') {
+            return '';
+        }
+        // Transliterar primero (quita acentos) y luego pasar a minúsculas:
+        // así funciona incluso sin mbstring y sin corromper UTF-8.
+        if (function_exists('iconv')) {
+            $ascii = @iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $value);
+            if ($ascii !== false && $ascii !== '') {
+                $value = $ascii;
+            }
+        }
+        $value = function_exists('mb_strtolower') ? mb_strtolower($value, 'UTF-8') : strtolower($value);
+        // Normalizar a solo [a-z0-9] y espacios: elimina acentos residuales,
+        // signos de puntuación y guiones (idéntico en vocabulario y entrada).
+        $value = preg_replace('/[^a-z0-9]+/', ' ', $value) ?? $value;
+        $value = preg_replace('/\s+/', ' ', $value) ?? $value;
+        return trim($value);
+    }
+}
+
+if (!function_exists('ti_target_region_map')) {
+    /**
+     * Mapa normalizado => nombre canónico de región (canónicas + extras).
+     */
+    function ti_target_region_map(): array
+    {
+        static $map = null;
+        if ($map !== null) {
+            return $map;
+        }
+        $map = [];
+        foreach (array_merge(TI_TARGET_REGIONS, TI_TARGET_REGION_EXTRAS) as $r) {
+            $map[ti_normalize_target((string)$r)] = (string)$r;
+        }
+        return $map;
+    }
+}
+
+if (!function_exists('ti_target_industry_map')) {
+    /**
+     * Mapa normalizado => nombre canónico de industria (MDTI).
+     */
+    function ti_target_industry_map(): array
+    {
+        static $map = null;
+        if ($map !== null) {
+            return $map;
+        }
+        $map = [];
+        foreach (TI_TARGET_INDUSTRIES as $i) {
+            $map[ti_normalize_target((string)$i)] = (string)$i;
+        }
+        return $map;
+    }
+}
+
 if (!function_exists('ti_parse_targets')) {
     /**
-     * Separa los "targets" de un intelProfile de Graph en industrias y regiones.
-     * Graph devuelve entradas tipo "Industry: SubIndustry" (p. ej.
-     * "Government Agencies & Services: Defense") y, en algunos perfiles, regiones.
+     * Separa los "targets" de un intelProfile de Graph en industrias, regiones
+     * y sub-industrias, usando la taxonomía canónica de MDTI.
      *
-     * @return array{industries:string[],regions:string[]}
+     * - "Industry: SubIndustry"  -> industria canónica (+ sub-industria)
+     * - Región conocida          -> región canónica
+     * - Desconocido              -> se conserva como industria (no se pierde)
+     *
+     * @return array{industries:string[],regions:string[],subindustries:string[]}
      */
     function ti_parse_targets(array $targets): array
     {
-        static $regions = [
-            'central america and the caribbean', 'central asia', 'east asia', 'eastern europe',
-            'middle east', 'north africa', 'north america', 'northern europe', 'oceania',
-            'south america', 'sub-saharan africa', 'western europe', 'southern europe',
-            'south asia', 'southeast asia', 'central europe', 'africa', 'europe', 'asia',
-            'latin america', 'middle east and north africa',
-        ];
+        $regMap = ti_target_region_map();
+        $indMap = ti_target_industry_map();
+
         $industries = [];
-        $reg = [];
+        $regions = [];
+        $subindustries = [];
+
         foreach ($targets as $t) {
-            $t = trim((string)(is_array($t) ? ($t['value'] ?? $t['name'] ?? '') : $t));
-            if ($t === '') {
+            $raw = trim((string)(is_array($t) ? ($t['value'] ?? $t['name'] ?? '') : $t));
+            if ($raw === '') {
                 continue;
             }
-            if (str_contains($t, ':')) {
-                $ind = trim(explode(':', $t, 2)[0]);
-                if ($ind !== '') {
-                    $industries[$ind] = true;
+
+            if (str_contains($raw, ':')) {
+                [$left, $right] = array_map('trim', explode(':', $raw, 2));
+                if ($left !== '') {
+                    $industries[$indMap[ti_normalize_target($left)] ?? $left] = true;
+                }
+                if ($right !== '') {
+                    $subindustries[$right] = true;
                 }
                 continue;
             }
-            if (in_array(strtolower($t), $regions, true)) {
-                $reg[$t] = true;
-            } else {
-                $industries[$t] = true;
+
+            $norm = ti_normalize_target($raw);
+            if (isset($regMap[$norm])) {
+                $regions[$regMap[$norm]] = true;
+                continue;
             }
+            if (isset($indMap[$norm])) {
+                $industries[$indMap[$norm]] = true;
+                continue;
+            }
+            $industries[$raw] = true;
         }
-        return ['industries' => array_keys($industries), 'regions' => array_keys($reg)];
+
+        return [
+            'industries'    => array_keys($industries),
+            'regions'       => array_keys($regions),
+            'subindustries' => array_keys($subindustries),
+        ];
     }
 }
 

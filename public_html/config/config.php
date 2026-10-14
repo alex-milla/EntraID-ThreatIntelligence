@@ -217,3 +217,64 @@ define('SECTOR_INDUSTRY_MAP', [
     'information'=> 'Tecnología',
     'telecom'    => 'Telecom',
 ]);
+
+// ============================================================
+// Threat Intelligence — taxonomía canónica de "targets" (MDTI)
+// Industrias y regiones tal y como las expone el portal de Microsoft
+// (Intel explorer → Target industries / Target regions).
+// ============================================================
+
+define('TI_TARGET_INDUSTRIES', [
+    'Education',
+    'Other business entities',
+    'Financial Services',
+    'Information Technology',
+    'Government Agencies & Services',
+    'Critical Manufacturing',
+    'Healthcare & public health',
+    'Communications infrastructure',
+    'Transportation Systems',
+    'Consumer Retail',
+    'Energy',
+    'Water & Wastewater System',
+    'Commercial Facilities',
+    'Food and Agriculture',
+    'Inter-Governmental Organization',
+    'Non-Government Organization',
+    'Digital, Print and Broadcast Media',
+    'Natural Resources',
+    'Defense Industrial Base',
+    'Emergency Services',
+    'Private Consumer Accounts',
+    'Political and other groups',
+    'Government Facilities',
+]);
+
+define('TI_TARGET_REGIONS', [
+    'Central America and the Caribbean',
+    'Central Asia',
+    'East Asia',
+    'Eastern Europe',
+    'Middle East',
+    'North Africa',
+    'North America',
+    'Northern Europe',
+    'Oceania',
+    'South America',
+    'Sub-Saharan Africa',
+    'Western Europe',
+]);
+
+// Regiones adicionales que Graph puede devolver (no canónicas): se siguen
+// tratando como región y se conservan para no perder información.
+define('TI_TARGET_REGION_EXTRAS', [
+    'Central Europe',
+    'Southern Europe',
+    'South Asia',
+    'Southeast Asia',
+    'Africa',
+    'Europe',
+    'Asia',
+    'Latin America',
+    'Middle East and North Africa',
+]);
