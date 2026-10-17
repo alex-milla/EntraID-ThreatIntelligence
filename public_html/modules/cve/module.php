@@ -36,6 +36,11 @@ class Module_Cve extends BaseModule
     {
         return [
             ['method' => 'GET',  'pattern' => '',                'handler' => [$this, 'index']],
+            ['method' => 'GET',  'pattern' => 'detail/{cveId}',  'handler' => [$this, 'detail']],
+            ['method' => 'GET',  'pattern' => 'status',          'handler' => [$this, 'syncStatus']],
+            ['method' => 'POST', 'pattern' => 'sync',            'handler' => [$this, 'triggerSync']],
+            ['method' => 'POST', 'pattern' => 'step',            'handler' => [$this, 'stepSync']],
+            ['method' => 'POST', 'pattern' => 'cancel',          'handler' => [$this, 'cancelSync']],
             ['method' => 'POST', 'pattern' => 'groups/save',     'handler' => [$this, 'saveGroup']],
             ['method' => 'POST', 'pattern' => 'groups/delete',   'handler' => [$this, 'deleteGroup']],
             ['method' => 'POST', 'pattern' => 'software/save',   'handler' => [$this, 'saveSoftware']],
@@ -63,10 +68,29 @@ class Module_Cve extends BaseModule
         $editGroup = null;
         $dbError = null;
 
+        $catalog = [];
+        $catalogTotal = 0;
+        $catalogPage = 1;
+        $catalogPages = 0;
+        $catalogFilters = ['q' => '', 'severity' => '', 'product' => ''];
+        $syncState = null;
+
         try {
             $groups = $this->groupTree();
             if ($tab === 'software') {
                 $software = $this->listSoftware($selectedGroup, $q);
+            } else {
+                $catalogFilters = [
+                    'q'        => trim((string)($_GET['q'] ?? '')),
+                    'severity' => trim((string)($_GET['severity'] ?? '')),
+                    'product'  => trim((string)($_GET['product'] ?? '')),
+                ];
+                $catalogPage = max(1, (int)($_GET['page'] ?? 1));
+                $catalogResult = $this->listCatalog($catalogFilters, $catalogPage);
+                $catalog = $catalogResult['data'];
+                $catalogTotal = $catalogResult['total'];
+                $catalogPages = $catalogResult['totalPages'];
+                $syncState = (new CveSync())->state();
             }
             $stats = $this->stats();
 
@@ -97,6 +121,12 @@ class Module_Cve extends BaseModule
             'editSoftware'  => $editSoftware,
             'editGroup'     => $editGroup,
             'dbError'       => $dbError,
+            'catalog'       => $catalog,
+            'catalogTotal'  => $catalogTotal,
+            'catalogPage'   => $catalogPage,
+            'catalogPages'  => $catalogPages,
+            'catalogFilters'=> $catalogFilters,
+            'syncState'     => $syncState,
         ]);
     }
 
@@ -314,6 +344,114 @@ class Module_Cve extends BaseModule
     }
 
     // ============================================================
+    // Catálogo
+    // ============================================================
+
+    public function detail(array $params = []): void
+    {
+        Auth::require();
+
+        $cveId = strtoupper(rawurldecode((string)($params['cveId'] ?? '')));
+        $valid = (bool)preg_match('/^CVE-\d{4}-\d{4,}$/', $cveId);
+        $cve = $valid ? $this->getCatalogCve($cveId) : null;
+
+        $products = [];
+        $references = [];
+        $cwes = [];
+        $kev = null;
+        $epss = null;
+
+        if ($cve !== null) {
+            $products = CveDatabase::fetchAll(
+                "SELECT vendor, product FROM cve_product WHERE cve_id = ? ORDER BY vendor ASC, product ASC",
+                [$cveId]
+            );
+            $references = safe_json_decode($cve['references_json'] ?? '[]', []);
+            $cwes = safe_json_decode($cve['cwe_ids'] ?? '[]', []);
+            $kev = CveDatabase::fetchOne("SELECT * FROM cve_kev WHERE cve_id = ?", [$cveId]);
+            $epss = CveDatabase::fetchOne("SELECT * FROM cve_epss WHERE cve_id = ?", [$cveId]);
+        }
+
+        http_response_code($cve !== null ? 200 : 404);
+
+        echo $this->page('detail', [
+            'cveId'      => $cveId,
+            'cve'        => $cve,
+            'products'   => $products,
+            'references' => is_array($references) ? $references : [],
+            'cwes'       => is_array($cwes) ? $cwes : [],
+            'kev'        => $kev,
+            'epss'       => $epss,
+        ]);
+    }
+
+    // ============================================================
+    // Sincronización NVD
+    // ============================================================
+
+    public function triggerSync(array $params = []): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        try {
+            $mode = isset($_POST['mode']) ? (string)$_POST['mode'] : null;
+            json_response((new CveSync())->start($mode));
+        } catch (Throwable $e) {
+            json_response(['success' => false, 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    public function syncStatus(array $params = []): void
+    {
+        Auth::require();
+
+        try {
+            json_response((new CveSync())->status());
+        } catch (Throwable $e) {
+            json_response(['success' => false, 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    public function cancelSync(array $params = []): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        try {
+            json_response((new CveSync())->cancel());
+        } catch (Throwable $e) {
+            json_response(['success' => false, 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Fallback manual cuando el hosting no permite el loopback del worker.
+     */
+    public function stepSync(array $params = []): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+        @set_time_limit(0);
+        release_session_lock();
+
+        try {
+            $sync = new CveSync();
+            $state = $sync->state();
+            if (!$state || !in_array((string)$state['status'], ['queued', 'running'], true) || empty($state['token'])) {
+                json_response(['success' => false, 'error' => 'No hay una sincronización activa.']);
+            }
+            $result = $sync->runChunk((string)$state['token']);
+            json_response([
+                'success' => empty($result['error']),
+                'result'  => $result,
+            ]);
+        } catch (Throwable $e) {
+            json_response(['success' => false, 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    // ============================================================
     // Consultas internas
     // ============================================================
 
@@ -323,6 +461,9 @@ class Module_Cve extends BaseModule
             'groups'     => 0,
             'software'   => 0,
             'catalog'    => 0,
+            'critical'   => 0,
+            'high'       => 0,
+            'products'   => 0,
             'kev'        => 0,
             'epss'       => 0,
             'matches'    => 0,
@@ -337,6 +478,9 @@ class Module_Cve extends BaseModule
         $stats['groups']   = (int)(CveDatabase::fetchOne("SELECT COUNT(*) AS c FROM software_groups")['c'] ?? 0);
         $stats['software'] = (int)(CveDatabase::fetchOne("SELECT COUNT(*) AS c FROM software_watchlist")['c'] ?? 0);
         $stats['catalog']  = (int)(CveDatabase::fetchOne("SELECT COUNT(*) AS c FROM cve_catalog")['c'] ?? 0);
+        $stats['critical'] = (int)(CveDatabase::fetchOne("SELECT COUNT(*) AS c FROM cve_catalog WHERE severity = 'Critical'")['c'] ?? 0);
+        $stats['high']     = (int)(CveDatabase::fetchOne("SELECT COUNT(*) AS c FROM cve_catalog WHERE severity = 'High'")['c'] ?? 0);
+        $stats['products'] = (int)(CveDatabase::fetchOne("SELECT COUNT(*) AS c FROM cve_product")['c'] ?? 0);
         $stats['kev']      = (int)(CveDatabase::fetchOne("SELECT COUNT(*) AS c FROM cve_kev")['c'] ?? 0);
         $stats['epss']     = (int)(CveDatabase::fetchOne("SELECT COUNT(*) AS c FROM cve_epss")['c'] ?? 0);
         $stats['matches']  = (int)(CveDatabase::fetchOne("SELECT COUNT(*) AS c FROM cve_watchlist_match")['c'] ?? 0);
@@ -448,6 +592,66 @@ class Module_Cve extends BaseModule
              ORDER BY g.name ASC, w.name ASC, w.version ASC",
             $params
         );
+    }
+
+    private function listCatalog(array $filters, int $page, int $perPage = 50): array
+    {
+        $where = [];
+        $params = [];
+
+        $q = trim((string)($filters['q'] ?? ''));
+        if ($q !== '') {
+            $like = '%' . $q . '%';
+            $where[] = '(c.cve_id LIKE ? OR c.description LIKE ?)';
+            array_push($params, $like, $like);
+        }
+
+        $severity = trim((string)($filters['severity'] ?? ''));
+        if ($severity !== '') {
+            $where[] = 'c.severity = ?';
+            $params[] = $severity;
+        }
+
+        $product = trim((string)($filters['product'] ?? ''));
+        if ($product !== '') {
+            $like = '%' . $product . '%';
+            $where[] = 'EXISTS (SELECT 1 FROM cve_product p WHERE p.cve_id = c.cve_id AND (p.vendor LIKE ? OR p.product LIKE ?))';
+            array_push($params, $like, $like);
+        }
+
+        $whereSql = $where ? ('WHERE ' . implode(' AND ', $where)) : '';
+        $total = (int)(CveDatabase::fetchOne(
+            "SELECT COUNT(*) AS c FROM cve_catalog c $whereSql",
+            $params
+        )['c'] ?? 0);
+
+        $perPage = max(10, min(100, $perPage));
+        $page = max(1, $page);
+        $offset = ($page - 1) * $perPage;
+        $params[] = $perPage;
+        $params[] = $offset;
+
+        $rows = CveDatabase::fetchAll(
+            "SELECT c.* FROM cve_catalog c
+             $whereSql
+             ORDER BY c.published_at DESC, c.cve_id DESC
+             LIMIT ? OFFSET ?",
+            $params
+        );
+
+        return [
+            'data'       => $rows,
+            'total'      => $total,
+            'page'       => $page,
+            'perPage'    => $perPage,
+            'totalPages' => (int)ceil($total / $perPage),
+        ];
+    }
+
+    private function getCatalogCve(string $cveId): ?array
+    {
+        $row = CveDatabase::fetchOne("SELECT * FROM cve_catalog WHERE cve_id = ?", [$cveId]);
+        return $row ?: null;
     }
 
     private function getSoftware(int $id): ?array

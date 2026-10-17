@@ -48,6 +48,11 @@ class CveClient
         return new self(self::config());
     }
 
+    public function hasApiKey(): bool
+    {
+        return $this->nvdKey !== '';
+    }
+
     /**
      * Comprueba las tres fuentes sin lanzar excepciones.
      */
@@ -70,6 +75,69 @@ class CveClient
             'success'   => $ok,
             'sources'   => $sources,
             'tested_at' => date('c'),
+        ];
+    }
+
+    /**
+     * Descarga una página de NVD API 2.0.
+     *
+     * @param int $startIndex Inicio (0-based)
+     * @param int $pageSize Tamaño (máx. 2000)
+     * @param string|null $pubStart Fecha ISO de publicación desde
+     * @param string|null $pubEnd Fecha ISO de publicación hasta
+     * @return array{total:int,vulnerabilities:array,timestamp:?string}
+     */
+    public function nvdPage(int $startIndex, int $pageSize, ?string $pubStart = null, ?string $pubEnd = null): array
+    {
+        if (!self::isSafeUrl($this->nvdUrl)) {
+            throw new RuntimeException('URL de NVD no válida (se requiere HTTPS público).');
+        }
+
+        $pageSize = max(1, min(2000, $pageSize));
+        $params = [
+            'resultsPerPage' => $pageSize,
+            'startIndex'     => max(0, $startIndex),
+        ];
+        if ($pubStart !== null && $pubEnd !== null) {
+            $params['pubStartDate'] = $pubStart;
+            $params['pubEndDate'] = $pubEnd;
+        }
+
+        $sep = str_contains($this->nvdUrl, '?') ? '&' : '?';
+        $url = $this->nvdUrl . $sep . http_build_query($params) . '&noRejected';
+        $headers = ['Accept: application/json'];
+        if ($this->nvdKey !== '') {
+            $headers[] = 'apiKey: ' . $this->nvdKey;
+        }
+
+        $res = $this->httpGet($url, $headers, 120, false);
+        for ($attempt = 1; $attempt <= 2 && ($res['http'] === 429 || $res['http'] >= 500); $attempt++) {
+            sleep(15 * $attempt);
+            $res = $this->httpGet($url, $headers, 120, false);
+        }
+        if ($res['http'] !== 200) {
+            $detail = trim(strip_tags(substr((string)$res['body'], 0, 500)));
+            $message = 'NVD respondió HTTP ' . $res['http'];
+            if ($res['http'] === 403 || $res['http'] === 401) {
+                $message .= ' (API key inválida o sin permisos)';
+            } elseif ($res['http'] === 429) {
+                $message .= ' (rate limit; configura una API key de NVD)';
+            }
+            if ($detail !== '') {
+                $message .= ': ' . $detail;
+            }
+            throw new RuntimeException($message);
+        }
+
+        $data = json_decode((string)$res['body'], true);
+        if (!is_array($data)) {
+            throw new RuntimeException('NVD devolvió un JSON no válido.');
+        }
+
+        return [
+            'total'           => (int)($data['totalResults'] ?? 0),
+            'vulnerabilities' => is_array($data['vulnerabilities'] ?? null) ? $data['vulnerabilities'] : [],
+            'timestamp'       => isset($data['timestamp']) ? (string)$data['timestamp'] : null,
         ];
     }
 

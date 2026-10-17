@@ -213,7 +213,7 @@ $cveScope = (string)($cve['scope'] ?? 'full');
             <select name="scope" class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
                 <option value="full" <?= $cveScope === 'full' ? 'selected' : '' ?>>Completo — todos los CVEs de NVD</option>
                 <option value="recent" <?= $cveScope === 'recent' ? 'selected' : '' ?>>Reciente — últimos años</option>
-                <option value="kev" <?= $cveScope === 'kev' ? 'selected' : '' ?>>Solo KEV + EPSS</option>
+                <option value="kev" <?= $cveScope === 'kev' ? 'selected' : '' ?>>Solo KEV + EPSS (Fase 4)</option>
             </select>
             <p class="text-xs text-gray-400 mt-1">El catálogo completo ocupa cientos de MB; se recomienda medir el disco antes.</p>
         </div>
@@ -256,7 +256,7 @@ $cveScope = (string)($cve['scope'] ?? 'full');
             <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Sincronización automática</label>
             <label class="inline-flex items-center gap-2 text-sm mt-2">
                 <input type="checkbox" name="auto_sync" value="1" <?= !empty($cve['auto_sync']) ? 'checked' : '' ?> class="rounded border-gray-300 text-brand-500 focus:ring-brand-500">
-                Activar sincronización diaria (Fase 2)
+                Activar sincronización automática (requiere cron)
             </label>
         </div>
         <div>
@@ -269,11 +269,14 @@ $cveScope = (string)($cve['scope'] ?? 'full');
     <div class="flex items-center gap-3 pt-2 border-t border-gray-100 dark:border-gray-700 flex-wrap">
         <button type="submit" class="px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors">Guardar fuentes</button>
         <button type="button" onclick="testCveSources()" class="px-4 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 text-sm font-medium rounded-lg transition-colors">Probar fuentes</button>
-        <button type="button" disabled title="Disponible en la Fase 2"
-                class="px-4 py-2 bg-gray-100 dark:bg-gray-800 text-gray-400 dark:text-gray-500 text-sm font-medium rounded-lg opacity-60 cursor-not-allowed">Actualizar catálogo (Fase 2)</button>
+        <button type="button" onclick="startCveSyncFromAdmin()" title="Descarga completa según el alcance configurado. El incremental llega en la Fase 3."
+                class="px-4 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 text-sm font-medium rounded-lg transition-colors">Descargar / reconstruir catálogo</button>
     </div>
 
     <div id="cve-test-result" class="text-xs text-gray-500 space-y-1"></div>
+    <p class="text-xs text-gray-400">
+        El progreso de la descarga se muestra en <strong>Seguridad → CVE → Catálogo</strong>.
+    </p>
 
     <?php if (!empty($cveError)): ?>
         <div class="px-4 py-3 rounded-lg text-sm text-red-600 bg-red-50 dark:bg-red-900/20">
@@ -328,6 +331,18 @@ function updateModelSuggestions() {
         o.value = m;
         list.appendChild(o);
     });
+}
+function startCveSyncFromAdmin() {
+    if (!window.confirm('Se descargará el catálogo NVD en segundo plano. ¿Continuar?')) return;
+    api('POST', '<?= base_url('modules/cve/sync') ?>', {})
+        .then(function(res) {
+            if (!res || !res.success) {
+                toast((res && res.error) ? res.error : 'No se pudo iniciar la sincronización', 'error');
+                return;
+            }
+            toast(res.message || 'Sincronización iniciada', res.worker_started ? 'success' : 'info');
+        })
+        .catch(function() { toast('Error de conexión', 'error'); });
 }
 function testCveSources() {
     var box = document.getElementById('cve-test-result');

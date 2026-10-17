@@ -192,7 +192,65 @@ class CveDatabase
 
     private static function migrateSchema(PDO $db): void
     {
-        // Reservado para futuras columnas. Mantener idempotente.
+        // v0.2.6.1 creó software_watchlist con environment NULL y
+        // UNIQUE(name, version). v0.2.7.0 añade entorno a la clave única.
+        // SQLite no permite alterar una UNIQUE: reconstruimos la tabla.
+        $cols = [];
+        foreach ($db->query("PRAGMA table_info(software_watchlist)") as $col) {
+            $cols[$col['name']] = $col;
+        }
+        if (empty($cols)) {
+            return;
+        }
+        if (!isset($cols['environment']) || (int)($cols['environment']['notnull'] ?? 0) === 0) {
+            self::rebuildSoftwareWatchlist($db);
+        }
+    }
+
+    private static function rebuildSoftwareWatchlist(PDO $db): void
+    {
+        $db->exec("PRAGMA foreign_keys = OFF");
+        try {
+            $db->beginTransaction();
+            $db->exec("DROP TABLE IF EXISTS software_watchlist_new");
+            $db->exec("CREATE TABLE software_watchlist_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                group_id INTEGER REFERENCES software_groups(id) ON DELETE SET NULL,
+                name TEXT NOT NULL,
+                vendor TEXT,
+                product TEXT,
+                version TEXT NOT NULL DEFAULT '',
+                environment TEXT NOT NULL DEFAULT '',
+                criticality TEXT,
+                asset_count INTEGER,
+                notes TEXT,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                UNIQUE(name, version, environment)
+            )");
+            $db->exec(
+                "INSERT INTO software_watchlist_new
+                 (id, group_id, name, vendor, product, version, environment, criticality, asset_count, notes, is_active, created_at, updated_at)
+                 SELECT id, group_id, name, vendor, product,
+                        COALESCE(version, ''), COALESCE(environment, ''),
+                        criticality, asset_count, notes, COALESCE(is_active, 1),
+                        COALESCE(created_at, datetime('now')), COALESCE(updated_at, datetime('now'))
+                 FROM software_watchlist"
+            );
+            $db->exec("DROP TABLE software_watchlist");
+            $db->exec("ALTER TABLE software_watchlist_new RENAME TO software_watchlist");
+            $db->commit();
+        } catch (Throwable $e) {
+            if ($db->inTransaction()) {
+                $db->rollBack();
+            }
+            throw $e;
+        } finally {
+            $db->exec("PRAGMA foreign_keys = ON");
+        }
+
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_software_group ON software_watchlist(group_id)");
     }
 
     public static function query(string $sql, array $params = []): PDOStatement

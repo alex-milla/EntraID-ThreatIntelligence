@@ -48,7 +48,9 @@ almacenamiento SQLite y arquitectura modular.
 7. **Catálogo CVE (opcional)**: en Admin → APIs → *Fuentes públicas de CVEs*
    puedes guardar la API key de NVD y probar NVD/CISA KEV/EPSS. El catálogo
    se guarda en `storage/cve.sqlite` (`CVE_DB_PATH` en `.env`), separado de la
-   base de datos principal. La descarga masiva se habilita en la Fase 2.
+   base de datos principal. La descarga se lanza desde **Seguridad → CVE →
+   Catálogo → Actualizar catálogo**. Si el hosting no permite el worker en
+   segundo plano, usa **Continuar** para procesar tramos manualmente.
 
 ## Arquitectura modular
 
@@ -93,6 +95,7 @@ public_html/
 ├── .env.example           # Plantilla de configuración
 ├── .gitignore
 ├── index.php              # Front controller
+├── cve-worker.php         # Worker de descarga del catálogo NVD
 ├── config/
 │   ├── config.php         # Constantes y carga de .env
 │   ├── database.php       # Esquema SQLite + clase Database
@@ -105,6 +108,9 @@ public_html/
 │   ├── router.php         # Router
 │   ├── helpers.php        # Funciones auxiliares
 │   ├── graph_client.php   # Cliente Microsoft Graph
+│   ├── cve_database.php   # Base SQLite del catálogo CVE
+│   ├── cve_client.php     # Cliente NVD/KEV/EPSS
+│   ├── cve_sync.php       # Motor de descarga y matching
 │   ├── tenant_manager.php # CRUD de tenants
 │   └── module_manager.php # Gestor de módulos
 ├── modules/               # Módulos (uno por herramienta)
