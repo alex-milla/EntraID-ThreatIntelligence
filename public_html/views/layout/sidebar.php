@@ -140,6 +140,7 @@ foreach ($navModules as $item) {
                 </span>
             </div>
         </div>
+        <p class="mt-2 text-center text-[10px] text-gray-400" title="Versión instalada">v<?= e(APP_VERSION) ?></p>
     </div>
 </aside>
 

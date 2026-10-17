@@ -58,7 +58,7 @@ class Module_Cve extends BaseModule
         Auth::require();
 
         $isAdmin = Auth::isAdmin();
-        $tab = (($_GET['tab'] ?? 'software') === 'catalog') ? 'catalog' : 'software';
+        $tab = (($_GET['tab'] ?? 'catalog') === 'software') ? 'software' : 'catalog';
         $selectedGroup = (int)($_GET['group'] ?? 0);
         $q = trim((string)($_GET['q'] ?? ''));
 

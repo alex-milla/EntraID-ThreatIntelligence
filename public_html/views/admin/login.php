@@ -84,6 +84,7 @@
             Usuario por defecto: <code class="font-mono">admin</code> / <code class="font-mono">admin</code>
             <br><span class="text-amber-500">Cámbiala tras el primer acceso</span>
         </p>
+        <p class="text-center text-[10px] text-gray-400 mt-2">v<?= e(APP_VERSION) ?></p>
     </div>
 </div>
 </body>

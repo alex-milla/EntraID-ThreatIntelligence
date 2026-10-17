@@ -77,6 +77,10 @@ define('APP_DEBUG', ($env['APP_DEBUG'] ?? 'false') === 'true');
 define('APP_URL', rtrim($env['APP_URL'] ?? '', '/'));
 define('APP_TIMEZONE', $env['APP_TIMEZONE'] ?? 'Europe/Madrid');
 
+// Versión instalada (fuente única: fichero VERSION)
+$appVersionFile = ROOT_PATH . '/VERSION';
+define('APP_VERSION', is_file($appVersionFile) ? (trim((string)@file_get_contents($appVersionFile)) ?: '0.0.0') : '0.0.0');
+
 // Seguridad
 define('ENCRYPTION_KEY', $env['ENCRYPTION_KEY'] ?? '');
 define('SESSION_SECRET', $env['SESSION_SECRET'] ?? bin2hex(random_bytes(32)));

@@ -27,6 +27,10 @@ foreach ($flashData as $type => $msg):
                 <dd class="font-medium"><?= e(APP_NAME) ?></dd>
             </div>
             <div class="flex justify-between text-sm">
+                <dt class="text-gray-500">Versión</dt>
+                <dd class="font-medium">v<?= e(APP_VERSION) ?></dd>
+            </div>
+            <div class="flex justify-between text-sm">
                 <dt class="text-gray-500">Entorno</dt>
                 <dd class="font-medium"><?= e(APP_ENV) ?></dd>
             </div>

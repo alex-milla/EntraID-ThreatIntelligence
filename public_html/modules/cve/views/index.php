@@ -64,13 +64,13 @@ foreach ($flashData as $type => $msg):
 </div>
 
 <div class="flex items-center gap-2 mb-5 border-b border-gray-200 dark:border-gray-700">
-    <a href="<?= base_url('modules/cve?tab=software') ?>"
-       class="px-3 py-2 -mb-px text-sm font-medium border-b-2 <?= $tab === 'software' ? 'border-brand-500 text-brand-600 dark:text-brand-300' : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300' ?>">
-        Mi software
-    </a>
     <a href="<?= base_url('modules/cve?tab=catalog') ?>"
        class="px-3 py-2 -mb-px text-sm font-medium border-b-2 <?= $tab === 'catalog' ? 'border-brand-500 text-brand-600 dark:text-brand-300' : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300' ?>">
         Catálogo
+    </a>
+    <a href="<?= base_url('modules/cve?tab=software') ?>"
+       class="px-3 py-2 -mb-px text-sm font-medium border-b-2 <?= $tab === 'software' ? 'border-brand-500 text-brand-600 dark:text-brand-300' : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300' ?>">
+        Mi software
     </a>
 </div>
 
