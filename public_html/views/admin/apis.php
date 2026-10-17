@@ -209,13 +209,13 @@ $cveScope = (string)($cve['scope'] ?? 'full');
             <p class="text-xs text-gray-400 mt-1">Sin key: 5 peticiones/30 s. Con key: 50 peticiones/30 s.</p>
         </div>
         <div>
-            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Alcance del catálogo</label>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Alcance de la primera carga</label>
             <select name="scope" class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
                 <option value="full" <?= $cveScope === 'full' ? 'selected' : '' ?>>Completo — todos los CVEs de NVD</option>
                 <option value="recent" <?= $cveScope === 'recent' ? 'selected' : '' ?>>Reciente — últimos años</option>
                 <option value="kev" <?= $cveScope === 'kev' ? 'selected' : '' ?>>Solo KEV + EPSS (Fase 4)</option>
             </select>
-            <p class="text-xs text-gray-400 mt-1">El catálogo completo ocupa cientos de MB; se recomienda medir el disco antes.</p>
+            <p class="text-xs text-gray-400 mt-1">Se usa cuando aún no hay catálogo. Después, «Actualizar catálogo» usa el incremental.</p>
         </div>
         <div>
             <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">URL de NVD</label>
@@ -275,8 +275,10 @@ $cveScope = (string)($cve['scope'] ?? 'full');
     <div class="flex items-center gap-3 pt-2 border-t border-gray-100 dark:border-gray-700 flex-wrap">
         <button type="submit" class="px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors">Guardar fuentes</button>
         <button type="button" onclick="testCveSources()" class="px-4 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 text-sm font-medium rounded-lg transition-colors">Probar fuentes</button>
-        <button type="button" onclick="startCveSyncFromAdmin()" title="Descarga completa según el alcance configurado. El incremental llega en la Fase 3."
-                class="px-4 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 text-sm font-medium rounded-lg transition-colors">Descargar / reconstruir catálogo</button>
+        <button type="button" onclick="startCveSyncFromAdmin('auto')" title="Incremental si ya hay catálogo; primera carga completa si está vacío."
+                class="px-4 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 text-sm font-medium rounded-lg transition-colors">Actualizar catálogo</button>
+        <button type="button" onclick="startCveSyncFromAdmin('full')" title="Reconstruye el catálogo completo desde cero."
+                class="px-4 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 text-sm font-medium rounded-lg transition-colors">Reconstruir</button>
     </div>
 
     <div id="cve-test-result" class="text-xs text-gray-500 space-y-1"></div>
@@ -338,9 +340,13 @@ function updateModelSuggestions() {
         list.appendChild(o);
     });
 }
-function startCveSyncFromAdmin() {
-    if (!window.confirm('Se descargará el catálogo NVD en segundo plano. ¿Continuar?')) return;
-    api('POST', '<?= base_url('modules/cve/sync') ?>', {})
+function startCveSyncFromAdmin(mode) {
+    mode = mode || 'auto';
+    var msg = mode === 'full'
+        ? 'Se reconstruirá el catálogo completo desde cero. Puede tardar bastante. ¿Continuar?'
+        : 'Se actualizará el catálogo NVD en segundo plano. ¿Continuar?';
+    if (!window.confirm(msg)) return;
+    api('POST', '<?= base_url('modules/cve/sync') ?>', { mode: mode })
         .then(function(res) {
             if (!res || !res.success) {
                 toast((res && res.error) ? res.error : 'No se pudo iniciar la sincronización', 'error');

@@ -1,8 +1,7 @@
 <?php
 /**
  * CveClient — cliente HTTP para las fuentes públicas de CVEs.
- * Fase 1: prueba de conectividad de NVD, CISA KEV y EPSS.
- * La descarga masiva se implementará en la Fase 2.
+ * Prueba NVD, CPE, CISA KEV (con mirror) y EPSS; también descarga páginas NVD.
  */
 
 declare(strict_types=1);
@@ -10,6 +9,7 @@ declare(strict_types=1);
 class CveClient
 {
     private string $nvdUrl;
+    private string $cpeUrl;
     private string $nvdKey;
     private string $kevUrl;
     private string $kevFallbackUrl;
@@ -19,6 +19,7 @@ class CveClient
     public function __construct(array $config = [])
     {
         $this->nvdUrl = (string)($config['nvd_url'] ?? CVE_NVD_URL);
+        $this->cpeUrl = (string)($config['cpe_url'] ?? CVE_CPE_URL);
         $this->nvdKey = (string)($config['nvd_api_key'] ?? '');
         $this->kevUrl = (string)($config['kev_url'] ?? CVE_KEV_URL);
         $this->kevFallbackUrl = (string)($config['kev_fallback_url'] ?? CVE_KEV_FALLBACK_URL);
@@ -33,6 +34,7 @@ class CveClient
     {
         return [
             'nvd_url'         => (string)setting_get('cve_nvd_url', CVE_NVD_URL),
+            'cpe_url'         => (string)setting_get('cve_cpe_url', CVE_CPE_URL),
             'nvd_api_key'     => (string)setting_get('cve_nvd_api_key', CVE_NVD_API_KEY),
             'nvd_page_size'   => (int)setting_get('cve_nvd_page_size', CVE_NVD_PAGE_SIZE),
             'scope'           => (string)setting_get('cve_scope', 'full'),
@@ -95,7 +97,15 @@ class CveClient
      * @param string|null $pubEnd Fecha ISO de publicación hasta
      * @return array{total:int,vulnerabilities:array,timestamp:?string}
      */
-    public function nvdPage(int $startIndex, int $pageSize, ?string $pubStart = null, ?string $pubEnd = null): array
+    public function nvdPage(
+        int $startIndex,
+        int $pageSize,
+        ?string $pubStart = null,
+        ?string $pubEnd = null,
+        ?string $lastModStart = null,
+        ?string $lastModEnd = null,
+        ?string $virtualMatchString = null
+    ): array
     {
         if (!self::isSafeUrl($this->nvdUrl)) {
             throw new RuntimeException('URL de NVD no válida (se requiere HTTPS público).');
@@ -109,6 +119,13 @@ class CveClient
         if ($pubStart !== null && $pubEnd !== null) {
             $params['pubStartDate'] = $pubStart;
             $params['pubEndDate'] = $pubEnd;
+        }
+        if ($lastModStart !== null && $lastModEnd !== null) {
+            $params['lastModStartDate'] = $lastModStart;
+            $params['lastModEndDate'] = $lastModEnd;
+        }
+        if ($virtualMatchString !== null && $virtualMatchString !== '') {
+            $params['virtualMatchString'] = $virtualMatchString;
         }
 
         $sep = str_contains($this->nvdUrl, '?') ? '&' : '?';
@@ -147,6 +164,79 @@ class CveClient
             'vulnerabilities' => is_array($data['vulnerabilities'] ?? null) ? $data['vulnerabilities'] : [],
             'timestamp'       => isset($data['timestamp']) ? (string)$data['timestamp'] : null,
         ];
+    }
+
+    /**
+     * Busca CPE en NVD por palabra clave y deduplica a la CPE base
+     * (cpe:2.3:part:vendor:product, sin versión).
+     */
+    public function searchCpes(string $query, int $limit = 20): array
+    {
+        $query = trim($query);
+        if ($query === '') {
+            return [];
+        }
+        if (!self::isSafeUrl($this->cpeUrl)) {
+            throw new RuntimeException('URL del buscador CPE no válida.');
+        }
+
+        $params = [
+            'keywordSearch'  => $query,
+            'resultsPerPage' => max(10, min(100, $limit * 3)),
+        ];
+        $sep = str_contains($this->cpeUrl, '?') ? '&' : '?';
+        $url = $this->cpeUrl . $sep . http_build_query($params);
+        $headers = ['Accept: application/json'];
+        if ($this->nvdKey !== '') {
+            $headers[] = 'apiKey: ' . $this->nvdKey;
+        }
+
+        $res = $this->httpGet($url, $headers, 45, false);
+        if ($res['http'] !== 200) {
+            throw new RuntimeException('NVD CPE respondió HTTP ' . $res['http'] . '.');
+        }
+        $data = json_decode((string)$res['body'], true);
+        if (!is_array($data) || !is_array($data['products'] ?? null)) {
+            return [];
+        }
+
+        $out = [];
+        foreach ($data['products'] as $product) {
+            $cpe = $product['cpe'] ?? null;
+            if (!is_array($cpe) || !empty($cpe['deprecated'])) {
+                continue;
+            }
+            $name = (string)($cpe['cpeName'] ?? '');
+            if (!str_starts_with($name, 'cpe:2.3:')) {
+                continue;
+            }
+            $parts = explode(':', $name);
+            if (count($parts) < 5) {
+                continue;
+            }
+            $base = implode(':', array_slice($parts, 0, 5));
+            if (isset($out[$base])) {
+                continue;
+            }
+            $title = ucwords(str_replace(['_', '-'], ' ', $parts[3] . ' ' . $parts[4]));
+            foreach (($cpe['titles'] ?? []) as $t) {
+                if (is_array($t) && ($t['lang'] ?? '') === 'es' && !preg_match('/\d/', (string)($t['title'] ?? ''))) {
+                    $title = (string)$t['title'];
+                    break;
+                }
+            }
+            $out[$base] = [
+                'cpe'     => $base,
+                'title'   => $title,
+                'vendor'  => $parts[3],
+                'product' => $parts[4],
+            ];
+            if (count($out) >= $limit) {
+                break;
+            }
+        }
+
+        return array_values($out);
     }
 
     private function testNvd(): array

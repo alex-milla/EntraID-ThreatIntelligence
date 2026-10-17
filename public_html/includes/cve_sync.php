@@ -2,8 +2,9 @@
 /**
  * CveSync — sincronización del catálogo público de CVEs (NVD API 2.0).
  *
- * Fase 2: carga inicial (full/recent), índice de productos y matching local
- * contra el inventario de software. KEV/EPSS llegan en la Fase 4.
+ * Modos: full/recent (carga inicial o reconstrucción), incremental (lastMod)
+ * y backfill (virtualMatchString por producto). Incluye índice de productos,
+ * matching local y reconciliación de matches.
  */
 
 declare(strict_types=1);
@@ -107,12 +108,38 @@ class CveSync
         if (!CveClient::isSafeUrl((string)($cfg['nvd_url'] ?? ''))) {
             return ['success' => false, 'error' => 'La URL de NVD no es válida. Revísala en Admin → APIs.'];
         }
-        $mode = strtolower(trim((string)($mode ?? ($cfg['scope'] ?? 'full'))));
-        if (!in_array($mode, ['full', 'recent'], true)) {
-            return [
-                'success' => false,
-                'error'   => 'El modo «solo KEV + EPSS» se habilitará en la Fase 4. Usa Full o Reciente.',
-            ];
+        $requested = strtolower(trim((string)($mode ?? 'auto')));
+        if ($requested === '') {
+            $requested = 'auto';
+        }
+
+        $state = $this->state();
+        if ($requested === 'auto') {
+            $catalogCount = (int)(CveDatabase::fetchOne("SELECT COUNT(*) AS c FROM cve_catalog")['c'] ?? 0);
+            $lastSuccess = $state['last_success_at'] ?? null;
+            $initialized = (string)setting_get('cve_catalog_initialized', '0') === '1';
+            if (!$initialized && !empty($lastSuccess) && in_array((string)($state['mode'] ?? ''), ['full', 'recent', 'incremental'], true)) {
+                // Instalaciones de v0.2.7.x que ya hicieron una carga completa.
+                $initialized = true;
+            }
+            if ($catalogCount > 0 && $initialized && !empty($lastSuccess)) {
+                $requested = 'incremental';
+            } else {
+                $scope = (string)($cfg['scope'] ?? 'full');
+                if ($scope === 'kev') {
+                    return ['success' => false, 'error' => 'El modo «solo KEV + EPSS» se habilitará en la Fase 4. Usa Full o Reciente.'];
+                }
+                $requested = $scope === 'recent' ? 'recent' : 'full';
+            }
+        }
+
+        if (!in_array($requested, ['full', 'recent', 'incremental'], true)) {
+            return ['success' => false, 'error' => 'Modo de sincronización no válido.'];
+        }
+        $mode = $requested;
+
+        if ($mode === 'incremental' && empty($state['last_success_at'])) {
+            return ['success' => false, 'error' => 'No hay una sincronización previa; usa Full o Reciente para la primera carga.'];
         }
 
         $state = $this->state();
@@ -150,6 +177,33 @@ class CveSync
             $windowStart = gmdate('Y-m-d\TH:i:s\Z', $startTs);
             $windowEnd = gmdate('Y-m-d\TH:i:s\Z', $endTs);
         }
+        if (!$resume && $mode === 'incremental') {
+            $lastTs = $this->dbTime($state['last_success_at'] ?? null);
+            if ($lastTs <= 0) {
+                return ['success' => false, 'error' => 'No se pudo leer la fecha de la última sincronización.'];
+            }
+            $startTs = $lastTs - (7 * 86400);
+            // NVD limita lastMod a 120 días; si hace mucho que no se sincroniza,
+            // acotamos la ventana y el usuario puede usar Reconstruir si hace falta.
+            $startTs = max($startTs, time() - (119 * 86400));
+            $endTs = time();
+            $windowStart = gmdate('Y-m-d\TH:i:s\Z', $startTs);
+            $windowEnd = gmdate('Y-m-d\TH:i:s\Z', $endTs);
+        }
+
+        if (in_array($mode, ['full', 'recent'], true)) {
+            try {
+                setting_set('cve_catalog_initialized', '0');
+            } catch (Throwable $e) {
+                // No bloquear el arranque por un fallo de settings.
+            }
+        } elseif ($mode === 'incremental') {
+            try {
+                setting_set('cve_catalog_initialized', '1');
+            } catch (Throwable $e) {
+                // No bloquear el arranque por un fallo de settings.
+            }
+        }
 
         $token = bin2hex(random_bytes(32));
         $baseUrl = $this->baseUrl();
@@ -162,7 +216,8 @@ class CveSync
             "UPDATE cve_sync_state
              SET status = 'queued', mode = ?, phase = 'nvd', cursor = ?, total = ?,
                  processed = ?, inserted = ?, updated = ?, token = ?, base_url = ?,
-                 message = ?, window_start = ?, window_end = ?, started_at = datetime('now'),
+                 message = ?, window_start = ?, window_end = ?, target_watchlist_id = NULL,
+                 target_cpes = NULL, target_index = 0, started_at = datetime('now'),
                  finished_at = NULL, updated_at = datetime('now')
              WHERE id = 1",
             [
@@ -174,7 +229,11 @@ class CveSync
                 $updatedCount,
                 $token,
                 $baseUrl,
-                $resume ? 'Reanudando la descarga de NVD…' : 'Preparando la descarga de NVD…',
+                $resume
+                    ? 'Reanudando la sincronización de NVD…'
+                    : ($mode === 'incremental'
+                        ? 'Preparando actualización incremental…'
+                        : ($mode === 'recent' ? 'Preparando descarga reciente…' : 'Preparando reconstrucción completa…')),
                 $windowStart,
                 $windowEnd,
             ]
@@ -205,11 +264,131 @@ class CveSync
         ];
     }
 
+    /**
+     * Backfill de un producto: descarga sus CVEs con virtualMatchString y
+     * crea/actualiza los matches del inventario.
+     */
+    public function startBackfill(int $watchlistId): array
+    {
+        $software = CveDatabase::fetchOne(
+            "SELECT id, name FROM software_watchlist WHERE id = ?",
+            [$watchlistId]
+        );
+        if (!$software) {
+            return ['success' => false, 'error' => 'El software no existe.'];
+        }
+
+        $rows = CveDatabase::fetchAll(
+            "SELECT cpe_name FROM software_cpe WHERE watchlist_id = ? ORDER BY is_primary DESC, id ASC",
+            [$watchlistId]
+        );
+        $cpes = [];
+        foreach ($rows as $row) {
+            $parsed = $this->parseCpe((string)($row['cpe_name'] ?? ''));
+            if ($parsed === null) {
+                continue;
+            }
+            $base = 'cpe:2.3:' . $parsed['part'] . ':' . $parsed['vendor'] . ':' . $parsed['product'];
+            $cpes[$base] = true;
+        }
+        if (empty($cpes)) {
+            return ['success' => false, 'error' => 'Ese software no tiene CPE válidos. Añade al menos uno.'];
+        }
+        $cpeList = array_keys($cpes);
+        $targetJson = json_encode($cpeList, JSON_UNESCAPED_SLASHES);
+
+        $state = $this->state();
+        $resume = false;
+        $cursor = 0;
+        $total = 0;
+        $processed = 0;
+        $inserted = 0;
+        $updatedCount = 0;
+        $targetIndex = 0;
+
+        if ($state && in_array((string)$state['status'], ['queued', 'running'], true)) {
+            $lastUpdate = $this->dbTime($state['updated_at'] ?? null);
+            if ($lastUpdate > 0 && (time() - $lastUpdate) < (int)CVE_SYNC_STALE) {
+                return ['success' => false, 'error' => 'Hay una sincronización en curso. Inténtalo cuando termine.'];
+            }
+            if (
+                (string)($state['mode'] ?? '') === 'backfill'
+                && (int)($state['target_watchlist_id'] ?? 0) === $watchlistId
+                && (string)($state['target_cpes'] ?? '') === $targetJson
+                && (string)($state['phase'] ?? '') === 'nvd'
+            ) {
+                $resume = true;
+                $cursor = (int)($state['cursor'] ?? 0);
+                $total = (int)($state['total'] ?? 0);
+                $processed = (int)($state['processed'] ?? 0);
+                $inserted = (int)($state['inserted'] ?? 0);
+                $updatedCount = (int)($state['updated'] ?? 0);
+                $targetIndex = (int)($state['target_index'] ?? 0);
+            }
+        }
+
+        $cfg = CveClient::config();
+        $token = bin2hex(random_bytes(32));
+        $baseUrl = $this->baseUrl();
+        $pageSize = max(1, min(2000, (int)($cfg['nvd_page_size'] ?? CVE_NVD_PAGE_SIZE)));
+        setting_set('cve_job_page_size', (string)$pageSize);
+
+        CveDatabase::query(
+            "UPDATE cve_sync_state
+             SET status = 'queued', mode = 'backfill', phase = 'nvd', cursor = ?, total = ?,
+                 processed = ?, inserted = ?, updated = ?, token = ?, base_url = ?,
+                 message = ?, window_start = NULL, window_end = NULL,
+                 target_watchlist_id = ?, target_cpes = ?, target_index = ?,
+                 started_at = datetime('now'), finished_at = NULL, updated_at = datetime('now')
+             WHERE id = 1",
+            [
+                $cursor,
+                $total,
+                $processed,
+                $inserted,
+                $updatedCount,
+                $token,
+                $baseUrl,
+                $resume
+                    ? 'Reanudando backfill de ' . (string)$software['name'] . '…'
+                    : 'Preparando backfill de ' . (string)$software['name'] . '…',
+                $watchlistId,
+                $targetJson,
+                $targetIndex,
+            ]
+        );
+
+        $workerStarted = false;
+        if ($baseUrl !== '') {
+            $workerStarted = background_request(
+                rtrim($baseUrl, '/') . '/cve-worker.php?token=' . rawurlencode($token)
+            );
+        }
+        if (!$workerStarted) {
+            CveDatabase::query(
+                "UPDATE cve_sync_state
+                 SET message = ?, updated_at = datetime('now')
+                 WHERE id = 1 AND token = ?",
+                ['No se pudo lanzar el worker; pulsa «Continuar» para procesar tramos.', $token]
+            );
+        }
+
+        return [
+            'success'        => true,
+            'state'          => $this->publicState($this->state()),
+            'worker_started' => $workerStarted,
+            'message'        => $workerStarted
+                ? 'Backfill de ' . (string)$software['name'] . ' iniciado.'
+                : 'No se pudo lanzar el worker; usa «Continuar».',
+        ];
+    }
+
     public function cancel(): array
     {
         CveDatabase::query(
             "UPDATE cve_sync_state
              SET status = 'cancelled', token = '', message = 'Cancelado por el usuario.',
+                 target_watchlist_id = NULL, target_cpes = NULL, target_index = 0,
                  finished_at = datetime('now'), updated_at = datetime('now')
              WHERE id = 1 AND status IN ('queued', 'running')"
         );
@@ -289,14 +468,36 @@ class CveSync
                 }
                 usleep((int)($delay * 1000000));
 
-                $pubStart = ($state['mode'] === 'recent') ? ($state['window_start'] ?? null) : null;
-                $pubEnd = ($state['mode'] === 'recent') ? ($state['window_end'] ?? null) : null;
+                $mode = (string)($state['mode'] ?? 'full');
+                $pubStart = ($mode === 'recent') ? ($state['window_start'] ?? null) : null;
+                $pubEnd = ($mode === 'recent') ? ($state['window_end'] ?? null) : null;
+                $lastModStart = ($mode === 'incremental') ? ($state['window_start'] ?? null) : null;
+                $lastModEnd = ($mode === 'incremental') ? ($state['window_end'] ?? null) : null;
+
+                $virtual = null;
+                $targetCpes = [];
+                $targetIndex = (int)($state['target_index'] ?? 0);
+                if ($mode === 'backfill') {
+                    $targetCpes = json_decode((string)($state['target_cpes'] ?? '[]'), true);
+                    if (!is_array($targetCpes) || empty($targetCpes)) {
+                        $this->finish((int)$state['processed'], $token);
+                        return ['done' => true, 'state' => $this->state()];
+                    }
+                    $virtual = $targetCpes[$targetIndex] ?? null;
+                    if ($virtual === null) {
+                        $this->finish((int)$state['processed'], $token);
+                        return ['done' => true, 'state' => $this->state()];
+                    }
+                }
 
                 $page = $this->client()->nvdPage(
                     (int)$state['cursor'],
                     $pageSize,
                     $pubStart !== null ? (string)$pubStart : null,
-                    $pubEnd !== null ? (string)$pubEnd : null
+                    $pubEnd !== null ? (string)$pubEnd : null,
+                    $lastModStart !== null ? (string)$lastModStart : null,
+                    $lastModEnd !== null ? (string)$lastModEnd : null,
+                    $virtual !== null ? (string)$virtual : null
                 );
 
                 $vulns = $page['vulnerabilities'];
@@ -317,7 +518,7 @@ class CveSync
                 $done = false;
 
                 if ($pageCount === 0 || ($total > 0 && $cursor >= $total) || ($total === 0 && $pageCount === 0)) {
-                    if ((string)$state['mode'] === 'recent') {
+                    if ($mode === 'recent') {
                         $next = $this->nextWindow($windowEnd !== null ? (string)$windowEnd : null);
                         if ($next !== null) {
                             $windowStart = $next['start'];
@@ -328,15 +529,35 @@ class CveSync
                             $phase = 'done';
                             $done = true;
                         }
+                    } elseif ($mode === 'backfill') {
+                        $targetIndex++;
+                        $cursor = 0;
+                        $total = 0;
+                        if ($targetIndex >= count($targetCpes)) {
+                            $phase = 'done';
+                            $done = true;
+                        }
                     } else {
                         $phase = 'done';
                         $done = true;
                     }
                 }
 
-                $message = $state['mode'] === 'recent'
-                    ? sprintf('NVD (ventana %s → %s): %s CVEs procesados', (string)$windowStart, (string)$windowEnd, number_format($processed))
-                    : sprintf('NVD: %s CVEs procesados', number_format($processed));
+                if ($mode === 'recent') {
+                    $message = sprintf('NVD (ventana %s → %s): %s CVEs procesados', (string)$windowStart, (string)$windowEnd, number_format($processed));
+                } elseif ($mode === 'incremental') {
+                    $message = sprintf('NVD incremental: %s CVEs procesados', number_format($processed));
+                } elseif ($mode === 'backfill') {
+                    $message = sprintf(
+                        'Backfill %s (%d/%d): %s CVEs',
+                        (string)$virtual,
+                        min($targetIndex + 1, count($targetCpes)),
+                        count($targetCpes),
+                        number_format($processed)
+                    );
+                } else {
+                    $message = sprintf('NVD: %s CVEs procesados', number_format($processed));
+                }
 
                 $this->updateState([
                     'phase'        => $phase,
@@ -347,6 +568,7 @@ class CveSync
                     'updated'      => $updated,
                     'window_start' => $windowStart,
                     'window_end'   => $windowEnd,
+                    'target_index' => $targetIndex,
                     'message'      => $message,
                 ], $token);
 
@@ -726,8 +948,8 @@ class CveSync
         }
 
         if (empty($byWatchlist)) {
-            // No borramos matches antiguos aquí: la reconciliación completa
-            // se hace en la Fase 3. En una carga inicial no hay stale.
+            // No borramos matches antiguos aquí: la reconciliación principal
+            // se hace al editar el producto (CPE/versión) y en el backfill.
             return 0;
         }
 
@@ -847,9 +1069,20 @@ class CveSync
 
     private function finish(int $processed, ?string $token = null): void
     {
+        $state = $this->state();
+        $mode = (string)($state['mode'] ?? '');
+        if (in_array($mode, ['full', 'recent', 'incremental'], true)) {
+            try {
+                setting_set('cve_catalog_initialized', '1');
+            } catch (Throwable $e) {
+                // No bloquear el cierre del job por un fallo de settings.
+            }
+        }
+
         $sql = "UPDATE cve_sync_state
              SET status = 'idle', phase = 'done', token = '', base_url = '',
                  message = ?, finished_at = datetime('now'), last_success_at = datetime('now'),
+                 target_watchlist_id = NULL, target_cpes = NULL, target_index = 0,
                  updated_at = datetime('now')
              WHERE id = 1";
         $params = [sprintf('Catálogo actualizado: %s CVEs procesados.', number_format($processed))];
@@ -865,6 +1098,7 @@ class CveSync
         $allowed = [
             'status', 'phase', 'cursor', 'total', 'processed', 'inserted', 'updated',
             'window_start', 'window_end', 'message', 'started_at', 'finished_at', 'last_success_at',
+            'target_index',
         ];
         $sets = [];
         $params = [];

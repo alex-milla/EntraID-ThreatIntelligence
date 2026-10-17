@@ -2,9 +2,7 @@
 /**
  * Módulo: CVE — catálogo público e inventario de software.
  *
- * Fase 1: configuración, grupos anidados e inventario de software.
- * El catálogo NVD se descargará en la Fase 2.
- *
+ * Catálogo NVD (full/recent/incremental), matching por CPE y backfill por producto.
  * Es un módulo GLOBAL: no depende de tenants ni de permisos de Microsoft Graph.
  */
 
@@ -39,12 +37,14 @@ class Module_Cve extends BaseModule
             ['method' => 'GET',  'pattern' => 'detail/{cveId}',  'handler' => [$this, 'detail']],
             ['method' => 'GET',  'pattern' => 'status',          'handler' => [$this, 'syncStatus']],
             ['method' => 'GET',  'pattern' => 'active',          'handler' => [$this, 'syncActive']],
+            ['method' => 'GET',  'pattern' => 'cpe-search',      'handler' => [$this, 'cpeSearch']],
             ['method' => 'POST', 'pattern' => 'sync',            'handler' => [$this, 'triggerSync']],
             ['method' => 'POST', 'pattern' => 'step',            'handler' => [$this, 'stepSync']],
             ['method' => 'POST', 'pattern' => 'cancel',          'handler' => [$this, 'cancelSync']],
             ['method' => 'POST', 'pattern' => 'groups/save',     'handler' => [$this, 'saveGroup']],
             ['method' => 'POST', 'pattern' => 'groups/delete',   'handler' => [$this, 'deleteGroup']],
             ['method' => 'POST', 'pattern' => 'software/save',   'handler' => [$this, 'saveSoftware']],
+            ['method' => 'POST', 'pattern' => 'software/backfill','handler' => [$this, 'backfillSoftware']],
             ['method' => 'POST', 'pattern' => 'software/delete', 'handler' => [$this, 'deleteSoftware']],
         ];
     }
@@ -91,7 +91,8 @@ class Module_Cve extends BaseModule
                 $catalog = $catalogResult['data'];
                 $catalogTotal = $catalogResult['total'];
                 $catalogPages = $catalogResult['totalPages'];
-                $syncState = (new CveSync())->state();
+                $cveSync = new CveSync();
+                $syncState = $cveSync->publicState($cveSync->state());
             }
             $stats = $this->stats();
 
@@ -229,7 +230,20 @@ class Module_Cve extends BaseModule
         $assetCountRaw = trim((string)($_POST['asset_count'] ?? ''));
         $assetCount = $assetCountRaw === '' ? null : max(0, (int)$assetCountRaw);
         $notes = trim((string)($_POST['notes'] ?? ''));
-        $cpe = trim((string)($_POST['cpe_name'] ?? ''));
+        $cpeList = trim((string)($_POST['cpe_list'] ?? $_POST['cpe_name'] ?? ''));
+        $cpes = [];
+        foreach (preg_split('/\r\n|\r|\n/', $cpeList) ?: [] as $line) {
+            $line = trim($line);
+            if ($line === '') {
+                continue;
+            }
+            if (!str_starts_with($line, 'cpe:2.3:')) {
+                flash('error', 'Cada CPE debe empezar por cpe:2.3: (por ejemplo, cpe:2.3:a:google:chrome).');
+                redirect(base_url('modules/cve?tab=software'));
+            }
+            $cpes[$line] = true;
+        }
+        $cpes = array_keys($cpes);
 
         $allowedCriticality = ['critical', 'high', 'medium', 'low', 'info'];
         if (!in_array($criticality, $allowedCriticality, true)) {
@@ -247,19 +261,28 @@ class Module_Cve extends BaseModule
         if ($version === '') {
             $version = '';
         }
-        if ($cpe !== '' && !str_starts_with($cpe, 'cpe:2.3:')) {
-            flash('error', 'El CPE debe empezar por cpe:2.3: (por ejemplo, cpe:2.3:a:google:chrome).');
-            redirect(base_url('modules/cve?tab=software'));
-        }
         if ($groupId > 0 && $this->getGroup($groupId) === null) {
             flash('error', 'El grupo seleccionado no existe.');
             redirect(base_url('modules/cve?tab=software'));
         }
 
+        $oldSoftware = $id > 0 ? $this->getSoftware($id) : null;
+        $cpeChanged = $id === 0
+            || (string)($oldSoftware['cpe_list'] ?? '') !== implode("\n", $cpes)
+            || (string)($oldSoftware['version'] ?? '') !== $version;
+
+        $syncActive = false;
+        try {
+            $syncActive = !empty((new CveSync())->activeStatus()['active']);
+        } catch (Throwable $e) {
+            // Si no se puede consultar, asumimos que no hay sync activa.
+        }
+        $deleteMatches = $cpeChanged && !$syncActive;
+
         try {
             $savedId = CveDatabase::transaction(function (PDO $db) use (
                 $id, $name, $groupId, $vendor, $product, $version, $environment,
-                $criticality, $assetCount, $notes, $cpe
+                $criticality, $assetCount, $notes, $cpes, $deleteMatches
             ): int {
                 if ($id > 0) {
                     $stmt = $db->prepare(
@@ -302,19 +325,42 @@ class Module_Cve extends BaseModule
                     $savedId = (int)$db->lastInsertId();
                 }
 
-                // Fase 1: un CPE principal por software. La Fase 3 permitirá varios.
-                $del = $db->prepare("DELETE FROM software_cpe WHERE watchlist_id = ? AND is_primary = 1");
+                if ($deleteMatches) {
+                    $db->prepare("DELETE FROM cve_watchlist_match WHERE watchlist_id = ?")->execute([$savedId]);
+                }
+
+                // Varios CPE por software: el primero es el principal.
+                $del = $db->prepare("DELETE FROM software_cpe WHERE watchlist_id = ?");
                 $del->execute([$savedId]);
-                if ($cpe !== '') {
-                    $ins = $db->prepare("INSERT OR IGNORE INTO software_cpe (watchlist_id, cpe_name, is_primary) VALUES (?, ?, 1)");
-                    $ins->execute([$savedId, $cpe]);
+                $ins = $db->prepare("INSERT OR IGNORE INTO software_cpe (watchlist_id, cpe_name, is_primary) VALUES (?, ?, ?)");
+                foreach (array_values($cpes) as $i => $cpeName) {
+                    $ins->execute([$savedId, $cpeName, $i === 0 ? 1 : 0]);
                 }
 
                 return $savedId;
             });
 
             log_activity('cve.software_saved', ['id' => $savedId, 'name' => $name, 'group_id' => $groupId]);
-            flash('success', $id > 0 ? 'Software actualizado.' : 'Software añadido al inventario.');
+            $message = $id > 0 ? 'Software actualizado.' : 'Software añadido al inventario.';
+            if ($cpeChanged && !empty($cpes)) {
+                try {
+                    $backfill = (new CveSync())->startBackfill($savedId);
+                    if (!empty($backfill['success'])) {
+                        if (!empty($backfill['worker_started'])) {
+                            $message .= ' Backfill iniciado en segundo plano.';
+                        } else {
+                            flash('warning', $backfill['message'] ?? 'Backfill preparado; usa «Continuar».');
+                        }
+                    } else {
+                        flash('warning', 'Software guardado, pero no se pudo iniciar el backfill: '
+                            . ($backfill['error'] ?? 'error desconocido')
+                            . ' Puedes usar «Sincronizar» en la fila del software.');
+                    }
+                } catch (Throwable $e) {
+                    flash('warning', 'Software guardado, pero no se pudo iniciar el backfill: ' . $e->getMessage());
+                }
+            }
+            flash('success', $message);
         } catch (Throwable $e) {
             $msg = $e->getMessage();
             if (str_contains($msg, 'UNIQUE constraint failed')) {
@@ -339,6 +385,34 @@ class Module_Cve extends BaseModule
                 flash('success', 'Software eliminado del inventario.');
             } catch (Throwable $e) {
                 flash('error', 'No se pudo eliminar el software: ' . $e->getMessage());
+            }
+        }
+        redirect(base_url('modules/cve?tab=software'));
+    }
+
+    /**
+     * Backfill manual de un producto (también se lanza al guardar CPE/versión).
+     */
+    public function backfillSoftware(array $params = []): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        $id = (int)($_POST['id'] ?? 0);
+        if ($id > 0) {
+            try {
+                $result = (new CveSync())->startBackfill($id);
+                if (!empty($result['success'])) {
+                    if (!empty($result['worker_started'])) {
+                        flash('success', $result['message'] ?? 'Backfill iniciado.');
+                    } else {
+                        flash('warning', $result['message'] ?? 'Backfill preparado; usa «Continuar».');
+                    }
+                } else {
+                    flash('error', $result['error'] ?? 'No se pudo iniciar el backfill.');
+                }
+            } catch (Throwable $e) {
+                flash('error', 'No se pudo iniciar el backfill: ' . $e->getMessage());
             }
         }
         redirect(base_url('modules/cve?tab=software'));
@@ -396,7 +470,14 @@ class Module_Cve extends BaseModule
         Csrf::validateOrFail();
 
         try {
-            $mode = isset($_POST['mode']) ? (string)$_POST['mode'] : null;
+            $raw = file_get_contents('php://input');
+            $input = json_decode((string)$raw, true);
+            $mode = null;
+            if (is_array($input) && isset($input['mode'])) {
+                $mode = (string)$input['mode'];
+            } elseif (isset($_POST['mode'])) {
+                $mode = (string)$_POST['mode'];
+            }
             json_response((new CveSync())->start($mode));
         } catch (Throwable $e) {
             json_response(['success' => false, 'error' => $e->getMessage()], 500);
@@ -425,6 +506,26 @@ class Module_Cve extends BaseModule
             json_response((new CveSync())->activeStatus());
         } catch (Throwable $e) {
             json_response(['success' => false, 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Busca CPE en NVD para el formulario de software.
+     */
+    public function cpeSearch(array $params = []): void
+    {
+        Auth::requireAdmin();
+
+        $q = trim((string)($_GET['q'] ?? ''));
+        if ($this->textLength($q) < 2) {
+            json_response(['success' => true, 'results' => []]);
+        }
+
+        try {
+            $results = CveClient::fromSettings()->searchCpes($q, 20);
+            json_response(['success' => true, 'results' => $results]);
+        } catch (Throwable $e) {
+            json_response(['success' => false, 'error' => $e->getMessage(), 'results' => []]);
         }
     }
 
@@ -603,7 +704,8 @@ class Module_Cve extends BaseModule
         $whereSql = $where ? ('WHERE ' . implode(' AND ', $where)) : '';
 
         return CveDatabase::fetchAll(
-            "SELECT w.*, g.name AS group_name, c.cpe_name
+            "SELECT w.*, g.name AS group_name, c.cpe_name,
+                    (SELECT COUNT(*) FROM software_cpe c2 WHERE c2.watchlist_id = w.id) AS cpe_count
              FROM software_watchlist w
              LEFT JOIN software_groups g ON g.id = w.group_id
              LEFT JOIN software_cpe c ON c.watchlist_id = w.id AND c.is_primary = 1
@@ -685,7 +787,18 @@ class Module_Cve extends BaseModule
              WHERE w.id = ?",
             [$id]
         );
-        return $row ?: null;
+        if (!$row) {
+            return null;
+        }
+        $cpes = CveDatabase::fetchAll(
+            "SELECT cpe_name FROM software_cpe WHERE watchlist_id = ? ORDER BY is_primary DESC, id ASC",
+            [$id]
+        );
+        $row['cpe_list'] = implode("\n", array_map(
+            static fn(array $c): string => (string)$c['cpe_name'],
+            $cpes
+        ));
+        return $row;
     }
 
     private function getGroup(int $id): ?array

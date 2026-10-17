@@ -160,6 +160,9 @@ class CveDatabase
             token TEXT,
             base_url TEXT,
             message TEXT,
+            target_watchlist_id INTEGER,
+            target_cpes TEXT,
+            target_index INTEGER NOT NULL DEFAULT 0,
             started_at TEXT,
             finished_at TEXT,
             last_success_at TEXT,
@@ -199,11 +202,23 @@ class CveDatabase
         foreach ($db->query("PRAGMA table_info(software_watchlist)") as $col) {
             $cols[$col['name']] = $col;
         }
-        if (empty($cols)) {
-            return;
-        }
-        if (!isset($cols['environment']) || (int)($cols['environment']['notnull'] ?? 0) === 0) {
+        if (!empty($cols) && (!isset($cols['environment']) || (int)($cols['environment']['notnull'] ?? 0) === 0)) {
             self::rebuildSoftwareWatchlist($db);
+        }
+
+        // v0.2.7.3: destino del backfill de un producto.
+        $syncCols = [];
+        foreach ($db->query("PRAGMA table_info(cve_sync_state)") as $col) {
+            $syncCols[$col['name']] = true;
+        }
+        if (!isset($syncCols['target_watchlist_id'])) {
+            $db->exec("ALTER TABLE cve_sync_state ADD COLUMN target_watchlist_id INTEGER");
+        }
+        if (!isset($syncCols['target_cpes'])) {
+            $db->exec("ALTER TABLE cve_sync_state ADD COLUMN target_cpes TEXT");
+        }
+        if (!isset($syncCols['target_index'])) {
+            $db->exec("ALTER TABLE cve_sync_state ADD COLUMN target_index INTEGER NOT NULL DEFAULT 0");
         }
     }
 

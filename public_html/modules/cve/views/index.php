@@ -39,6 +39,7 @@ $flashData = flash();
 foreach ($flashData as $type => $msg):
     $colors = match($type) {
         'success' => 'text-green-600 bg-green-50 dark:bg-green-900/20',
+        'warning' => 'text-amber-600 bg-amber-50 dark:bg-amber-900/20',
         'error'   => 'text-red-600 bg-red-50 dark:bg-red-900/20',
         default   => 'text-blue-600 bg-blue-50 dark:bg-blue-900/20',
     };
@@ -50,8 +51,8 @@ foreach ($flashData as $type => $msg):
     <div>
         <h1 class="text-xl font-semibold">CVE</h1>
         <p class="text-sm text-gray-500 mt-1">
-            Catálogo público de CVEs e inventario de software. En esta fase se configuran las fuentes y se define
-            el software de tus entornos; la descarga NVD llega en la Fase 2.
+            Catálogo público de CVEs e inventario de software de tus entornos. Actualiza el catálogo de forma
+            incremental y sincroniza cada producto desde su CPE.
         </p>
     </div>
     <?php if ($isAdmin): ?>
@@ -132,11 +133,16 @@ foreach ($flashData as $type => $msg):
             </div>
             <?php if ($isAdmin): ?>
                 <div class="flex items-center gap-2">
-                    <button type="button" id="cve-start-btn" onclick="startCveSync()"
-                            title="Descarga completa según el alcance configurado. El incremental llega en la Fase 3."
+                    <button type="button" id="cve-start-btn" onclick="startCveSync('auto')"
+                            title="Incremental si ya hay catálogo; primera carga completa si está vacío."
                             class="<?= $syncRunning ? 'hidden' : 'inline-flex' ?> items-center gap-2 px-3 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
-                        Descargar catálogo
+                        Actualizar catálogo
+                    </button>
+                    <button type="button" id="cve-rebuild-btn" onclick="startCveSync('full')"
+                            title="Vuelve a descargar el catálogo completo. Úsalo solo si es necesario."
+                            class="<?= $syncRunning ? 'hidden' : 'inline-flex' ?> items-center px-2 py-2 text-xs text-gray-400 hover:text-red-500 transition-colors">
+                        Reconstruir
                     </button>
                     <button type="button" id="cve-cancel-btn" onclick="cancelCveSync()"
                             class="<?= $syncRunning ? 'inline-flex' : 'hidden' ?> items-center gap-2 px-3 py-2 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-300 hover:bg-red-100 dark:hover:bg-red-900/40 text-sm font-medium rounded-lg transition-colors">
@@ -213,7 +219,7 @@ foreach ($flashData as $type => $msg):
                     <?= $catalogTotal === 0 ? 'El catálogo está vacío. Configura las fuentes y pulsa «Actualizar catálogo».' : 'No hay CVEs con estos filtros.' ?>
                 </p>
                 <?php if ($catalogTotal === 0 && $isAdmin): ?>
-                    <button type="button" onclick="startCveSync()" class="inline-block mt-3 text-sm text-brand-600 dark:text-brand-400 hover:underline">Descargar catálogo NVD</button>
+                    <button type="button" onclick="startCveSync('auto')" class="inline-block mt-3 text-sm text-brand-600 dark:text-brand-400 hover:underline">Descargar catálogo NVD</button>
                 <?php endif; ?>
             </div>
         <?php else: ?>
@@ -307,15 +313,21 @@ foreach ($flashData as $type => $msg):
             return Date.parse(v.replace(' ', 'T') + 'Z');
         }
 
-        window.startCveSync = function() {
-            api('POST', SYNC_URL, {}).then(function(res) {
+        window.startCveSync = function(mode) {
+            mode = mode || 'auto';
+            if (mode === 'full' && !window.confirm('Se reconstruirá el catálogo completo. Puede tardar bastante. ¿Continuar?')) {
+                return;
+            }
+            api('POST', SYNC_URL, { mode: mode }).then(function(res) {
                 if (!res || !res.success) { toast((res && res.error) ? res.error : 'No se pudo iniciar', 'error'); return; }
                 wasRunning = true;
                 toast(res.message || 'Sincronización iniciada', res.worker_started ? 'success' : 'info');
                 var start = document.getElementById('cve-start-btn');
+                var rebuild = document.getElementById('cve-rebuild-btn');
                 var cancel = document.getElementById('cve-cancel-btn');
                 var progress = document.getElementById('cve-sync-progress-wrap');
                 if (start) start.classList.add('hidden');
+                if (rebuild) rebuild.classList.add('hidden');
                 if (cancel) cancel.classList.remove('hidden');
                 if (progress) progress.classList.remove('hidden');
                 var step = document.getElementById('cve-step-btn');
@@ -360,6 +372,7 @@ foreach ($flashData as $type => $msg):
                 var badge = document.getElementById('cve-sync-status');
                 var step = document.getElementById('cve-step-btn');
                 var start = document.getElementById('cve-start-btn');
+                var rebuild = document.getElementById('cve-rebuild-btn');
                 var cancel = document.getElementById('cve-cancel-btn');
                 var progress = document.getElementById('cve-sync-progress-wrap');
                 if (bar) bar.style.width = pct + '%';
@@ -368,6 +381,7 @@ foreach ($flashData as $type => $msg):
                 if (badge) badge.textContent = running ? 'Sincronizando' : (s.status || 'idle');
                 if (progress) progress.classList.toggle('hidden', !running);
                 if (start) start.classList.toggle('hidden', running);
+                if (rebuild) rebuild.classList.toggle('hidden', running);
                 if (cancel) cancel.classList.toggle('hidden', !running);
                 if (step) {
                     var updated = parseDbTime(s.updated_at || '');
@@ -575,10 +589,20 @@ foreach ($flashData as $type => $msg):
                                         </td>
                                         <td class="px-4 py-3 text-xs font-mono text-gray-400 max-w-[260px] truncate" title="<?= e($s['cpe_name'] ?? '') ?>">
                                             <?= e($s['cpe_name'] ?? '—') ?>
+                                            <?php if ((int)($s['cpe_count'] ?? 0) > 1): ?>
+                                                <span class="text-gray-500"> +<?= (int)$s['cpe_count'] - 1 ?></span>
+                                            <?php endif; ?>
                                         </td>
                                         <td class="px-4 py-3 text-right whitespace-nowrap">
                                             <?php if ($isAdmin): ?>
                                                 <a href="<?= base_url('modules/cve?tab=software&edit_software=' . (int)$s['id']) ?>" class="text-xs text-gray-400 hover:text-brand-500 mr-2">Editar</a>
+                                                <?php if ((int)($s['cpe_count'] ?? 0) > 0): ?>
+                                                    <form method="POST" action="<?= base_url('modules/cve/software/backfill') ?>" class="inline mr-2">
+                                                        <?= Csrf::field() ?>
+                                                        <input type="hidden" name="id" value="<?= (int)$s['id'] ?>">
+                                                        <button type="submit" class="text-xs text-gray-400 hover:text-brand-500">Sincronizar</button>
+                                                    </form>
+                                                <?php endif; ?>
                                                 <form method="POST" action="<?= base_url('modules/cve/software/delete') ?>" class="inline" data-confirm="¿Eliminar «<?= e($s['name']) ?>» del inventario?" data-confirm-danger>
                                                     <?= Csrf::field() ?>
                                                     <input type="hidden" name="id" value="<?= (int)$s['id'] ?>">
@@ -596,7 +620,7 @@ foreach ($flashData as $type => $msg):
 
             <?php if ($showSoftwareForm): ?>
                 <?php
-                $cpeValue = (string)($sw['cpe_name'] ?? '');
+                $cpeValue = (string)($sw['cpe_list'] ?? $sw['cpe_name'] ?? '');
                 ?>
                 <form method="POST" action="<?= base_url('modules/cve/software/save') ?>"
                       class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-6 space-y-4">
@@ -668,12 +692,22 @@ foreach ($flashData as $type => $msg):
                     </div>
 
                     <div>
-                        <label class="block text-xs text-gray-500 mb-1">CPE principal</label>
-                        <input type="text" name="cpe_name" value="<?= e($cpeValue) ?>"
-                               placeholder="cpe:2.3:a:google:chrome"
-                               class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm font-mono focus:ring-2 focus:ring-brand-500 outline-none">
+                        <label class="block text-xs text-gray-500 mb-1">CPEs (uno por línea)</label>
+                        <textarea name="cpe_list" id="cve-cpe-list" rows="3"
+                                  placeholder="cpe:2.3:a:google:chrome&#10;cpe:2.3:a:google:chrome_os"
+                                  class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm font-mono focus:ring-2 focus:ring-brand-500 outline-none"><?= e($cpeValue) ?></textarea>
+                        <div class="flex items-center gap-2 mt-2">
+                            <input type="text" id="cve-cpe-query" placeholder="Buscar en NVD: Chrome, Adobe Acrobat…"
+                                   class="flex-1 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none"
+                                   onkeydown="if (event.key === 'Enter') { event.preventDefault(); cveSearchCpe(); }">
+                            <button type="button" onclick="cveSearchCpe()"
+                                    class="px-3 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 text-sm font-medium rounded-lg transition-colors">
+                                Buscar CPE
+                            </button>
+                        </div>
+                        <div id="cve-cpe-results" class="mt-2 space-y-1"></div>
                         <p class="text-xs text-gray-400 mt-1">
-                            Formato NVD: <code class="font-mono">cpe:2.3:a:vendor:product</code>. En la Fase 3 se podrá buscar y añadir varios CPE por software.
+                            Formato NVD: <code class="font-mono">cpe:2.3:a:vendor:product</code>. Puedes añadir varios CPE; el primero será el principal.
                         </p>
                     </div>
 
@@ -693,4 +727,58 @@ foreach ($flashData as $type => $msg):
             <?php endif; ?>
         </div>
     </div>
+
+    <script>
+    (function () {
+        var searchUrl = '<?= base_url('modules/cve/cpe-search') ?>';
+        var input = document.getElementById('cve-cpe-query');
+        var results = document.getElementById('cve-cpe-results');
+        var list = document.getElementById('cve-cpe-list');
+
+        function esc(s) {
+            var d = document.createElement('div');
+            d.textContent = s || '';
+            return d.innerHTML;
+        }
+
+        function addCpe(cpe) {
+            if (!list || !cpe) return;
+            var lines = list.value.split(/\r?\n/).map(function (v) { return v.trim(); }).filter(Boolean);
+            if (lines.indexOf(cpe) === -1) {
+                lines.push(cpe);
+                list.value = lines.join('\n');
+            }
+        }
+
+        window.cveSearchCpe = function () {
+            var q = input ? input.value.trim() : '';
+            if (!results || q.length < 2) return;
+            results.innerHTML = '<p class="text-xs text-gray-400">Buscando en NVD…</p>';
+            api('GET', searchUrl + '?q=' + encodeURIComponent(q)).then(function (res) {
+                if (!res || !res.success) {
+                    results.innerHTML = '<p class="text-xs text-red-500">' + esc((res && res.error) ? res.error : 'Error al buscar CPE.') + '</p>';
+                    return;
+                }
+                var items = res.results || [];
+                if (!items.length) {
+                    results.innerHTML = '<p class="text-xs text-gray-400">Sin resultados. Puedes escribir el CPE manualmente.</p>';
+                    return;
+                }
+                results.innerHTML = items.map(function (item) {
+                    return '<button type="button" class="block w-full text-left px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-muted-dark" data-cpe="' + esc(item.cpe) + '">'
+                        + '<span class="block text-xs font-medium">' + esc(item.title || item.cpe) + '</span>'
+                        + '<span class="block text-[10px] font-mono text-gray-400">' + esc(item.cpe) + '</span>'
+                        + '</button>';
+                }).join('');
+                results.querySelectorAll('button[data-cpe]').forEach(function (btn) {
+                    btn.addEventListener('click', function () {
+                        addCpe(btn.getAttribute('data-cpe') || '');
+                    });
+                });
+            }).catch(function () {
+                results.innerHTML = '<p class="text-xs text-red-500">Error de conexión al buscar CPE.</p>';
+            });
+        };
+    })();
+    </script>
 <?php endif; ?>

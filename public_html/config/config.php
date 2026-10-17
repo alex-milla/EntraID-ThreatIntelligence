@@ -93,6 +93,7 @@ define('CVE_DB_PATH', ROOT_PATH . '/' . ($env['CVE_DB_PATH'] ?? 'storage/cve.sql
 
 // Fuentes públicas de CVEs
 define('CVE_NVD_URL', 'https://services.nvd.nist.gov/rest/json/cves/2.0');
+define('CVE_CPE_URL', 'https://services.nvd.nist.gov/rest/json/cpes/2.0');
 define('CVE_KEV_URL', 'https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json');
 define('CVE_KEV_FALLBACK_URL', 'https://raw.githubusercontent.com/cisagov/kev-data/develop/known_exploited_vulnerabilities.json');
 define('CVE_EPSS_CSV_URL', 'https://epss.empiricalsecurity.com/epss_scores-current.csv.gz');

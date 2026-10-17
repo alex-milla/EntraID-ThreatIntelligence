@@ -49,8 +49,11 @@ almacenamiento SQLite y arquitectura modular.
    puedes guardar la API key de NVD y probar NVD/CISA KEV/EPSS. El catálogo
    se guarda en `storage/cve.sqlite` (`CVE_DB_PATH` en `.env`), separado de la
    base de datos principal. La descarga se lanza desde **Seguridad → CVE →
-   Catálogo → Descargar catálogo**. El progreso se muestra también en el badge
-   **CVE** del sidebar en cualquier pantalla. Si el hosting no permite el worker
+   Catálogo → Actualizar catálogo**: usa el modo incremental si ya hay catálogo
+   y **Reconstruir** para volver a descargarlo completo. El progreso se muestra
+   en el badge **CVE** del sidebar en cualquier pantalla.
+   En **Mi software** puedes buscar CPE en NVD, añadir varios CPE por producto
+   y lanzar un backfill automático al guardar. Si el hosting no permite el worker
    en segundo plano, usa **Continuar** para procesar tramos manualmente.
    Si CISA bloquea la IP del hosting (HTTP 403), KEV usa automáticamente el
    mirror oficial de GitHub (`cisagov/kev-data`).
