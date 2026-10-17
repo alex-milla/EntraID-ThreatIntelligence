@@ -129,7 +129,13 @@ $severityClass = $severityClasses[$severity] ?? 'bg-gray-100 text-gray-600 dark:
                     <?php if (!empty($epss)): ?>
                         <div class="flex justify-between gap-3">
                             <dt class="text-gray-500">EPSS</dt>
-                            <dd class="font-semibold"><?= e(number_format((float)$epss['epss'], 3)) ?> <span class="text-xs text-gray-400">(<?= e(number_format((float)$epss['percentile'], 2)) ?>)</span></dd>
+                            <dd class="font-semibold text-right">
+                                <?= e(number_format((float)$epss['epss'], 3)) ?>
+                                <span class="text-xs text-gray-400">(<?= e(number_format((float)$epss['percentile'], 2)) ?>)</span>
+                                <?php if (!empty($epss['score_date'])): ?>
+                                    <span class="block text-[10px] text-gray-400 font-normal"><?= e((string)$epss['score_date']) ?></span>
+                                <?php endif; ?>
+                            </dd>
                         </div>
                     <?php endif; ?>
                 </dl>
@@ -154,8 +160,11 @@ $severityClass = $severityClasses[$severity] ?? 'bg-gray-100 text-gray-600 dark:
                     <p class="text-sm text-red-600 dark:text-red-400 font-medium">En CISA KEV</p>
                     <p class="text-xs text-gray-500 mt-1">Añadido: <?= e((string)($kev['date_added'] ?? '—')) ?> · Vence: <?= e((string)($kev['due_date'] ?? '—')) ?></p>
                     <p class="text-xs text-gray-500 mt-1">Ransomware: <?= e((string)($kev['known_ransomware'] ?? '—')) ?></p>
+                    <?php if (!empty($kev['required_action'])): ?>
+                        <p class="text-xs text-gray-500 mt-2 line-clamp-4"><?= e((string)$kev['required_action']) ?></p>
+                    <?php endif; ?>
                 <?php else: ?>
-                    <p class="text-sm text-gray-500">Sin datos KEV todavía. La integración KEV/EPSS llega en la Fase 4.</p>
+                    <p class="text-sm text-gray-500">No consta en CISA KEV.</p>
                 <?php endif; ?>
             </div>
         </div>

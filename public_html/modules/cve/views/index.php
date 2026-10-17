@@ -144,6 +144,11 @@ foreach ($flashData as $type => $msg):
                             class="<?= $syncRunning ? 'hidden' : 'inline-flex' ?> items-center px-2 py-2 text-xs text-gray-400 hover:text-red-500 transition-colors">
                         Reconstruir
                     </button>
+                    <button type="button" id="cve-sources-btn" onclick="startCveSync('kev')"
+                            title="Actualiza solo CISA KEV y EPSS."
+                            class="<?= $syncRunning ? 'hidden' : 'inline-flex' ?> items-center px-2 py-2 text-xs text-gray-400 hover:text-brand-500 transition-colors">
+                        KEV / EPSS
+                    </button>
                     <button type="button" id="cve-cancel-btn" onclick="cancelCveSync()"
                             class="<?= $syncRunning ? 'inline-flex' : 'hidden' ?> items-center gap-2 px-3 py-2 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-300 hover:bg-red-100 dark:hover:bg-red-900/40 text-sm font-medium rounded-lg transition-colors">
                         Detener
@@ -167,7 +172,7 @@ foreach ($flashData as $type => $msg):
         </div>
     </div>
 
-    <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-6">
+    <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-6">
         <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-4">
             <p class="text-xs text-gray-500">CVEs</p>
             <p class="text-2xl font-bold mt-1"><?= number_format((int)($stats['catalog'] ?? 0)) ?></p>
@@ -181,8 +186,12 @@ foreach ($flashData as $type => $msg):
             <p class="text-2xl font-bold mt-1 text-orange-500"><?= number_format((int)($stats['high'] ?? 0)) ?></p>
         </div>
         <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-4">
-            <p class="text-xs text-gray-500">Productos</p>
-            <p class="text-2xl font-bold mt-1"><?= number_format((int)($stats['products'] ?? 0)) ?></p>
+            <p class="text-xs text-gray-500">KEV</p>
+            <p class="text-2xl font-bold mt-1 text-red-500"><?= number_format((int)($stats['kev'] ?? 0)) ?></p>
+        </div>
+        <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-4">
+            <p class="text-xs text-gray-500">EPSS ≥ 0,1</p>
+            <p class="text-2xl font-bold mt-1 text-amber-500"><?= number_format((int)($stats['epss_high'] ?? 0)) ?></p>
         </div>
         <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-4">
             <p class="text-xs text-gray-500">Matches</p>
@@ -206,8 +215,14 @@ foreach ($flashData as $type => $msg):
                 </select>
                 <input type="text" name="product" value="<?= e($catalogFilters['product'] ?? '') ?>" placeholder="vendor / producto"
                        class="w-40 px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                <label class="inline-flex items-center gap-1 text-xs text-gray-600 dark:text-gray-300">
+                    <input type="checkbox" name="kev" value="1" <?= !empty($catalogFilters['kev']) ? 'checked' : '' ?> class="rounded border-gray-300 text-brand-500 focus:ring-brand-500">
+                    Solo KEV
+                </label>
+                <input type="number" name="epss_min" min="0" max="1" step="0.01" value="<?= e((string)($catalogFilters['epss_min'] ?? '')) ?>" placeholder="EPSS ≥"
+                       class="w-24 px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
                 <button type="submit" class="px-3 py-1.5 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 text-xs font-medium rounded-lg transition-colors">Filtrar</button>
-                <?php if (!empty($catalogFilters['q']) || !empty($catalogFilters['severity']) || !empty($catalogFilters['product'])): ?>
+                <?php if (!empty($catalogFilters['q']) || !empty($catalogFilters['severity']) || !empty($catalogFilters['product']) || !empty($catalogFilters['kev']) || (string)($catalogFilters['epss_min'] ?? '') !== ''): ?>
                     <a href="<?= base_url('modules/cve?tab=catalog') ?>" class="text-xs text-gray-400 hover:underline">Limpiar</a>
                 <?php endif; ?>
             </form>
@@ -230,6 +245,8 @@ foreach ($flashData as $type => $msg):
                             <th class="text-left px-4 py-2">CVE</th>
                             <th class="text-left px-4 py-2">Severidad</th>
                             <th class="text-left px-4 py-2">CVSS</th>
+                            <th class="text-left px-4 py-2">EPSS</th>
+                            <th class="text-left px-4 py-2">KEV</th>
                             <th class="text-left px-4 py-2">Publicado</th>
                             <th class="text-left px-4 py-2">Productos</th>
                             <th class="text-left px-4 py-2">Descripción</th>
@@ -264,8 +281,26 @@ foreach ($flashData as $type => $msg):
                                     $cvss = $cve['cvss_v3_score'] !== null
                                         ? (float)$cve['cvss_v3_score']
                                         : ($cve['cvss_v2_score'] !== null ? (float)$cve['cvss_v2_score'] : null);
+                                    $epssScore = $cve['epss'] !== null ? (float)$cve['epss'] : null;
+                                    $epssPercentile = $cve['epss_percentile'] !== null ? (float)$cve['epss_percentile'] : null;
+                                    $isKev = !empty($cve['kev_id']);
                                     ?>
                                     <?= $cvss !== null ? e(number_format($cvss, 1)) : '—' ?>
+                                </td>
+                                <td class="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">
+                                    <?php if ($epssScore !== null): ?>
+                                        <span class="font-medium text-gray-700 dark:text-gray-300"><?= e(number_format($epssScore, 3)) ?></span>
+                                        <?php if ($epssPercentile !== null): ?><span class="text-gray-400">(<?= e(number_format($epssPercentile, 2)) ?>)</span><?php endif; ?>
+                                    <?php else: ?>
+                                        —
+                                    <?php endif; ?>
+                                </td>
+                                <td class="px-4 py-3 text-xs whitespace-nowrap">
+                                    <?php if ($isKev): ?>
+                                        <span class="inline-flex px-2 py-0.5 text-[10px] rounded-full bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300" title="<?= e((string)($cve['kev_date'] ?? '')) ?>">KEV</span>
+                                    <?php else: ?>
+                                        <span class="text-gray-400">—</span>
+                                    <?php endif; ?>
                                 </td>
                                 <td class="px-4 py-3 text-xs text-gray-500 whitespace-nowrap"><?= e(format_date($cve['published_at'] ?? null, 'd/m/Y')) ?></td>
                                 <td class="px-4 py-3 text-xs text-gray-500">
@@ -318,16 +353,21 @@ foreach ($flashData as $type => $msg):
             if (mode === 'full' && !window.confirm('Se reconstruirá el catálogo completo. Puede tardar bastante. ¿Continuar?')) {
                 return;
             }
+            if (mode === 'kev' && !window.confirm('Se actualizarán solo CISA KEV y EPSS. ¿Continuar?')) {
+                return;
+            }
             api('POST', SYNC_URL, { mode: mode }).then(function(res) {
                 if (!res || !res.success) { toast((res && res.error) ? res.error : 'No se pudo iniciar', 'error'); return; }
                 wasRunning = true;
                 toast(res.message || 'Sincronización iniciada', res.worker_started ? 'success' : 'info');
                 var start = document.getElementById('cve-start-btn');
                 var rebuild = document.getElementById('cve-rebuild-btn');
+                var sources = document.getElementById('cve-sources-btn');
                 var cancel = document.getElementById('cve-cancel-btn');
                 var progress = document.getElementById('cve-sync-progress-wrap');
                 if (start) start.classList.add('hidden');
                 if (rebuild) rebuild.classList.add('hidden');
+                if (sources) sources.classList.add('hidden');
                 if (cancel) cancel.classList.remove('hidden');
                 if (progress) progress.classList.remove('hidden');
                 var step = document.getElementById('cve-step-btn');
@@ -373,6 +413,7 @@ foreach ($flashData as $type => $msg):
                 var step = document.getElementById('cve-step-btn');
                 var start = document.getElementById('cve-start-btn');
                 var rebuild = document.getElementById('cve-rebuild-btn');
+                var sources = document.getElementById('cve-sources-btn');
                 var cancel = document.getElementById('cve-cancel-btn');
                 var progress = document.getElementById('cve-sync-progress-wrap');
                 if (bar) bar.style.width = pct + '%';
@@ -382,6 +423,7 @@ foreach ($flashData as $type => $msg):
                 if (progress) progress.classList.toggle('hidden', !running);
                 if (start) start.classList.toggle('hidden', running);
                 if (rebuild) rebuild.classList.toggle('hidden', running);
+                if (sources) sources.classList.toggle('hidden', running);
                 if (cancel) cancel.classList.toggle('hidden', !running);
                 if (step) {
                     var updated = parseDbTime(s.updated_at || '');

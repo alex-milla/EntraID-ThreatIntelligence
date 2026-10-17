@@ -126,14 +126,11 @@ class CveSync
                 $requested = 'incremental';
             } else {
                 $scope = (string)($cfg['scope'] ?? 'full');
-                if ($scope === 'kev') {
-                    return ['success' => false, 'error' => 'El modo «solo KEV + EPSS» se habilitará en la Fase 4. Usa Full o Reciente.'];
-                }
-                $requested = $scope === 'recent' ? 'recent' : 'full';
+                $requested = $scope === 'kev' ? 'kev' : ($scope === 'recent' ? 'recent' : 'full');
             }
         }
 
-        if (!in_array($requested, ['full', 'recent', 'incremental'], true)) {
+        if (!in_array($requested, ['full', 'recent', 'incremental', 'kev'], true)) {
             return ['success' => false, 'error' => 'Modo de sincronización no válido.'];
         }
         $mode = $requested;
@@ -208,13 +205,14 @@ class CveSync
         $token = bin2hex(random_bytes(32));
         $baseUrl = $this->baseUrl();
         $pageSize = max(1, min(2000, (int)($cfg['nvd_page_size'] ?? CVE_NVD_PAGE_SIZE)));
+        $initialPhase = $mode === 'kev' ? 'kev' : 'nvd';
 
         // Guardar el tamaño de página elegido para este job.
         setting_set('cve_job_page_size', (string)$pageSize);
 
         CveDatabase::query(
             "UPDATE cve_sync_state
-             SET status = 'queued', mode = ?, phase = 'nvd', cursor = ?, total = ?,
+             SET status = 'queued', mode = ?, phase = ?, cursor = ?, total = ?,
                  processed = ?, inserted = ?, updated = ?, token = ?, base_url = ?,
                  message = ?, window_start = ?, window_end = ?, target_watchlist_id = NULL,
                  target_cpes = NULL, target_index = 0, started_at = datetime('now'),
@@ -222,6 +220,7 @@ class CveSync
              WHERE id = 1",
             [
                 $mode,
+                $initialPhase,
                 $cursor,
                 $total,
                 $processed,
@@ -231,9 +230,11 @@ class CveSync
                 $baseUrl,
                 $resume
                     ? 'Reanudando la sincronización de NVD…'
-                    : ($mode === 'incremental'
-                        ? 'Preparando actualización incremental…'
-                        : ($mode === 'recent' ? 'Preparando descarga reciente…' : 'Preparando reconstrucción completa…')),
+                    : ($mode === 'kev'
+                        ? 'Actualizando KEV y EPSS…'
+                        : ($mode === 'incremental'
+                            ? 'Preparando actualización incremental…'
+                            : ($mode === 'recent' ? 'Preparando descarga reciente…' : 'Preparando reconstrucción completa…'))),
                 $windowStart,
                 $windowEnd,
             ]
@@ -396,6 +397,196 @@ class CveSync
     }
 
     /**
+     * Sincroniza CISA KEV (directo o mirror) en cve_kev y crea stubs para
+     * CVEs que aún no estén en NVD.
+     */
+    public function syncKev(): array
+    {
+        $catalog = $this->client()->fetchKevCatalog();
+        $vulns = $catalog['data']['vulnerabilities'] ?? [];
+        if (!is_array($vulns)) {
+            $vulns = [];
+        }
+
+        $db = CveDatabase::getInstance();
+        $db->beginTransaction();
+        try {
+            $upsert = $db->prepare(
+                "INSERT INTO cve_kev
+                 (cve_id, vendor_project, product, vulnerability_name, date_added,
+                  short_description, required_action, due_date, known_ransomware, notes,
+                  cwes, forensic_triage, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                 ON CONFLICT(cve_id) DO UPDATE SET
+                    vendor_project = excluded.vendor_project,
+                    product = excluded.product,
+                    vulnerability_name = excluded.vulnerability_name,
+                    date_added = excluded.date_added,
+                    short_description = excluded.short_description,
+                    required_action = excluded.required_action,
+                    due_date = excluded.due_date,
+                    known_ransomware = excluded.known_ransomware,
+                    notes = excluded.notes,
+                    cwes = excluded.cwes,
+                    forensic_triage = excluded.forensic_triage,
+                    updated_at = datetime('now')"
+            );
+            $stub = $db->prepare(
+                "INSERT INTO cve_catalog
+                 (cve_id, description, description_lang, published_at, vuln_status,
+                  source_identifier, products_json, nvd_url, fetched_at, updated_at)
+                 VALUES (?, ?, 'en', ?, 'KEV', 'CISA', ?, ?, datetime('now'), datetime('now'))
+                 ON CONFLICT(cve_id) DO NOTHING"
+            );
+            $product = $db->prepare(
+                "INSERT OR IGNORE INTO cve_product (cve_id, vendor, product) VALUES (?, ?, ?)"
+            );
+
+            $count = 0;
+            foreach ($vulns as $v) {
+                if (!is_array($v)) {
+                    continue;
+                }
+                $cveId = strtoupper(trim((string)($v['cveID'] ?? '')));
+                if (!preg_match('/^CVE-\d{4}-\d{4,}$/', $cveId)) {
+                    continue;
+                }
+                $vendor = trim((string)($v['vendorProject'] ?? ''));
+                $productName = trim((string)($v['product'] ?? ''));
+                $name = trim((string)($v['vulnerabilityName'] ?? ''));
+                $short = trim((string)($v['shortDescription'] ?? ''));
+                $cwes = is_array($v['cwes'] ?? null) ? $v['cwes'] : [];
+                $products = [];
+                if ($vendor !== '' || $productName !== '') {
+                    $products[] = ['vendor' => $vendor, 'product' => $productName];
+                }
+
+                $upsert->execute([
+                    $cveId,
+                    $vendor !== '' ? $vendor : null,
+                    $productName !== '' ? $productName : null,
+                    $name !== '' ? $name : null,
+                    (string)($v['dateAdded'] ?? '') !== '' ? (string)$v['dateAdded'] : null,
+                    $short !== '' ? $short : null,
+                    (string)($v['requiredAction'] ?? '') !== '' ? (string)$v['requiredAction'] : null,
+                    (string)($v['dueDate'] ?? '') !== '' ? (string)$v['dueDate'] : null,
+                    (string)($v['knownRansomwareCampaignUse'] ?? '') !== '' ? (string)$v['knownRansomwareCampaignUse'] : null,
+                    (string)($v['notes'] ?? '') !== '' ? (string)$v['notes'] : null,
+                    json_encode($cwes, JSON_UNESCAPED_SLASHES),
+                    (string)($v['forensicTriage'] ?? '') !== '' ? (string)$v['forensicTriage'] : null,
+                ]);
+
+                $stub->execute([
+                    $cveId,
+                    $short !== '' ? $short : $name,
+                    (string)($v['dateAdded'] ?? '') !== '' ? (string)$v['dateAdded'] : null,
+                    json_encode($products, JSON_UNESCAPED_SLASHES),
+                    'https://nvd.nist.gov/vuln/detail/' . $cveId,
+                ]);
+
+                if ($vendor !== '' && $productName !== '') {
+                    $product->execute([$cveId, $vendor, $productName]);
+                }
+                $count++;
+            }
+
+            $db->commit();
+        } catch (Throwable $e) {
+            if ($db->inTransaction()) {
+                $db->rollBack();
+            }
+            throw $e;
+        }
+
+        return [
+            'count'    => $count,
+            'source'   => (string)$catalog['source'],
+            'version'  => (string)($catalog['version'] ?? ''),
+            'released' => (string)($catalog['released'] ?? ''),
+        ];
+    }
+
+    /**
+     * Sincroniza el CSV diario de EPSS en cve_epss.
+     */
+    public function syncEpss(): array
+    {
+        $body = $this->client()->downloadEpssCsv();
+        $isGzip = str_starts_with($body, "\x1f\x8b");
+        $file = CACHE_PATH . ($isGzip ? '/epss_scores-current.csv.gz' : '/epss_scores-current.csv');
+        if (!is_dir(CACHE_PATH)) {
+            mkdir(CACHE_PATH, 0750, true);
+        }
+        if (@file_put_contents($file, $body) === false) {
+            throw new RuntimeException('No se pudo escribir el CSV de EPSS en caché.');
+        }
+
+        $handle = $isGzip ? @gzopen($file, 'rb') : @fopen($file, 'rb');
+        if ($handle === false) {
+            throw new RuntimeException('No se pudo abrir el CSV de EPSS.');
+        }
+
+        $db = CveDatabase::getInstance();
+        $db->beginTransaction();
+        try {
+            $db->exec("DELETE FROM cve_epss");
+            $stmt = $db->prepare(
+                "INSERT OR REPLACE INTO cve_epss (cve_id, epss, percentile, score_date) VALUES (?, ?, ?, ?)"
+            );
+
+            $scoreDate = null;
+            $count = 0;
+            $headerSeen = false;
+            $read = $isGzip ? 'gzgets' : 'fgets';
+
+            while (($line = $read($handle)) !== false) {
+                $line = trim((string)$line);
+                if ($line === '') {
+                    continue;
+                }
+                if (str_starts_with($line, '#')) {
+                    if (preg_match('/score_date:([^,]+)/', $line, $m)) {
+                        $scoreDate = trim($m[1]);
+                    }
+                    continue;
+                }
+                if (!$headerSeen && str_starts_with($line, 'cve,')) {
+                    $headerSeen = true;
+                    continue;
+                }
+
+                $parts = explode(',', $line);
+                if (count($parts) < 3) {
+                    continue;
+                }
+                $cveId = strtoupper(trim($parts[0]));
+                if (!preg_match('/^CVE-\d{4}-\d{4,}$/', $cveId)) {
+                    continue;
+                }
+                $epss = is_numeric($parts[1]) ? (float)$parts[1] : null;
+                $percentile = is_numeric($parts[2]) ? (float)$parts[2] : null;
+                $stmt->execute([$cveId, $epss, $percentile, $scoreDate ?? gmdate('Y-m-d')]);
+                $count++;
+            }
+
+            $db->commit();
+        } catch (Throwable $e) {
+            if ($db->inTransaction()) {
+                $db->rollBack();
+            }
+            throw $e;
+        } finally {
+            if ($isGzip) {
+                @gzclose($handle);
+            } else {
+                @fclose($handle);
+            }
+        }
+
+        return ['count' => $count, 'score_date' => $scoreDate ?? gmdate('Y-m-d')];
+    }
+
+    /**
      * Procesa un tramo del job. Devuelve done/token/base_url para el worker.
      */
     public function runChunk(string $token): array
@@ -463,6 +654,34 @@ class CveSync
                     return ['done' => true, 'state' => $this->state()];
                 }
 
+                if ((string)$state['phase'] === 'kev') {
+                    try {
+                        $kev = $this->syncKev();
+                        $message = 'KEV actualizado: ' . number_format((int)$kev['count']) . ' CVEs'
+                            . (!empty($kev['version']) ? ' (catálogo ' . $kev['version'] . ')' : '')
+                            . ' · fuente: ' . ($kev['source'] ?? 'cisa') . '.';
+                    } catch (Throwable $e) {
+                        $message = 'KEV no disponible: ' . substr($e->getMessage(), 0, 300);
+                    }
+                    $this->updateState(['phase' => 'epss', 'message' => $message], $token);
+                    continue;
+                }
+
+                if ((string)$state['phase'] === 'epss') {
+                    $kevMessage = (string)($state['message'] ?? '');
+                    try {
+                        $epss = $this->syncEpss();
+                        $epssMessage = 'EPSS actualizado: ' . number_format((int)$epss['count'])
+                            . ' CVEs (score ' . $epss['score_date'] . ').';
+                    } catch (Throwable $e) {
+                        $epssMessage = 'EPSS no disponible: ' . substr($e->getMessage(), 0, 300);
+                    }
+                    $finalMessage = trim($kevMessage . ' ' . $epssMessage);
+                    $this->updateState(['phase' => 'done', 'message' => $finalMessage], $token);
+                    $this->finish((int)$state['processed'], $token, $finalMessage);
+                    return ['done' => true, 'state' => $this->state()];
+                }
+
                 if (microtime(true) + $delay >= $deadline) {
                     break;
                 }
@@ -526,8 +745,8 @@ class CveSync
                             $cursor = 0;
                             $total = 0;
                         } else {
-                            $phase = 'done';
-                            $done = true;
+                            $phase = 'kev';
+                            $done = false;
                         }
                     } elseif ($mode === 'backfill') {
                         $targetIndex++;
@@ -538,8 +757,8 @@ class CveSync
                             $done = true;
                         }
                     } else {
-                        $phase = 'done';
-                        $done = true;
+                        $phase = 'kev';
+                        $done = false;
                     }
                 }
 
@@ -670,6 +889,17 @@ class CveSync
                     affected_versions = excluded.affected_versions,
                     last_seen_at = datetime('now')"
             ),
+            'upsert_kev_nvd' => $db->prepare(
+                "INSERT INTO cve_kev
+                 (cve_id, date_added, due_date, required_action, vulnerability_name, updated_at)
+                 VALUES (?, ?, ?, ?, ?, datetime('now'))
+                 ON CONFLICT(cve_id) DO UPDATE SET
+                    date_added = excluded.date_added,
+                    due_date = excluded.due_date,
+                    required_action = excluded.required_action,
+                    vulnerability_name = excluded.vulnerability_name,
+                    updated_at = datetime('now')"
+            ),
         ];
     }
 
@@ -712,6 +942,16 @@ class CveSync
         $stmts['del_products']->execute([$id]);
         foreach ($parsed['products'] as $product) {
             $stmts['ins_product']->execute([$id, $product['vendor'], $product['product']]);
+        }
+
+        if (!empty($parsed['kev_date'])) {
+            $stmts['upsert_kev_nvd']->execute([
+                $id,
+                $parsed['kev_date'],
+                $parsed['kev_due_date'],
+                $parsed['kev_action'],
+                $parsed['kev_name'],
+            ]);
         }
 
         if (!empty($this->watchlistMap)) {
@@ -842,6 +1082,10 @@ class CveSync
             'references_json'   => json_encode(array_keys($references), JSON_UNESCAPED_SLASHES),
             'products_json'     => json_encode(array_values($products), JSON_UNESCAPED_SLASHES),
             'nvd_url'           => 'https://nvd.nist.gov/vuln/detail/' . $id,
+            'kev_date'          => !empty($cve['cisaExploitAdd']) ? (string)$cve['cisaExploitAdd'] : null,
+            'kev_due_date'      => !empty($cve['cisaActionDue']) ? (string)$cve['cisaActionDue'] : null,
+            'kev_action'        => !empty($cve['cisaRequiredAction']) ? (string)$cve['cisaRequiredAction'] : null,
+            'kev_name'          => !empty($cve['cisaVulnerabilityName']) ? (string)$cve['cisaVulnerabilityName'] : null,
             'cpe_matches'       => $cpeMatches,
             'products'          => array_values($products),
         ];
@@ -1067,7 +1311,7 @@ class CveSync
         ];
     }
 
-    private function finish(int $processed, ?string $token = null): void
+    private function finish(int $processed, ?string $token = null, ?string $message = null): void
     {
         $state = $this->state();
         $mode = (string)($state['mode'] ?? '');
@@ -1085,7 +1329,10 @@ class CveSync
                  target_watchlist_id = NULL, target_cpes = NULL, target_index = 0,
                  updated_at = datetime('now')
              WHERE id = 1";
-        $params = [sprintf('Catálogo actualizado: %s CVEs procesados.', number_format($processed))];
+        $finalMessage = ($message !== null && $message !== '')
+            ? $message
+            : sprintf('Catálogo actualizado: %s CVEs procesados.', number_format($processed));
+        $params = [$finalMessage];
         if ($token !== null) {
             $sql .= " AND token = ?";
             $params[] = $token;

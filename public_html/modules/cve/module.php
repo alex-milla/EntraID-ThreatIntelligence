@@ -85,6 +85,8 @@ class Module_Cve extends BaseModule
                     'q'        => trim((string)($_GET['q'] ?? '')),
                     'severity' => trim((string)($_GET['severity'] ?? '')),
                     'product'  => trim((string)($_GET['product'] ?? '')),
+                    'kev'      => !empty($_GET['kev']),
+                    'epss_min' => trim((string)($_GET['epss_min'] ?? '')),
                 ];
                 $catalogPage = max(1, (int)($_GET['page'] ?? 1));
                 $catalogResult = $this->listCatalog($catalogFilters, $catalogPage);
@@ -586,6 +588,7 @@ class Module_Cve extends BaseModule
             'products'   => 0,
             'kev'        => 0,
             'epss'       => 0,
+            'epss_high'  => 0,
             'matches'    => 0,
             'db_size'    => 0,
             'last_sync'  => null,
@@ -603,6 +606,7 @@ class Module_Cve extends BaseModule
         $stats['products'] = (int)(CveDatabase::fetchOne("SELECT COUNT(*) AS c FROM cve_product")['c'] ?? 0);
         $stats['kev']      = (int)(CveDatabase::fetchOne("SELECT COUNT(*) AS c FROM cve_kev")['c'] ?? 0);
         $stats['epss']     = (int)(CveDatabase::fetchOne("SELECT COUNT(*) AS c FROM cve_epss")['c'] ?? 0);
+        $stats['epss_high']= (int)(CveDatabase::fetchOne("SELECT COUNT(*) AS c FROM cve_epss e JOIN cve_catalog c ON c.cve_id = e.cve_id WHERE e.epss >= 0.1")['c'] ?? 0);
         $stats['matches']  = (int)(CveDatabase::fetchOne("SELECT COUNT(*) AS c FROM cve_watchlist_match")['c'] ?? 0);
         $stats['db_size']  = is_file(CVE_DB_PATH) ? (int)filesize(CVE_DB_PATH) : 0;
 
@@ -740,9 +744,21 @@ class Module_Cve extends BaseModule
             array_push($params, $like, $like);
         }
 
+        if (!empty($filters['kev'])) {
+            $where[] = 'k.cve_id IS NOT NULL';
+        }
+
+        $epssMin = trim((string)($filters['epss_min'] ?? ''));
+        if ($epssMin !== '' && is_numeric($epssMin)) {
+            $where[] = 'e.epss >= ?';
+            $params[] = (float)$epssMin;
+        }
+
         $whereSql = $where ? ('WHERE ' . implode(' AND ', $where)) : '';
+        $joins = "LEFT JOIN cve_kev k ON k.cve_id = c.cve_id
+                  LEFT JOIN cve_epss e ON e.cve_id = c.cve_id";
         $total = (int)(CveDatabase::fetchOne(
-            "SELECT COUNT(*) AS c FROM cve_catalog c $whereSql",
+            "SELECT COUNT(*) AS c FROM cve_catalog c $joins $whereSql",
             $params
         )['c'] ?? 0);
 
@@ -753,7 +769,11 @@ class Module_Cve extends BaseModule
         $params[] = $offset;
 
         $rows = CveDatabase::fetchAll(
-            "SELECT c.* FROM cve_catalog c
+            "SELECT c.*, k.cve_id AS kev_id, k.date_added AS kev_date,
+                    k.known_ransomware AS kev_ransomware,
+                    e.epss AS epss, e.percentile AS epss_percentile, e.score_date AS epss_date
+             FROM cve_catalog c
+             $joins
              $whereSql
              ORDER BY c.published_at DESC, c.cve_id DESC
              LIMIT ? OFFSET ?",

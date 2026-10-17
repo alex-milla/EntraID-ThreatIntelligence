@@ -372,10 +372,70 @@ class CveClient
                 'count'    => $count,
                 'version'  => $version,
                 'released' => $released,
+                'data'     => $data,
             ];
         } catch (Throwable $e) {
             return ['ok' => false, 'http' => 0, 'message' => $e->getMessage()];
         }
+    }
+
+    /**
+     * Devuelve el catálogo KEV desde CISA o el mirror oficial.
+     * Lanza excepción si ninguna fuente responde.
+     */
+    public function fetchKevCatalog(): array
+    {
+        $primary = $this->tryKevUrl($this->kevUrl);
+        if (!empty($primary['ok']) && is_array($primary['data'] ?? null)) {
+            return [
+                'source'   => 'cisa',
+                'data'     => $primary['data'],
+                'count'    => (int)$primary['count'],
+                'version'  => (string)$primary['version'],
+                'released' => (string)$primary['released'],
+            ];
+        }
+
+        if (
+            $this->kevFallbackUrl !== ''
+            && $this->kevFallbackUrl !== $this->kevUrl
+            && self::isSafeUrl($this->kevFallbackUrl)
+        ) {
+            $fallback = $this->tryKevUrl($this->kevFallbackUrl);
+            if (!empty($fallback['ok']) && is_array($fallback['data'] ?? null)) {
+                return [
+                    'source'   => 'github',
+                    'data'     => $fallback['data'],
+                    'count'    => (int)$fallback['count'],
+                    'version'  => (string)$fallback['version'],
+                    'released' => (string)$fallback['released'],
+                ];
+            }
+            throw new RuntimeException(
+                'No se pudo obtener KEV. CISA: ' . $primary['message']
+                . ' / GitHub: ' . $fallback['message']
+            );
+        }
+
+        throw new RuntimeException('No se pudo obtener KEV: ' . $primary['message']);
+    }
+
+    /**
+     * Descarga el CSV GZ diario de EPSS.
+     */
+    public function downloadEpssCsv(): string
+    {
+        if (!self::isSafeUrl($this->epssUrl)) {
+            throw new RuntimeException('URL de EPSS no válida.');
+        }
+        $res = $this->httpGet($this->epssUrl, ['Accept: */*'], 120, true);
+        if ($res['http'] !== 200) {
+            throw new RuntimeException('EPSS respondió HTTP ' . $res['http'] . '.');
+        }
+        if ($res['body'] === '') {
+            throw new RuntimeException('EPSS devolvió un cuerpo vacío.');
+        }
+        return (string)$res['body'];
     }
 
     private function testEpss(): array

@@ -213,7 +213,7 @@ $cveScope = (string)($cve['scope'] ?? 'full');
             <select name="scope" class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
                 <option value="full" <?= $cveScope === 'full' ? 'selected' : '' ?>>Completo — todos los CVEs de NVD</option>
                 <option value="recent" <?= $cveScope === 'recent' ? 'selected' : '' ?>>Reciente — últimos años</option>
-                <option value="kev" <?= $cveScope === 'kev' ? 'selected' : '' ?>>Solo KEV + EPSS (Fase 4)</option>
+                <option value="kev" <?= $cveScope === 'kev' ? 'selected' : '' ?>>Solo KEV + EPSS (sin NVD)</option>
             </select>
             <p class="text-xs text-gray-400 mt-1">Se usa cuando aún no hay catálogo. Después, «Actualizar catálogo» usa el incremental.</p>
         </div>
@@ -279,6 +279,8 @@ $cveScope = (string)($cve['scope'] ?? 'full');
                 class="px-4 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 text-sm font-medium rounded-lg transition-colors">Actualizar catálogo</button>
         <button type="button" onclick="startCveSyncFromAdmin('full')" title="Reconstruye el catálogo completo desde cero."
                 class="px-4 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 text-sm font-medium rounded-lg transition-colors">Reconstruir</button>
+        <button type="button" onclick="startCveSyncFromAdmin('kev')" title="Actualiza solo CISA KEV y EPSS, sin descargar NVD."
+                class="px-4 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 text-sm font-medium rounded-lg transition-colors">KEV / EPSS</button>
     </div>
 
     <div id="cve-test-result" class="text-xs text-gray-500 space-y-1"></div>
@@ -344,7 +346,9 @@ function startCveSyncFromAdmin(mode) {
     mode = mode || 'auto';
     var msg = mode === 'full'
         ? 'Se reconstruirá el catálogo completo desde cero. Puede tardar bastante. ¿Continuar?'
-        : 'Se actualizará el catálogo NVD en segundo plano. ¿Continuar?';
+        : (mode === 'kev'
+            ? 'Se actualizarán solo CISA KEV y EPSS. ¿Continuar?'
+            : 'Se actualizará el catálogo NVD en segundo plano. ¿Continuar?');
     if (!window.confirm(msg)) return;
     api('POST', '<?= base_url('modules/cve/sync') ?>', { mode: mode })
         .then(function(res) {
