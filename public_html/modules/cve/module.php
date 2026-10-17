@@ -73,7 +73,8 @@ class Module_Cve extends BaseModule
         $catalogTotal = 0;
         $catalogPage = 1;
         $catalogPages = 0;
-        $catalogFilters = ['q' => '', 'severity' => '', 'product' => ''];
+        $catalogFilters = ['q' => '', 'severity' => '', 'product' => '', 'kev' => false, 'epss_min' => '', 'group' => 0, 'software_id' => 0, 'mine' => false, 'sort' => 'published'];
+        $softwareOptions = [];
         $syncState = null;
 
         try {
@@ -82,12 +83,17 @@ class Module_Cve extends BaseModule
                 $software = $this->listSoftware($selectedGroup, $q);
             } else {
                 $catalogFilters = [
-                    'q'        => trim((string)($_GET['q'] ?? '')),
-                    'severity' => trim((string)($_GET['severity'] ?? '')),
-                    'product'  => trim((string)($_GET['product'] ?? '')),
-                    'kev'      => !empty($_GET['kev']),
-                    'epss_min' => trim((string)($_GET['epss_min'] ?? '')),
+                    'q'           => trim((string)($_GET['q'] ?? '')),
+                    'severity'    => trim((string)($_GET['severity'] ?? '')),
+                    'product'     => trim((string)($_GET['product'] ?? '')),
+                    'kev'         => !empty($_GET['kev']),
+                    'epss_min'    => trim((string)($_GET['epss_min'] ?? '')),
+                    'group'       => (int)($_GET['group'] ?? 0),
+                    'software_id' => (int)($_GET['software_id'] ?? 0),
+                    'mine'        => !empty($_GET['mine']),
+                    'sort'        => trim((string)($_GET['sort'] ?? 'published')),
                 ];
+                $softwareOptions = $this->listSoftware(0, '');
                 $catalogPage = max(1, (int)($_GET['page'] ?? 1));
                 $catalogResult = $this->listCatalog($catalogFilters, $catalogPage);
                 $catalog = $catalogResult['data'];
@@ -130,6 +136,7 @@ class Module_Cve extends BaseModule
             'catalogPage'   => $catalogPage,
             'catalogPages'  => $catalogPages,
             'catalogFilters'=> $catalogFilters,
+            'softwareOptions'=> $softwareOptions,
             'syncState'     => $syncState,
         ]);
     }
@@ -590,6 +597,9 @@ class Module_Cve extends BaseModule
             'epss'       => 0,
             'epss_high'  => 0,
             'matches'    => 0,
+            'matched_cves'=> 0,
+            'my_kev'      => 0,
+            'my_epss_high'=> 0,
             'db_size'    => 0,
             'last_sync'  => null,
         ];
@@ -608,6 +618,13 @@ class Module_Cve extends BaseModule
         $stats['epss']     = (int)(CveDatabase::fetchOne("SELECT COUNT(*) AS c FROM cve_epss")['c'] ?? 0);
         $stats['epss_high']= (int)(CveDatabase::fetchOne("SELECT COUNT(*) AS c FROM cve_epss e JOIN cve_catalog c ON c.cve_id = e.cve_id WHERE e.epss >= 0.1")['c'] ?? 0);
         $stats['matches']  = (int)(CveDatabase::fetchOne("SELECT COUNT(*) AS c FROM cve_watchlist_match")['c'] ?? 0);
+        $stats['matched_cves'] = (int)(CveDatabase::fetchOne("SELECT COUNT(DISTINCT cve_id) AS c FROM cve_watchlist_match")['c'] ?? 0);
+        $stats['my_kev'] = (int)(CveDatabase::fetchOne(
+            "SELECT COUNT(DISTINCT m.cve_id) AS c FROM cve_watchlist_match m JOIN cve_kev k ON k.cve_id = m.cve_id"
+        )['c'] ?? 0);
+        $stats['my_epss_high'] = (int)(CveDatabase::fetchOne(
+            "SELECT COUNT(DISTINCT m.cve_id) AS c FROM cve_watchlist_match m JOIN cve_epss e ON e.cve_id = m.cve_id WHERE e.epss >= 0.1"
+        )['c'] ?? 0);
         $stats['db_size']  = is_file(CVE_DB_PATH) ? (int)filesize(CVE_DB_PATH) : 0;
 
         $state = CveDatabase::fetchOne("SELECT last_success_at, status, updated_at FROM cve_sync_state WHERE id = 1");
@@ -709,12 +726,19 @@ class Module_Cve extends BaseModule
 
         return CveDatabase::fetchAll(
             "SELECT w.*, g.name AS group_name, c.cpe_name,
-                    (SELECT COUNT(*) FROM software_cpe c2 WHERE c2.watchlist_id = w.id) AS cpe_count
+                    (SELECT COUNT(*) FROM software_cpe c2 WHERE c2.watchlist_id = w.id) AS cpe_count,
+                    (SELECT COUNT(*) FROM cve_watchlist_match m2 WHERE m2.watchlist_id = w.id) AS match_count,
+                    (SELECT COUNT(*) FROM cve_watchlist_match m3
+                     JOIN cve_kev k3 ON k3.cve_id = m3.cve_id
+                     WHERE m3.watchlist_id = w.id) AS kev_count,
+                    (SELECT COUNT(*) FROM cve_watchlist_match m4
+                     JOIN cve_epss e4 ON e4.cve_id = m4.cve_id
+                     WHERE m4.watchlist_id = w.id AND e4.epss >= 0.1) AS epss_high_count
              FROM software_watchlist w
              LEFT JOIN software_groups g ON g.id = w.group_id
              LEFT JOIN software_cpe c ON c.watchlist_id = w.id AND c.is_primary = 1
              $whereSql
-             ORDER BY g.name ASC, w.name ASC, w.version ASC",
+             ORDER BY kev_count DESC, epss_high_count DESC, match_count DESC, g.name ASC, w.name ASC, w.version ASC",
             $params
         );
     }
@@ -754,6 +778,42 @@ class Module_Cve extends BaseModule
             $params[] = (float)$epssMin;
         }
 
+        $softwareId = (int)($filters['software_id'] ?? 0);
+        if ($softwareId > 0) {
+            $where[] = 'EXISTS (SELECT 1 FROM cve_watchlist_match mw WHERE mw.cve_id = c.cve_id AND mw.watchlist_id = ?)';
+            $params[] = $softwareId;
+        }
+
+        $groupId = (int)($filters['group'] ?? 0);
+        if ($groupId > 0) {
+            $groupIds = $this->descendantGroupIds($groupId);
+            if (empty($groupIds)) {
+                $where[] = '1 = 0';
+            } else {
+                $placeholders = implode(',', array_fill(0, count($groupIds), '?'));
+                $where[] = "EXISTS (
+                    SELECT 1 FROM cve_watchlist_match mw
+                    JOIN software_watchlist sw ON sw.id = mw.watchlist_id
+                    WHERE mw.cve_id = c.cve_id AND sw.group_id IN ($placeholders)
+                )";
+                foreach ($groupIds as $gid) {
+                    $params[] = $gid;
+                }
+            }
+        }
+
+        if (!empty($filters['mine']) && $softwareId <= 0 && $groupId <= 0) {
+            $where[] = 'EXISTS (SELECT 1 FROM cve_watchlist_match mw WHERE mw.cve_id = c.cve_id)';
+        }
+
+        $sort = (string)($filters['sort'] ?? 'published');
+        $orderSql = match ($sort) {
+            'cvss' => 'COALESCE(c.cvss_v3_score, c.cvss_v2_score) DESC, c.published_at DESC',
+            'epss' => 'e.epss DESC, c.cvss_v3_score DESC, c.published_at DESC',
+            'kev'  => '(k.cve_id IS NOT NULL) DESC, e.epss DESC, c.cvss_v3_score DESC, c.published_at DESC',
+            default => 'c.published_at DESC, c.cve_id DESC',
+        };
+
         $whereSql = $where ? ('WHERE ' . implode(' AND ', $where)) : '';
         $joins = "LEFT JOIN cve_kev k ON k.cve_id = c.cve_id
                   LEFT JOIN cve_epss e ON e.cve_id = c.cve_id";
@@ -771,11 +831,15 @@ class Module_Cve extends BaseModule
         $rows = CveDatabase::fetchAll(
             "SELECT c.*, k.cve_id AS kev_id, k.date_added AS kev_date,
                     k.known_ransomware AS kev_ransomware,
-                    e.epss AS epss, e.percentile AS epss_percentile, e.score_date AS epss_date
+                    e.epss AS epss, e.percentile AS epss_percentile, e.score_date AS epss_date,
+                    (SELECT GROUP_CONCAT(DISTINCT sw2.name)
+                     FROM cve_watchlist_match mw2
+                     JOIN software_watchlist sw2 ON sw2.id = mw2.watchlist_id
+                     WHERE mw2.cve_id = c.cve_id) AS matched_software
              FROM cve_catalog c
              $joins
              $whereSql
-             ORDER BY c.published_at DESC, c.cve_id DESC
+             ORDER BY $orderSql
              LIMIT ? OFFSET ?",
             $params
         );

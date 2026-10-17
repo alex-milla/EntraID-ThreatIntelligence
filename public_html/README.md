@@ -54,6 +54,10 @@ almacenamiento SQLite y arquitectura modular.
    se sincronizan también **CISA KEV** y **EPSS**; el botón **KEV / EPSS**
    permite actualizarlos sin tocar NVD. El progreso se muestra en el badge
    **CVE** del sidebar en cualquier pantalla.
+   El catálogo permite filtrar por grupo, por software, por «Solo mis
+   productos», KEV y EPSS mínimo, y ordenar por CVSS, EPSS o KEV. La vista
+   **Mi software** muestra por producto los CVEs, KEV y EPSS altos que le
+   afectan.
    En **Mi software** puedes buscar CPE en NVD, añadir varios CPE por producto
    y lanzar un backfill automático al guardar. Si el hosting no permite el worker
    en segundo plano, usa **Continuar** para procesar tramos manualmente.

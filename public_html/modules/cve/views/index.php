@@ -194,8 +194,8 @@ foreach ($flashData as $type => $msg):
             <p class="text-2xl font-bold mt-1 text-amber-500"><?= number_format((int)($stats['epss_high'] ?? 0)) ?></p>
         </div>
         <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-4">
-            <p class="text-xs text-gray-500">Matches</p>
-            <p class="text-2xl font-bold mt-1 text-brand-500"><?= number_format((int)($stats['matches'] ?? 0)) ?></p>
+            <p class="text-xs text-gray-500">Mis CVEs</p>
+            <p class="text-2xl font-bold mt-1 text-brand-500"><?= number_format((int)($stats['matched_cves'] ?? 0)) ?></p>
         </div>
     </div>
 
@@ -215,14 +215,44 @@ foreach ($flashData as $type => $msg):
                 </select>
                 <input type="text" name="product" value="<?= e($catalogFilters['product'] ?? '') ?>" placeholder="vendor / producto"
                        class="w-40 px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                <select name="group"
+                        class="px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                    <option value="0">Todos los grupos</option>
+                    <?php foreach ($groups as $g): ?>
+                        <option value="<?= (int)$g['id'] ?>" <?= (int)($catalogFilters['group'] ?? 0) === (int)$g['id'] ? 'selected' : '' ?>>
+                            <?= str_repeat('— ', (int)$g['depth']) . e($g['name']) ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+                <select name="software_id"
+                        class="px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none max-w-[220px]">
+                    <option value="0">Mi software (todos)</option>
+                    <?php foreach (($softwareOptions ?? []) as $so): ?>
+                        <option value="<?= (int)$so['id'] ?>" <?= (int)($catalogFilters['software_id'] ?? 0) === (int)$so['id'] ? 'selected' : '' ?>>
+                            <?= e((string)$so['name']) ?><?= !empty($so['version']) ? ' · ' . e((string)$so['version']) : '' ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+                <label class="inline-flex items-center gap-1 text-xs text-gray-600 dark:text-gray-300">
+                    <input type="checkbox" name="mine" value="1" <?= !empty($catalogFilters['mine']) ? 'checked' : '' ?> class="rounded border-gray-300 text-brand-500 focus:ring-brand-500">
+                    Solo mis productos
+                </label>
                 <label class="inline-flex items-center gap-1 text-xs text-gray-600 dark:text-gray-300">
                     <input type="checkbox" name="kev" value="1" <?= !empty($catalogFilters['kev']) ? 'checked' : '' ?> class="rounded border-gray-300 text-brand-500 focus:ring-brand-500">
                     Solo KEV
                 </label>
                 <input type="number" name="epss_min" min="0" max="1" step="0.01" value="<?= e((string)($catalogFilters['epss_min'] ?? '')) ?>" placeholder="EPSS ≥"
                        class="w-24 px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                <select name="sort"
+                        class="px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                    <?php $sortValue = (string)($catalogFilters['sort'] ?? 'published'); ?>
+                    <option value="published" <?= $sortValue === 'published' ? 'selected' : '' ?>>Más recientes</option>
+                    <option value="cvss" <?= $sortValue === 'cvss' ? 'selected' : '' ?>>Mayor CVSS</option>
+                    <option value="epss" <?= $sortValue === 'epss' ? 'selected' : '' ?>>Mayor EPSS</option>
+                    <option value="kev" <?= $sortValue === 'kev' ? 'selected' : '' ?>>KEV primero</option>
+                </select>
                 <button type="submit" class="px-3 py-1.5 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 text-xs font-medium rounded-lg transition-colors">Filtrar</button>
-                <?php if (!empty($catalogFilters['q']) || !empty($catalogFilters['severity']) || !empty($catalogFilters['product']) || !empty($catalogFilters['kev']) || (string)($catalogFilters['epss_min'] ?? '') !== ''): ?>
+                <?php if (!empty($catalogFilters['q']) || !empty($catalogFilters['severity']) || !empty($catalogFilters['product']) || !empty($catalogFilters['kev']) || (string)($catalogFilters['epss_min'] ?? '') !== '' || (int)($catalogFilters['group'] ?? 0) > 0 || (int)($catalogFilters['software_id'] ?? 0) > 0 || !empty($catalogFilters['mine']) || (string)($catalogFilters['sort'] ?? 'published') !== 'published'): ?>
                     <a href="<?= base_url('modules/cve?tab=catalog') ?>" class="text-xs text-gray-400 hover:underline">Limpiar</a>
                 <?php endif; ?>
             </form>
@@ -247,6 +277,7 @@ foreach ($flashData as $type => $msg):
                             <th class="text-left px-4 py-2">CVSS</th>
                             <th class="text-left px-4 py-2">EPSS</th>
                             <th class="text-left px-4 py-2">KEV</th>
+                            <th class="text-left px-4 py-2">Mis productos</th>
                             <th class="text-left px-4 py-2">Publicado</th>
                             <th class="text-left px-4 py-2">Productos</th>
                             <th class="text-left px-4 py-2">Descripción</th>
@@ -301,6 +332,9 @@ foreach ($flashData as $type => $msg):
                                     <?php else: ?>
                                         <span class="text-gray-400">—</span>
                                     <?php endif; ?>
+                                </td>
+                                <td class="px-4 py-3 text-xs text-gray-500 max-w-[180px]">
+                                    <?= e(truncate((string)($cve['matched_software'] ?? ''), 60)) ?: '—' ?>
                                 </td>
                                 <td class="px-4 py-3 text-xs text-gray-500 whitespace-nowrap"><?= e(format_date($cve['published_at'] ?? null, 'd/m/Y')) ?></td>
                                 <td class="px-4 py-3 text-xs text-gray-500">
@@ -458,16 +492,16 @@ foreach ($flashData as $type => $msg):
             <p class="text-2xl font-bold mt-1"><?= number_format((int)($stats['software'] ?? 0)) ?></p>
         </div>
         <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-4">
-            <p class="text-xs text-gray-500">CVEs</p>
-            <p class="text-2xl font-bold mt-1"><?= number_format((int)($stats['catalog'] ?? 0)) ?></p>
-        </div>
-        <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-4">
-            <p class="text-xs text-gray-500">KEV</p>
-            <p class="text-2xl font-bold mt-1 text-red-500"><?= number_format((int)($stats['kev'] ?? 0)) ?></p>
-        </div>
-        <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-4">
             <p class="text-xs text-gray-500">Matches</p>
-            <p class="text-2xl font-bold mt-1 text-brand-500"><?= number_format((int)($stats['matches'] ?? 0)) ?></p>
+            <p class="text-2xl font-bold mt-1"><?= number_format((int)($stats['matches'] ?? 0)) ?></p>
+        </div>
+        <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-4">
+            <p class="text-xs text-gray-500">KEV míos</p>
+            <p class="text-2xl font-bold mt-1 text-red-500"><?= number_format((int)($stats['my_kev'] ?? 0)) ?></p>
+        </div>
+        <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-4">
+            <p class="text-xs text-gray-500">EPSS ≥ 0,1 míos</p>
+            <p class="text-2xl font-bold mt-1 text-amber-500"><?= number_format((int)($stats['my_epss_high'] ?? 0)) ?></p>
         </div>
         <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-4">
             <p class="text-xs text-gray-500">DB CVE</p>
@@ -606,6 +640,9 @@ foreach ($flashData as $type => $msg):
                                     <th class="text-left px-4 py-2">Versión</th>
                                     <th class="text-left px-4 py-2">Criticidad</th>
                                     <th class="text-left px-4 py-2">CPE</th>
+                                    <th class="text-left px-4 py-2">CVEs</th>
+                                    <th class="text-left px-4 py-2">KEV</th>
+                                    <th class="text-left px-4 py-2">EPSS ≥ 0,1</th>
                                     <th class="text-right px-4 py-2"></th>
                                 </tr>
                             </thead>
@@ -634,6 +671,18 @@ foreach ($flashData as $type => $msg):
                                             <?php if ((int)($s['cpe_count'] ?? 0) > 1): ?>
                                                 <span class="text-gray-500"> +<?= (int)$s['cpe_count'] - 1 ?></span>
                                             <?php endif; ?>
+                                        </td>
+                                        <td class="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">
+                                            <?= number_format((int)($s['match_count'] ?? 0)) ?>
+                                            <?php if ((int)($s['match_count'] ?? 0) > 0): ?>
+                                                <a href="<?= base_url('modules/cve?tab=catalog&software_id=' . (int)$s['id']) ?>" class="text-brand-600 dark:text-brand-400 hover:underline ml-1">Ver</a>
+                                            <?php endif; ?>
+                                        </td>
+                                        <td class="px-4 py-3 text-xs font-medium <?= (int)($s['kev_count'] ?? 0) > 0 ? 'text-red-500' : 'text-gray-400' ?>">
+                                            <?= number_format((int)($s['kev_count'] ?? 0)) ?>
+                                        </td>
+                                        <td class="px-4 py-3 text-xs font-medium <?= (int)($s['epss_high_count'] ?? 0) > 0 ? 'text-amber-500' : 'text-gray-400' ?>">
+                                            <?= number_format((int)($s['epss_high_count'] ?? 0)) ?>
                                         </td>
                                         <td class="px-4 py-3 text-right whitespace-nowrap">
                                             <?php if ($isAdmin): ?>
