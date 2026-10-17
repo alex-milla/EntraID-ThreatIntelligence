@@ -248,6 +248,12 @@ $cveScope = (string)($cve['scope'] ?? 'full');
                    class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white font-mono text-sm focus:ring-2 focus:ring-brand-500 outline-none">
         </div>
         <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">URL de respaldo KEV (GitHub)</label>
+            <input type="text" name="kev_fallback_url" value="<?= e((string)($cve['kev_fallback_url'] ?? CVE_KEV_FALLBACK_URL)) ?>"
+                   class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white font-mono text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+            <p class="text-xs text-gray-400 mt-1">Se usa si CISA bloquea la IP del hosting (403). Mirror oficial de CISA.</p>
+        </div>
+        <div>
             <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">URL del CSV de EPSS</label>
             <input type="text" name="epss_url" value="<?= e((string)($cve['epss_url'] ?? CVE_EPSS_CSV_URL)) ?>"
                    class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white font-mono text-sm focus:ring-2 focus:ring-brand-500 outline-none">
@@ -356,15 +362,26 @@ function testCveSources() {
             }
             var labels = {nvd: 'NVD', kev: 'CISA KEV', epss: 'EPSS'};
             var html = '';
-            var okAll = true;
+            var hasProblem = false;
             ['nvd', 'kev', 'epss'].forEach(function(k) {
                 var s = res.sources[k] || {};
-                if (!s.ok) { okAll = false; }
-                var color = s.ok ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400';
-                html += '<div><span class="font-medium ' + color + '">' + labels[k] + ':</span> ' + escHtml(s.message || '') + '</div>';
+                var status = s.status || (s.ok ? 'ok' : 'error');
+                if (status !== 'ok') { hasProblem = true; }
+                var color = status === 'ok'
+                    ? 'text-green-600 dark:text-green-400'
+                    : (status === 'warning' ? 'text-amber-600 dark:text-amber-400' : 'text-red-600 dark:text-red-400');
+                var label = labels[k];
+                if (k === 'kev' && s.source === 'github') { label = 'CISA KEV (mirror GitHub)'; }
+                html += '<div><span class="font-medium ' + color + '">' + label + ':</span> ' + escHtml(s.message || '') + '</div>';
             });
             if (box) { box.innerHTML = html; }
-            toast(okAll ? 'Fuentes comprobadas correctamente' : 'Hay fuentes con error', okAll ? 'success' : 'error');
+            if (!res.success) {
+                toast('Hay fuentes con error', 'error');
+            } else if (hasProblem) {
+                toast('Fuentes comprobadas con avisos', 'warning');
+            } else {
+                toast('Fuentes comprobadas correctamente', 'success');
+            }
         })
         .catch(function() {
             if (box) { box.textContent = 'Error de conexión.'; }

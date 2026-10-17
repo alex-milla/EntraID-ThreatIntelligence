@@ -565,6 +565,9 @@ class AdminController
         $cveError = null;
         try {
             $cveState = CveDatabase::fetchOne("SELECT * FROM cve_sync_state WHERE id = 1");
+            if (is_array($cveState)) {
+                unset($cveState['token'], $cveState['base_url']);
+            }
             $cveCounts = [
                 'catalog'  => (int)(CveDatabase::fetchOne("SELECT COUNT(*) AS c FROM cve_catalog")['c'] ?? 0),
                 'kev'      => (int)(CveDatabase::fetchOne("SELECT COUNT(*) AS c FROM cve_kev")['c'] ?? 0),
@@ -688,9 +691,13 @@ class AdminController
 
         $nvdUrl = trim((string)($_POST['nvd_url'] ?? CVE_NVD_URL));
         $kevUrl = trim((string)($_POST['kev_url'] ?? CVE_KEV_URL));
+        $kevFallbackUrl = trim((string)($_POST['kev_fallback_url'] ?? ''));
+        if ($kevFallbackUrl === '') {
+            $kevFallbackUrl = CVE_KEV_FALLBACK_URL;
+        }
         $epssUrl = trim((string)($_POST['epss_url'] ?? CVE_EPSS_CSV_URL));
 
-        foreach (['NVD' => $nvdUrl, 'KEV' => $kevUrl, 'EPSS' => $epssUrl] as $label => $url) {
+        foreach (['NVD' => $nvdUrl, 'KEV' => $kevUrl, 'KEV (respaldo)' => $kevFallbackUrl, 'EPSS' => $epssUrl] as $label => $url) {
             if (!CveClient::isSafeUrl($url)) {
                 flash('error', "La URL de $label no es válida: se requiere HTTPS público.");
                 redirect(base_url('admin/apis'));
@@ -719,6 +726,7 @@ class AdminController
 
         setting_set('cve_nvd_url', $nvdUrl);
         setting_set('cve_kev_url', $kevUrl);
+        setting_set('cve_kev_fallback_url', $kevFallbackUrl);
         setting_set('cve_epss_url', $epssUrl);
         setting_set('cve_nvd_page_size', (string)$pageSize);
         setting_set('cve_scope', $scope);
@@ -776,6 +784,9 @@ class AdminController
 
         try {
             $state = CveDatabase::fetchOne("SELECT * FROM cve_sync_state WHERE id = 1");
+            if (is_array($state)) {
+                unset($state['token'], $state['base_url']);
+            }
             $counts = [
                 'catalog'  => (int)(CveDatabase::fetchOne("SELECT COUNT(*) AS c FROM cve_catalog")['c'] ?? 0),
                 'kev'      => (int)(CveDatabase::fetchOne("SELECT COUNT(*) AS c FROM cve_kev")['c'] ?? 0),

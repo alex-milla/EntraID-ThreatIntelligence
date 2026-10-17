@@ -12,6 +12,7 @@ class CveClient
     private string $nvdUrl;
     private string $nvdKey;
     private string $kevUrl;
+    private string $kevFallbackUrl;
     private string $epssUrl;
     private int $timeout;
 
@@ -20,6 +21,7 @@ class CveClient
         $this->nvdUrl = (string)($config['nvd_url'] ?? CVE_NVD_URL);
         $this->nvdKey = (string)($config['nvd_api_key'] ?? '');
         $this->kevUrl = (string)($config['kev_url'] ?? CVE_KEV_URL);
+        $this->kevFallbackUrl = (string)($config['kev_fallback_url'] ?? CVE_KEV_FALLBACK_URL);
         $this->epssUrl = (string)($config['epss_url'] ?? CVE_EPSS_CSV_URL);
         $this->timeout = (int)($config['timeout'] ?? 45);
     }
@@ -37,6 +39,7 @@ class CveClient
             'recent_years'    => (int)setting_get('cve_recent_years', 3),
             'min_cvss'        => (float)setting_get('cve_min_cvss', 0),
             'kev_url'         => (string)setting_get('cve_kev_url', CVE_KEV_URL),
+            'kev_fallback_url'=> (string)setting_get('cve_kev_fallback_url', CVE_KEV_FALLBACK_URL),
             'epss_url'        => (string)setting_get('cve_epss_url', CVE_EPSS_CSV_URL),
             'auto_sync'       => (int)setting_get('cve_auto_sync', 1),
             'interval_hours'  => (int)setting_get('cve_interval_hours', 24),
@@ -64,15 +67,20 @@ class CveClient
             'epss' => $this->testEpss(),
         ];
 
-        $ok = true;
-        foreach ($sources as $source) {
-            if (empty($source['ok'])) {
-                $ok = false;
+        foreach ($sources as $key => $source) {
+            if (empty($source['status'])) {
+                $sources[$key]['status'] = !empty($source['ok']) ? 'ok' : 'error';
             }
         }
 
+        // NVD y EPSS son el núcleo. KEV puede quedar en warning si el
+        // mirror funciona o si CISA bloquea la IP del hosting.
+        $coreOk = !empty($sources['nvd']['ok']) && !empty($sources['epss']['ok']);
+        $allOk = $coreOk && !empty($sources['kev']['ok']);
+
         return [
-            'success'   => $ok,
+            'success'   => $coreOk,
+            'all_ok'    => $allOk,
             'sources'   => $sources,
             'tested_at' => date('c'),
         ];
@@ -183,25 +191,83 @@ class CveClient
 
     private function testKev(): array
     {
-        try {
-            if (!self::isSafeUrl($this->kevUrl)) {
-                return $this->result(false, 0, 'URL de KEV no válida (se requiere HTTPS público).');
+        $primary = $this->tryKevUrl($this->kevUrl);
+        if (!empty($primary['ok'])) {
+            return $this->result(true, 200, 'OK — ' . (string)$primary['message'], [
+                'status'         => 'ok',
+                'source'         => 'cisa',
+                'fallback_used'  => false,
+                'primary_http'   => 200,
+                'count'          => $primary['count'],
+                'version'        => $primary['version'],
+                'released'       => $primary['released'],
+            ]);
+        }
+
+        if (
+            $this->kevFallbackUrl !== ''
+            && $this->kevFallbackUrl !== $this->kevUrl
+            && self::isSafeUrl($this->kevFallbackUrl)
+        ) {
+            $fallback = $this->tryKevUrl($this->kevFallbackUrl);
+            if (!empty($fallback['ok'])) {
+                $message = 'CISA directo HTTP ' . ($primary['http'] ?: '—')
+                    . '; mirror GitHub OK — ' . $fallback['message'];
+                return $this->result(true, 200, $message, [
+                    'status'         => 'warning',
+                    'source'         => 'github',
+                    'fallback_used'  => true,
+                    'primary_http'   => (int)$primary['http'],
+                    'count'          => $fallback['count'],
+                    'version'        => $fallback['version'],
+                    'released'       => $fallback['released'],
+                ]);
             }
 
-            $res = $this->httpGet($this->kevUrl, ['Accept: application/json'], $this->timeout, true);
+            $message = 'CISA directo HTTP ' . ($primary['http'] ?: '—')
+                . ' y mirror GitHub HTTP ' . ($fallback['http'] ?: '—') . '. '
+                . $primary['message'] . ' / ' . $fallback['message'];
+            return $this->result(false, 0, $message, [
+                'status'         => 'error',
+                'source'         => 'none',
+                'fallback_used'  => true,
+                'primary_http'   => (int)$primary['http'],
+                'fallback_http'  => (int)$fallback['http'],
+            ]);
+        }
+
+        return $this->result(false, (int)$primary['http'], (string)$primary['message'], [
+            'status'        => 'error',
+            'source'        => 'cisa',
+            'fallback_used' => false,
+            'primary_http'  => (int)$primary['http'],
+        ]);
+    }
+
+    /**
+     * Intenta descargar y validar un catálogo KEV desde una URL.
+     */
+    private function tryKevUrl(string $url): array
+    {
+        try {
+            if (!self::isSafeUrl($url)) {
+                return ['ok' => false, 'http' => 0, 'message' => 'URL de KEV no válida (se requiere HTTPS público).'];
+            }
+
+            $res = $this->httpGet($url, ['Accept: application/json'], $this->timeout, true);
             if ($res['http'] !== 200) {
-                return $this->result(false, $res['http'], 'HTTP ' . $res['http'] . ' al descargar CISA KEV.');
+                return ['ok' => false, 'http' => (int)$res['http'], 'message' => 'HTTP ' . $res['http']];
             }
 
             $data = json_decode($res['body'], true);
-            if (!is_array($data)) {
-                return $this->result(false, 200, 'CISA KEV no devolvió un JSON válido.');
+            if (!is_array($data) || !is_array($data['vulnerabilities'] ?? null)) {
+                return ['ok' => false, 'http' => 200, 'message' => 'KEV no devolvió un JSON válido.'];
             }
 
-            $count = (int)($data['count'] ?? count($data['vulnerabilities'] ?? []));
+            $count = (int)($data['count'] ?? count($data['vulnerabilities']));
             $version = (string)($data['catalogVersion'] ?? '');
             $released = (string)($data['dateReleased'] ?? '');
-            $message = 'OK — ' . number_format($count) . ' CVEs';
+            $message = number_format($count) . ' CVEs';
             if ($version !== '') {
                 $message .= ' (catálogo ' . $version . ')';
             }
@@ -209,13 +275,16 @@ class CveClient
                 $message .= ', publicado ' . $released;
             }
 
-            return $this->result(true, 200, $message . '.', [
+            return [
+                'ok'       => true,
+                'http'     => 200,
+                'message'  => $message,
                 'count'    => $count,
                 'version'  => $version,
                 'released' => $released,
-            ]);
+            ];
         } catch (Throwable $e) {
-            return $this->result(false, 0, 'No se pudo conectar con CISA KEV: ' . $e->getMessage());
+            return ['ok' => false, 'http' => 0, 'message' => $e->getMessage()];
         }
     }
 

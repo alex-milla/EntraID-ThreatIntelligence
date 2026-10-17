@@ -294,7 +294,7 @@ foreach ($flashData as $type => $msg):
     <?php if ($isAdmin): ?>
     <script>
     (function() {
-        var STATUS_URL = '<?= base_url('modules/cve/status') ?>';
+        var STATUS_URL = '<?= base_url('modules/cve/active') ?>';
         var SYNC_URL = '<?= base_url('modules/cve/sync') ?>';
         var CANCEL_URL = '<?= base_url('modules/cve/cancel') ?>';
         var STEP_URL = '<?= base_url('modules/cve/step') ?>';

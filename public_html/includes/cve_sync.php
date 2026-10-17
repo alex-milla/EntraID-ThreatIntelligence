@@ -61,13 +61,41 @@ class CveSync
 
     public function status(): array
     {
-        $state = $this->state();
+        $state = $this->publicState($this->state());
         $running = $state && in_array((string)$state['status'], ['queued', 'running'], true);
         return [
             'success' => true,
             'state'   => $state,
             'counts'  => $running ? [] : $this->counts(),
         ];
+    }
+
+    /**
+     * Estado ligero para el badge global y el polling de la página CVE.
+     * No ejecuta COUNT(*): solo lee cve_sync_state.
+     */
+    public function activeStatus(): array
+    {
+        $state = $this->publicState($this->state());
+        $active = $state !== null && in_array((string)$state['status'], ['queued', 'running'], true);
+        return [
+            'success' => true,
+            'active'  => $active,
+            'state'   => $state,
+        ];
+    }
+
+    /**
+     * Elimina secretos internos (token del worker, base_url) antes de enviar
+     * el estado al navegador.
+     */
+    public function publicState(?array $state): ?array
+    {
+        if ($state === null) {
+            return null;
+        }
+        unset($state['token'], $state['base_url']);
+        return $state;
     }
 
     /**
@@ -169,7 +197,7 @@ class CveSync
 
         return [
             'success'        => true,
-            'state'          => $this->state(),
+            'state'          => $this->publicState($this->state()),
             'worker_started' => $workerStarted,
             'message'        => $workerStarted
                 ? 'Sincronización iniciada en segundo plano.'
@@ -185,7 +213,7 @@ class CveSync
                  finished_at = datetime('now'), updated_at = datetime('now')
              WHERE id = 1 AND status IN ('queued', 'running')"
         );
-        return ['success' => true, 'state' => $this->state()];
+        return ['success' => true, 'state' => $this->publicState($this->state())];
     }
 
     /**

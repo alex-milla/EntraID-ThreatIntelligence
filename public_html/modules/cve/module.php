@@ -38,6 +38,7 @@ class Module_Cve extends BaseModule
             ['method' => 'GET',  'pattern' => '',                'handler' => [$this, 'index']],
             ['method' => 'GET',  'pattern' => 'detail/{cveId}',  'handler' => [$this, 'detail']],
             ['method' => 'GET',  'pattern' => 'status',          'handler' => [$this, 'syncStatus']],
+            ['method' => 'GET',  'pattern' => 'active',          'handler' => [$this, 'syncActive']],
             ['method' => 'POST', 'pattern' => 'sync',            'handler' => [$this, 'triggerSync']],
             ['method' => 'POST', 'pattern' => 'step',            'handler' => [$this, 'stepSync']],
             ['method' => 'POST', 'pattern' => 'cancel',          'handler' => [$this, 'cancelSync']],
@@ -413,6 +414,20 @@ class Module_Cve extends BaseModule
         }
     }
 
+    /**
+     * Endpoint ligero para el badge global (sin contadores).
+     */
+    public function syncActive(array $params = []): void
+    {
+        Auth::require();
+
+        try {
+            json_response((new CveSync())->activeStatus());
+        } catch (Throwable $e) {
+            json_response(['success' => false, 'error' => $e->getMessage()], 500);
+        }
+    }
+
     public function cancelSync(array $params = []): void
     {
         Auth::requireAdmin();
@@ -442,6 +457,10 @@ class Module_Cve extends BaseModule
                 json_response(['success' => false, 'error' => 'No hay una sincronización activa.']);
             }
             $result = $sync->runChunk((string)$state['token']);
+            unset($result['token'], $result['base_url']);
+            if (isset($result['state']) && is_array($result['state'])) {
+                $result['state'] = $sync->publicState($result['state']);
+            }
             json_response([
                 'success' => empty($result['error']),
                 'result'  => $result,

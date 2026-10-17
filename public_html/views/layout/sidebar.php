@@ -58,6 +58,16 @@ foreach ($navModules as $item) {
                                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 6l12 12M18 6L6 18"/></svg>
                             </button>
                         </span>
+                    <?php elseif (str_contains((string)$item['url'], '/modules/cve')): ?>
+                        <span id="cve-sync-badge" class="ml-auto items-center gap-1 text-[10px] font-medium text-brand-600 dark:text-brand-300" style="display:none" title="Sincronización CVE en curso">
+                            <svg class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path></svg>
+                            <span id="cve-sync-badge-pct">0%</span>
+                            <?php if (Auth::isAdmin()): ?>
+                                <button type="button" id="cve-sync-badge-stop" title="Detener la sincronización CVE" class="ml-0.5 p-0.5 rounded hover:bg-brand-100 dark:hover:bg-brand-900 text-red-500">
+                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 6l12 12M18 6L6 18"/></svg>
+                                </button>
+                            <?php endif; ?>
+                        </span>
                     <?php endif; ?>
                 </a>
             <?php endforeach; ?>
