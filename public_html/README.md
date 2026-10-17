@@ -45,6 +45,11 @@ almacenamiento SQLite y arquitectura modular.
    0 * * * * php /ruta/public_html/cron/sync.php >> /ruta/storage/cron.log 2>&1
    ```
 
+7. **Catálogo CVE (opcional)**: en Admin → APIs → *Fuentes públicas de CVEs*
+   puedes guardar la API key de NVD y probar NVD/CISA KEV/EPSS. El catálogo
+   se guarda en `storage/cve.sqlite` (`CVE_DB_PATH` en `.env`), separado de la
+   base de datos principal. La descarga masiva se habilita en la Fase 2.
+
 ## Arquitectura modular
 
 Cada herramienta es un módulo independiente en `modules/{nombre}/`:
@@ -55,6 +60,7 @@ Cada herramienta es un módulo independiente en `modules/{nombre}/`:
 | `threat_intelligence` | Informes TI, IOCs, CVEs | `ThreatIntelligence.Read.All` |
 | `incidents` | Incidentes y alertas | `SecurityIncident.Read.All`, `SecurityAlert.Read.All` |
 | `vulnerabilities` | Equipos y vulnerabilidades (TVM) | `Machine.Read.All`, `Vulnerability.Read.All` |
+| `cve` | Catálogo público de CVEs e inventario de software (NVD/KEV/EPSS) | — |
 | `secure_score` | Evolución del Secure Score | `SecurityEvents.Read.All` |
 | `hunting` | Consultas KQL (Advanced Hunting) | `ThreatHunting.Read.All` |
 | `reports` | Generación de reportes periódicos | — (usa datos almacenados) |
@@ -107,6 +113,7 @@ public_html/
 │   ├── threat_intelligence/
 │   ├── incidents/
 │   ├── vulnerabilities/
+│   ├── cve/
 │   ├── secure_score/
 │   ├── hunting/
 │   ├── reports/

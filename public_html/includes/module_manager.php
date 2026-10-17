@@ -147,12 +147,37 @@ class ModuleManager
     public static function getNavigation(): array
     {
         $nav = [];
+        $deferred = [];
         foreach (self::$instances as $key => $instance) {
             $navItem = $instance->getNavItem();
-            if ($navItem !== null) {
+            if ($navItem === null) {
+                continue;
+            }
+            // Los ítems con "after" se insertan detrás del módulo indicado.
+            if (!empty($navItem['after'])) {
+                $deferred[] = $navItem;
+            } else {
                 $nav[] = $navItem;
             }
         }
+
+        foreach ($deferred as $navItem) {
+            $after = (string)$navItem['after'];
+            $insertAt = null;
+            foreach ($nav as $index => $existing) {
+                $url = (string)($existing['url'] ?? '');
+                if ($url !== '' && str_contains($url, '/modules/' . $after)) {
+                    $insertAt = $index + 1;
+                    break;
+                }
+            }
+            if ($insertAt === null) {
+                $nav[] = $navItem;
+            } else {
+                array_splice($nav, $insertAt, 0, [$navItem]);
+            }
+        }
+
         return $nav;
     }
 

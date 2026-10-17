@@ -18,6 +18,7 @@ public_html/                 # Aplicación
     │   ├── threat_intelligence/ # IOCs, intel profiles, CVEs
     │   ├── incidents/          # Incidentes de seguridad
     │   ├── vulnerabilities/   # TVM (vulnerabilidades de equipos)
+    │   ├── cve/               # Catálogo público de CVEs (NVD/KEV/EPSS)
     │   ├── secure_score/       # Secure Score
     │   ├── hunting/           # Advanced Hunting (KQL)
     │   ├── reports/           # Reportes periódicos (diario → anual)

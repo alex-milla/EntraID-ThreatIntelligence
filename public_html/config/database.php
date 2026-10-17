@@ -503,6 +503,7 @@ class Database
             ['threat_intelligence','Threat Intelligence',           'Informes TI, IOCs, CVEs e intel profiles',         '1.0.0'],
             ['incidents',          'Incidentes y Alertas',          'Incidentes y alertas de Defender XDR',             '1.0.0'],
             ['vulnerabilities',    'Vulnerabilidades (TVM)',        'Vulnerabilidades de equipos y software',           '1.0.0'],
+            ['cve',                'CVE (catálogo público)',        'Catálogo público de CVEs e inventario de software', '0.1.0'],
             ['secure_score',       'Secure Score',                  'Evolución de la postura de seguridad',             '1.0.0'],
             ['hunting',            'Advanced Hunting (KQL)',        'Consultas programáticas KQL',                      '1.0.0'],
             ['entra_users',        'Usuarios Entra ID',             'Investigación de usuarios: MFA, logins y riesgo',  '1.0.0'],

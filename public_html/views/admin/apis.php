@@ -175,9 +175,132 @@ foreach ($flashData as $type => $msg):
     </div>
 </form>
 
+<?php
+$cve = is_array($cve ?? null) ? $cve : [];
+$cveCounts = is_array($cveCounts ?? null) ? $cveCounts : [];
+$cveState = is_array($cveState ?? null) ? $cveState : [];
+$cveError = $cveError ?? null;
+$cveScope = (string)($cve['scope'] ?? 'full');
+?>
+<!-- Fuentes públicas de CVEs -->
+<form method="POST" action="<?= base_url('admin/apis/cve-save') ?>" class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-6 mb-6 space-y-4">
+    <?= Csrf::field() ?>
+    <div class="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+            <h2 class="text-lg font-semibold">Fuentes públicas de CVEs</h2>
+            <p class="text-xs text-gray-500 mt-1">
+                Catálogo NVD + CISA KEV + EPSS. Son fuentes gratuitas; solo NVD usa API key (opcional pero muy recomendable).
+            </p>
+        </div>
+        <a href="https://nvd.nist.gov/developers/request-an-api-key" target="_blank" rel="noopener noreferrer"
+           class="text-xs text-brand-600 dark:text-brand-400 hover:underline">Solicitar API key de NVD ↗</a>
+    </div>
+
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">NVD API Key</label>
+            <input type="password" name="nvd_api_key" autocomplete="new-password"
+                   placeholder="<?= !empty($cve['nvd_key_set']) ? '•••••••• (ya configurada — deja vacío para mantenerla)' : 'Pega aquí tu API key de NVD' ?>"
+                   class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white font-mono text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+            <label class="inline-flex items-center gap-2 text-xs text-gray-500 mt-2">
+                <input type="checkbox" name="clear_nvd_key" value="1" class="rounded border-gray-300 text-brand-500 focus:ring-brand-500">
+                Borrar la API key guardada
+            </label>
+            <p class="text-xs text-gray-400 mt-1">Sin key: 5 peticiones/30 s. Con key: 50 peticiones/30 s.</p>
+        </div>
+        <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Alcance del catálogo</label>
+            <select name="scope" class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+                <option value="full" <?= $cveScope === 'full' ? 'selected' : '' ?>>Completo — todos los CVEs de NVD</option>
+                <option value="recent" <?= $cveScope === 'recent' ? 'selected' : '' ?>>Reciente — últimos años</option>
+                <option value="kev" <?= $cveScope === 'kev' ? 'selected' : '' ?>>Solo KEV + EPSS</option>
+            </select>
+            <p class="text-xs text-gray-400 mt-1">El catálogo completo ocupa cientos de MB; se recomienda medir el disco antes.</p>
+        </div>
+        <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">URL de NVD</label>
+            <input type="text" name="nvd_url" value="<?= e((string)($cve['nvd_url'] ?? CVE_NVD_URL)) ?>"
+                   class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white font-mono text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+        </div>
+        <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Tamaño de página</label>
+            <select name="nvd_page_size" class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+                <?php foreach ([500, 1000, 2000] as $size): ?>
+                    <option value="<?= $size ?>" <?= (int)($cve['nvd_page_size'] ?? 1000) === $size ? 'selected' : '' ?>><?= number_format($size) ?> CVEs/petición</option>
+                <?php endforeach; ?>
+            </select>
+        </div>
+        <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Años recientes</label>
+            <input type="number" name="recent_years" min="1" max="10" value="<?= (int)($cve['recent_years'] ?? 3) ?>"
+                   class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+            <p class="text-xs text-gray-400 mt-1">Solo se usa con alcance “Reciente”.</p>
+        </div>
+        <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">CVSS mínimo</label>
+            <input type="number" name="min_cvss" min="0" max="10" step="0.1" value="<?= e((string)($cve['min_cvss'] ?? 0)) ?>"
+                   class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+            <p class="text-xs text-gray-400 mt-1">0 = guardar todos. Un valor alto reduce el tamaño.</p>
+        </div>
+        <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">URL de CISA KEV</label>
+            <input type="text" name="kev_url" value="<?= e((string)($cve['kev_url'] ?? CVE_KEV_URL)) ?>"
+                   class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white font-mono text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+        </div>
+        <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">URL del CSV de EPSS</label>
+            <input type="text" name="epss_url" value="<?= e((string)($cve['epss_url'] ?? CVE_EPSS_CSV_URL)) ?>"
+                   class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white font-mono text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+        </div>
+        <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Sincronización automática</label>
+            <label class="inline-flex items-center gap-2 text-sm mt-2">
+                <input type="checkbox" name="auto_sync" value="1" <?= !empty($cve['auto_sync']) ? 'checked' : '' ?> class="rounded border-gray-300 text-brand-500 focus:ring-brand-500">
+                Activar sincronización diaria (Fase 2)
+            </label>
+        </div>
+        <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Intervalo (horas)</label>
+            <input type="number" name="interval_hours" min="1" max="168" value="<?= (int)($cve['interval_hours'] ?? 24) ?>"
+                   class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+        </div>
+    </div>
+
+    <div class="flex items-center gap-3 pt-2 border-t border-gray-100 dark:border-gray-700 flex-wrap">
+        <button type="submit" class="px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors">Guardar fuentes</button>
+        <button type="button" onclick="testCveSources()" class="px-4 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 text-sm font-medium rounded-lg transition-colors">Probar fuentes</button>
+        <button type="button" disabled title="Disponible en la Fase 2"
+                class="px-4 py-2 bg-gray-100 dark:bg-gray-800 text-gray-400 dark:text-gray-500 text-sm font-medium rounded-lg opacity-60 cursor-not-allowed">Actualizar catálogo (Fase 2)</button>
+    </div>
+
+    <div id="cve-test-result" class="text-xs text-gray-500 space-y-1"></div>
+
+    <?php if (!empty($cveError)): ?>
+        <div class="px-4 py-3 rounded-lg text-sm text-red-600 bg-red-50 dark:bg-red-900/20">
+            No se pudo abrir la base de datos de CVEs: <?= e($cveError) ?>
+        </div>
+    <?php else: ?>
+        <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 pt-3 border-t border-gray-100 dark:border-gray-700">
+            <div><p class="text-xs text-gray-400">Catálogo</p><p class="text-sm font-semibold"><?= number_format((int)($cveCounts['catalog'] ?? 0)) ?></p></div>
+            <div><p class="text-xs text-gray-400">KEV</p><p class="text-sm font-semibold"><?= number_format((int)($cveCounts['kev'] ?? 0)) ?></p></div>
+            <div><p class="text-xs text-gray-400">EPSS</p><p class="text-sm font-semibold"><?= number_format((int)($cveCounts['epss'] ?? 0)) ?></p></div>
+            <div><p class="text-xs text-gray-400">Grupos</p><p class="text-sm font-semibold"><?= number_format((int)($cveCounts['groups'] ?? 0)) ?></p></div>
+            <div><p class="text-xs text-gray-400">Software</p><p class="text-sm font-semibold"><?= number_format((int)($cveCounts['software'] ?? 0)) ?></p></div>
+            <div><p class="text-xs text-gray-400">Matches</p><p class="text-sm font-semibold"><?= number_format((int)($cveCounts['matches'] ?? 0)) ?></p></div>
+        </div>
+        <p class="text-xs text-gray-400">
+            Estado: <strong><?= e((string)($cveState['status'] ?? 'idle')) ?></strong>
+            <?php if (!empty($cveState['last_success_at'])): ?> · última sync: <?= e((string)$cveState['last_success_at']) ?><?php endif; ?>
+        </p>
+    <?php endif; ?>
+    <p class="text-xs text-gray-400">
+        La API key de NVD se guarda cifrada (AES-256-GCM) y nunca se muestra ni se envía al navegador.
+    </p>
+</form>
+
 <div class="bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 rounded-xl p-4">
     <p class="text-xs text-amber-700 dark:text-amber-300">
-        La API key se guarda <strong>cifrada (AES-256-GCM)</strong> y nunca se muestra ni se envía al navegador.
+        <strong>Sobre los perfiles de IA:</strong> la API key se guarda <strong>cifrada (AES-256-GCM)</strong> y nunca se muestra ni se envía al navegador.
         Consejo: el <strong>nombre del modelo debe ser válido para el proveedor</strong> elegido; si no, la prueba de conexión indicará «Invalid model».
         Mistral no entrena con tus prompts (zero-retention).
     </p>
@@ -205,6 +328,38 @@ function updateModelSuggestions() {
         o.value = m;
         list.appendChild(o);
     });
+}
+function testCveSources() {
+    var box = document.getElementById('cve-test-result');
+    if (box) { box.textContent = 'Probando fuentes…'; }
+    api('POST', '<?= base_url('admin/apis/cve-test') ?>', {})
+        .then(function(res) {
+            if (!res || !res.sources) {
+                if (box) { box.textContent = (res && res.error) ? res.error : 'Error al probar las fuentes.'; }
+                toast((res && res.error) ? res.error : 'Error al probar las fuentes', 'error');
+                return;
+            }
+            var labels = {nvd: 'NVD', kev: 'CISA KEV', epss: 'EPSS'};
+            var html = '';
+            var okAll = true;
+            ['nvd', 'kev', 'epss'].forEach(function(k) {
+                var s = res.sources[k] || {};
+                if (!s.ok) { okAll = false; }
+                var color = s.ok ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400';
+                html += '<div><span class="font-medium ' + color + '">' + labels[k] + ':</span> ' + escHtml(s.message || '') + '</div>';
+            });
+            if (box) { box.innerHTML = html; }
+            toast(okAll ? 'Fuentes comprobadas correctamente' : 'Hay fuentes con error', okAll ? 'success' : 'error');
+        })
+        .catch(function() {
+            if (box) { box.textContent = 'Error de conexión.'; }
+            toast('Error de conexión', 'error');
+        });
+}
+function escHtml(s) {
+    var d = document.createElement('div');
+    d.textContent = s || '';
+    return d.innerHTML;
 }
 function testProfile(id) {
     api('POST', '<?= base_url('admin/apis/test') ?>', { profile_id: id })

@@ -84,6 +84,19 @@ define('SESSION_SECRET', $env['SESSION_SECRET'] ?? bin2hex(random_bytes(32)));
 // Base de datos
 define('DB_PATH', ROOT_PATH . '/' . ($env['DB_PATH'] ?? 'storage/database.sqlite'));
 
+// Catálogo público de CVEs (base de datos independiente, opcional)
+define('CVE_DB_PATH', ROOT_PATH . '/' . ($env['CVE_DB_PATH'] ?? 'storage/cve.sqlite'));
+
+// Fuentes públicas de CVEs
+define('CVE_NVD_URL', 'https://services.nvd.nist.gov/rest/json/cves/2.0');
+define('CVE_KEV_URL', 'https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json');
+define('CVE_EPSS_CSV_URL', 'https://epss.empiricalsecurity.com/epss_scores-current.csv.gz');
+define('CVE_NVD_API_KEY', $env['NVD_API_KEY'] ?? '');
+define('CVE_NVD_PAGE_SIZE', 1000);
+define('CVE_SYNC_BUDGET', 25);
+define('CVE_SYNC_STALE', 180);
+define('CVE_SYNC_WATCHDOG', 900);
+
 // LLM
 define('LLM_PROVIDER', $env['LLM_PROVIDER'] ?? '');
 define('LLM_API_KEY', $env['LLM_API_KEY'] ?? '');

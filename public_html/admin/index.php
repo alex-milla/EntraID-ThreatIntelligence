@@ -557,6 +557,26 @@ class AdminController
             $taskProfiles[$t] = llm_task_profile($t);
         }
 
+        // Fuentes públicas de CVEs (Fase 1).
+        $cve = CveClient::config();
+        $cve['nvd_key_set'] = setting_get('cve_nvd_api_key', CVE_NVD_API_KEY) !== '';
+        $cveState = null;
+        $cveCounts = ['catalog' => 0, 'kev' => 0, 'epss' => 0, 'software' => 0, 'groups' => 0, 'matches' => 0];
+        $cveError = null;
+        try {
+            $cveState = CveDatabase::fetchOne("SELECT * FROM cve_sync_state WHERE id = 1");
+            $cveCounts = [
+                'catalog'  => (int)(CveDatabase::fetchOne("SELECT COUNT(*) AS c FROM cve_catalog")['c'] ?? 0),
+                'kev'      => (int)(CveDatabase::fetchOne("SELECT COUNT(*) AS c FROM cve_kev")['c'] ?? 0),
+                'epss'     => (int)(CveDatabase::fetchOne("SELECT COUNT(*) AS c FROM cve_epss")['c'] ?? 0),
+                'software' => (int)(CveDatabase::fetchOne("SELECT COUNT(*) AS c FROM software_watchlist")['c'] ?? 0),
+                'groups'   => (int)(CveDatabase::fetchOne("SELECT COUNT(*) AS c FROM software_groups")['c'] ?? 0),
+                'matches'  => (int)(CveDatabase::fetchOne("SELECT COUNT(*) AS c FROM cve_watchlist_match")['c'] ?? 0),
+            ];
+        } catch (Throwable $e) {
+            $cveError = $e->getMessage();
+        }
+
         require VIEWS_PATH . '/layout/header.php';
         require VIEWS_PATH . '/layout/sidebar.php';
         require VIEWS_PATH . '/admin/apis.php';
@@ -656,6 +676,118 @@ class AdminController
         }
         flash('success', 'Modelo por tarea guardado');
         redirect(base_url('admin/apis'));
+    }
+
+    /**
+     * Guarda la configuración de las fuentes públicas de CVEs.
+     */
+    public static function cveSave(): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        $nvdUrl = trim((string)($_POST['nvd_url'] ?? CVE_NVD_URL));
+        $kevUrl = trim((string)($_POST['kev_url'] ?? CVE_KEV_URL));
+        $epssUrl = trim((string)($_POST['epss_url'] ?? CVE_EPSS_CSV_URL));
+
+        foreach (['NVD' => $nvdUrl, 'KEV' => $kevUrl, 'EPSS' => $epssUrl] as $label => $url) {
+            if (!CveClient::isSafeUrl($url)) {
+                flash('error', "La URL de $label no es válida: se requiere HTTPS público.");
+                redirect(base_url('admin/apis'));
+            }
+        }
+
+        $key = trim((string)($_POST['nvd_api_key'] ?? ''));
+        $clearKey = !empty($_POST['clear_nvd_key']);
+        if ($key !== '' && ENCRYPTION_KEY === '') {
+            flash('error', 'No se puede guardar la API key de NVD: falta ENCRYPTION_KEY en el .env.');
+            redirect(base_url('admin/apis'));
+        }
+
+        $pageSize = (int)($_POST['nvd_page_size'] ?? CVE_NVD_PAGE_SIZE);
+        if (!in_array($pageSize, [500, 1000, 2000], true)) {
+            $pageSize = CVE_NVD_PAGE_SIZE;
+        }
+        $scope = (string)($_POST['scope'] ?? 'full');
+        if (!in_array($scope, ['full', 'recent', 'kev'], true)) {
+            $scope = 'full';
+        }
+        $recentYears = max(1, min(10, (int)($_POST['recent_years'] ?? 3)));
+        $minCvss = max(0.0, min(10.0, (float)($_POST['min_cvss'] ?? 0)));
+        $autoSync = !empty($_POST['auto_sync']) ? 1 : 0;
+        $interval = max(1, min(168, (int)($_POST['interval_hours'] ?? 24)));
+
+        setting_set('cve_nvd_url', $nvdUrl);
+        setting_set('cve_kev_url', $kevUrl);
+        setting_set('cve_epss_url', $epssUrl);
+        setting_set('cve_nvd_page_size', (string)$pageSize);
+        setting_set('cve_scope', $scope);
+        setting_set('cve_recent_years', (string)$recentYears);
+        setting_set('cve_min_cvss', (string)$minCvss);
+        setting_set('cve_auto_sync', (string)$autoSync);
+        setting_set('cve_interval_hours', (string)$interval);
+
+        if ($clearKey) {
+            setting_set('cve_nvd_api_key', '');
+        } elseif ($key !== '') {
+            try {
+                setting_set('cve_nvd_api_key', $key, true);
+            } catch (Throwable $e) {
+                flash('error', 'No se pudo cifrar/guardar la API key de NVD: ' . $e->getMessage());
+                redirect(base_url('admin/apis'));
+            }
+        }
+
+        log_activity('cve.settings_saved', [
+            'scope'     => $scope,
+            'page_size' => $pageSize,
+            'auto_sync' => $autoSync,
+            'key_set'   => $clearKey ? false : ($key !== '' || setting_get('cve_nvd_api_key', CVE_NVD_API_KEY) !== ''),
+        ]);
+        flash('success', 'Configuración de fuentes de CVEs guardada.');
+        redirect(base_url('admin/apis'));
+    }
+
+    /**
+     * Prueba NVD, CISA KEV y EPSS sin descargar el catálogo completo.
+     */
+    public static function cveTest(): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        try {
+            $client = CveClient::fromSettings();
+            json_response($client->testAll());
+        } catch (Throwable $e) {
+            json_response([
+                'success' => false,
+                'error'   => $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * Estado del catálogo CVE (para el panel de Admin → APIs).
+     */
+    public static function cveStatus(): void
+    {
+        Auth::requireAdmin();
+
+        try {
+            $state = CveDatabase::fetchOne("SELECT * FROM cve_sync_state WHERE id = 1");
+            $counts = [
+                'catalog'  => (int)(CveDatabase::fetchOne("SELECT COUNT(*) AS c FROM cve_catalog")['c'] ?? 0),
+                'kev'      => (int)(CveDatabase::fetchOne("SELECT COUNT(*) AS c FROM cve_kev")['c'] ?? 0),
+                'epss'     => (int)(CveDatabase::fetchOne("SELECT COUNT(*) AS c FROM cve_epss")['c'] ?? 0),
+                'software' => (int)(CveDatabase::fetchOne("SELECT COUNT(*) AS c FROM software_watchlist")['c'] ?? 0),
+                'groups'   => (int)(CveDatabase::fetchOne("SELECT COUNT(*) AS c FROM software_groups")['c'] ?? 0),
+                'matches'  => (int)(CveDatabase::fetchOne("SELECT COUNT(*) AS c FROM cve_watchlist_match")['c'] ?? 0),
+            ];
+            json_response(['success' => true, 'state' => $state, 'counts' => $counts]);
+        } catch (Throwable $e) {
+            json_response(['success' => false, 'error' => $e->getMessage()]);
+        }
     }
 
     /**
@@ -1034,6 +1166,7 @@ $adminRoutes = [
         'storage'          => 'storage',
         'security'         => 'security',
         'apis'             => 'apis',
+        'apis/cve-status'  => 'cveStatus',
         'updates'          => 'updates',
         'change-password'  => 'changePassword',
     ],
@@ -1053,6 +1186,8 @@ $adminRoutes = [
         'apis/default'     => 'apisDefault',
         'apis/delete'      => 'apisDelete',
         'apis/tasks'       => 'apisTasks',
+        'apis/cve-save'    => 'cveSave',
+        'apis/cve-test'    => 'cveTest',
         'updates'          => 'updates',
         'change-password'  => 'changePassword',
     ],

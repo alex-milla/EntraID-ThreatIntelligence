@@ -39,6 +39,10 @@ foreach ($flashData as $type => $msg):
                 <dd class="font-mono text-xs"><?= e(basename(DB_PATH)) ?></dd>
             </div>
             <div class="flex justify-between text-sm">
+                <dt class="text-gray-500">Catálogo CVE</dt>
+                <dd class="font-mono text-xs"><?= e(basename(CVE_DB_PATH)) ?></dd>
+            </div>
+            <div class="flex justify-between text-sm">
                 <dt class="text-gray-500">Clave de cifrado</dt>
                 <dd class="font-medium <?= empty(ENCRYPTION_KEY) ? 'text-red-500' : 'text-green-600' ?>">
                     <?= empty(ENCRYPTION_KEY) ? 'NO CONFIGURADA' : 'Configurada' ?>

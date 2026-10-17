@@ -209,6 +209,10 @@ SESSION_SECRET=$sessionSecret
 # Base de datos
 DB_PATH=storage/database.sqlite
 
+# Catálogo público de CVEs (opcional)
+CVE_DB_PATH=storage/cve.sqlite
+NVD_API_KEY=
+
 # LLM (configurar manualmente si se usa)
 LLM_PROVIDER=
 LLM_API_KEY=
