@@ -57,6 +57,8 @@ class CveSync
             'matches'  => (int)(CveDatabase::fetchOne("SELECT COUNT(*) AS c FROM cve_watchlist_match")['c'] ?? 0),
             'software' => (int)(CveDatabase::fetchOne("SELECT COUNT(*) AS c FROM software_watchlist")['c'] ?? 0),
             'groups'   => (int)(CveDatabase::fetchOne("SELECT COUNT(*) AS c FROM software_groups")['c'] ?? 0),
+            'kev'      => (int)(CveDatabase::fetchOne("SELECT COUNT(*) AS c FROM cve_kev")['c'] ?? 0),
+            'epss'     => (int)(CveDatabase::fetchOne("SELECT COUNT(*) AS c FROM cve_epss")['c'] ?? 0),
         ];
     }
 
@@ -101,8 +103,12 @@ class CveSync
 
     /**
      * Inicia una sincronización global. Solo un job a la vez.
+     *
+     * @param string|null $mode          Modo solicitado (auto, full, recent, incremental, kev).
+     * @param bool        $launchWorker  Si es false, no lanza el worker HTTP; el llamante
+     *                                   procesa los tramos con runChunk()/runScheduled().
      */
-    public function start(?string $mode = null): array
+    public function start(?string $mode = null, bool $launchWorker = true): array
     {
         $cfg = CveClient::config();
         if (!CveClient::isSafeUrl((string)($cfg['nvd_url'] ?? ''))) {
@@ -241,12 +247,19 @@ class CveSync
         );
 
         $workerStarted = false;
-        if ($baseUrl !== '') {
+        if ($launchWorker && $baseUrl !== '') {
             $workerStarted = background_request(
                 rtrim($baseUrl, '/') . '/cve-worker.php?token=' . rawurlencode($token)
             );
         }
-        if (!$workerStarted) {
+        if (!$launchWorker) {
+            CveDatabase::query(
+                "UPDATE cve_sync_state
+                 SET message = ?, updated_at = datetime('now')
+                 WHERE id = 1 AND token = ?",
+                ['Sincronización programada en curso…', $token]
+            );
+        } elseif (!$workerStarted) {
             CveDatabase::query(
                 "UPDATE cve_sync_state
                  SET message = ?, updated_at = datetime('now')
@@ -259,9 +272,134 @@ class CveSync
             'success'        => true,
             'state'          => $this->publicState($this->state()),
             'worker_started' => $workerStarted,
-            'message'        => $workerStarted
-                ? 'Sincronización iniciada en segundo plano.'
-                : 'No se pudo lanzar el worker. Usa «Continuar» para procesar tramos manualmente.',
+            'message'        => !$launchWorker
+                ? 'Sincronización programada iniciada.'
+                : ($workerStarted
+                    ? 'Sincronización iniciada en segundo plano.'
+                    : 'No se pudo lanzar el worker. Usa «Continuar» para procesar tramos manualmente.'),
+        ];
+    }
+
+    /**
+     * Ejecuta una sincronización completa o reanuda la activa desde cron/CLI.
+     *
+     * No lanza el worker HTTP: procesa los tramos en el propio proceso hasta
+     * terminar o agotar $maxSeconds. Si se agota, deja el job en estado
+     * queued/running para que la siguiente ejecución lo reanude.
+     */
+    public function runScheduled(?string $mode = null, int $maxSeconds = 240): array
+    {
+        $maxSeconds = max(30, min(1800, $maxSeconds));
+        $deadline = microtime(true) + $maxSeconds;
+
+        $state = $this->state();
+        $resumed = $state !== null && in_array((string)($state['status'] ?? ''), ['queued', 'running'], true);
+
+        if ($resumed) {
+            $lastUpdate = $this->dbTime((string)($state['updated_at'] ?? ''));
+            $grace = defined('CVE_CRON_ACTIVE_GRACE') ? (int)CVE_CRON_ACTIVE_GRACE : 45;
+            if ($lastUpdate > 0 && (time() - $lastUpdate) < max(10, $grace)) {
+                return [
+                    'success' => true,
+                    'done'    => false,
+                    'partial' => true,
+                    'skipped' => true,
+                    'reason'  => 'active',
+                    'error'   => null,
+                    'chunks'  => 0,
+                    'state'   => $this->publicState($state),
+                ];
+            }
+        }
+
+        if (!$resumed) {
+            $start = $this->start($mode ?? 'auto', false);
+            if (empty($start['success'])) {
+                return [
+                    'success' => false,
+                    'error'   => (string)($start['error'] ?? 'No se pudo iniciar la sincronización.'),
+                    'done'    => false,
+                    'chunks'  => 0,
+                    'state'   => $start['state'] ?? null,
+                ];
+            }
+            $state = $this->state();
+        }
+
+        if ($state === null || empty($state['token'])) {
+            return [
+                'success' => false,
+                'error'   => 'No hay una sincronización activa que procesar.',
+                'done'    => false,
+                'chunks'  => 0,
+                'state'   => $this->publicState($state),
+            ];
+        }
+
+        $token = (string)$state['token'];
+        $chunks = 0;
+        $done = false;
+
+        while (microtime(true) < $deadline) {
+            try {
+                $chunk = $this->runChunk($token);
+            } catch (Throwable $e) {
+                return [
+                    'success' => false,
+                    'error'   => $e->getMessage(),
+                    'done'    => false,
+                    'chunks'  => $chunks,
+                    'state'   => $this->publicState($this->state()),
+                ];
+            }
+            $chunks++;
+            $state = $this->state();
+
+            if (!empty($chunk['error'])) {
+                return [
+                    'success' => false,
+                    'error'   => (string)$chunk['error'],
+                    'done'    => false,
+                    'chunks'  => $chunks,
+                    'state'   => $this->publicState($state),
+                ];
+            }
+            if (!empty($chunk['done'])) {
+                $done = true;
+                break;
+            }
+            if ($state === null || !hash_equals((string)($state['token'] ?? ''), $token)) {
+                break;
+            }
+        }
+
+        $state = $this->state();
+        $status = (string)($state['status'] ?? '');
+        if (in_array($status, ['error', 'cancelled'], true)) {
+            return [
+                'success' => false,
+                'error'   => (string)($state['message'] ?? 'La sincronización no terminó correctamente.'),
+                'done'    => true,
+                'chunks'  => $chunks,
+                'state'   => $this->publicState($state),
+            ];
+        }
+
+        $done = $done
+            || ($state !== null
+                && (string)($state['status'] ?? '') === 'idle'
+                && (string)($state['phase'] ?? '') === 'done');
+
+        return [
+            'success' => true,
+            'done'    => $done,
+            'partial' => !$done,
+            'resumed' => $resumed,
+            'chunks'  => $chunks,
+            'mode'    => $state['mode'] ?? null,
+            'phase'   => $state['phase'] ?? null,
+            'state'   => $this->publicState($state),
+            'counts'  => $done ? $this->counts() : [],
         ];
     }
 

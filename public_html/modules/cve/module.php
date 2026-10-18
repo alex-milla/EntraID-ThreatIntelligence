@@ -698,7 +698,12 @@ class Module_Cve extends BaseModule
         exit;
     }
 
-    private function createReport(array $input): array
+    public function createScheduledReport(array $input): array
+    {
+        return $this->createReport($input, null);
+    }
+
+    private function createReport(array $input, ?int $generatedBy = null): array
     {
         $filters = $this->normalizeReportFilters($input);
 
@@ -736,7 +741,7 @@ class Module_Cve extends BaseModule
                 $filtersJson,
                 $summaryJson,
                 $dataJson,
-                Auth::id(),
+                $generatedBy ?? Auth::id(),
             ]
         );
 

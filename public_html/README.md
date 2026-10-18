@@ -68,6 +68,26 @@ almacenamiento SQLite y arquitectura modular.
    Si CISA bloquea la IP del hosting (HTTP 403), KEV usa automáticamente el
    mirror oficial de GitHub (`cisagov/kev-data`).
 
+8. **Cron CVE** (opcional): sincroniza el catálogo incremental y actualiza
+   KEV/EPSS sin depender del navegador. Ejecuta una vez al día:
+   ```
+   php /ruta/public_html/cron/cve-sync.php --mode=auto --max-seconds=240 >> /ruta/public_html/storage/cve-cron.log 2>&1
+   ```
+   Si la primera carga completa no termina en una ejecución, el proceso queda
+   en estado parcial y la siguiente ejecución lo reanuda. Añade `--report` para
+   generar además un informe de los últimos 7 días:
+   ```
+   php /ruta/public_html/cron/cve-sync.php --report --report-period=7d
+   ```
+   También puede llamarse por URL con `CRON_TOKEN`:
+   ```
+   https://tu-dominio.com/cron/cve-sync.php?token=TU_CRON_TOKEN&report=1
+   ```
+   Opciones de informe: `--report-scope=all|group|software`,
+   `--report-group=ID`, `--report-software=ID`,
+   `--report-period=7d|30d|90d|all`, `--report-severity=Critical`,
+   `--report-kev=1` y `--report-epss=0.10`.
+
 ## Arquitectura modular
 
 Cada herramienta es un módulo independiente en `modules/{nombre}/`:
@@ -159,7 +179,8 @@ public_html/
 │   ├── cache/             # Caché de tokens
 │   └── exports/           # Archivos exportados
 └── cron/
-    └── sync.php           # Sincronización programada
+    ├── sync.php           # Sincronización programada
+    └── cve-sync.php       # Sincronización CVE + KEV/EPSS + informes
 ```
 
 ## Licencia
