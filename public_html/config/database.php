@@ -479,6 +479,73 @@ class Database
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
         )");
 
+        // Módulo Remediación: organizaciones, tareas y asistente IA.
+        $db->exec("CREATE TABLE IF NOT EXISTS remediation_orgs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            kind TEXT NOT NULL DEFAULT 'manual',
+            tenant_id INTEGER REFERENCES tenants(id) ON DELETE SET NULL,
+            notes TEXT,
+            created_by INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )");
+
+        $db->exec("CREATE TABLE IF NOT EXISTS remediation_tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            org_id INTEGER NOT NULL REFERENCES remediation_orgs(id) ON DELETE CASCADE,
+            cve_id TEXT NOT NULL,
+            title TEXT,
+            severity TEXT,
+            cvss REAL,
+            epss REAL,
+            kev INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'open',
+            owner TEXT,
+            due_at TEXT,
+            resolved_at TEXT,
+            patch_kb TEXT,
+            fixed_version TEXT,
+            evidence TEXT,
+            notes TEXT,
+            plan TEXT,
+            exception_until TEXT,
+            machine_count INTEGER NOT NULL DEFAULT 0,
+            machines_json TEXT,
+            source TEXT NOT NULL DEFAULT 'manual',
+            created_by INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(org_id, cve_id)
+        )");
+
+        $db->exec("CREATE TABLE IF NOT EXISTS remediation_chats (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            org_id INTEGER REFERENCES remediation_orgs(id) ON DELETE SET NULL,
+            user_id INTEGER,
+            context_type TEXT,
+            context_ref TEXT,
+            title TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )");
+
+        $db->exec("CREATE TABLE IF NOT EXISTS remediation_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id INTEGER NOT NULL REFERENCES remediation_chats(id) ON DELETE CASCADE,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            model TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )");
+
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_remediation_org_kind ON remediation_orgs(kind)");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_remediation_task_org ON remediation_tasks(org_id, status)");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_remediation_task_due ON remediation_tasks(due_at)");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_remediation_task_cve ON remediation_tasks(cve_id)");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_remediation_chat_user ON remediation_chats(user_id, org_id)");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_remediation_msg_chat ON remediation_messages(chat_id)");
+
         // Crear usuario admin por defecto si no existe ninguno
         $stmt = $db->query("SELECT COUNT(*) as cnt FROM users");
         $row = $stmt->fetch();
@@ -504,6 +571,7 @@ class Database
             ['incidents',          'Incidentes y Alertas',          'Incidentes y alertas de Defender XDR',             '1.0.0'],
             ['vulnerabilities',    'Vulnerabilidades (TVM)',        'Vulnerabilidades de equipos y software',           '1.0.0'],
             ['cve',                'CVE (catálogo público)',        'Catálogo público de CVEs e inventario de software', '0.1.0'],
+            ['remediation',        'Remediación',                   'Tareas de remediación, SLA y asistente IA',         '0.1.0'],
             ['secure_score',       'Secure Score',                  'Evolución de la postura de seguridad',             '1.0.0'],
             ['hunting',            'Advanced Hunting (KQL)',        'Consultas programáticas KQL',                      '1.0.0'],
             ['entra_users',        'Usuarios Entra ID',             'Investigación de usuarios: MFA, logins y riesgo',  '1.0.0'],

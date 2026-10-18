@@ -44,7 +44,27 @@ require __DIR__ . '/_tabs.php';
                     <?php if (!empty($cve['source_identifier'])): ?> · Fuente: <?= e((string)$cve['source_identifier']) ?><?php endif; ?>
                 </p>
             </div>
-            <div class="flex items-center gap-2">
+            <div class="flex items-center gap-2 flex-wrap justify-end">
+                <?php
+                $remediationActive = false;
+                try {
+                    $remediationActive = (bool)(Database::fetchOne(
+                        "SELECT is_active FROM modules WHERE module_key = 'remediation'"
+                    )['is_active'] ?? 0);
+                } catch (Throwable $e) {
+                    $remediationActive = false;
+                }
+                ?>
+                <?php if ($remediationActive): ?>
+                    <a href="<?= base_url('modules/remediation?tab=tasks&new_cve=' . urlencode((string)$cve['cve_id'])) ?>"
+                       class="inline-flex items-center gap-1.5 px-3 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors">
+                        Crear tarea de remediación
+                    </a>
+                    <a href="<?= base_url('modules/remediation?tab=assistant&cve=' . urlencode((string)$cve['cve_id'])) ?>"
+                       class="inline-flex items-center gap-1.5 px-3 py-2 border border-gray-200 dark:border-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">
+                        Preguntar a la IA
+                    </a>
+                <?php endif; ?>
                 <a href="<?= e((string)($cve['nvd_url'] ?? ('https://nvd.nist.gov/vuln/detail/' . $cve['cve_id']))) ?>"
                    target="_blank" rel="noopener noreferrer"
                    class="inline-flex items-center gap-1.5 px-3 py-2 border border-gray-200 dark:border-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">

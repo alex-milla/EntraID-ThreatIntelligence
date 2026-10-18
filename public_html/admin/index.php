@@ -551,6 +551,7 @@ class AdminController
             'analyze_article'  => 'Analizar artículo (Threat Intel)',
             'translate_article'=> 'Traducir artículo (Threat Intel)',
             'cve_report'       => 'Informe de CVE con IA',
+            'remediation_assistant' => 'Asistente de remediación',
             'chat'             => 'Chat / Análisis IA',
         ];
         $taskProfiles = [];
