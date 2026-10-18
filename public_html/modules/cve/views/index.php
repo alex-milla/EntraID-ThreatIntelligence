@@ -256,6 +256,13 @@ foreach ($companyGroups as $companyRow) {
                                placeholder="Buscar por CVE o descripción…"
                                class="w-full pl-9 pr-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
                     </div>
+                    <select name="severity" aria-label="Filtrar por severidad"
+                            class="w-full sm:w-48 px-2 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+                        <option value="">Todas las severidades</option>
+                        <?php foreach (['Critical' => 'Crítica', 'High' => 'Alta', 'Medium' => 'Media', 'Low' => 'Baja'] as $sev => $sevLabel): ?>
+                            <option value="<?= e($sev) ?>" <?= ($catalogFilters['severity'] ?? '') === $sev ? 'selected' : '' ?>><?= e($sevLabel) ?></option>
+                        <?php endforeach; ?>
+                    </select>
                     <div class="flex items-center gap-2">
                         <button type="submit" class="px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors">
                             Buscar
@@ -267,17 +274,7 @@ foreach ($companyGroups as $companyRow) {
                 </div>
                 <p class="text-[11px] text-gray-400">Pulsa Intro o Buscar para aplicar los filtros.</p>
 
-                <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
-                    <label class="block">
-                        <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Severidad</span>
-                        <select name="severity"
-                                class="w-full px-2 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
-                            <option value="">Todas las severidades</option>
-                            <?php foreach (['Critical' => 'Crítica', 'High' => 'Alta', 'Medium' => 'Media', 'Low' => 'Baja'] as $sev => $sevLabel): ?>
-                                <option value="<?= e($sev) ?>" <?= ($catalogFilters['severity'] ?? '') === $sev ? 'selected' : '' ?>><?= e($sevLabel) ?></option>
-                            <?php endforeach; ?>
-                        </select>
-                    </label>
+                <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
                     <label class="block">
                         <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Producto</span>
                         <input type="text" name="product" value="<?= e($catalogFilters['product'] ?? '') ?>" placeholder="vendor / producto"
@@ -377,7 +374,7 @@ foreach ($companyGroups as $companyRow) {
             </div>
         <?php else: ?>
             <div class="overflow-x-auto">
-                <table class="w-full text-sm">
+                <table id="catalog-cve-table" class="w-full text-sm">
                     <thead>
                         <tr class="border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-xs text-gray-500 uppercase">
                             <?php if ($isAdmin): ?>
@@ -398,6 +395,7 @@ foreach ($companyGroups as $companyRow) {
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-gray-100 dark:divide-gray-700/50">
+                        <?php $catalogColspan = $isAdmin ? 10 : 9; ?>
                         <?php foreach ($catalog as $cve): ?>
                             <?php
                             $sev = (string)($cve['severity'] ?? '');
@@ -421,9 +419,17 @@ foreach ($companyGroups as $companyRow) {
                                     </td>
                                 <?php endif; ?>
                                 <td class="px-4 py-3 whitespace-nowrap">
-                                    <a href="<?= base_url('modules/cve/detail/' . rawurlencode((string)$cve['cve_id'])) ?>" class="font-mono text-xs font-medium text-brand-600 dark:text-brand-400 hover:underline">
+                                    <button type="button"
+                                            class="js-catalog-toggle cursor-pointer inline-flex items-center gap-1.5 font-mono text-xs font-medium text-brand-600 dark:text-brand-400 hover:underline"
+                                            data-panel-url="<?= e(base_url('modules/cve/detail/' . rawurlencode((string)$cve['cve_id']) . '/catalog-panel')) ?>"
+                                            title="Desplegar detalle del CVE"
+                                            aria-expanded="false"
+                                            aria-controls="catalog-panel-<?= e((string)$cve['cve_id']) ?>">
+                                        <svg class="js-catalog-chevron w-3.5 h-3.5 text-gray-400 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                                        </svg>
                                         <?= e((string)$cve['cve_id']) ?>
-                                    </a>
+                                    </button>
                                 </td>
                                 <td class="px-4 py-3">
                                     <span class="inline-flex px-2 py-0.5 text-[10px] rounded-full <?= $sevClass ?>"><?= e($sev !== '' ? $sev : '—') ?></span>
@@ -475,6 +481,9 @@ foreach ($companyGroups as $companyRow) {
                                 <td class="px-4 py-3 text-xs text-gray-500 max-w-[420px]">
                                     <?= e(truncate((string)($cve['description'] ?? ''), 180)) ?>
                                 </td>
+                            </tr>
+                            <tr id="catalog-panel-<?= e((string)$cve['cve_id']) ?>" class="js-catalog-expand hidden">
+                                <td colspan="<?= (int)$catalogColspan ?>" class="p-0"></td>
                             </tr>
                         <?php endforeach; ?>
                     </tbody>
@@ -951,6 +960,98 @@ foreach ($companyGroups as $companyRow) {
         };
 
         updateSelection();
+    })();
+    </script>
+
+    <script>
+    (function () {
+        'use strict';
+        var table = document.getElementById('catalog-cve-table');
+        if (!table) {
+            return;
+        }
+
+        var currentPanel = null;
+        var currentButton = null;
+
+        function setOpen(button, panel, open) {
+            if (!button || !panel) {
+                return;
+            }
+            panel.classList.toggle('hidden', !open);
+            button.setAttribute('aria-expanded', open ? 'true' : 'false');
+            var chevron = button.querySelector('.js-catalog-chevron');
+            if (chevron) {
+                chevron.classList.toggle('rotate-90', open);
+            }
+        }
+
+        function closeCurrent() {
+            if (currentPanel && currentButton) {
+                setOpen(currentButton, currentPanel, false);
+            }
+            currentPanel = null;
+            currentButton = null;
+        }
+
+        table.addEventListener('click', function (event) {
+            var button = event.target && event.target.closest
+                ? event.target.closest('.js-catalog-toggle')
+                : null;
+            if (!button || !table.contains(button)) {
+                return;
+            }
+            event.preventDefault();
+
+            var row = button.closest('tr');
+            var panel = row ? row.nextElementSibling : null;
+            if (!panel || !panel.classList.contains('js-catalog-expand')) {
+                return;
+            }
+
+            if (currentPanel === panel && !panel.classList.contains('hidden')) {
+                closeCurrent();
+                return;
+            }
+
+            closeCurrent();
+            currentPanel = panel;
+            currentButton = button;
+            setOpen(button, panel, true);
+
+            var cell = panel.querySelector('td');
+            if (!cell || panel.dataset.loaded === '1' || panel.dataset.loading === '1') {
+                return;
+            }
+
+            panel.dataset.loading = '1';
+            cell.innerHTML = '<div class="p-4 text-xs text-gray-500">Cargando CVE…</div>';
+            var url = button.dataset.panelUrl || '';
+            if (!url) {
+                delete panel.dataset.loading;
+                cell.innerHTML = '<div class="p-4 text-xs text-red-600">No se pudo cargar el CVE.</div>';
+                return;
+            }
+
+            fetch(url, {
+                method: 'GET',
+                headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                credentials: 'same-origin'
+            }).then(function (res) {
+                if (!res.ok) {
+                    throw new Error('HTTP ' + res.status);
+                }
+                return res.text();
+            }).then(function (html) {
+                cell.innerHTML = html;
+                panel.dataset.loaded = '1';
+                delete panel.dataset.loading;
+            }).catch(function (err) {
+                delete panel.dataset.loading;
+                cell.innerHTML = '<div class="p-4 text-xs text-red-600">No se pudo cargar el CVE: '
+                    + (err && err.message ? err.message : 'error desconocido') + '</div>';
+            });
+        });
     })();
     </script>
 <?php elseif ($tab === 'reports'): ?>

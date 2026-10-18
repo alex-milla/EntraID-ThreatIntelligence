@@ -35,6 +35,7 @@ class Module_Cve extends BaseModule
         return [
             ['method' => 'GET',  'pattern' => '',                'handler' => [$this, 'index']],
             ['method' => 'GET',  'pattern' => 'detail/{cveId}/panel', 'handler' => [$this, 'detailPanel']],
+            ['method' => 'GET',  'pattern' => 'detail/{cveId}/catalog-panel', 'handler' => [$this, 'catalogPanel']],
             ['method' => 'GET',  'pattern' => 'detail/{cveId}',  'handler' => [$this, 'detail']],
             ['method' => 'POST', 'pattern' => 'exploits/refresh', 'handler' => [$this, 'refreshExploits']],
             ['method' => 'GET',  'pattern' => 'status',          'handler' => [$this, 'syncStatus']],
@@ -583,49 +584,89 @@ class Module_Cve extends BaseModule
         Auth::require();
 
         $cveId = strtoupper(rawurldecode((string)($params['cveId'] ?? '')));
-        $valid = (bool)preg_match('/^CVE-\d{4}-\d{4,}$/', $cveId);
-        $cve = $valid ? $this->getCatalogCve($cveId) : null;
+        $data = $this->loadCveDetailData($cveId);
 
-        $products = [];
-        $references = [];
-        $cwes = [];
-        $kev = null;
-        $epss = null;
+        http_response_code($data !== null ? 200 : 404);
+        echo $this->page('detail', $data ?? [
+            'cveId'      => $cveId,
+            'cve'        => null,
+            'products'   => [],
+            'references' => [],
+            'cwes'       => [],
+            'kev'        => null,
+            'epss'       => null,
+        ]);
+    }
 
-        if ($cve !== null) {
-            $products = CveDatabase::fetchAll(
-                "SELECT vendor, product FROM cve_product WHERE cve_id = ? ORDER BY vendor ASC, product ASC",
-                [$cveId]
-            );
-            $references = safe_json_decode($cve['references_json'] ?? '[]', []);
-            $cwes = safe_json_decode($cve['cwe_ids'] ?? '[]', []);
-            $kev = CveDatabase::fetchOne("SELECT * FROM cve_kev WHERE cve_id = ?", [$cveId]);
-            $epss = CveDatabase::fetchOne("SELECT * FROM cve_epss WHERE cve_id = ?", [$cveId]);
+    /**
+     * Panel inline del catálogo: mismo contenido y acciones que la ficha
+     * completa, sin la cabecera de página.
+     */
+    public function catalogPanel(array $params = []): void
+    {
+        Auth::require();
+
+        $cveId = strtoupper(rawurldecode((string)($params['cveId'] ?? '')));
+        $data = $this->loadCveDetailData($cveId);
+
+        header('Content-Type: text/html; charset=utf-8');
+        header('Cache-Control: no-store, no-cache, must-revalidate');
+
+        if ($data === null) {
+            http_response_code(404);
+            echo '<div class="p-4 text-sm text-gray-500">No hay datos para este CVE en el catálogo local.</div>';
+            return;
         }
 
-        http_response_code($cve !== null ? 200 : 404);
+        $isInline = true;
+        extract($data);
+        echo '<div class="p-4 bg-gray-50/70 dark:bg-gray-900/40 border-t border-gray-100 dark:border-gray-800">';
+        require __DIR__ . '/views/_cve_detail_content.php';
+        echo '</div>';
+    }
 
-        if ($cve !== null) {
-            $sourceDescription = (string)($cve['description'] ?? '');
-            $cachedEs = trim((string)($cve['description_es'] ?? ''));
-            if ($cachedEs !== '' && hash_equals((string)($cve['description_es_hash'] ?? ''), sha1($sourceDescription))) {
-                $cve['description_display'] = $cachedEs;
-                $cve['description_display_lang'] = 'es';
-            } else {
-                $cve['description_display'] = $sourceDescription;
-                $cve['description_display_lang'] = (string)($cve['description_lang'] ?? 'en');
-            }
+    /**
+     * Datos comunes de la ficha completa y del panel inline del catálogo.
+     */
+    private function loadCveDetailData(string $cveId): ?array
+    {
+        if (!preg_match('/^CVE-\d{4}-\d{4,}$/', $cveId)) {
+            return null;
         }
 
-        echo $this->page('detail', [
+        $cve = $this->getCatalogCve($cveId);
+        if ($cve === null) {
+            return null;
+        }
+
+        $products = CveDatabase::fetchAll(
+            "SELECT vendor, product FROM cve_product WHERE cve_id = ? ORDER BY vendor ASC, product ASC",
+            [$cveId]
+        );
+        $references = safe_json_decode($cve['references_json'] ?? '[]', []);
+        $cwes = safe_json_decode($cve['cwe_ids'] ?? '[]', []);
+        $kev = CveDatabase::fetchOne("SELECT * FROM cve_kev WHERE cve_id = ?", [$cveId]);
+        $epss = CveDatabase::fetchOne("SELECT * FROM cve_epss WHERE cve_id = ?", [$cveId]);
+
+        $sourceDescription = (string)($cve['description'] ?? '');
+        $cachedEs = trim((string)($cve['description_es'] ?? ''));
+        if ($cachedEs !== '' && hash_equals((string)($cve['description_es_hash'] ?? ''), sha1($sourceDescription))) {
+            $cve['description_display'] = $cachedEs;
+            $cve['description_display_lang'] = 'es';
+        } else {
+            $cve['description_display'] = $sourceDescription;
+            $cve['description_display_lang'] = (string)($cve['description_lang'] ?? 'en');
+        }
+
+        return [
             'cveId'      => $cveId,
             'cve'        => $cve,
-            'products'   => $products,
+            'products'   => is_array($products) ? $products : [],
             'references' => is_array($references) ? $references : [],
             'cwes'       => is_array($cwes) ? $cwes : [],
             'kev'        => $kev,
             'epss'       => $epss,
-        ]);
+        ];
     }
 
     /**
