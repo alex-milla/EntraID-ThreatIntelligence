@@ -649,35 +649,213 @@ final class CveReportAi
         }
 
         return "Eres un analista de seguridad sénior. Usando SOLO la información proporcionada, "
-            . "genera EXACTAMENTE cuatro secciones, cada una empezando por el encabezado numérico indicado:\n\n"
+            . "redacta un análisis BREVE para un responsable técnico. Devuelve EXACTAMENTE estas "
+            . "cuatro secciones, cada una empezando por su encabezado numerado:\n\n"
             . "1. Evaluación del riesgo\n"
-            . "Explica la naturaleza de la vulnerabilidad, los componentes afectados (si están claros), "
-            . "las precondiciones, el esfuerzo necesario para atacar y el impacto en confidencialidad, "
-            . "integridad y disponibilidad. Ten en cuenta señales como CVSS/EPSS, la presencia en CISA KEV "
-            . "y los exploits públicos disponibles. Si algún dato no está claro, escribe \"Desconocido\".\n\n"
-            . "2. Escenarios de ataque potenciales\n"
-            . "Describe al menos un escenario realista de extremo a extremo: punto de entrada, si es previo "
-            . "o posterior a la autenticación, privilegios necesarios, movimiento lateral y consecuencias "
-            . "realistas (robo de datos, ejecución remota de código, interrupción del negocio). Si hay varias "
-            . "vías, elige la de mayor riesgo y justifícala brevemente.\n\n"
-            . "3. Recomendaciones de mitigación\n"
-            . "Proporciona acciones concretas y priorizadas: actualización o parche si se referencia una "
-            . "corrección del fabricante, mitigaciones temporales (controles de red, desactivación de "
-            . "funciones, reglas WAF, endurecimiento de configuración) e ideas de detección y monitorización. "
-            . "Cita solo enlaces presentes en las referencias proporcionadas; NO inventes URLs. Si no está "
-            . "claro si hay parche, escribe \"Estado del parche: Desconocido\".\n\n"
-            . "4. Resumen ejecutivo\n"
-            . "Resume en dos párrafos concisos para responsables no técnicos: riesgo de negocio, "
-            . "probabilidad de explotación y urgencia. Termina con una llamada a la acción clara.\n\n"
-            . "Reglas estrictas de formato:\n"
-            . "- Solo texto plano. Sin viñetas, sin guiones, sin Markdown, sin emojis.\n"
-            . "- Cada uno de los cuatro encabezados debe aparecer literalmente en su propia línea.\n"
-            . "- Separa los párrafos con una única línea en blanco.\n"
-            . "- No añadas secciones extra ni una conclusión más allá de las cuatro secciones.\n"
-            . "- Si no estás seguro, escribe \"Desconocido\" en lugar de especular.\n"
-            . "- Si el informe incluye varios CVEs, evalúa el conjunto sin repetir la misma información y "
-            . "prioriza los de mayor riesgo.\n\n"
+            . "2. Escenarios de ataque\n"
+            . "3. Mitigación\n"
+            . "4. Resumen ejecutivo\n\n"
+            . "Formato obligatorio:\n"
+            . "- Usa SOLO viñetas, una por línea, empezando por \"- \".\n"
+            . "- Máximo 4 viñetas por sección.\n"
+            . "- Cada viñeta debe ocupar una sola línea y tener 20 palabras como máximo.\n"
+            . "- No escribas párrafos, introducciones ni conclusiones fuera de las cuatro secciones.\n"
+            . "- No repitas CVSS, EPSS, KEV, fechas ni la descripción literal: ya aparecen en el informe.\n"
+            . "- No incluyas URLs ni enlaces: las referencias se muestran aparte.\n"
+            . "- Sin Markdown (nada de **, #, `), sin emojis, sin tablas.\n"
+            . "- Español técnico y directo. Si un dato es desconocido, escribe una viñeta con \"Desconocido\".\n"
+            . "- Si hay varios CVEs, prioriza los de mayor riesgo y no repitas lo mismo.\n\n"
+            . "Contenido esperado:\n"
+            . "1. Naturaleza, componente afectado, precondiciones, impacto CIA y señal KEV/EPSS/exploits.\n"
+            . "2. Un escenario realista: entrada, autenticación, privilegios y consecuencia.\n"
+            . "3. Acciones concretas: parche, mitigación temporal y detección.\n"
+            . "4. Riesgo de negocio, probabilidad y urgencia (2-3 viñetas).\n\n"
             . "DATOS DE LOS CVEs:\n" . implode("\n", $data);
+    }
+
+    /**
+     * Convierte la respuesta de la IA en secciones con viñetas.
+     * Tolera que el modelo ignore el formato y devuelva prosa.
+     *
+     * @return array<int,array{title:string,bullets:string[],paragraphs:string[]}>
+     */
+    public static function parseAiSections(?string $text): array
+    {
+        $text = trim((string)$text);
+        if ($text === '') {
+            return [];
+        }
+
+        $text = str_replace(["\r\n", "\r"], "\n", $text);
+        $text = preg_replace('/\*\*(.+?)\*\*/u', '$1', $text) ?? $text;
+        $text = preg_replace('/^#{1,6}\s*/m', '', $text) ?? $text;
+        $text = str_replace('`', '', $text);
+
+        $parts = preg_split('/(?=^\s*[1-4]\.\s+\S)/mu', $text) ?: [];
+        $sections = [];
+
+        foreach ($parts as $part) {
+            $part = trim($part);
+            if ($part === '') {
+                continue;
+            }
+
+            $lines = preg_split('/\n/', $part) ?: [];
+            $title = trim((string)array_shift($lines));
+            $title = preg_replace('/^[1-4]\.\s*/u', '', $title) ?? $title;
+
+            $bullets = [];
+            $paragraphs = [];
+            $buffer = '';
+
+            foreach ($lines as $line) {
+                $line = trim($line);
+                if ($line === '') {
+                    if ($buffer !== '') {
+                        $paragraphs[] = $buffer;
+                        $buffer = '';
+                    }
+                    continue;
+                }
+                if (preg_match('/^[-•*]\s+(.+)$/u', $line, $m)
+                    || preg_match('/^\d+[.)]\s+(.+)$/u', $line, $m)) {
+                    if ($buffer !== '') {
+                        $paragraphs[] = $buffer;
+                        $buffer = '';
+                    }
+                    $bullets[] = trim($m[1]);
+                    continue;
+                }
+                $buffer .= ($buffer !== '' ? ' ' : '') . $line;
+            }
+            if ($buffer !== '') {
+                $paragraphs[] = $buffer;
+            }
+
+            // Si el modelo ignoró las viñetas, partir las frases para no mostrar parrafadas.
+            if ($bullets === [] && $paragraphs !== []) {
+                foreach ($paragraphs as $paragraph) {
+                    foreach (self::splitSentences($paragraph) as $sentence) {
+                        $bullets[] = $sentence;
+                    }
+                }
+                $paragraphs = [];
+            }
+
+            $bullets = array_slice($bullets, 0, 6);
+            $paragraphs = array_slice($paragraphs, 0, 2);
+
+            if ($title !== '') {
+                $sections[] = [
+                    'title'      => $title,
+                    'bullets'    => $bullets,
+                    'paragraphs' => $paragraphs,
+                ];
+            }
+        }
+
+        if ($sections === []) {
+            $bullets = [];
+            foreach (preg_split('/\n/', $text) ?: [] as $line) {
+                $line = trim($line);
+                if ($line === '') {
+                    continue;
+                }
+                $bullets[] = preg_replace('/^[-•*]\s*/u', '', $line) ?? $line;
+            }
+            if ($bullets !== []) {
+                $sections[] = [
+                    'title'      => 'Análisis',
+                    'bullets'    => array_slice($bullets, 0, 6),
+                    'paragraphs' => [],
+                ];
+            }
+        }
+
+        return $sections;
+    }
+
+    /**
+     * Recupera el texto de IA de un informe antiguo guardado en formato ASCII.
+     */
+    public static function extractAiTextFromContent(?string $content): string
+    {
+        $content = (string)$content;
+        if ($content === '') {
+            return '';
+        }
+
+        $lines = preg_split('/\r\n|\n|\r/', $content) ?: [];
+        $started = false;
+        $raw = [];
+
+        foreach ($lines as $line) {
+            if (!$started) {
+                if (str_contains($line, 'Evaluación de riesgo con IA')) {
+                    $started = true;
+                }
+                continue;
+            }
+            if (str_starts_with($line, '└')) {
+                break;
+            }
+            if (str_starts_with($line, '| ')) {
+                $raw[] = substr($line, 2);
+            } elseif (trim($line) === '|') {
+                $raw[] = '';
+            }
+        }
+
+        $result = [];
+        $buffer = '';
+        foreach ($raw as $line) {
+            $line = trim($line);
+            if ($line === '') {
+                if ($buffer !== '') {
+                    $result[] = $buffer;
+                    $buffer = '';
+                }
+                $result[] = '';
+                continue;
+            }
+            if (preg_match('/^-{3,}$/', $line)) {
+                continue;
+            }
+            if (preg_match('/^[1-4]\.\s+\S/u', $line)) {
+                if ($buffer !== '') {
+                    $result[] = $buffer;
+                    $buffer = '';
+                }
+                $result[] = $line;
+                continue;
+            }
+            $buffer .= ($buffer !== '' ? ' ' : '') . $line;
+        }
+        if ($buffer !== '') {
+            $result[] = $buffer;
+        }
+
+        return trim(implode("\n", $result));
+    }
+
+    /**
+     * @return string[]
+     */
+    private static function splitSentences(string $text): array
+    {
+        $text = trim(preg_replace('/\s+/u', ' ', $text) ?? '');
+        if ($text === '') {
+            return [];
+        }
+        $parts = preg_split('/(?<=[.!?])\s+/u', $text) ?: [];
+        $out = [];
+        foreach ($parts as $part) {
+            $part = trim($part);
+            if ($part !== '') {
+                $out[] = $part;
+            }
+        }
+        return array_slice($out, 0, 6);
     }
 
     // ============================================================
@@ -792,7 +970,7 @@ final class CveReportAi
                     $result = $llm->chat(
                         self::systemPrompt(),
                         self::userPrompt($items),
-                        ['max_tokens' => 3000, 'temperature' => 0.2],
+                        ['max_tokens' => 1200, 'temperature' => 0.2],
                         $profileId > 0 ? $profileId : null
                     );
                     if (!empty($result['success'])) {
@@ -822,17 +1000,16 @@ final class CveReportAi
                 ]);
             }
 
-            $content = self::renderReport($items, $aiText, $aiError, $localOnly);
             $status = ($localOnly || $aiText !== null) ? 'done' : 'error';
             $durationMs = (int)round((microtime(true) - $started) * 1000);
 
             CveDatabase::query(
                 "UPDATE cve_ai_reports
-                 SET content_text = ?, status = ?, ai_error = ?, ai_model = ?,
+                 SET ai_text = ?, content_text = NULL, status = ?, ai_error = ?, ai_model = ?,
                      ai_duration_ms = ?, finished_at = datetime('now'), token = NULL
                  WHERE id = ?",
                 [
-                    $content,
+                    $aiText,
                     $status,
                     $aiError !== '' ? substr($aiError, 0, 2000) : null,
                     $model !== '' ? $model : null,

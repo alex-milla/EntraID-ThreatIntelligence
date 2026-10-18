@@ -770,7 +770,7 @@ foreach ($flashData as $type => $msg):
                 <h2 class="text-sm font-semibold">Informe de CVE con IA</h2>
                 <p class="text-xs text-gray-500 mt-1">
                     Introduce uno o varios CVEs (separados por comas) y la IA redactará el análisis de riesgo.
-                    Formato de informe tipo SploitScan, listo para imprimir o guardar en PDF.
+                    Informe estructurado con viñetas, listo para imprimir o guardar en PDF.
                 </p>
             </div>
         </div>
@@ -1041,9 +1041,6 @@ foreach ($flashData as $type => $msg):
                                 </td>
                                 <td class="px-4 py-3 text-right whitespace-nowrap">
                                     <a href="<?= $aiUrl ?>" class="text-xs text-brand-600 dark:text-brand-400 hover:underline">Ver</a>
-                                    <?php if (in_array($aiStatus, ['done', 'error'], true)): ?>
-                                        <a href="<?= $aiUrl ?>/txt" class="text-xs text-gray-600 dark:text-gray-300 hover:underline ml-3">TXT</a>
-                                    <?php endif; ?>
                                 </td>
                             </tr>
                         <?php endforeach; ?>

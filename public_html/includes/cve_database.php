@@ -201,6 +201,7 @@ class CveDatabase
             status TEXT NOT NULL DEFAULT 'pending',
             data_json TEXT,
             content_text TEXT,
+            ai_text TEXT,
             ai_profile_id INTEGER,
             ai_model TEXT,
             ai_error TEXT,
@@ -267,6 +268,10 @@ class CveDatabase
         }
         if (!isset($aiCols['started_at'])) {
             $db->exec("ALTER TABLE cve_ai_reports ADD COLUMN started_at TEXT");
+        }
+        // v0.2.7.13: respuesta de la IA sin formatear (la vista es HTML).
+        if (!isset($aiCols['ai_text'])) {
+            $db->exec("ALTER TABLE cve_ai_reports ADD COLUMN ai_text TEXT");
         }
     }
 

@@ -45,7 +45,6 @@ class Module_Cve extends BaseModule
             ['method' => 'POST', 'pattern' => 'reports/ai-retry/{id}', 'handler' => [$this, 'retryAiReport']],
             ['method' => 'GET',  'pattern' => 'reports/ai-status/{id}', 'handler' => [$this, 'aiReportStatus']],
             ['method' => 'GET',  'pattern' => 'report/{id}/csv',  'handler' => [$this, 'reportCsv']],
-            ['method' => 'GET',  'pattern' => 'report-ai/{id}/txt', 'handler' => [$this, 'aiReportTxt']],
             ['method' => 'GET',  'pattern' => 'report-ai/{id}',   'handler' => [$this, 'aiReportView']],
             ['method' => 'GET',  'pattern' => 'report/{id}',      'handler' => [$this, 'reportView']],
             ['method' => 'POST', 'pattern' => 'sync',            'handler' => [$this, 'triggerSync']],
@@ -1112,33 +1111,23 @@ class Module_Cve extends BaseModule
             http_response_code(404);
         }
 
-        echo $this->page('ai_report', [
-            'report'   => $report,
-            'profiles' => llm_profile_list(),
-        ]);
-    }
-
-    public function aiReportTxt(array $params = []): void
-    {
-        Auth::require();
-
-        $id = (int)($params['id'] ?? 0);
-        $report = $id > 0
-            ? CveDatabase::fetchOne("SELECT id, title, content_text FROM cve_ai_reports WHERE id = ?", [$id])
-            : null;
-        if ($report === null || trim((string)($report['content_text'] ?? '')) === '') {
-            http_response_code(404);
-            echo 'Informe no disponible.';
-            return;
+        $items = $report !== null ? safe_json_decode((string)($report['data_json'] ?? ''), []) : [];
+        if (!is_array($items)) {
+            $items = [];
         }
 
-        $filename = 'informe-cve-ia-' . $id . '-' . date('Ymd-His') . '.txt';
-        header('Content-Type: text/plain; charset=utf-8');
-        header('Content-Disposition: attachment; filename="' . $filename . '"');
-        header('Cache-Control: no-store, no-cache, must-revalidate');
+        $aiText = $report !== null ? trim((string)($report['ai_text'] ?? '')) : '';
+        if ($aiText === '' && $report !== null && empty($report['no_ai'])) {
+            // Compatibilidad: informes antiguos guardados en formato ASCII.
+            $aiText = CveReportAi::extractAiTextFromContent((string)($report['content_text'] ?? ''));
+        }
 
-        echo "\xEF\xBB\xBF" . (string)$report['content_text'];
-        exit;
+        echo $this->page('ai_report', [
+            'report'   => $report,
+            'items'    => $items,
+            'aiText'   => $aiText,
+            'sections' => CveReportAi::parseAiSections($aiText),
+        ]);
     }
 
     /**
