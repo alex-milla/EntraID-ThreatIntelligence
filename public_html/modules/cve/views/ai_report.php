@@ -90,7 +90,7 @@ $statusClasses = [
                     <?php if (!empty($report['ai_duration_ms'])): ?>
                         · <?= e(number_format((int)$report['ai_duration_ms'] / 1000, 1, ',', '.')) ?> s
                     <?php endif; ?>
-                    · Generado <?= e(format_date((string)($report['created_at'] ?? ''), 'd/m/Y H:i')) ?>
+                    · Generado <?= e(format_db_date((string)($report['created_at'] ?? ''), 'd/m/Y H:i')) ?>
                 </p>
             </div>
             <div class="text-right text-xs text-gray-400">
@@ -101,9 +101,15 @@ $statusClasses = [
     </div>
 
     <?php if ($isProcessing): ?>
-        <div class="mb-5 px-4 py-3 rounded-lg text-sm bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-300 flex items-center gap-3" id="ai-processing-banner">
-            <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg>
-            La IA está redactando la evaluación de riesgo. Esta página se actualizará sola cuando termine.
+        <div class="mb-5 px-4 py-3 rounded-lg text-sm bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-300 flex items-start justify-between gap-3 flex-wrap" id="ai-processing-banner">
+            <div class="flex items-center gap-3 min-w-0">
+                <svg class="w-4 h-4 animate-spin shrink-0" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg>
+                <span id="ai-processing-text">La IA está redactando la evaluación de riesgo. Esta página se actualizará sola cuando termine.</span>
+            </div>
+            <button type="button" onclick="runCveAiReport()"
+                    class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded-lg transition-colors shrink-0">
+                Ejecutar ahora
+            </button>
         </div>
     <?php endif; ?>
 
@@ -152,94 +158,191 @@ $statusClasses = [
     </style>
 
     <script>
-    var CVE_AI_STATUS_URL = <?= json_encode(base_url('modules/cve/reports/ai-status/' . (int)$report['id'])) ?>;
-    var CVE_AI_RETRY_URL = <?= json_encode(base_url('modules/cve/reports/ai-retry/' . (int)$report['id'])) ?>;
-    var CVE_AI_RUN_URL = <?= json_encode(base_url('modules/cve/reports/ai-run/' . (int)$report['id'])) ?>;
-    var CVE_AI_CONTENT = <?= json_encode($content, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
-
-    function copyCveAiReport(button) {
-        var text = CVE_AI_CONTENT || '';
-        if (!text) return;
-        var done = function () {
-            var original = button.textContent;
-            button.textContent = 'Copiado';
-            setTimeout(function () { button.textContent = original; }, 1500);
-        };
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-            navigator.clipboard.writeText(text).then(done).catch(function () {
-                fallbackCopyCveAiReport(text, done);
-            });
-        } else {
-            fallbackCopyCveAiReport(text, done);
-        }
-    }
-
-    function fallbackCopyCveAiReport(text, done) {
-        var area = document.createElement('textarea');
-        area.value = text;
-        area.style.position = 'fixed';
-        area.style.opacity = '0';
-        document.body.appendChild(area);
-        area.select();
-        try { document.execCommand('copy'); if (done) done(); } catch (e) {}
-        document.body.removeChild(area);
-    }
-
-    function cveAiErrorText(err) {
-        return (err && err.message) ? err.message : 'error de red';
-    }
-
-    function runCveAiReport() {
-        api('POST', CVE_AI_RUN_URL, {}).then(function () {
-            window.location.reload();
-        }).catch(function (err) {
-            var banner = document.getElementById('ai-processing-banner');
-            if (banner) {
-                banner.textContent = 'La petición se interrumpió; seguimos comprobando el estado… (' + cveAiErrorText(err) + ')';
-            }
-            startCveAiPolling();
-        });
-    }
-
-    function startCveAiPolling() {
-        var tries = 0;
-        var timer = setInterval(function () {
-            tries++;
-            if (tries > 300) {
-                clearInterval(timer);
-                return;
-            }
-            api('GET', CVE_AI_STATUS_URL).then(function (res) {
-                if (res.success && (res.status === 'done' || res.status === 'error')) {
-                    clearInterval(timer);
-                    window.location.reload();
-                }
-            }).catch(function () { /* se reintenta */ });
-        }, 3000);
-    }
-
-    function retryCveAiReport(button) {
-        if (button) button.disabled = true;
-        api('POST', CVE_AI_RETRY_URL, {}).then(function (res) {
-            if (!res.success) {
-                alert(res.error || 'No se pudo reintentar el informe.');
-                if (button) button.disabled = false;
-                return;
-            }
-            window.location.reload();
-        }).catch(function (err) {
-            alert('No se pudo reintentar: ' + cveAiErrorText(err));
-            if (button) button.disabled = false;
-        });
-    }
-
-    <?php if ($status === 'pending'): ?>
     (function () {
-        // Informe creado pero sin ejecutar (p. ej. se cortó la petición): lo lanzamos aquí.
-        runCveAiReport();
+        'use strict';
+
+        var STATUS_URL = <?= json_encode(base_url('modules/cve/reports/ai-status/' . (int)$report['id'])) ?>;
+        var RETRY_URL  = <?= json_encode(base_url('modules/cve/reports/ai-retry/' . (int)$report['id'])) ?>;
+        var RUN_URL    = <?= json_encode(base_url('modules/cve/reports/ai-run/' . (int)$report['id'])) ?>;
+        var CONTENT    = <?= json_encode($content, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
+        var STATUS     = <?= json_encode($status) ?>;
+
+        var pollTimer = null;
+        var running = false;
+
+        function csrfToken() {
+            var el = document.querySelector('input[name="csrf_token"]');
+            return el ? el.value : '';
+        }
+
+        function parseResponse(res) {
+            return res.text().then(function (text) {
+                var payload;
+                try {
+                    payload = text ? JSON.parse(text) : {};
+                } catch (e) {
+                    var snippet = (text || '').replace(/\s+/g, ' ').trim().slice(0, 160);
+                    var err = new Error('HTTP ' + res.status + (snippet ? ' · ' + snippet : ''));
+                    err.httpStatus = res.status;
+                    throw err;
+                }
+                if (res.status === 401) {
+                    window.location.href = (window.APP_URL || '') + '/admin/login';
+                }
+                return payload;
+            });
+        }
+
+        function postJson(url, data) {
+            return fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'X-CSRF-Token': csrfToken()
+                },
+                credentials: 'same-origin',
+                body: JSON.stringify(data || {})
+            }).then(parseResponse);
+        }
+
+        function getJson(url) {
+            return fetch(url, {
+                headers: {
+                    'Accept': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
+                credentials: 'same-origin'
+            }).then(parseResponse);
+        }
+
+        function errorText(err) {
+            return (err && err.message) ? err.message : 'error de red';
+        }
+
+        function setBanner(text) {
+            var el = document.getElementById('ai-processing-text');
+            if (el) {
+                el.textContent = text;
+            }
+        }
+
+        function startPolling() {
+            if (pollTimer) {
+                return;
+            }
+            var tries = 0;
+            pollTimer = setInterval(function () {
+                tries++;
+                if (tries > 300) {
+                    clearInterval(pollTimer);
+                    pollTimer = null;
+                    return;
+                }
+                getJson(STATUS_URL).then(function (res) {
+                    if (res.success && (res.status === 'done' || res.status === 'error')) {
+                        clearInterval(pollTimer);
+                        pollTimer = null;
+                        window.location.reload();
+                    }
+                }).catch(function () { /* se reintenta */ });
+            }, 3000);
+        }
+
+        function runNow() {
+            if (running) {
+                return;
+            }
+            running = true;
+            startPolling();
+            setBanner('Ejecutando el informe… si la conexión se corta, seguiremos consultando el estado.');
+
+            postJson(RUN_URL, {}).then(function (res) {
+                if (res && res.url) {
+                    window.location.href = res.url;
+                    return;
+                }
+                if (res && res.error) {
+                    setBanner(res.error);
+                }
+            }).catch(function (err) {
+                setBanner('No se pudo ejecutar: ' + errorText(err) + '. Seguimos comprobando el estado…');
+                startPolling();
+            }).then(function () {
+                running = false;
+            });
+        }
+
+        function retry() {
+            postJson(RETRY_URL, {}).then(function (res) {
+                if (!res.success) {
+                    alert(res.error || 'No se pudo reintentar el informe.');
+                    return;
+                }
+                window.location.reload();
+            }).catch(function (err) {
+                alert('No se pudo reintentar: ' + errorText(err));
+            });
+        }
+
+        function fallbackCopy(text, done) {
+            var area = document.createElement('textarea');
+            area.value = text;
+            area.style.position = 'fixed';
+            area.style.opacity = '0';
+            document.body.appendChild(area);
+            area.select();
+            try { document.execCommand('copy'); if (done) done(); } catch (e) {}
+            document.body.removeChild(area);
+        }
+
+        function copyReport(button) {
+            var text = CONTENT || '';
+            if (!text) {
+                return;
+            }
+            var done = function () {
+                var original = button.textContent;
+                button.textContent = 'Copiado';
+                setTimeout(function () { button.textContent = original; }, 1500);
+            };
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text).then(done).catch(function () {
+                    fallbackCopy(text, done);
+                });
+            } else {
+                fallbackCopy(text, done);
+            }
+        }
+
+        // Los onclick del HTML deben encontrar las funciones.
+        window.runCveAiReport = runNow;
+        window.retryCveAiReport = retry;
+        window.copyCveAiReport = copyReport;
+
+        function ready(fn) {
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', fn);
+            } else {
+                fn();
+            }
+        }
+
+        ready(function () {
+            if (STATUS === 'pending') {
+                runNow();
+            } else if (STATUS === 'running') {
+                startPolling();
+            }
+
+            if (STATUS === 'pending' || STATUS === 'running') {
+                setTimeout(function () {
+                    if (document.getElementById('ai-processing-banner')) {
+                        setBanner('Está tardando más de lo normal. Pulsa «Ejecutar ahora» o revisa Admin → Logs (canal cve_ai).');
+                    }
+                }, 45000);
+            }
+        });
     })();
-    <?php elseif ($status === 'running'): ?>
-    startCveAiPolling();
-    <?php endif; ?>
     </script>
 <?php endif; ?>

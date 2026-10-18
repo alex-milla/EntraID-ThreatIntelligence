@@ -118,6 +118,25 @@ if (!function_exists('format_date')) {
     }
 }
 
+if (!function_exists('format_db_date')) {
+    /**
+     * Formatea una fecha guardada por SQLite (UTC, sin zona) en hora local.
+     * Evita el desfase de 1-2 h de interpretar «datetime('now')» como local.
+     */
+    function format_db_date(?string $date, string $format = 'd/m/Y H:i'): string
+    {
+        if ($date === null || trim($date) === '') {
+            return '—';
+        }
+        $value = trim($date);
+        if (!str_contains($value, 'T') && !str_ends_with($value, 'Z')) {
+            $value .= ' UTC';
+        }
+        $ts = strtotime($value);
+        return $ts === false ? '—' : date($format, $ts);
+    }
+}
+
 if (!function_exists('time_ago')) {
     /**
      * Convierte una fecha a "hace X tiempo".

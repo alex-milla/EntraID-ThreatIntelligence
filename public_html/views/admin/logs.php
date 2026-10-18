@@ -210,6 +210,10 @@ $ext = is_array($diag['ext'] ?? null) ? $diag['ext'] : [];
     <h3 class="text-sm font-semibold mb-4">Diagnóstico del entorno</h3>
     <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 text-xs">
         <div class="p-3 rounded-lg bg-gray-50 dark:bg-gray-900">
+            <p class="text-gray-500">Versión</p>
+            <p class="font-medium mt-0.5"><?= e((string)($diag['app_version'] ?? '—')) ?></p>
+        </div>
+        <div class="p-3 rounded-lg bg-gray-50 dark:bg-gray-900">
             <p class="text-gray-500">PHP</p>
             <p class="font-medium mt-0.5"><?= e((string)($diag['php'] ?? '')) ?> · <?= e((string)($diag['sapi'] ?? '')) ?></p>
         </div>
@@ -348,7 +352,7 @@ $ext = is_array($diag['ext'] ?? null) ? $diag['ext'] : [];
                                 <?= e(truncate((string)($job['ai_error'] ?? ''), 140)) ?>
                             </td>
                             <td class="px-3 py-2 text-gray-500 whitespace-nowrap">
-                                <?= e(format_date((string)($job['created_at'] ?? ''), 'd/m/Y H:i')) ?>
+                                <?= e(format_db_date((string)($job['created_at'] ?? ''), 'd/m/Y H:i')) ?>
                             </td>
                         </tr>
                     <?php endforeach; ?>

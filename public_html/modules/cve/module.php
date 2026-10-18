@@ -972,6 +972,12 @@ class Module_Cve extends BaseModule
             json_response(['success' => false, 'error' => 'Informe no válido.'], 400);
         }
 
+        app_log('info', 'cve_ai', 'Petición de ejecución recibida', [
+            'id'      => $id,
+            'ajax'    => is_ajax(),
+            'request' => ($_SERVER['REQUEST_METHOD'] ?? '') . ' ' . ($_SERVER['REQUEST_URI'] ?? ''),
+        ]);
+
         // La llamada a la IA puede tardar: liberar la sesión y ampliar el límite.
         if (function_exists('release_session_lock')) {
             release_session_lock();
@@ -1051,23 +1057,32 @@ class Module_Cve extends BaseModule
                 json_response(['success' => false, 'error' => 'Informe no encontrado.'], 404);
             }
 
-            // Autosalud: un informe «running» atascado no debe quedarse eterno.
-            if ((string)$row['status'] === 'running') {
-                $ref = (string)($row['started_at'] ?? '');
-                if ($ref === '') {
-                    $ref = (string)($row['created_at'] ?? '');
-                }
+            // Autosalud: ni «pending» ni «running» deben quedarse eternos.
+            $currentStatus = (string)$row['status'];
+            if (in_array($currentStatus, ['pending', 'running'], true)) {
+                $ref = $currentStatus === 'running' && !empty($row['started_at'])
+                    ? (string)$row['started_at']
+                    : (string)($row['created_at'] ?? '');
                 $started = strtotime(str_contains($ref, 'Z') ? $ref : $ref . ' UTC');
-                if ($started !== false && (time() - $started) > 1800) {
-                    $message = 'La generación no terminó a tiempo (30 minutos). Puedes reintentarlo.';
+                $limit = $currentStatus === 'running' ? 1800 : 600;
+
+                if ($started !== false && (time() - $started) > $limit) {
+                    $message = $currentStatus === 'running'
+                        ? 'La generación no terminó a tiempo (30 minutos). Puedes reintentarlo.'
+                        : 'El informe no llegó a ejecutarse (10 minutos en cola). Pulsa Reintentar.';
                     CveDatabase::query(
                         "UPDATE cve_ai_reports
                          SET status = 'error', ai_error = ?, token = NULL, finished_at = datetime('now')
-                         WHERE id = ? AND status = 'running'",
-                        [$message, $id]
+                         WHERE id = ? AND status = ?",
+                        [$message, $id, $currentStatus]
                     );
                     $row['status'] = 'error';
                     $row['ai_error'] = $message;
+                    app_log('warning', 'cve_ai', 'Informe atascado marcado como error', [
+                        'id'     => $id,
+                        'status' => $currentStatus,
+                        'min'    => (int)round((time() - $started) / 60),
+                    ]);
                 }
             }
 

@@ -1037,7 +1037,7 @@ foreach ($flashData as $type => $msg):
                                     </span>
                                 </td>
                                 <td class="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">
-                                    <?= e(format_date((string)($aiRow['created_at'] ?? ''), 'd/m/Y H:i')) ?>
+                                    <?= e(format_db_date((string)($aiRow['created_at'] ?? ''), 'd/m/Y H:i')) ?>
                                 </td>
                                 <td class="px-4 py-3 text-right whitespace-nowrap">
                                     <a href="<?= $aiUrl ?>" class="text-xs text-brand-600 dark:text-brand-400 hover:underline">Ver</a>
@@ -1147,6 +1147,14 @@ foreach ($flashData as $type => $msg):
         startCveAiStatusPolling(id, message, button);
 
         api('POST', <?= json_encode(base_url('modules/cve/reports/ai-run')) ?> + '/' + id, {}).then(function (res) {
+            if (res && res.success === false && res.error && !res.url) {
+                if (message) {
+                    message.textContent = res.error;
+                    message.className = 'text-xs text-red-500';
+                }
+                if (button) button.disabled = false;
+                return;
+            }
             if (res && res.url) {
                 window.location.href = res.url;
             }

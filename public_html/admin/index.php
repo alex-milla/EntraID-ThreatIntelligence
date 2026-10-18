@@ -1261,6 +1261,7 @@ class AdminController
         }
 
         $diag = [
+            'app_version'         => is_file(ROOT_PATH . '/VERSION') ? trim((string)@file_get_contents(ROOT_PATH . '/VERSION')) : '—',
             'php'                 => PHP_VERSION,
             'sapi'                => function_exists('php_sapi_name') ? (string)php_sapi_name() : '—',
             'ext'                 => [
