@@ -980,9 +980,21 @@ $pendingAiCount = count($pendingAiReports);
                     Generar pendientes (<?= (int)$pendingAiCount ?>)
                 </button>
             <?php endif; ?>
-            <input id="ai-list-search" type="search" oninput="cveAiFilterList(this.value)"
-                   placeholder="Buscar por CVE o título…"
-                   class="mt-2 w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+            <div class="mt-2 flex items-center gap-2">
+                <input id="ai-list-search" type="search" oninput="cveAiFilterList(this.value)"
+                       placeholder="Buscar por CVE o título…"
+                       class="flex-1 min-w-0 px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                <select id="ai-list-status-filter" onchange="cveAiFilterStatus(this.value)"
+                        title="Filtrar por estado"
+                        class="w-[122px] shrink-0 px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                    <option value="">Todos</option>
+                    <option value="done">Listos</option>
+                    <option value="pending">Pendientes</option>
+                    <option value="running">Generando</option>
+                    <option value="error">Error</option>
+                    <option value="canceled">Cancelados</option>
+                </select>
+            </div>
             <?php if ($isAdmin): ?>
                 <div class="mt-2 flex items-center gap-2 text-[11px] flex-wrap">
                     <label class="inline-flex items-center gap-1.5 text-gray-500 dark:text-gray-400 cursor-pointer">
@@ -1002,6 +1014,10 @@ $pendingAiCount = count($pendingAiReports);
                     </button>
                 </div>
             <?php endif; ?>
+        </div>
+
+        <div id="ai-list-filter-empty" class="hidden px-4 py-3 text-center text-xs text-gray-500 border-b border-gray-100 dark:border-gray-800">
+            No hay informes con este filtro.
         </div>
 
         <div id="ai-report-list" class="flex-1 overflow-y-auto">
@@ -1782,6 +1798,8 @@ $pendingAiCount = count($pendingAiReports);
     var list = document.getElementById('ai-report-list');
     var reportsSelectAll = document.getElementById('ai-reports-select-all');
     var reportsSelectedCount = document.getElementById('ai-reports-selected-count');
+    var statusFilter = document.getElementById('ai-list-status-filter');
+    var filterEmpty = document.getElementById('ai-list-filter-empty');
     var reportsBulkGroup = document.getElementById('ai-reports-bulk-group');
     var reportsBulkDelete = document.getElementById('ai-reports-bulk-delete');
     var newForm = document.getElementById('ai-new-form');
@@ -2450,6 +2468,7 @@ $pendingAiCount = count($pendingAiReports);
             progress.textContent = processed + '/' + total;
         }
         updatePendingButton();
+        applyReportFilters();
     }
 
     function refreshReportList() {
@@ -2468,11 +2487,7 @@ $pendingAiCount = count($pendingAiReports);
             var scrollTop = list.scrollTop;
             list.innerHTML = html;
             list.scrollTop = scrollTop;
-            updateReportSelection();
-            var search = document.getElementById('ai-list-search');
-            if (search && search.value) {
-                cveAiFilterList(search.value);
-            }
+            applyReportFilters();
             markSelected(state.id);
             updatePendingButton();
         });
@@ -2919,23 +2934,52 @@ $pendingAiCount = count($pendingAiReports);
         });
     };
 
-    window.cveAiFilterList = function (query) {
-        var q = (query || '').toLowerCase().trim();
+    function applyReportFilters() {
         if (!list) {
             return;
         }
+        var search = document.getElementById('ai-list-search');
+        var q = (search && search.value ? search.value : '').toLowerCase().trim();
+        var status = statusFilter ? statusFilter.value : '';
+        var total = 0;
+        var visible = 0;
+
         list.querySelectorAll('.ai-report-item').forEach(function (el) {
+            total++;
             var hay = (el.dataset.search || '').toLowerCase();
-            var hidden = q !== '' && hay.indexOf(q) === -1;
+            var matchText = q === '' || hay.indexOf(q) !== -1;
+            var matchStatus = status === '' || el.dataset.status === status;
+            var hidden = !(matchText && matchStatus);
             el.classList.toggle('hidden', hidden);
             if (hidden) {
                 var checkbox = el.querySelector('.ai-report-check');
                 if (checkbox) {
                     checkbox.checked = false;
                 }
+            } else {
+                visible++;
             }
         });
+
+        if (filterEmpty) {
+            filterEmpty.classList.toggle('hidden', !(total > 0 && visible === 0));
+        }
         updateReportSelection();
+    }
+
+    window.cveAiFilterList = function (query) {
+        var search = document.getElementById('ai-list-search');
+        if (search && typeof query === 'string') {
+            search.value = query;
+        }
+        applyReportFilters();
+    };
+
+    window.cveAiFilterStatus = function (value) {
+        if (statusFilter) {
+            statusFilter.value = value;
+        }
+        applyReportFilters();
     };
 
     window.toggleCveAiFullscreen = function () {
@@ -3580,6 +3624,7 @@ $pendingAiCount = count($pendingAiReports);
         activate();
         updateReportSelection();
         updatePendingButton();
+        applyReportFilters();
 
         if (state.status === 'pending' || state.status === 'running') {
             setTimeout(function () {
