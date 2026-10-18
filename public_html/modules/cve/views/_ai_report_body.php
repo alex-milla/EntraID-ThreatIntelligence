@@ -98,6 +98,19 @@ $linkLabel = static function (string $url): string {
     }
     return $label;
 };
+
+$exposureLabel = static function (string $value): string {
+    $map = [
+        'critical' => 'Crítica',
+        'high'     => 'Alta',
+        'medium'   => 'Media',
+        'low'      => 'Baja',
+        'none'     => 'Ninguna',
+        'unknown'  => 'Desconocida',
+    ];
+    $key = strtolower(trim($value));
+    return $map[$key] ?? $value;
+};
 ?>
 <div class="ai-report-body" data-report-id="<?= (int)($report['id'] ?? 0) ?>" data-status="<?= e($bodyStatus) ?>" data-group-id="<?= (int)($report['group_id'] ?? 0) ?>">
 
@@ -249,6 +262,8 @@ $linkLabel = static function (string $url): string {
                 $github = is_array($item['github'] ?? null) ? $item['github'] : [];
                 $references = is_array($item['references'] ?? null) ? $item['references'] : [];
                 $isKev = !empty($item['kev']);
+                $kevActionEs = trim((string)($item['kev_action_es'] ?? ''));
+                $kevAction = $kevActionEs !== '' ? $kevActionEs : trim((string)($item['kev_action'] ?? ''));
                 $nvdUrl = (string)($item['nvd_url'] ?? '');
                 if (!preg_match('#^https?://#i', $nvdUrl)) {
                     $nvdUrl = 'https://nvd.nist.gov/vuln/detail/' . rawurlencode($cveId);
@@ -331,9 +346,14 @@ $linkLabel = static function (string $url): string {
 
                     <?php if ($isKev && (!empty($item['kev_action']) || !empty($item['kev_due']) || strcasecmp((string)($item['kev_ransomware'] ?? ''), 'Known') === 0)): ?>
                         <div class="mt-4 px-4 py-3 rounded-lg bg-red-50 border border-red-100">
-                            <p class="text-[10px] font-semibold uppercase tracking-wide text-red-500">Acción requerida (CISA)</p>
-                            <?php if (!empty($item['kev_action'])): ?>
-                                <p class="text-sm text-red-800 mt-1"><?= e((string)$item['kev_action']) ?></p>
+                            <div class="flex items-center gap-2 flex-wrap">
+                                <p class="text-[10px] font-semibold uppercase tracking-wide text-red-500">Acción requerida (CISA)</p>
+                                <?php if ($kevActionEs === '' && $kevAction !== ''): ?>
+                                    <span class="text-[10px] text-red-400">original (inglés)</span>
+                                <?php endif; ?>
+                            </div>
+                            <?php if ($kevAction !== ''): ?>
+                                <p class="text-sm text-red-800 mt-1"><?= e($kevAction) ?></p>
                             <?php endif; ?>
                             <p class="text-[11px] text-red-700 mt-1">
                                 <?php if (!empty($item['kev_due'])): ?>Vence el <?= e((string)$item['kev_due']) ?>. <?php endif; ?>
@@ -400,8 +420,8 @@ $linkLabel = static function (string $url): string {
                                                 <tr>
                                                     <td class="py-1.5 pr-3 font-medium text-gray-700"><?= e((string)($machine['name'] ?? '—')) ?></td>
                                                     <td class="py-1.5 pr-3 text-gray-600"><?= e((string)($machine['os'] ?? '—')) ?></td>
-                                                    <td class="py-1.5 pr-3 text-gray-600"><?= e((string)($machine['exposure'] ?? '—')) ?></td>
-                                                    <td class="py-1.5 pr-3 text-gray-600"><?= e((string)($machine['risk'] ?? '—')) ?></td>
+                                                    <td class="py-1.5 pr-3 text-gray-600"><?= e($exposureLabel((string)($machine['exposure'] ?? '—'))) ?></td>
+                                                    <td class="py-1.5 pr-3 text-gray-600"><?= e($exposureLabel((string)($machine['risk'] ?? '—'))) ?></td>
                                                     <td class="py-1.5 pr-3 text-gray-500 whitespace-nowrap"><?= e(format_db_date((string)($machine['last_seen'] ?? ''), 'd/m/Y H:i')) ?></td>
                                                     <td class="py-1.5 text-gray-600"><?= e((string)($machine['tenant'] ?? '—')) ?></td>
                                                 </tr>

@@ -1282,6 +1282,16 @@ class Module_Cve extends BaseModule
                 json_response(['success' => false, 'error' => 'Ninguno de los CVEs está en el catálogo local.'], 400);
             }
 
+            // Traducir descripciones/acciones KEV pendientes antes de comparar:
+            // así «Actualizar» incorpora la traducción a informes antiguos.
+            if (empty($row['no_ai'])) {
+                $profileId = (int)($row['ai_profile_id'] ?? 0);
+                $llm = class_exists('Module_Llm') ? new Module_Llm() : null;
+                if ($llm !== null && $llm->isConfigured($profileId > 0 ? $profileId : null)) {
+                    CveReportAi::ensureSpanishTexts($items, $profileId > 0 ? $profileId : null);
+                }
+            }
+
             $newJson = json_encode($items, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
             if ($newJson === false) {
                 json_response(['success' => false, 'error' => 'No se pudieron serializar los datos.'], 500);

@@ -167,6 +167,12 @@ final class CveReportAi
             }
 
             $isKev = $kevRow !== null;
+            $kevAction = trim((string)($kevRow['required_action'] ?? ''));
+            $kevActionEs = '';
+            $cachedActionEs = trim((string)($kevRow['required_action_es'] ?? ''));
+            if ($cachedActionEs !== '' && hash_equals((string)($kevRow['required_action_es_hash'] ?? ''), sha1($kevAction))) {
+                $kevActionEs = $cachedActionEs;
+            }
 
             $description = trim((string)($row['description'] ?? ''));
             $descriptionEs = '';
@@ -195,6 +201,7 @@ final class CveReportAi
                 'kev_due'         => self::shortDate((string)($kevRow['due_date'] ?? '')),
                 'kev_ransomware'  => (string)($kevRow['known_ransomware'] ?? ''),
                 'kev_action'      => trim((string)($kevRow['required_action'] ?? '')),
+                'kev_action_es'   => $kevActionEs,
                 'kev_name'        => trim((string)($kevRow['vulnerability_name'] ?? '')),
                 'github'          => $github,
                 'references'      => $others,
@@ -616,48 +623,61 @@ final class CveReportAi
     }
 
     /**
-     * Traduce al español las descripciones que aún no tienen traducción cacheada.
-     * El resultado se guarda en cve_catalog y se reutiliza en informes futuros.
+     * Traduce y cachea en español la descripción del CVE y la acción requerida
+     * por CISA. Se ejecuta una sola vez por CVE y se reutiliza en informes futuros.
      *
      * @param array<int,array<string,mixed>> $items
      */
-    public static function ensureSpanishDescriptions(array &$items, ?int $profileId = null): void
+    public static function ensureSpanishTexts(array &$items, ?int $profileId = null): void
     {
         $pending = [];
         foreach ($items as $index => $item) {
-            if (trim((string)($item['description'] ?? '')) === '') {
+            $description = trim((string)($item['description'] ?? ''));
+            $action = trim((string)($item['kev_action'] ?? ''));
+            $needDescription = $description !== '' && trim((string)($item['description_es'] ?? '')) === '';
+            $needAction = $action !== '' && trim((string)($item['kev_action_es'] ?? '')) === '';
+            if (!$needDescription && !$needAction) {
                 continue;
             }
-            if (trim((string)($item['description_es'] ?? '')) !== '') {
-                continue;
-            }
-            $pending[$index] = $item;
+            $pending[$index] = [
+                'item'         => $item,
+                'description'  => $needDescription,
+                'action'       => $needAction,
+            ];
         }
+
         if ($pending === [] || !class_exists('Module_Llm')) {
             return;
         }
 
         $blocks = [];
-        foreach ($pending as $item) {
-            $blocks[] = 'CVE: ' . $item['cve_id'] . "\n"
-                . 'DESCRIPCION: ' . truncate((string)$item['description'], 1200);
+        foreach ($pending as $entry) {
+            $block = 'CVE: ' . $entry['item']['cve_id'];
+            if ($entry['description']) {
+                $block .= "\nDESCRIPCION: " . truncate((string)$entry['item']['description'], 1200);
+            }
+            if ($entry['action']) {
+                $block .= "\nACCION_KEV: " . truncate((string)$entry['item']['kev_action'], 1200);
+            }
+            $blocks[] = $block;
         }
 
         $system = 'Eres un traductor técnico especializado en ciberseguridad. Traduces al español '
-            . 'manteniendo en inglés los términos técnicos habituales (RCE, buffer overflow, heap, '
-            . 'checksum, kernel, privilege escalation, etc.). No añades información ni opiniones.';
+            . 'manteniendo en inglés los términos técnicos y nombres propios (RCE, buffer overflow, heap, '
+            . 'checksum, kernel, privilege escalation, CISA, KEV, BOD 26-04, etc.). No añades información ni opiniones.';
 
-        $prompt = "Traduce al español cada descripción de vulnerabilidad.\n\n"
+        $prompt = "Traduce al español los textos de cada bloque.\n\n"
             . "Reglas:\n"
-            . "- Devuelve EXACTAMENTE un bloque por CVE con este formato, sin nada más:\n"
+            . "- Devuelve EXACTAMENTE un bloque por CVE, con las mismas claves que recibe, sin nada más:\n"
             . "CVE: CVE-AAAA-NNNN\n"
-            . "DESCRIPCION_ES: texto traducido en una sola línea\n"
-            . "- Mantén los términos técnicos en inglés cuando sea lo habitual.\n"
+            . "DESCRIPCION_ES: ... (solo si el bloque tenía DESCRIPCION)\n"
+            . "ACCION_KEV_ES: ... (solo si el bloque tenía ACCION_KEV)\n"
+            . "- Mantén los términos técnicos y nombres propios en inglés cuando sea lo habitual.\n"
             . "- No inventes datos ni añadas URLs.\n"
             . "- No resumas: traduce el contenido completo.\n\n"
-            . "DESCRIPCIONES:\n" . implode("\n\n", $blocks);
+            . "TEXTOS:\n" . implode("\n\n", $blocks);
 
-        $maxTokens = min(3000, max(600, 350 * count($pending)));
+        $maxTokens = min(4000, max(800, 600 * count($pending)));
         $started = microtime(true);
 
         try {
@@ -669,60 +689,85 @@ final class CveReportAi
                 $profileId
             );
         } catch (Throwable $e) {
-            app_log('warning', 'cve_ai', 'No se pudieron traducir las descripciones', ['error' => $e->getMessage()]);
+            app_log('warning', 'cve_ai', 'No se pudieron traducir los textos', ['error' => $e->getMessage()]);
             return;
         }
 
         if (empty($result['success'])) {
-            app_log('warning', 'cve_ai', 'Traducción de descripciones fallida', [
+            app_log('warning', 'cve_ai', 'Traducción de textos fallida', [
                 'error' => (string)($result['error'] ?? ''),
             ]);
             return;
         }
 
         $text = (string)($result['content'] ?? '');
-        $translated = 0;
+        $chunks = preg_split('/(?:^|\n)\s*CVE:\s*/i', "\n" . $text) ?: [];
+        array_shift($chunks);
 
-        if (preg_match_all(
-            '/(?:^|\n)\s*CVE:\s*(CVE-\d{4}-\d{4,7})\s*\n\s*DESCRIPCION_ES:\s*(.+?)(?=\n\s*CVE:|\z)/is',
-            $text,
-            $matches,
-            PREG_SET_ORDER
-        )) {
-            foreach ($matches as $match) {
-                $cveId = strtoupper(trim($match[1]));
-                $translation = trim(preg_replace('/\s+/u', ' ', $match[2]) ?? '');
-                if ($translation === '') {
+        $translatedDescriptions = 0;
+        $translatedActions = 0;
+
+        foreach ($chunks as $chunk) {
+            if (!preg_match('/^(CVE-\d{4}-\d{4,7})/i', trim($chunk), $m)) {
+                continue;
+            }
+            $cveId = strtoupper($m[1]);
+
+            $descriptionEs = null;
+            if (preg_match('/DESCRIPCION_ES:\s*(.+?)(?=\n\s*ACCION_KEV_ES:|\z)/is', $chunk, $dm)) {
+                $descriptionEs = trim(preg_replace('/\s+/u', ' ', $dm[1]) ?? '');
+            }
+            $actionEs = null;
+            if (preg_match('/ACCION_KEV_ES:\s*(.+?)(?=\n\s*DESCRIPCION_ES:|\z)/is', $chunk, $am)) {
+                $actionEs = trim(preg_replace('/\s+/u', ' ', $am[1]) ?? '');
+            }
+
+            $sourceDescription = '';
+            $sourceAction = '';
+            foreach ($items as &$item) {
+                if ((string)$item['cve_id'] !== $cveId) {
                     continue;
                 }
-
-                $source = '';
-                foreach ($items as &$item) {
-                    if ((string)$item['cve_id'] === $cveId) {
-                        $source = (string)$item['description'];
-                        $item['description_es'] = $translation;
-                        break;
-                    }
+                if ($descriptionEs !== null && $descriptionEs !== '') {
+                    $sourceDescription = (string)$item['description'];
+                    $item['description_es'] = $descriptionEs;
                 }
-                unset($item);
-
-                if ($source === '') {
-                    continue;
+                if ($actionEs !== null && $actionEs !== '') {
+                    $sourceAction = (string)$item['kev_action'];
+                    $item['kev_action_es'] = $actionEs;
                 }
+                break;
+            }
+            unset($item);
 
+            if ($sourceDescription !== '' && $descriptionEs !== null && $descriptionEs !== '') {
                 CveDatabase::query(
                     "UPDATE cve_catalog SET description_es = ?, description_es_hash = ? WHERE cve_id = ?",
-                    [$translation, sha1($source), $cveId]
+                    [$descriptionEs, sha1($sourceDescription), $cveId]
                 );
-                $translated++;
+                $translatedDescriptions++;
+            }
+
+            if ($sourceAction !== '' && $actionEs !== null && $actionEs !== '') {
+                CveDatabase::query(
+                    "UPDATE cve_kev SET required_action_es = ?, required_action_es_hash = ? WHERE cve_id = ?",
+                    [$actionEs, sha1($sourceAction), $cveId]
+                );
+                $translatedActions++;
             }
         }
 
-        app_log($translated > 0 ? 'info' : 'warning', 'cve_ai', 'Traducción de descripciones', [
-            'requested'  => count($pending),
-            'translated' => $translated,
-            'ms'         => (int)round((microtime(true) - $started) * 1000),
-        ]);
+        app_log(
+            ($translatedDescriptions + $translatedActions) > 0 ? 'info' : 'warning',
+            'cve_ai',
+            'Traducción de textos',
+            [
+                'requested'    => count($pending),
+                'descriptions' => $translatedDescriptions,
+                'actions'      => $translatedActions,
+                'ms'           => (int)round((microtime(true) - $started) * 1000),
+            ]
+        );
     }
 
     /**
@@ -760,7 +805,10 @@ final class CveReportAi
             }
             $data[] = 'CISA KEV: ' . $kev;
             if (!empty($item['kev']) && $item['kev_action'] !== '') {
-                $data[] = 'Acción requerida (CISA): ' . $item['kev_action'];
+                $actionForPrompt = trim((string)($item['kev_action_es'] ?? '')) !== ''
+                    ? (string)$item['kev_action_es']
+                    : (string)$item['kev_action'];
+                $data[] = 'Acción requerida (CISA): ' . $actionForPrompt;
             }
             $github = is_array($item['github']) ? $item['github'] : [];
             $data[] = 'Exploits públicos en GitHub: ' . count($github)
@@ -1104,7 +1152,7 @@ final class CveReportAi
 
             // Descripción: se traduce una sola vez por CVE y se cachea en el catálogo.
             if (!$localOnly) {
-                self::ensureSpanishDescriptions($items, $profileId > 0 ? $profileId : null);
+                self::ensureSpanishTexts($items, $profileId > 0 ? $profileId : null);
             }
 
             $dataJson = json_encode($items, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);

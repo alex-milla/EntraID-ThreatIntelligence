@@ -77,6 +77,8 @@ class CveDatabase
             date_added TEXT,
             short_description TEXT,
             required_action TEXT,
+            required_action_es TEXT,
+            required_action_es_hash TEXT,
             due_date TEXT,
             known_ransomware TEXT,
             notes TEXT,
@@ -302,6 +304,18 @@ class CveDatabase
         }
         if (!isset($catCols['description_es_hash'])) {
             $db->exec("ALTER TABLE cve_catalog ADD COLUMN description_es_hash TEXT");
+        }
+
+        // v0.2.7.19: traducción cacheada de la acción requerida por CISA.
+        $kevCols = [];
+        foreach ($db->query("PRAGMA table_info(cve_kev)") as $col) {
+            $kevCols[$col['name']] = true;
+        }
+        if (!isset($kevCols['required_action_es'])) {
+            $db->exec("ALTER TABLE cve_kev ADD COLUMN required_action_es TEXT");
+        }
+        if (!isset($kevCols['required_action_es_hash'])) {
+            $db->exec("ALTER TABLE cve_kev ADD COLUMN required_action_es_hash TEXT");
         }
     }
 
