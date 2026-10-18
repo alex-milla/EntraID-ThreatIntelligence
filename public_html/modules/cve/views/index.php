@@ -130,6 +130,15 @@ foreach ($companyGroups as $companyRow) {
         'Low'      => 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300',
     ];
     $baseQuery = array_merge($catalogFilters, ['tab' => 'catalog']);
+    $hasCatalogFilters = !empty($catalogFilters['q'])
+        || !empty($catalogFilters['severity'])
+        || !empty($catalogFilters['product'])
+        || !empty($catalogFilters['kev'])
+        || (string)($catalogFilters['epss_min'] ?? '') !== ''
+        || (int)($catalogFilters['software_id'] ?? 0) > 0
+        || !empty($catalogFilters['mine'])
+        || (string)($catalogFilters['sort'] ?? 'published') !== 'published'
+        || !empty($catalogFilters['cves']);
     ?>
 
     <div id="cve-sync-box" class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-5 mb-6">
@@ -229,80 +238,110 @@ foreach ($companyGroups as $companyRow) {
     <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
         <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between gap-3 flex-wrap">
             <h2 class="text-sm font-semibold">CVEs (<?= number_format($catalogTotal) ?>)</h2>
-            <form method="GET" action="<?= base_url('modules/cve') ?>" class="flex items-center gap-2 flex-wrap">
+            <?php if ($hasCatalogFilters): ?>
+                <span class="inline-flex px-2 py-0.5 text-[10px] rounded-full bg-brand-50 text-brand-700 dark:bg-brand-950/40 dark:text-brand-300">Filtros aplicados</span>
+            <?php endif; ?>
+        </div>
+
+        <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50/60 dark:bg-gray-900/20">
+            <form method="GET" action="<?= base_url('modules/cve') ?>" class="space-y-4">
                 <input type="hidden" name="tab" value="catalog">
-                <input type="text" name="q" value="<?= e($catalogFilters['q'] ?? '') ?>" placeholder="CVE o descripción"
-                       class="w-48 px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
-                <select name="severity"
-                        class="px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
-                    <option value="">Todas las severidades</option>
-                    <?php foreach (['Critical', 'High', 'Medium', 'Low'] as $sev): ?>
-                        <option value="<?= e($sev) ?>" <?= ($catalogFilters['severity'] ?? '') === $sev ? 'selected' : '' ?>><?= e($sev) ?></option>
-                    <?php endforeach; ?>
-                </select>
-                <input type="text" name="product" value="<?= e($catalogFilters['product'] ?? '') ?>" placeholder="vendor / producto"
-                       class="w-40 px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
-                <select name="group"
-                        class="px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
-                    <option value="0">Todas las empresas y grupos</option>
-                    <?php if ($companyGroups !== []): ?>
-                        <optgroup label="Empresas">
-                            <?php foreach ($companyGroups as $g): ?>
-                                <option value="<?= (int)$g['id'] ?>" <?= (int)($catalogFilters['group'] ?? 0) === (int)$g['id'] ? 'selected' : '' ?>>
-                                    <?= e($g['name']) ?>
-                                </option>
+
+                <div class="flex flex-col sm:flex-row gap-2">
+                    <div class="relative flex-1">
+                        <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M21 21l-4.35-4.35M17 10.5a6.5 6.5 0 11-13 0 6.5 6.5 0 0113 0z"/>
+                        </svg>
+                        <input type="text" name="q" value="<?= e($catalogFilters['q'] ?? '') ?>"
+                               placeholder="Buscar por CVE o descripción…"
+                               class="w-full pl-9 pr-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button type="submit" class="px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors">
+                            Buscar
+                        </button>
+                        <?php if ($hasCatalogFilters): ?>
+                            <a href="<?= base_url('modules/cve?tab=catalog') ?>" class="px-3 py-2 text-xs text-gray-500 hover:text-red-500">Limpiar</a>
+                        <?php endif; ?>
+                    </div>
+                </div>
+                <p class="text-[11px] text-gray-400">Pulsa Intro o Buscar para aplicar los filtros.</p>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+                    <label class="block">
+                        <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Severidad</span>
+                        <select name="severity"
+                                class="w-full px-2 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                            <option value="">Todas las severidades</option>
+                            <?php foreach (['Critical' => 'Crítica', 'High' => 'Alta', 'Medium' => 'Media', 'Low' => 'Baja'] as $sev => $sevLabel): ?>
+                                <option value="<?= e($sev) ?>" <?= ($catalogFilters['severity'] ?? '') === $sev ? 'selected' : '' ?>><?= e($sevLabel) ?></option>
                             <?php endforeach; ?>
-                        </optgroup>
-                    <?php endif; ?>
-                    <?php if ($applicationGroups !== []): ?>
-                        <optgroup label="Grupos de aplicaciones">
-                            <?php foreach ($applicationGroups as $g): ?>
-                                <option value="<?= (int)$g['id'] ?>" <?= (int)($catalogFilters['group'] ?? 0) === (int)$g['id'] ? 'selected' : '' ?>>
-                                    <?= str_repeat('— ', (int)$g['depth']) . e($g['name']) ?>
-                                </option>
-                            <?php endforeach; ?>
-                        </optgroup>
-                    <?php endif; ?>
-                </select>
-                <select name="software_id"
-                        class="px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none max-w-[220px]">
-                    <option value="0">Mi software (todos)</option>
-                    <?php foreach (($softwareOptions ?? []) as $so): ?>
-                        <option value="<?= (int)$so['id'] ?>" <?= (int)($catalogFilters['software_id'] ?? 0) === (int)$so['id'] ? 'selected' : '' ?>>
-                            <?= e((string)$so['name']) ?><?= !empty($so['version']) ? ' · ' . e((string)$so['version']) : '' ?>
-                        </option>
-                    <?php endforeach; ?>
-                </select>
-                <label class="inline-flex items-center gap-1 text-xs text-gray-600 dark:text-gray-300">
-                    <input type="checkbox" name="mine" value="1" <?= !empty($catalogFilters['mine']) ? 'checked' : '' ?> class="rounded border-gray-300 text-brand-500 focus:ring-brand-500">
-                    Solo mis productos
-                </label>
-                <label class="inline-flex items-center gap-1 text-xs text-gray-600 dark:text-gray-300">
-                    <input type="checkbox" name="kev" value="1" <?= !empty($catalogFilters['kev']) ? 'checked' : '' ?> class="rounded border-gray-300 text-brand-500 focus:ring-brand-500">
-                    Solo KEV
-                </label>
-                <input type="number" name="epss_min" min="0" max="1" step="0.01" value="<?= e((string)($catalogFilters['epss_min'] ?? '')) ?>" placeholder="EPSS ≥"
-                       class="w-24 px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
-                <select name="sort"
-                        class="px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
-                    <?php $sortValue = (string)($catalogFilters['sort'] ?? 'published'); ?>
-                    <option value="published" <?= $sortValue === 'published' ? 'selected' : '' ?>>Más recientes</option>
-                    <option value="cvss" <?= $sortValue === 'cvss' ? 'selected' : '' ?>>Mayor CVSS</option>
-                    <option value="epss" <?= $sortValue === 'epss' ? 'selected' : '' ?>>Mayor EPSS</option>
-                    <option value="kev" <?= $sortValue === 'kev' ? 'selected' : '' ?>>KEV primero</option>
-                </select>
-                <label class="block w-full mt-1">
-                    <span class="block text-[10px] font-semibold uppercase tracking-wide text-gray-400 mb-1">
-                        Pegar CVEs (separados por comas, espacios o líneas; máximo 200)
-                    </span>
-                    <textarea name="cves" rows="2" maxlength="6000" placeholder="CVE-2024-38063&#10;CVE-2024-21762, CVE-2023-48795"
-                              class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs font-mono focus:ring-2 focus:ring-brand-500 outline-none"><?= e((string)($catalogFilters['cves'] ?? '')) ?></textarea>
-                    <span class="block text-[10px] text-gray-400 mt-1">Se muestran solo los que estén en el catálogo local y tengan formato CVE-AAAA-NNNN.</span>
-                </label>
-                <button type="submit" class="px-3 py-1.5 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 text-xs font-medium rounded-lg transition-colors">Filtrar / Mostrar</button>
-                <?php if (!empty($catalogFilters['q']) || !empty($catalogFilters['severity']) || !empty($catalogFilters['product']) || !empty($catalogFilters['kev']) || (string)($catalogFilters['epss_min'] ?? '') !== '' || (int)($catalogFilters['group'] ?? 0) > 0 || (int)($catalogFilters['software_id'] ?? 0) > 0 || !empty($catalogFilters['mine']) || (string)($catalogFilters['sort'] ?? 'published') !== 'published' || !empty($catalogFilters['cves'])): ?>
-                    <a href="<?= base_url('modules/cve?tab=catalog') ?>" class="text-xs text-gray-400 hover:underline">Limpiar</a>
-                <?php endif; ?>
+                        </select>
+                    </label>
+                    <label class="block">
+                        <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Producto</span>
+                        <input type="text" name="product" value="<?= e($catalogFilters['product'] ?? '') ?>" placeholder="vendor / producto"
+                               class="w-full px-2 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                    </label>
+                    <label class="block">
+                        <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">EPSS mínimo</span>
+                        <input type="number" name="epss_min" min="0" max="1" step="0.01" value="<?= e((string)($catalogFilters['epss_min'] ?? '')) ?>" placeholder="0.10"
+                               class="w-full px-2 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                    </label>
+                    <label class="block">
+                        <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Ordenar por</span>
+                        <select name="sort"
+                                class="w-full px-2 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                            <?php $sortValue = (string)($catalogFilters['sort'] ?? 'published'); ?>
+                            <option value="published" <?= $sortValue === 'published' ? 'selected' : '' ?>>Más recientes</option>
+                            <option value="cvss" <?= $sortValue === 'cvss' ? 'selected' : '' ?>>Mayor CVSS</option>
+                            <option value="epss" <?= $sortValue === 'epss' ? 'selected' : '' ?>>Mayor EPSS</option>
+                            <option value="kev" <?= $sortValue === 'kev' ? 'selected' : '' ?>>KEV primero</option>
+                        </select>
+                    </label>
+                </div>
+
+                <div>
+                    <p class="text-[10px] font-semibold uppercase tracking-wide text-gray-400 mb-2">Inventario</p>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 items-end">
+                        <label class="block sm:col-span-2">
+                            <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Mi software</span>
+                            <select name="software_id"
+                                    class="w-full px-2 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                                <option value="0">Mi software (todos)</option>
+                                <?php foreach (($softwareOptions ?? []) as $so): ?>
+                                    <option value="<?= (int)$so['id'] ?>" <?= (int)($catalogFilters['software_id'] ?? 0) === (int)$so['id'] ? 'selected' : '' ?>>
+                                        <?= e((string)$so['name']) ?><?= !empty($so['version']) ? ' · ' . e((string)$so['version']) : '' ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </label>
+                        <label class="flex items-center gap-2 h-[38px] text-xs text-gray-600 dark:text-gray-300">
+                            <input type="checkbox" name="mine" value="1" <?= !empty($catalogFilters['mine']) ? 'checked' : '' ?> class="rounded border-gray-300 text-brand-500 focus:ring-brand-500">
+                            Solo mis productos
+                        </label>
+                        <label class="flex items-center gap-2 h-[38px] text-xs text-gray-600 dark:text-gray-300">
+                            <input type="checkbox" name="kev" value="1" <?= !empty($catalogFilters['kev']) ? 'checked' : '' ?> class="rounded border-gray-300 text-brand-500 focus:ring-brand-500">
+                            Solo KEV
+                        </label>
+                    </div>
+                </div>
+
+                <details class="text-xs" <?= (string)($catalogFilters['cves'] ?? '') !== '' ? 'open' : '' ?>>
+                    <summary class="cursor-pointer text-xs font-medium text-gray-500 hover:text-brand-600 dark:hover:text-brand-400">
+                        Filtros avanzados · pegar lista de CVEs
+                    </summary>
+                    <div class="mt-3">
+                        <label class="block">
+                            <span class="block text-[10px] font-semibold uppercase tracking-wide text-gray-400 mb-1">
+                                Pegar CVEs (separados por comas, espacios o líneas; máximo 200)
+                            </span>
+                            <textarea name="cves" rows="3" maxlength="6000" placeholder="CVE-2024-38063&#10;CVE-2024-21762, CVE-2023-48795"
+                                      class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs font-mono focus:ring-2 focus:ring-brand-500 outline-none"><?= e((string)($catalogFilters['cves'] ?? '')) ?></textarea>
+                            <span class="block text-[10px] text-gray-400 mt-1">Se muestran solo los que estén en el catálogo local y tengan formato CVE-AAAA-NNNN.</span>
+                        </label>
+                    </div>
+                </details>
             </form>
         </div>
 

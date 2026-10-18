@@ -113,7 +113,7 @@ class Module_Cve extends BaseModule
         $catalogTotal = 0;
         $catalogPage = 1;
         $catalogPages = 0;
-        $catalogFilters = ['q' => '', 'severity' => '', 'product' => '', 'kev' => false, 'epss_min' => '', 'group' => 0, 'software_id' => 0, 'mine' => false, 'sort' => 'published', 'cves' => ''];
+        $catalogFilters = ['q' => '', 'severity' => '', 'product' => '', 'kev' => false, 'epss_min' => '', 'software_id' => 0, 'mine' => false, 'sort' => 'published', 'cves' => ''];
         $cvesMissing = [];
         $softwareOptions = [];
         $syncState = null;
@@ -164,7 +164,6 @@ class Module_Cve extends BaseModule
                     'product'     => trim((string)($_GET['product'] ?? '')),
                     'kev'         => !empty($_GET['kev']),
                     'epss_min'    => trim((string)($_GET['epss_min'] ?? '')),
-                    'group'       => (int)($_GET['group'] ?? 0),
                     'software_id' => (int)($_GET['software_id'] ?? 0),
                     'mine'        => !empty($_GET['mine']),
                     'sort'        => trim((string)($_GET['sort'] ?? 'published')),
@@ -4399,25 +4398,7 @@ class Module_Cve extends BaseModule
             $params[] = $softwareId;
         }
 
-        $groupId = (int)($filters['group'] ?? 0);
-        if ($groupId > 0) {
-            $groupIds = $this->descendantGroupIds($groupId);
-            if (empty($groupIds)) {
-                $where[] = '1 = 0';
-            } else {
-                $placeholders = implode(',', array_fill(0, count($groupIds), '?'));
-                $where[] = "EXISTS (
-                    SELECT 1 FROM cve_watchlist_match mw
-                    JOIN software_watchlist sw ON sw.id = mw.watchlist_id
-                    WHERE mw.cve_id = c.cve_id AND sw.group_id IN ($placeholders)
-                )";
-                foreach ($groupIds as $gid) {
-                    $params[] = $gid;
-                }
-            }
-        }
-
-        if (!empty($filters['mine']) && $softwareId <= 0 && $groupId <= 0) {
+        if (!empty($filters['mine']) && $softwareId <= 0) {
             $where[] = 'EXISTS (SELECT 1 FROM cve_watchlist_match mw WHERE mw.cve_id = c.cve_id)';
         }
 
