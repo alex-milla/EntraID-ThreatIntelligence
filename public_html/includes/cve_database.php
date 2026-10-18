@@ -207,6 +207,8 @@ class CveDatabase
             ai_duration_ms INTEGER,
             token TEXT,
             generated_by INTEGER,
+            no_ai INTEGER NOT NULL DEFAULT 0,
+            started_at TEXT,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             finished_at TEXT
         )");
@@ -253,6 +255,18 @@ class CveDatabase
         }
         if (!isset($syncCols['target_index'])) {
             $db->exec("ALTER TABLE cve_sync_state ADD COLUMN target_index INTEGER NOT NULL DEFAULT 0");
+        }
+
+        // v0.2.7.11: modo sin IA y marca de inicio del informe.
+        $aiCols = [];
+        foreach ($db->query("PRAGMA table_info(cve_ai_reports)") as $col) {
+            $aiCols[$col['name']] = true;
+        }
+        if (!isset($aiCols['no_ai'])) {
+            $db->exec("ALTER TABLE cve_ai_reports ADD COLUMN no_ai INTEGER NOT NULL DEFAULT 0");
+        }
+        if (!isset($aiCols['started_at'])) {
+            $db->exec("ALTER TABLE cve_ai_reports ADD COLUMN started_at TEXT");
         }
     }
 

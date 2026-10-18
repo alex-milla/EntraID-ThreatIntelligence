@@ -538,6 +538,81 @@ if (!function_exists('log_activity')) {
     }
 }
 
+if (!function_exists('app_log')) {
+    /**
+     * Log estructurado de la aplicación (JSONL en storage/app.log).
+     * Nunca lanza excepciones: un fallo al escribir no debe tumbar la petición.
+     */
+    function app_log(string $level, string $channel, string $message, array $context = []): void
+    {
+        try {
+            $logFile = STORAGE_PATH . '/app.log';
+
+            // Rotación simple al superar 2 MB.
+            if (is_file($logFile) && (int)@filesize($logFile) > 2097152) {
+                @rename($logFile, STORAGE_PATH . '/app.log.1');
+            }
+
+            $userId = null;
+            try {
+                if (class_exists('Auth') && Auth::check()) {
+                    $userId = Auth::id();
+                }
+            } catch (Throwable $e) {
+                $userId = null;
+            }
+
+            $entry = [
+                'timestamp' => date('c'),
+                'level'     => strtolower($level),
+                'channel'   => $channel,
+                'message'   => $message,
+                'user_id'   => $userId,
+                'context'   => app_log_redact($context),
+            ];
+
+            $line = json_encode($entry, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
+            if ($line === false) {
+                $line = json_encode(['timestamp' => date('c'), 'level' => $level, 'channel' => $channel, 'message' => $message]);
+            }
+            @file_put_contents($logFile, $line . "\n", FILE_APPEND | LOCK_EX);
+        } catch (Throwable $e) {
+            // Silencio deliberado.
+        }
+    }
+}
+
+if (!function_exists('app_log_redact')) {
+    /**
+     * Oculta secretos y recorta valores largos antes de escribir en el log.
+     */
+    function app_log_redact(array $context, int $depth = 0): array
+    {
+        if ($depth > 4) {
+            return ['…' => 'demasiada profundidad'];
+        }
+
+        $out = [];
+        foreach ($context as $key => $value) {
+            if (is_string($key) && preg_match('/key|token|secret|password|authorization|cookie/i', $key)) {
+                $out[$key] = '[redactado]';
+                continue;
+            }
+            if (is_array($value)) {
+                $out[$key] = app_log_redact($value, $depth + 1);
+            } elseif (is_string($value)) {
+                $out[$key] = truncate($value, 2000);
+            } elseif (is_bool($value) || is_int($value) || is_float($value) || $value === null) {
+                $out[$key] = $value;
+            } else {
+                $out[$key] = truncate((string)$value, 500);
+            }
+        }
+
+        return $out;
+    }
+}
+
 if (!function_exists('setting_get')) {
     /**
      * Lee un valor de la tabla `settings`. Si está marcado como cifrado,

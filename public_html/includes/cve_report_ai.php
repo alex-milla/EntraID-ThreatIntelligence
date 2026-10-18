@@ -58,6 +58,7 @@ final class CveReportAi
             'refs_more'      => '… y %d referencias más',
             'ai_error'       => '❌ No se pudo generar la evaluación con IA: %s',
             'ai_pending'     => '⏳ Evaluación con IA pendiente.',
+            'ai_local'       => 'ℹ️ Informe generado en modo solo datos (sin IA). Las secciones anteriores salen del catálogo local.',
             'unknown'        => 'Desconocido',
             'yes'            => 'Sí',
             'no'             => 'No',
@@ -267,7 +268,7 @@ final class CveReportAi
      *
      * @param array<int,array<string,mixed>> $items
      */
-    public static function renderReport(array $items, ?string $aiText = null, string $aiError = ''): string
+    public static function renderReport(array $items, ?string $aiText = null, string $aiError = '', bool $localOnly = false): string
     {
         $L = self::labels();
         $blocks = [];
@@ -284,7 +285,7 @@ final class CveReportAi
             $blocks = array_merge($blocks, self::cveBox($item, $L));
         }
 
-        $blocks = array_merge($blocks, self::aiBox($aiText, $aiError));
+        $blocks = array_merge($blocks, self::aiBox($aiText, $aiError, $localOnly));
 
         return rtrim(implode("\n", $blocks)) . "\n";
     }
@@ -439,12 +440,16 @@ final class CveReportAi
      *
      * @return string[]
      */
-    private static function aiBox(?string $aiText, string $aiError): array
+    private static function aiBox(?string $aiText, string $aiError, bool $localOnly = false): array
     {
         $L = self::labels();
         $out = ['┌───[ ' . $L['sec_ai'] . ' ]', '|'];
 
-        if ($aiText !== null && trim($aiText) !== '') {
+        if ($localOnly) {
+            foreach (self::wrapLines($L['ai_local'], 94, 2) as $line) {
+                $out[] = '| ' . $line;
+            }
+        } elseif ($aiText !== null && trim($aiText) !== '') {
             foreach (self::formatAiText($aiText) as $line) {
                 $out[] = $line;
             }
@@ -614,7 +619,7 @@ final class CveReportAi
                 ? number_format((float)$item['cvss'], 1, '.', '') . ' (' . self::severityLabel((string)$item['severity']) . ')'
                 : 'Desconocida');
             $data[] = 'Vector: ' . ($item['vector'] !== '' ? $item['vector'] : 'Desconocido');
-            $data[] = 'Descripción: ' . ($item['description'] !== '' ? $item['description'] : 'Desconocida');
+            $data[] = 'Descripción: ' . ($item['description'] !== '' ? truncate($item['description'], 1500) : 'Desconocida');
             $data[] = 'EPSS: ' . ($item['epss'] !== null
                 ? number_format((float)$item['epss'] * 100, 2, '.', '') . '%'
                 : 'Desconocido');
@@ -634,9 +639,9 @@ final class CveReportAi
             }
             $github = is_array($item['github']) ? $item['github'] : [];
             $data[] = 'Exploits públicos en GitHub: ' . count($github)
-                . ($github !== [] ? ' — ' . implode(', ', array_slice($github, 0, 15)) : '');
+                . ($github !== [] ? ' — ' . implode(', ', array_slice($github, 0, 10)) : '');
             $data[] = 'Prioridad calculada: ' . (!empty($item['priority']) ? $item['priority'] : 'Sin datos');
-            $refs = is_array($item['references']) ? array_slice($item['references'], 0, 10) : [];
+            $refs = is_array($item['references']) ? array_slice($item['references'], 0, 8) : [];
             if ($refs !== []) {
                 $data[] = 'Referencias: ' . implode(', ', $refs);
             }
@@ -680,26 +685,61 @@ final class CveReportAi
     // ============================================================
 
     /**
-     * Procesa un informe pendiente a partir de su token.
-     * Se ejecuta desde cve-worker.php (sin sesión) para no bloquear la web.
+     * Procesa un informe pendiente a partir de su token (vía worker/CLI).
      */
     public static function runPending(string $token): array
     {
         $row = CveDatabase::fetchOne(
-            "SELECT * FROM cve_ai_reports WHERE token = ? AND status IN ('pending','running') LIMIT 1",
+            "SELECT id FROM cve_ai_reports WHERE token = ? AND status IN ('pending','running') LIMIT 1",
             [$token]
         );
         if ($row === null) {
             return ['success' => false, 'error' => 'Informe no encontrado o ya procesado.'];
         }
+        return self::runById((int)$row['id']);
+    }
 
-        $id = (int)$row['id'];
-        CveDatabase::query(
-            "UPDATE cve_ai_reports SET status = 'running' WHERE id = ? AND token = ?",
-            [$id, $token]
+    /**
+     * Ejecuta un informe concreto. Reclama la fila de forma atómica para que
+     * un doble clic (o el worker y la web a la vez) no lo genere dos veces.
+     */
+    public static function runById(int $id): array
+    {
+        $row = CveDatabase::fetchOne("SELECT * FROM cve_ai_reports WHERE id = ?", [$id]);
+        if ($row === null) {
+            return ['success' => false, 'status' => 'missing', 'error' => 'Informe no encontrado.'];
+        }
+
+        $claimed = CveDatabase::update(
+            "UPDATE cve_ai_reports
+             SET status = 'running', started_at = datetime('now')
+             WHERE id = ? AND status = 'pending'",
+            [$id]
         );
+        if ($claimed === 0) {
+            $status = (string)($row['status'] ?? 'pending');
+            return [
+                'success' => $status === 'done',
+                'id'      => $id,
+                'status'  => $status,
+                'error'   => $status === 'error' ? (string)($row['ai_error'] ?? '') : null,
+                'running' => in_array($status, ['pending', 'running'], true),
+            ];
+        }
+
+        // Si el proxy corta la conexión, el trabajo termina igualmente.
+        if (function_exists('ignore_user_abort')) {
+            @ignore_user_abort(true);
+        }
+        @set_time_limit(0);
 
         $started = microtime(true);
+        $noAi = !empty($row['no_ai']);
+        app_log('info', 'cve_ai', 'Informe IA iniciado', [
+            'id'    => $id,
+            'no_ai' => $noAi,
+            'cves'  => (string)($row['cve_ids'] ?? ''),
+        ]);
 
         try {
             $ids = safe_json_decode((string)($row['cve_ids'] ?? ''), []);
@@ -722,54 +762,91 @@ final class CveReportAi
             $aiText = null;
             $aiError = '';
             $model = '';
+            $localOnly = $noAi;
 
-            try {
-                if (!class_exists('Module_Llm')) {
-                    throw new RuntimeException('El módulo de IA no está activo. Actívalo en Admin → Módulos.');
-                }
-                $llm = new Module_Llm();
-                $result = $llm->chat(
-                    self::systemPrompt(),
-                    self::userPrompt($items),
-                    ['max_tokens' => 3000, 'temperature' => 0.2],
-                    $profileId > 0 ? $profileId : null
-                );
-                if (!empty($result['success'])) {
-                    $aiText = trim((string)($result['content'] ?? ''));
-                    $model = (string)($result['model'] ?? '');
-                    if ($aiText === '') {
-                        $aiError = 'La IA devolvió una respuesta vacía.';
-                        $aiText = null;
+            // Si no hay ningún dato relevante, no se gasta una llamada a la IA.
+            if (!$localOnly) {
+                $hasFacts = false;
+                foreach ($items as $item) {
+                    if ($item['cvss'] !== null || $item['epss'] !== null || !empty($item['kev'])
+                        || (string)$item['description'] !== '' || !empty($item['github'])) {
+                        $hasFacts = true;
+                        break;
                     }
-                } else {
-                    $aiError = (string)($result['error'] ?? 'Error desconocido del proveedor de IA.');
                 }
-            } catch (Throwable $e) {
-                $aiError = $e->getMessage();
+                if (!$hasFacts) {
+                    $localOnly = true;
+                    app_log('warning', 'cve_ai', 'Sin datos relevantes: se omite la IA', ['id' => $id]);
+                }
             }
 
-            if (stripos($aiError, 'curl_init') !== false || stripos($aiError, 'curl extension') !== false) {
-                $aiError = 'La extensión cURL de PHP no está disponible en el servidor; no se puede llamar a la IA.';
+            if ($localOnly) {
+                $model = 'local';
+            } else {
+                $llmStarted = microtime(true);
+                try {
+                    if (!class_exists('Module_Llm')) {
+                        throw new RuntimeException('El módulo de IA no está activo. Actívalo en Admin → Módulos.');
+                    }
+                    $llm = new Module_Llm();
+                    $result = $llm->chat(
+                        self::systemPrompt(),
+                        self::userPrompt($items),
+                        ['max_tokens' => 3000, 'temperature' => 0.2],
+                        $profileId > 0 ? $profileId : null
+                    );
+                    if (!empty($result['success'])) {
+                        $aiText = trim((string)($result['content'] ?? ''));
+                        $model = (string)($result['model'] ?? '');
+                        if ($aiText === '') {
+                            $aiError = 'La IA devolvió una respuesta vacía.';
+                            $aiText = null;
+                        }
+                    } else {
+                        $aiError = (string)($result['error'] ?? 'Error desconocido del proveedor de IA.');
+                    }
+                } catch (Throwable $e) {
+                    $aiError = $e->getMessage();
+                }
+
+                if (stripos($aiError, 'curl_init') !== false || stripos($aiError, 'curl extension') !== false) {
+                    $aiError = 'La extensión cURL de PHP no está disponible en el servidor; no se puede llamar a la IA.';
+                }
+
+                app_log($aiText !== null ? 'info' : 'error', 'cve_ai', $aiText !== null ? 'IA respondió' : 'IA falló', [
+                    'id'    => $id,
+                    'model' => $model,
+                    'ms'    => (int)round((microtime(true) - $llmStarted) * 1000),
+                    'chars' => $aiText !== null ? strlen($aiText) : 0,
+                    'error' => $aiText !== null ? null : $aiError,
+                ]);
             }
 
-            $content = self::renderReport($items, $aiText, $aiError);
-            $status = ($aiText !== null) ? 'done' : 'error';
+            $content = self::renderReport($items, $aiText, $aiError, $localOnly);
+            $status = ($localOnly || $aiText !== null) ? 'done' : 'error';
+            $durationMs = (int)round((microtime(true) - $started) * 1000);
 
             CveDatabase::query(
                 "UPDATE cve_ai_reports
                  SET content_text = ?, status = ?, ai_error = ?, ai_model = ?,
                      ai_duration_ms = ?, finished_at = datetime('now'), token = NULL
-                 WHERE id = ? AND token = ?",
+                 WHERE id = ?",
                 [
                     $content,
                     $status,
                     $aiError !== '' ? substr($aiError, 0, 2000) : null,
                     $model !== '' ? $model : null,
-                    (int)round((microtime(true) - $started) * 1000),
+                    $durationMs,
                     $id,
-                    $token,
                 ]
             );
+
+            app_log('info', 'cve_ai', 'Informe IA finalizado', [
+                'id'     => $id,
+                'status' => $status,
+                'no_ai'  => $localOnly,
+                'ms'     => $durationMs,
+            ]);
 
             return [
                 'success' => $status === 'done',
@@ -781,9 +858,10 @@ final class CveReportAi
             CveDatabase::query(
                 "UPDATE cve_ai_reports
                  SET status = 'error', ai_error = ?, finished_at = datetime('now'), token = NULL
-                 WHERE id = ? AND token = ?",
-                [substr($e->getMessage(), 0, 2000), $id, $token]
+                 WHERE id = ?",
+                [substr($e->getMessage(), 0, 2000), $id]
             );
+            app_log('error', 'cve_ai', 'Error generando el informe', ['id' => $id, 'error' => $e->getMessage()]);
             return ['success' => false, 'id' => $id, 'status' => 'error', 'error' => $e->getMessage()];
         }
     }

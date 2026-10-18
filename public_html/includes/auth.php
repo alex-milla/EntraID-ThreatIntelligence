@@ -147,6 +147,10 @@ class Auth
     public static function require(): void
     {
         if (!self::check()) {
+            // Peticiones AJAX: responder JSON (una redirección HTML rompe fetch()).
+            if (is_ajax() || str_contains($_SERVER['HTTP_ACCEPT'] ?? '', 'application/json')) {
+                json_response(['success' => false, 'error' => 'Sesión caducada. Recarga la página.'], 401);
+            }
             flash('error', 'Debes iniciar sesión para acceder a esta página.');
             set_old_input(['username' => $_POST['username'] ?? '']);
             redirect(base_url('admin/login'));
@@ -160,6 +164,9 @@ class Auth
     {
         self::require();
         if (!self::isAdmin()) {
+            if (is_ajax() || str_contains($_SERVER['HTTP_ACCEPT'] ?? '', 'application/json')) {
+                json_response(['success' => false, 'error' => 'No tienes permisos de administrador.'], 403);
+            }
             flash('error', 'No tienes permisos para acceder a esta página.');
             redirect(base_url('admin'));
         }

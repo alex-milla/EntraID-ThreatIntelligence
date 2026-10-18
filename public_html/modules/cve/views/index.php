@@ -804,6 +804,10 @@ foreach ($flashData as $type => $msg):
                     </select>
                 </label>
             <?php endif; ?>
+            <label class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300 mt-5">
+                <input id="ai-report-local" type="checkbox" class="rounded border-gray-300 text-brand-500 focus:ring-brand-500">
+                Solo datos locales (sin IA)
+            </label>
         </div>
 
         <div class="mt-4 flex items-center gap-3 flex-wrap">
@@ -1017,6 +1021,9 @@ foreach ($flashData as $type => $msg):
                                     <a href="<?= $aiUrl ?>" class="font-medium text-brand-600 dark:text-brand-400 hover:underline">
                                         <?= e((string)$aiRow['title']) ?>
                                     </a>
+                                    <?php if (!empty($aiRow['no_ai'])): ?>
+                                        <span class="ml-1 text-[10px] text-gray-400">(sin IA)</span>
+                                    <?php endif; ?>
                                     <?php if (!empty($aiRow['ai_model'])): ?>
                                         <p class="text-[10px] text-gray-400 mt-0.5"><?= e((string)$aiRow['ai_model']) ?></p>
                                     <?php endif; ?>
@@ -1089,10 +1096,15 @@ foreach ($flashData as $type => $msg):
         });
     }
 
+    function cveAiError(err) {
+        return (err && err.message) ? err.message : 'error de red';
+    }
+
     function generateCveAiReport(button) {
         var message = document.getElementById('ai-report-message');
         var input = document.getElementById('ai-report-cves');
         var profile = document.getElementById('ai-report-profile');
+        var local = document.getElementById('ai-report-local');
         if (!input || !message) return;
 
         var cves = (input.value || '').trim();
@@ -1103,59 +1115,88 @@ foreach ($flashData as $type => $msg):
             return;
         }
 
-        message.textContent = 'Generando informe con IA… puede tardar hasta un minuto.';
+        var noAi = !!(local && local.checked);
+        message.textContent = noAi
+            ? 'Generando informe solo con datos locales…'
+            : 'Generando informe con IA… puede tardar hasta un minuto.';
         message.className = 'text-xs text-gray-500';
         if (button) button.disabled = true;
 
-        api('POST', <?= json_encode(base_url('modules/cve/reports/ai-generate')) ?>, {
+        api('POST', <?= json_encode(base_url('modules/cve/reports/ai-start')) ?>, {
             cve_ids: cves,
-            profile_id: profile ? profile.value : 0
+            profile_id: profile ? profile.value : 0,
+            no_ai: noAi ? 1 : 0
         }).then(function (res) {
             if (!res.success) {
-                message.textContent = res.error || 'No se pudo generar el informe.';
+                message.textContent = res.error || 'No se pudo crear el informe.';
                 message.className = 'text-xs text-red-500';
                 if (button) button.disabled = false;
                 return;
             }
-            pollCveAiReport(res.report_id, message, button);
-        }).catch(function () {
-            message.textContent = 'Error de conexión al generar el informe.';
+            runCveAiReport(res.report_id, message, button);
+        }).catch(function (err) {
+            message.textContent = 'No se pudo crear el informe: ' + cveAiError(err);
             message.className = 'text-xs text-red-500';
             if (button) button.disabled = false;
         });
     }
 
-    function pollCveAiReport(id, message, button) {
+    function runCveAiReport(id, message, button) {
+        // Polling de seguridad en paralelo: si el proxy corta la petición
+        // larga, seguimos consultando el estado hasta que termine.
+        startCveAiStatusPolling(id, message, button);
+
+        api('POST', <?= json_encode(base_url('modules/cve/reports/ai-run')) ?> + '/' + id, {}).then(function (res) {
+            if (res && res.url) {
+                window.location.href = res.url;
+            }
+        }).catch(function (err) {
+            if (message) {
+                message.textContent = 'La petición se interrumpió; seguimos comprobando el estado… (' + cveAiError(err) + ')';
+                message.className = 'text-xs text-amber-600';
+            }
+        });
+    }
+
+    function startCveAiStatusPolling(id, message, button) {
         var base = <?= json_encode(base_url('modules/cve/reports/ai-status')) ?>;
         var tries = 0;
+        var failures = 0;
         var timer = setInterval(function () {
             tries++;
+            if (tries > 180) {
+                clearInterval(timer);
+                if (message) {
+                    message.textContent = 'La generación está tardando más de lo esperado. Abre el informe para ver su estado.';
+                    message.className = 'text-xs text-amber-600';
+                }
+                if (button) button.disabled = false;
+                return;
+            }
             api('GET', base + '/' + id).then(function (res) {
+                failures = 0;
                 if (!res.success) {
-                    clearInterval(timer);
-                    message.textContent = res.error || 'No se pudo consultar el estado del informe.';
-                    message.className = 'text-xs text-red-500';
-                    if (button) button.disabled = false;
+                    if (message) {
+                        message.textContent = res.error || 'No se pudo consultar el estado.';
+                        message.className = 'text-xs text-red-500';
+                    }
                     return;
                 }
                 if (res.status === 'done' || res.status === 'error') {
                     clearInterval(timer);
                     window.location.href = res.url;
-                    return;
+                } else if (message) {
+                    message.textContent = 'Generando… (' + res.status + ')';
+                    message.className = 'text-xs text-gray-500';
                 }
-                if (tries >= 120) {
-                    clearInterval(timer);
-                    message.textContent = 'La generación está tardando más de lo esperado. Abre el informe para ver su estado.';
+            }).catch(function (err) {
+                failures++;
+                if (message && failures >= 2) {
+                    message.textContent = 'Reintentando consulta de estado… (' + cveAiError(err) + ')';
                     message.className = 'text-xs text-amber-600';
-                    if (button) button.disabled = false;
                 }
-            }).catch(function () {
-                clearInterval(timer);
-                message.textContent = 'Error de conexión al consultar el estado del informe.';
-                message.className = 'text-xs text-red-500';
-                if (button) button.disabled = false;
             });
-        }, 2000);
+        }, 5000);
     }
 
     syncCveReportScope();

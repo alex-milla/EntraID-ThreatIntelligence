@@ -1189,6 +1189,305 @@ class AdminController
     }
 
     /**
+     * Logs de la aplicación: errores PHP, actividad y log estructurado,
+     * con filtros y panel de diagnóstico.
+     */
+    public static function logs(): void
+    {
+        Auth::requireAdmin();
+
+        $sources = [
+            'app'      => ['label' => 'Aplicación', 'file' => STORAGE_PATH . '/app.log'],
+            'php'      => ['label' => 'Errores PHP', 'file' => STORAGE_PATH . '/php_errors.log'],
+            'activity' => ['label' => 'Actividad', 'file' => STORAGE_PATH . '/activity.log'],
+        ];
+
+        $source = (string)($_GET['source'] ?? 'app');
+        if (!isset($sources[$source])) {
+            $source = 'app';
+        }
+        $level = strtolower(trim((string)($_GET['level'] ?? '')));
+        if (!in_array($level, ['', 'error', 'warning', 'info'], true)) {
+            $level = '';
+        }
+        $channel = trim((string)($_GET['channel'] ?? ''));
+        $q = trim((string)($_GET['q'] ?? ''));
+        $page = max(1, (int)($_GET['page'] ?? 1));
+
+        $entries = self::readLogEntries($source, $sources[$source]['file']);
+
+        $filtered = [];
+        foreach ($entries as $entry) {
+            if ($level !== '' && $entry['level'] !== $level) {
+                continue;
+            }
+            if ($channel !== '' && stripos((string)$entry['channel'], $channel) === false) {
+                continue;
+            }
+            if ($q !== '') {
+                $haystack = $entry['message'] . ' ' . json_encode($entry['context'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+                if (stripos($haystack, $q) === false) {
+                    continue;
+                }
+            }
+            $filtered[] = $entry;
+        }
+
+        // Más recientes primero (el fichero está en orden cronológico).
+        $filtered = array_reverse($filtered);
+
+        $counts = ['error' => 0, 'warning' => 0, 'info' => 0];
+        foreach ($filtered as $entry) {
+            $counts[$entry['level']] = ($counts[$entry['level']] ?? 0) + 1;
+        }
+
+        $perPage = 50;
+        $total = count($filtered);
+        $pages = max(1, (int)ceil($total / $perPage));
+        if ($page > $pages) {
+            $page = $pages;
+        }
+        $entriesPage = array_slice($filtered, ($page - 1) * $perPage, $perPage);
+
+        $fileInfo = [];
+        foreach ($sources as $key => $meta) {
+            $file = $meta['file'];
+            $fileInfo[$key] = [
+                'label'   => $meta['label'],
+                'exists'  => is_file($file),
+                'size'    => is_file($file) ? (int)@filesize($file) : 0,
+                'mtime'   => is_file($file) ? (int)@filemtime($file) : 0,
+            ];
+        }
+
+        $diag = [
+            'php'                 => PHP_VERSION,
+            'sapi'                => function_exists('php_sapi_name') ? (string)php_sapi_name() : '—',
+            'ext'                 => [
+                'curl'       => function_exists('curl_init'),
+                'mbstring'   => function_exists('mb_strlen'),
+                'openssl'    => function_exists('openssl_encrypt'),
+                'sqlite3'    => extension_loaded('sqlite3'),
+                'pdo_sqlite' => extension_loaded('pdo_sqlite'),
+            ],
+            'max_execution_time'  => (string)ini_get('max_execution_time'),
+            'memory_limit'        => (string)ini_get('memory_limit'),
+            'post_max_size'       => (string)ini_get('post_max_size'),
+            'display_errors'      => (string)ini_get('display_errors'),
+            'log_errors'          => (string)ini_get('log_errors'),
+            'app_debug'           => APP_DEBUG,
+            'rewrite'             => HAS_MOD_REWRITE,
+            'storage_writable'    => is_writable(STORAGE_PATH),
+            'disk_free'           => function_exists('disk_free_space') ? (int)@disk_free_space(STORAGE_PATH) : 0,
+            'disk_total'          => function_exists('disk_total_space') ? (int)@disk_total_space(STORAGE_PATH) : 0,
+            'db_size'             => is_file(DB_PATH) ? (int)@filesize(DB_PATH) : 0,
+            'cve_db_size'         => defined('CVE_DB_PATH') && is_file(CVE_DB_PATH) ? (int)@filesize(CVE_DB_PATH) : 0,
+        ];
+
+        $llmProfiles = llm_profile_list();
+        $llmTaskProfile = llm_task_profile('cve_report');
+        $llmConfigured = class_exists('Module_Llm') && (new Module_Llm())->isConfigured();
+
+        $jobs = [];
+        $jobCounts = [];
+        try {
+            $jobs = CveDatabase::fetchAll(
+                "SELECT id, title, status, ai_model, ai_error, ai_duration_ms, no_ai, created_at, finished_at
+                 FROM cve_ai_reports
+                 ORDER BY id DESC
+                 LIMIT 10"
+            );
+            foreach (CveDatabase::fetchAll("SELECT status, COUNT(*) AS c FROM cve_ai_reports GROUP BY status") as $row) {
+                $jobCounts[(string)$row['status']] = (int)$row['c'];
+            }
+        } catch (Throwable $e) {
+            app_log('warning', 'logs', 'No se pudo leer cve_ai_reports', ['error' => $e->getMessage()]);
+        }
+
+        $success = flash('success');
+        $error = flash('error');
+
+        $title = 'Logs';
+        require VIEWS_PATH . '/layout/header.php';
+        require VIEWS_PATH . '/layout/sidebar.php';
+        require VIEWS_PATH . '/admin/logs.php';
+        require VIEWS_PATH . '/layout/footer.php';
+    }
+
+    /**
+     * Descarga una fuente de log (solo las permitidas).
+     */
+    public static function logsDownload(): void
+    {
+        Auth::requireAdmin();
+
+        $files = [
+            'app'      => STORAGE_PATH . '/app.log',
+            'php'      => STORAGE_PATH . '/php_errors.log',
+            'activity' => STORAGE_PATH . '/activity.log',
+        ];
+        $source = (string)($_GET['source'] ?? '');
+        if (!isset($files[$source]) || !is_file($files[$source])) {
+            http_response_code(404);
+            echo 'Log no disponible.';
+            return;
+        }
+
+        $file = $files[$source];
+        header('Content-Type: text/plain; charset=utf-8');
+        header('Content-Disposition: attachment; filename="' . $source . '-' . date('Ymd-His') . '.log"');
+        header('Content-Length: ' . (string)filesize($file));
+        header('Cache-Control: no-store, no-cache, must-revalidate');
+        @readfile($file);
+        exit;
+    }
+
+    /**
+     * Rota (vacía) una fuente de log. Conserva el anterior como .1.
+     */
+    public static function logsClear(): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        $files = [
+            'app'      => STORAGE_PATH . '/app.log',
+            'php'      => STORAGE_PATH . '/php_errors.log',
+            'activity' => STORAGE_PATH . '/activity.log',
+        ];
+        $source = (string)($_POST['source'] ?? '');
+        if (!isset($files[$source])) {
+            flash('error', 'Fuente de log no válida.');
+            redirect(base_url('admin/logs'));
+        }
+
+        $file = $files[$source];
+        if (is_file($file)) {
+            @rename($file, $file . '.1');
+            @file_put_contents($file, '');
+        }
+        app_log('info', 'admin', 'Log vaciado manualmente', ['source' => $source]);
+        flash('success', 'Log vaciado. El anterior se conserva como «' . basename($file) . '.1».');
+        redirect(base_url('admin/logs?source=' . rawurlencode($source)));
+    }
+
+    /**
+     * Lee las últimas entradas de un log (máximo 1 MB) y las normaliza.
+     *
+     * @return array<int,array{ts:int,level:string,channel:string,message:string,context:mixed,raw:string}>
+     */
+    private static function readLogEntries(string $source, string $file, int $maxBytes = 1048576): array
+    {
+        if (!is_file($file) || !is_readable($file)) {
+            return [];
+        }
+
+        $size = (int)@filesize($file);
+        $fh = @fopen($file, 'rb');
+        if ($fh === false) {
+            return [];
+        }
+        if ($size > $maxBytes) {
+            @fseek($fh, $size - $maxBytes);
+        }
+        $data = (string)@stream_get_contents($fh);
+        @fclose($fh);
+
+        if ($size > $maxBytes) {
+            $pos = strpos($data, "\n");
+            if ($pos !== false) {
+                $data = substr($data, $pos + 1);
+            }
+        }
+
+        $lines = preg_split('/\r\n|\n|\r/', $data) ?: [];
+        $entries = [];
+
+        if ($source === 'php') {
+            $current = null;
+            foreach ($lines as $line) {
+                if ($line === '') {
+                    continue;
+                }
+                if (preg_match('/^\[([^\]]+)\]\s*(.*)$/', $line, $m)) {
+                    if ($current !== null) {
+                        $entries[] = $current;
+                    }
+                    $ts = strtotime($m[1]);
+                    $message = $m[2];
+                    $level = 'info';
+                    if (preg_match('/fatal|error|exception|uncaught/i', $message)) {
+                        $level = 'error';
+                    } elseif (preg_match('/warning/i', $message)) {
+                        $level = 'warning';
+                    }
+                    $current = [
+                        'ts'      => $ts !== false ? $ts : 0,
+                        'level'   => $level,
+                        'channel' => 'php',
+                        'message' => $message,
+                        'context' => '',
+                        'raw'     => $line,
+                    ];
+                } elseif ($current !== null) {
+                    $current['message'] .= "\n" . $line;
+                    $current['raw'] .= "\n" . $line;
+                }
+            }
+            if ($current !== null) {
+                $entries[] = $current;
+            }
+            return $entries;
+        }
+
+        foreach ($lines as $line) {
+            $line = trim($line);
+            if ($line === '') {
+                continue;
+            }
+            $row = json_decode($line, true);
+            if (!is_array($row)) {
+                $entries[] = [
+                    'ts' => 0, 'level' => 'info', 'channel' => $source,
+                    'message' => $line, 'context' => '', 'raw' => $line,
+                ];
+                continue;
+            }
+
+            $ts = strtotime((string)($row['timestamp'] ?? ''));
+            if ($source === 'activity') {
+                $context = is_array($row['context'] ?? null) ? $row['context'] : [];
+                $context['user_id'] = $row['user_id'] ?? null;
+                $context['ip'] = $row['ip'] ?? null;
+                $entries[] = [
+                    'ts'      => $ts !== false ? $ts : 0,
+                    'level'   => 'info',
+                    'channel' => 'activity',
+                    'message' => (string)($row['action'] ?? ''),
+                    'context' => $context,
+                    'raw'     => $line,
+                ];
+                continue;
+            }
+
+            $level = strtolower((string)($row['level'] ?? 'info'));
+            if (!in_array($level, ['error', 'warning', 'info'], true)) {
+                $level = 'info';
+            }
+            $entries[] = [
+                'ts'      => $ts !== false ? $ts : 0,
+                'level'   => $level,
+                'channel' => (string)($row['channel'] ?? 'app'),
+                'message' => (string)($row['message'] ?? ''),
+                'context' => $row['context'] ?? [],
+                'raw'     => $line,
+            ];
+        }
+
+        return $entries;
+    }
+
+    /**
      * Tamaño de un directorio (con tope de ficheros para no castigar el hosting).
      */
     private static function dirSize(string $path, int $maxFiles = 20000): int
@@ -1239,6 +1538,8 @@ $adminRoutes = [
         'security'         => 'security',
         'apis'             => 'apis',
         'apis/cve-status'  => 'cveStatus',
+        'logs'             => 'logs',
+        'logs/download'    => 'logsDownload',
         'updates'          => 'updates',
         'change-password'  => 'changePassword',
     ],
@@ -1260,6 +1561,7 @@ $adminRoutes = [
         'apis/tasks'       => 'apisTasks',
         'apis/cve-save'    => 'cveSave',
         'apis/cve-test'    => 'cveTest',
+        'logs/clear'       => 'logsClear',
         'updates'          => 'updates',
         'change-password'  => 'changePassword',
     ],

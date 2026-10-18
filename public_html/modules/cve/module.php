@@ -39,7 +39,9 @@ class Module_Cve extends BaseModule
             ['method' => 'GET',  'pattern' => 'active',          'handler' => [$this, 'syncActive']],
             ['method' => 'GET',  'pattern' => 'cpe-search',      'handler' => [$this, 'cpeSearch']],
             ['method' => 'POST', 'pattern' => 'reports/generate', 'handler' => [$this, 'generateReport']],
-            ['method' => 'POST', 'pattern' => 'reports/ai-generate', 'handler' => [$this, 'generateAiReport']],
+            ['method' => 'POST', 'pattern' => 'reports/ai-start', 'handler' => [$this, 'startAiReport']],
+            ['method' => 'POST', 'pattern' => 'reports/ai-run/{id}', 'handler' => [$this, 'runAiReport']],
+            ['method' => 'POST', 'pattern' => 'reports/ai-generate', 'handler' => [$this, 'startAiReport']],
             ['method' => 'POST', 'pattern' => 'reports/ai-retry/{id}', 'handler' => [$this, 'retryAiReport']],
             ['method' => 'GET',  'pattern' => 'reports/ai-status/{id}', 'handler' => [$this, 'aiReportStatus']],
             ['method' => 'GET',  'pattern' => 'report/{id}/csv',  'handler' => [$this, 'reportCsv']],
@@ -884,7 +886,7 @@ class Module_Cve extends BaseModule
     // Informes de CVE con IA (formato SploitScan)
     // ============================================================
 
-    public function generateAiReport(array $params = []): void
+    public function startAiReport(array $params = []): void
     {
         Auth::requireAdmin();
         Csrf::validateOrFail();
@@ -922,26 +924,74 @@ class Module_Cve extends BaseModule
                 ], 400);
             }
 
-            $llm = class_exists('Module_Llm') ? new Module_Llm() : null;
+            $noAi = !empty($input['no_ai']);
             $profileId = (int)($input['profile_id'] ?? 0);
             if ($profileId <= 0) {
                 $profileId = (int)(llm_task_profile('cve_report') ?? 0);
             }
-            if ($llm === null || !$llm->isConfigured($profileId > 0 ? $profileId : null)) {
-                json_response([
-                    'success' => false,
-                    'error'   => 'La IA no está configurada. Añade un perfil en Admin → APIs.',
-                ], 400);
+            if (!$noAi) {
+                $llm = class_exists('Module_Llm') ? new Module_Llm() : null;
+                if ($llm === null || !$llm->isConfigured($profileId > 0 ? $profileId : null)) {
+                    json_response([
+                        'success' => false,
+                        'error'   => 'La IA no está configurada. Añade un perfil en Admin → APIs o marca «Solo datos locales».',
+                    ], 400);
+                }
             }
 
-            $result = $this->queueAiReport($found, $profileId);
+            $result = $this->queueAiReport($found, $profileId, $noAi);
+            app_log('info', 'cve_ai', 'Informe IA creado', [
+                'id'     => (int)$result['report_id'],
+                'cves'   => $found,
+                'no_ai'  => $noAi,
+                'profile'=> $profileId,
+            ]);
             log_activity('cve.ai_report_created', [
                 'report_id' => (int)$result['report_id'],
                 'cves'      => $found,
             ]);
             json_response($result);
         } catch (Throwable $e) {
+            app_log('error', 'cve_ai', 'Error creando el informe', ['error' => $e->getMessage()]);
             json_response(['success' => false, 'error' => $e->getMessage()], 400);
+        }
+    }
+
+    /**
+     * Ejecuta el informe en la propia petición HTTP (sin worker ni loopback).
+     * El navegador espera la respuesta y, si el proxy la corta, el trabajo
+     * continúa gracias a ignore_user_abort() y el JS cae a polling.
+     */
+    public function runAiReport(array $params = []): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        $id = (int)($params['id'] ?? 0);
+        if ($id <= 0) {
+            json_response(['success' => false, 'error' => 'Informe no válido.'], 400);
+        }
+
+        // La llamada a la IA puede tardar: liberar la sesión y ampliar el límite.
+        if (function_exists('release_session_lock')) {
+            release_session_lock();
+        }
+        @set_time_limit(0);
+        @ignore_user_abort(true);
+
+        try {
+            $result = CveReportAi::runById($id);
+            $result['url'] = base_url('modules/cve/report-ai/' . $id);
+            json_response($result);
+        } catch (Throwable $e) {
+            app_log('error', 'cve_ai', 'Error ejecutando el informe', ['id' => $id, 'error' => $e->getMessage()]);
+            json_response([
+                'success' => false,
+                'id'      => $id,
+                'status'  => 'error',
+                'error'   => $e->getMessage(),
+                'url'     => base_url('modules/cve/report-ai/' . $id),
+            ], 500);
         }
     }
 
@@ -962,35 +1012,19 @@ class Module_Cve extends BaseModule
                 json_response(['success' => false, 'error' => 'El informe no tiene CVEs válidos.'], 400);
             }
 
-            $llm = class_exists('Module_Llm') ? new Module_Llm() : null;
-            $profileId = (int)($row['ai_profile_id'] ?? 0);
-            if ($llm === null || !$llm->isConfigured($profileId > 0 ? $profileId : null)) {
-                json_response([
-                    'success' => false,
-                    'error'   => 'La IA no está configurada. Añade un perfil en Admin → APIs.',
-                ], 400);
-            }
-
             $token = bin2hex(random_bytes(24));
             CveDatabase::update(
                 "UPDATE cve_ai_reports
-                 SET status = 'pending', token = ?, ai_error = NULL, finished_at = NULL
+                 SET status = 'pending', token = ?, ai_error = NULL, finished_at = NULL, started_at = NULL
                  WHERE id = ?",
                 [$token, $id]
             );
-
-            $base = CveReportAi::baseUrl();
-            $launched = $base !== '' && background_request($base . '/cve-worker.php?ai_token=' . rawurlencode($token));
-            if (!$launched) {
-                @set_time_limit(0);
-                CveReportAi::runPending($token);
-            }
+            app_log('info', 'cve_ai', 'Informe reencolado', ['id' => $id]);
 
             json_response([
                 'success'   => true,
                 'report_id' => $id,
                 'status'    => 'pending',
-                'launched'  => $launched,
                 'url'       => base_url('modules/cve/report-ai/' . $id),
             ]);
         } catch (Throwable $e) {
@@ -1000,39 +1034,57 @@ class Module_Cve extends BaseModule
 
     public function aiReportStatus(array $params = []): void
     {
-        Auth::require();
-
-        $id = (int)($params['id'] ?? 0);
-        $row = $id > 0
-            ? CveDatabase::fetchOne("SELECT id, status, ai_error, created_at FROM cve_ai_reports WHERE id = ?", [$id])
-            : null;
-        if ($row === null) {
-            json_response(['success' => false, 'error' => 'Informe no encontrado.'], 404);
+        // Nunca redirigir a HTML: el cliente espera JSON.
+        if (!Auth::check()) {
+            json_response(['success' => false, 'error' => 'Sesión caducada. Recarga la página.'], 401);
         }
 
-        // Auto-salud: si el worker murió, no dejar el informe «generando» para siempre.
-        if (in_array((string)$row['status'], ['pending', 'running'], true)) {
-            $created = strtotime((string)($row['created_at'] ?? '') . ' UTC');
-            if ($created !== false && (time() - $created) > 900) {
-                $message = 'La generación no terminó a tiempo (15 minutos). Puedes reintentarlo.';
-                CveDatabase::query(
-                    "UPDATE cve_ai_reports
-                     SET status = 'error', ai_error = ?, token = NULL, finished_at = datetime('now')
-                     WHERE id = ? AND status IN ('pending','running')",
-                    [$message, $id]
-                );
-                $row['status'] = 'error';
-                $row['ai_error'] = $message;
+        try {
+            $id = (int)($params['id'] ?? 0);
+            $row = $id > 0
+                ? CveDatabase::fetchOne(
+                    "SELECT id, status, ai_error, created_at, started_at FROM cve_ai_reports WHERE id = ?",
+                    [$id]
+                )
+                : null;
+            if ($row === null) {
+                json_response(['success' => false, 'error' => 'Informe no encontrado.'], 404);
             }
-        }
 
-        json_response([
-            'success'   => true,
-            'report_id' => $id,
-            'status'    => (string)$row['status'],
-            'error'     => (string)($row['ai_error'] ?? ''),
-            'url'       => base_url('modules/cve/report-ai/' . $id),
-        ]);
+            // Autosalud: un informe «running» atascado no debe quedarse eterno.
+            if ((string)$row['status'] === 'running') {
+                $ref = (string)($row['started_at'] ?? '');
+                if ($ref === '') {
+                    $ref = (string)($row['created_at'] ?? '');
+                }
+                $started = strtotime(str_contains($ref, 'Z') ? $ref : $ref . ' UTC');
+                if ($started !== false && (time() - $started) > 1800) {
+                    $message = 'La generación no terminó a tiempo (30 minutos). Puedes reintentarlo.';
+                    CveDatabase::query(
+                        "UPDATE cve_ai_reports
+                         SET status = 'error', ai_error = ?, token = NULL, finished_at = datetime('now')
+                         WHERE id = ? AND status = 'running'",
+                        [$message, $id]
+                    );
+                    $row['status'] = 'error';
+                    $row['ai_error'] = $message;
+                }
+            }
+
+            json_response([
+                'success'   => true,
+                'report_id' => $id,
+                'status'    => (string)$row['status'],
+                'error'     => (string)($row['ai_error'] ?? ''),
+                'url'       => base_url('modules/cve/report-ai/' . $id),
+            ]);
+        } catch (Throwable $e) {
+            app_log('error', 'cve_ai', 'Error consultando el estado', [
+                'id'    => $params['id'] ?? null,
+                'error' => $e->getMessage(),
+            ]);
+            json_response(['success' => false, 'error' => 'Error interno: ' . $e->getMessage()], 500);
+        }
     }
 
     public function aiReportView(array $params = []): void
@@ -1075,10 +1127,10 @@ class Module_Cve extends BaseModule
     }
 
     /**
-     * Encola un informe IA y lanza el worker (o lo procesa en línea si el
-     * hosting no permite loopback).
+     * Crea el informe en estado «pending». La ejecución la lanza el navegador
+     * contra reports/ai-run/{id} (sin loopback ni worker).
      */
-    private function queueAiReport(array $cveIds, int $profileId): array
+    private function queueAiReport(array $cveIds, int $profileId, bool $noAi = false): array
     {
         $token = bin2hex(random_bytes(24));
         $title = 'Informe CVE IA · '
@@ -1086,30 +1138,23 @@ class Module_Cve extends BaseModule
             . ' · ' . date('d/m/Y H:i');
 
         $id = CveDatabase::insert(
-            "INSERT INTO cve_ai_reports (cve_ids, title, status, token, ai_profile_id, generated_by)
-             VALUES (?, ?, 'pending', ?, ?, ?)",
+            "INSERT INTO cve_ai_reports (cve_ids, title, status, token, ai_profile_id, generated_by, no_ai)
+             VALUES (?, ?, 'pending', ?, ?, ?, ?)",
             [
                 $this->encodeJson($cveIds),
                 $title,
                 $token,
                 $profileId > 0 ? $profileId : null,
                 Auth::id(),
+                $noAi ? 1 : 0,
             ]
         );
-
-        $base = CveReportAi::baseUrl();
-        $launched = $base !== '' && background_request($base . '/cve-worker.php?ai_token=' . rawurlencode($token));
-
-        if (!$launched) {
-            @set_time_limit(0);
-            CveReportAi::runPending($token);
-        }
 
         return [
             'success'   => true,
             'report_id' => $id,
             'status'    => 'pending',
-            'launched'  => $launched,
+            'no_ai'     => $noAi,
             'url'       => base_url('modules/cve/report-ai/' . $id),
         ];
     }
@@ -1118,7 +1163,7 @@ class Module_Cve extends BaseModule
     {
         $limit = max(1, min(200, $limit));
         return CveDatabase::fetchAll(
-            "SELECT id, cve_ids, title, status, ai_model, ai_error, created_at, finished_at
+            "SELECT id, cve_ids, title, status, ai_model, ai_error, no_ai, created_at, finished_at
              FROM cve_ai_reports
              ORDER BY created_at DESC, id DESC
              LIMIT ?",

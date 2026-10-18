@@ -154,6 +154,7 @@ $statusClasses = [
     <script>
     var CVE_AI_STATUS_URL = <?= json_encode(base_url('modules/cve/reports/ai-status/' . (int)$report['id'])) ?>;
     var CVE_AI_RETRY_URL = <?= json_encode(base_url('modules/cve/reports/ai-retry/' . (int)$report['id'])) ?>;
+    var CVE_AI_RUN_URL = <?= json_encode(base_url('modules/cve/reports/ai-run/' . (int)$report['id'])) ?>;
     var CVE_AI_CONTENT = <?= json_encode($content, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
 
     function copyCveAiReport(button) {
@@ -184,6 +185,39 @@ $statusClasses = [
         document.body.removeChild(area);
     }
 
+    function cveAiErrorText(err) {
+        return (err && err.message) ? err.message : 'error de red';
+    }
+
+    function runCveAiReport() {
+        api('POST', CVE_AI_RUN_URL, {}).then(function () {
+            window.location.reload();
+        }).catch(function (err) {
+            var banner = document.getElementById('ai-processing-banner');
+            if (banner) {
+                banner.textContent = 'La petición se interrumpió; seguimos comprobando el estado… (' + cveAiErrorText(err) + ')';
+            }
+            startCveAiPolling();
+        });
+    }
+
+    function startCveAiPolling() {
+        var tries = 0;
+        var timer = setInterval(function () {
+            tries++;
+            if (tries > 300) {
+                clearInterval(timer);
+                return;
+            }
+            api('GET', CVE_AI_STATUS_URL).then(function (res) {
+                if (res.success && (res.status === 'done' || res.status === 'error')) {
+                    clearInterval(timer);
+                    window.location.reload();
+                }
+            }).catch(function () { /* se reintenta */ });
+        }, 3000);
+    }
+
     function retryCveAiReport(button) {
         if (button) button.disabled = true;
         api('POST', CVE_AI_RETRY_URL, {}).then(function (res) {
@@ -193,23 +227,19 @@ $statusClasses = [
                 return;
             }
             window.location.reload();
-        }).catch(function () {
-            alert('Error de conexión al reintentar el informe.');
+        }).catch(function (err) {
+            alert('No se pudo reintentar: ' + cveAiErrorText(err));
             if (button) button.disabled = false;
         });
     }
 
-    <?php if ($isProcessing): ?>
+    <?php if ($status === 'pending'): ?>
     (function () {
-        var timer = setInterval(function () {
-            api('GET', CVE_AI_STATUS_URL).then(function (res) {
-                if (res.success && (res.status === 'done' || res.status === 'error')) {
-                    clearInterval(timer);
-                    window.location.reload();
-                }
-            }).catch(function () {});
-        }, 2500);
+        // Informe creado pero sin ejecutar (p. ej. se cortó la petición): lo lanzamos aquí.
+        runCveAiReport();
     })();
+    <?php elseif ($status === 'running'): ?>
+    startCveAiPolling();
     <?php endif; ?>
     </script>
 <?php endif; ?>

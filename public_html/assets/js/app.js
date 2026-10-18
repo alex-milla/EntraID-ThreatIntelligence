@@ -92,7 +92,19 @@
                 window.location.href = (window.APP_URL || '') + '/admin/login';
                 throw new Error('No autorizado');
             }
-            return res.json();
+            return res.text().then(function (text) {
+                var payload;
+                try {
+                    payload = text ? JSON.parse(text) : {};
+                } catch (e) {
+                    var snippet = (text || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+                    var err = new Error('HTTP ' + res.status + (snippet ? ' · ' + snippet : ''));
+                    err.httpStatus = res.status;
+                    err.body = text || '';
+                    throw err;
+                }
+                return payload;
+            });
         });
     };
 
