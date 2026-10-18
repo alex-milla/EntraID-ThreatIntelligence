@@ -180,7 +180,21 @@ class CveDatabase
             finished_at TEXT
         )");
 
+        $db->exec("CREATE TABLE IF NOT EXISTS cve_reports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            report_type TEXT NOT NULL DEFAULT 'cve_software',
+            period_start TEXT,
+            period_end TEXT,
+            filters TEXT,
+            summary_json TEXT,
+            data TEXT NOT NULL,
+            generated_by INTEGER,
+            generated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )");
+
         $db->exec("CREATE INDEX IF NOT EXISTS idx_cve_catalog_severity ON cve_catalog(severity)");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_cve_reports_generated ON cve_reports(generated_at DESC)");
         $db->exec("CREATE INDEX IF NOT EXISTS idx_cve_catalog_published ON cve_catalog(published_at DESC)");
         $db->exec("CREATE INDEX IF NOT EXISTS idx_cve_catalog_cvss ON cve_catalog(cvss_v3_score DESC)");
         $db->exec("CREATE INDEX IF NOT EXISTS idx_cve_product_vendor ON cve_product(vendor, product)");

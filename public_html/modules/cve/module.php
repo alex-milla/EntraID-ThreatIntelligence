@@ -38,6 +38,9 @@ class Module_Cve extends BaseModule
             ['method' => 'GET',  'pattern' => 'status',          'handler' => [$this, 'syncStatus']],
             ['method' => 'GET',  'pattern' => 'active',          'handler' => [$this, 'syncActive']],
             ['method' => 'GET',  'pattern' => 'cpe-search',      'handler' => [$this, 'cpeSearch']],
+            ['method' => 'POST', 'pattern' => 'reports/generate', 'handler' => [$this, 'generateReport']],
+            ['method' => 'GET',  'pattern' => 'report/{id}/csv',  'handler' => [$this, 'reportCsv']],
+            ['method' => 'GET',  'pattern' => 'report/{id}',      'handler' => [$this, 'reportView']],
             ['method' => 'POST', 'pattern' => 'sync',            'handler' => [$this, 'triggerSync']],
             ['method' => 'POST', 'pattern' => 'step',            'handler' => [$this, 'stepSync']],
             ['method' => 'POST', 'pattern' => 'cancel',          'handler' => [$this, 'cancelSync']],
@@ -58,12 +61,14 @@ class Module_Cve extends BaseModule
         Auth::require();
 
         $isAdmin = Auth::isAdmin();
-        $tab = (($_GET['tab'] ?? 'catalog') === 'software') ? 'software' : 'catalog';
+        $tabParam = (string)($_GET['tab'] ?? 'catalog');
+        $tab = in_array($tabParam, ['software', 'reports'], true) ? $tabParam : 'catalog';
         $selectedGroup = (int)($_GET['group'] ?? 0);
         $q = trim((string)($_GET['q'] ?? ''));
 
         $groups = [];
         $software = [];
+        $reports = [];
         $stats = $this->emptyStats();
         $editSoftware = null;
         $editGroup = null;
@@ -81,6 +86,9 @@ class Module_Cve extends BaseModule
             $groups = $this->groupTree();
             if ($tab === 'software') {
                 $software = $this->listSoftware($selectedGroup, $q);
+            } elseif ($tab === 'reports') {
+                $softwareOptions = $this->listSoftware(0, '');
+                $reports = $this->listReports(30);
             } else {
                 $catalogFilters = [
                     'q'           => trim((string)($_GET['q'] ?? '')),
@@ -125,6 +133,7 @@ class Module_Cve extends BaseModule
             'tab'           => $tab,
             'groups'        => $groups,
             'software'      => $software,
+            'reports'       => $reports,
             'stats'         => $stats,
             'selectedGroup' => $selectedGroup,
             'q'             => $q,
@@ -578,6 +587,446 @@ class Module_Cve extends BaseModule
         } catch (Throwable $e) {
             json_response(['success' => false, 'error' => $e->getMessage()], 500);
         }
+    }
+
+    // ============================================================
+    // Informes
+    // ============================================================
+
+    public function generateReport(array $params = []): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        try {
+            $raw = file_get_contents('php://input');
+            $input = json_decode((string)$raw, true);
+            if (!is_array($input)) {
+                $input = $_POST;
+            }
+            json_response($this->createReport($input));
+        } catch (Throwable $e) {
+            json_response(['success' => false, 'error' => $e->getMessage()], 400);
+        }
+    }
+
+    public function reportView(array $params = []): void
+    {
+        Auth::require();
+
+        $id = (int)($params['id'] ?? 0);
+        $report = $id > 0 ? $this->getReport($id) : null;
+        if ($report === null) {
+            http_response_code(404);
+        }
+
+        $data = is_array($report['data'] ?? null) ? $report['data'] : [];
+        $summary = is_array($report['summary'] ?? null) ? $report['summary'] : [];
+
+        echo $this->page('report', [
+            'report'  => $report,
+            'data'    => $data,
+            'summary' => $summary,
+        ]);
+    }
+
+    public function reportCsv(array $params = []): void
+    {
+        Auth::require();
+
+        $id = (int)($params['id'] ?? 0);
+        $report = $id > 0 ? $this->getReport($id) : null;
+        if ($report === null || !is_array($report['data'] ?? null)) {
+            http_response_code(404);
+            echo 'Informe no encontrado.';
+            return;
+        }
+
+        $filename = 'cve-report-' . $id . '-' . date('Ymd-His') . '.csv';
+        header('Content-Type: text/csv; charset=utf-8');
+        header('Content-Disposition: attachment; filename="' . $filename . '"');
+        header('Cache-Control: no-store, no-cache, must-revalidate');
+
+        $out = fopen('php://output', 'w');
+        if ($out === false) {
+            return;
+        }
+        fwrite($out, "\xEF\xBB\xBF");
+        fputcsv($out, [
+            'Grupo', 'Software', 'Versión', 'Entorno', 'Criticidad', 'Activos',
+            'CVE', 'Severidad', 'CVSS', 'EPSS', 'Percentil EPSS',
+            'KEV', 'Fecha KEV', 'Vencimiento KEV', 'Ransomware',
+            'Publicado', 'Primera detección', 'Coincidencia', 'CPE',
+            'Versiones afectadas', 'Descripción', 'Acción requerida', 'URL NVD',
+        ], ',', '"', '');
+
+        $softwareSections = is_array($report['data']['software'] ?? null) ? $report['data']['software'] : [];
+        foreach ($softwareSections as $section) {
+            $affected = is_array($section['cves'] ?? null) ? $section['cves'] : [];
+            foreach ($affected as $cve) {
+                $versions = is_array($cve['affected_versions'] ?? null) ? $cve['affected_versions'] : [];
+                $row = [
+                    (string)($section['group'] ?? ''),
+                    (string)($section['name'] ?? ''),
+                    (string)($section['version'] ?? ''),
+                    (string)($section['environment'] ?? ''),
+                    (string)($section['criticality'] ?? ''),
+                    ($section['asset_count'] ?? null) !== null ? (string)$section['asset_count'] : '',
+                    (string)($cve['cve_id'] ?? ''),
+                    (string)($cve['severity'] ?? ''),
+                    ($cve['cvss'] ?? null) !== null ? (string)$cve['cvss'] : '',
+                    ($cve['epss'] ?? null) !== null ? (string)$cve['epss'] : '',
+                    ($cve['percentile'] ?? null) !== null ? (string)$cve['percentile'] : '',
+                    !empty($cve['kev']) ? 'Sí' : 'No',
+                    (string)($cve['kev_date'] ?? ''),
+                    (string)($cve['kev_due'] ?? ''),
+                    (string)($cve['kev_ransomware'] ?? ''),
+                    (string)($cve['published_at'] ?? ''),
+                    (string)($cve['first_seen_at'] ?? ''),
+                    (string)($cve['version_match'] ?? ''),
+                    (string)($cve['matched_cpe'] ?? ''),
+                    implode('; ', array_map('strval', $versions)),
+                    (string)($cve['description'] ?? ''),
+                    (string)($cve['kev_action'] ?? ''),
+                    (string)($cve['nvd_url'] ?? ''),
+                ];
+                fputcsv($out, array_map([$this, 'csvSafe'], $row), ',', '"', '');
+            }
+        }
+
+        fclose($out);
+        exit;
+    }
+
+    private function createReport(array $input): array
+    {
+        $filters = $this->normalizeReportFilters($input);
+
+        $scopeLabel = 'Todo el inventario';
+        if ($filters['scope'] === 'group') {
+            $group = $this->getGroup((int)$filters['group_id']);
+            if ($group === null) {
+                throw new RuntimeException('El grupo seleccionado no existe.');
+            }
+            $scopeLabel = 'Grupo: ' . (string)$group['name'];
+        } elseif ($filters['scope'] === 'software') {
+            $software = $this->getSoftware((int)$filters['software_id']);
+            if ($software === null) {
+                throw new RuntimeException('El software seleccionado no existe.');
+            }
+            $scopeLabel = trim((string)$software['name'] . ' ' . (string)($software['version'] ?? ''));
+        }
+
+        $period = $this->reportPeriod((string)$filters['period']);
+        $data = $this->buildReportData($filters, $period);
+        $title = 'Informe CVE · ' . $scopeLabel . ' · ' . $period['label'];
+
+        $dataJson = $this->encodeJson($data);
+        $summaryJson = $this->encodeJson($data['summary']);
+        $filtersJson = $this->encodeJson($filters);
+
+        $reportId = CveDatabase::insert(
+            "INSERT INTO cve_reports
+             (title, report_type, period_start, period_end, filters, summary_json, data, generated_by)
+             VALUES (?, 'cve_software', ?, ?, ?, ?, ?, ?)",
+            [
+                $title,
+                $period['start'],
+                $period['end'],
+                $filtersJson,
+                $summaryJson,
+                $dataJson,
+                Auth::id(),
+            ]
+        );
+
+        return [
+            'success'   => true,
+            'report_id' => $reportId,
+            'title'     => $title,
+            'url'       => base_url('modules/cve/report/' . $reportId),
+            'summary'   => $data['summary'],
+        ];
+    }
+
+    private function buildReportData(array $filters, array $period): array
+    {
+        $where = ['1 = 1'];
+        $params = [];
+
+        if ($filters['scope'] === 'software' && (int)$filters['software_id'] > 0) {
+            $where[] = 'w.id = ?';
+            $params[] = (int)$filters['software_id'];
+        } elseif ($filters['scope'] === 'group' && (int)$filters['group_id'] > 0) {
+            $groupIds = $this->descendantGroupIds((int)$filters['group_id']);
+            if (empty($groupIds)) {
+                $where[] = '1 = 0';
+            } else {
+                $placeholders = implode(',', array_fill(0, count($groupIds), '?'));
+                $where[] = "w.group_id IN ($placeholders)";
+                foreach ($groupIds as $groupId) {
+                    $params[] = $groupId;
+                }
+            }
+        }
+
+        if (!empty($filters['new_only']) && !empty($period['start'])) {
+            $where[] = "(datetime(c.published_at) >= datetime(?) OR datetime(m.first_seen_at) >= datetime(?))";
+            $params[] = $period['start'];
+            $params[] = $period['start'];
+        }
+        if ((string)$filters['severity'] !== '') {
+            $where[] = 'c.severity = ?';
+            $params[] = (string)$filters['severity'];
+        }
+        if (!empty($filters['only_kev'])) {
+            $where[] = 'k.cve_id IS NOT NULL';
+        }
+        if ($filters['epss_min'] !== null) {
+            $where[] = 'e.epss >= ?';
+            $params[] = (float)$filters['epss_min'];
+        }
+
+        $maxRows = defined('CVE_REPORT_MAX_ROWS') ? max(100, (int)CVE_REPORT_MAX_ROWS) : 5000;
+        $whereSql = implode(' AND ', $where);
+        $params[] = $maxRows + 1;
+
+        $rows = CveDatabase::fetchAll(
+            "SELECT w.id AS watchlist_id, w.name AS software_name, w.version, w.environment,
+                    w.criticality, w.asset_count, g.name AS group_name,
+                    c.cve_id, c.description, c.severity, c.cvss_v3_score, c.cvss_v2_score,
+                    c.published_at, c.nvd_url,
+                    k.cve_id AS kev_id, k.date_added AS kev_date, k.due_date AS kev_due,
+                    k.known_ransomware, k.required_action,
+                    e.epss, e.percentile,
+                    m.version_match, m.matched_cpe, m.affected_versions, m.first_seen_at
+             FROM software_watchlist w
+             JOIN cve_watchlist_match m ON m.watchlist_id = w.id
+             JOIN cve_catalog c ON c.cve_id = m.cve_id
+             LEFT JOIN software_groups g ON g.id = w.group_id
+             LEFT JOIN cve_kev k ON k.cve_id = m.cve_id
+             LEFT JOIN cve_epss e ON e.cve_id = m.cve_id
+             WHERE $whereSql
+             ORDER BY w.name ASC, (k.cve_id IS NOT NULL) DESC, e.epss DESC,
+                      COALESCE(c.cvss_v3_score, c.cvss_v2_score) DESC, c.cve_id ASC
+             LIMIT ?",
+            $params
+        );
+
+        $truncated = count($rows) > $maxRows;
+        if ($truncated) {
+            $rows = array_slice($rows, 0, $maxRows);
+        }
+
+        $sections = [];
+        $uniqueCves = [];
+        $uniqueKev = [];
+        $uniqueEpssHigh = [];
+        $uniqueCritical = [];
+        $uniqueHigh = [];
+
+        foreach ($rows as $row) {
+            $watchlistId = (int)$row['watchlist_id'];
+            if (!isset($sections[$watchlistId])) {
+                $sections[$watchlistId] = [
+                    'id'          => $watchlistId,
+                    'name'        => (string)$row['software_name'],
+                    'version'     => (string)($row['version'] ?? ''),
+                    'environment' => (string)($row['environment'] ?? ''),
+                    'criticality' => (string)($row['criticality'] ?? ''),
+                    'asset_count' => $row['asset_count'] !== null ? (int)$row['asset_count'] : null,
+                    'group'       => (string)($row['group_name'] ?? ''),
+                    'counts'      => ['total' => 0, 'kev' => 0, 'epss_high' => 0, 'critical' => 0, 'high' => 0],
+                    'cves'        => [],
+                ];
+            }
+
+            $cveId = (string)$row['cve_id'];
+            $isKev = !empty($row['kev_id']);
+            $epss = $row['epss'] !== null ? (float)$row['epss'] : null;
+            $cvss = $row['cvss_v3_score'] !== null
+                ? (float)$row['cvss_v3_score']
+                : ($row['cvss_v2_score'] !== null ? (float)$row['cvss_v2_score'] : null);
+            $severity = (string)($row['severity'] ?? '');
+            $isEpssHigh = $epss !== null && $epss >= 0.1;
+            $affectedVersions = safe_json_decode($row['affected_versions'] ?? '[]', []);
+            if (!is_array($affectedVersions)) {
+                $affectedVersions = [];
+            }
+            $affectedVersions = array_values(array_filter(
+                array_map(static fn($value): string => is_scalar($value) ? (string)$value : '', $affectedVersions),
+                static fn(string $value): bool => $value !== ''
+            ));
+            $nvdUrl = (string)($row['nvd_url'] ?? '');
+            if (!preg_match('#^https?://#i', $nvdUrl)) {
+                $nvdUrl = 'https://nvd.nist.gov/vuln/detail/' . rawurlencode($cveId);
+            }
+
+            $sections[$watchlistId]['cves'][] = [
+                'cve_id'            => $cveId,
+                'description'       => (string)($row['description'] ?? ''),
+                'severity'          => $severity,
+                'cvss'              => $cvss,
+                'epss'              => $epss,
+                'percentile'        => $row['percentile'] !== null ? (float)$row['percentile'] : null,
+                'kev'               => $isKev,
+                'kev_date'          => $row['kev_date'] ?? null,
+                'kev_due'           => $row['kev_due'] ?? null,
+                'kev_ransomware'    => (string)($row['known_ransomware'] ?? ''),
+                'kev_action'        => (string)($row['required_action'] ?? ''),
+                'published_at'      => $row['published_at'] ?? null,
+                'first_seen_at'     => $row['first_seen_at'] ?? null,
+                'version_match'     => (string)($row['version_match'] ?? ''),
+                'matched_cpe'       => (string)($row['matched_cpe'] ?? ''),
+                'affected_versions' => $affectedVersions,
+                'nvd_url'           => $nvdUrl,
+            ];
+
+            $sections[$watchlistId]['counts']['total']++;
+            if ($isKev) {
+                $sections[$watchlistId]['counts']['kev']++;
+                $uniqueKev[$cveId] = true;
+            }
+            if ($isEpssHigh) {
+                $sections[$watchlistId]['counts']['epss_high']++;
+                $uniqueEpssHigh[$cveId] = true;
+            }
+            if (strcasecmp($severity, 'Critical') === 0) {
+                $sections[$watchlistId]['counts']['critical']++;
+                $uniqueCritical[$cveId] = true;
+            } elseif (strcasecmp($severity, 'High') === 0) {
+                $sections[$watchlistId]['counts']['high']++;
+                $uniqueHigh[$cveId] = true;
+            }
+            $uniqueCves[$cveId] = true;
+        }
+
+        $sections = array_values($sections);
+        usort($sections, static function (array $a, array $b): int {
+            $cmp = $b['counts']['kev'] <=> $a['counts']['kev'];
+            if ($cmp !== 0) return $cmp;
+            $cmp = $b['counts']['epss_high'] <=> $a['counts']['epss_high'];
+            if ($cmp !== 0) return $cmp;
+            $cmp = $b['counts']['total'] <=> $a['counts']['total'];
+            if ($cmp !== 0) return $cmp;
+            return strcasecmp($a['name'] . ' ' . $a['version'], $b['name'] . ' ' . $b['version']);
+        });
+
+        $summary = [
+            'unique_cves'   => count($uniqueCves),
+            'total_rows'    => count($rows),
+            'software_count'=> count($sections),
+            'kev'           => count($uniqueKev),
+            'epss_high'     => count($uniqueEpssHigh),
+            'critical'      => count($uniqueCritical),
+            'high'          => count($uniqueHigh),
+            'truncated'     => $truncated,
+            'max_rows'      => $maxRows,
+        ];
+
+        return [
+            'summary'   => $summary,
+            'software'  => $sections,
+            'period'    => $period,
+            'filters'   => $filters,
+            'truncated' => $truncated,
+            'max_rows'  => $maxRows,
+        ];
+    }
+
+    private function normalizeReportFilters(array $input): array
+    {
+        $scope = (string)($input['scope'] ?? 'all');
+        if (!in_array($scope, ['all', 'group', 'software'], true)) {
+            $scope = 'all';
+        }
+
+        $period = (string)($input['period'] ?? '30d');
+        if (!in_array($period, ['7d', '30d', '90d', 'all'], true)) {
+            $period = '30d';
+        }
+
+        $severity = trim((string)($input['severity'] ?? ''));
+        if (!in_array($severity, ['', 'Critical', 'High', 'Medium', 'Low', 'None'], true)) {
+            $severity = '';
+        }
+
+        $epssMin = null;
+        $epssRaw = trim((string)($input['epss_min'] ?? ''));
+        if ($epssRaw !== '' && is_numeric($epssRaw)) {
+            $epssMin = max(0.0, min(1.0, (float)$epssRaw));
+        }
+
+        return [
+            'scope'       => $scope,
+            'group_id'    => $scope === 'group' ? (int)($input['group_id'] ?? 0) : 0,
+            'software_id' => $scope === 'software' ? (int)($input['software_id'] ?? 0) : 0,
+            'period'      => $period,
+            'new_only'    => !empty($input['new_only']) && $period !== 'all',
+            'severity'    => $severity,
+            'only_kev'    => !empty($input['only_kev']),
+            'epss_min'    => $epssMin,
+        ];
+    }
+
+    private function reportPeriod(string $period): array
+    {
+        $days = ['7d' => 7, '30d' => 30, '90d' => 90];
+        $labels = ['7d' => 'Últimos 7 días', '30d' => 'Últimos 30 días', '90d' => 'Últimos 90 días', 'all' => 'Todo el histórico'];
+        $end = gmdate('Y-m-d\TH:i:s\Z');
+        $start = isset($days[$period]) ? gmdate('Y-m-d\TH:i:s\Z', time() - ($days[$period] * 86400)) : null;
+
+        return [
+            'type'  => $period,
+            'start' => $start,
+            'end'   => $end,
+            'label' => $labels[$period] ?? $labels['30d'],
+        ];
+    }
+
+    private function listReports(int $limit = 30): array
+    {
+        $limit = max(1, min(200, $limit));
+        return CveDatabase::fetchAll(
+            "SELECT id, title, report_type, period_start, period_end, summary_json, generated_by, generated_at
+             FROM cve_reports
+             ORDER BY generated_at DESC, id DESC
+             LIMIT ?",
+            [$limit]
+        );
+    }
+
+    private function getReport(int $id): ?array
+    {
+        $row = CveDatabase::fetchOne("SELECT * FROM cve_reports WHERE id = ?", [$id]);
+        if ($row === null) {
+            return null;
+        }
+        $row['summary'] = safe_json_decode($row['summary_json'] ?? '{}', []);
+        $row['filters'] = safe_json_decode($row['filters'] ?? '{}', []);
+        $row['data'] = safe_json_decode($row['data'] ?? '{}', []);
+        return $row;
+    }
+
+    private function encodeJson(mixed $value): string
+    {
+        $json = json_encode(
+            $value,
+            JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE
+        );
+        if ($json === false) {
+            throw new RuntimeException('No se pudo serializar el informe.');
+        }
+        return $json;
+    }
+
+    private function csvSafe(string $value): string
+    {
+        $value = str_replace(["\r\n", "\r"], "\n", $value);
+        if (preg_match('/^[=+\-@\t]/', $value)) {
+            return "'" . $value;
+        }
+        return $value;
     }
 
     // ============================================================

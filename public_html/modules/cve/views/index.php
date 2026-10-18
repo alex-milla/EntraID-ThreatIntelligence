@@ -73,6 +73,10 @@ foreach ($flashData as $type => $msg):
        class="px-3 py-2 -mb-px text-sm font-medium border-b-2 <?= $tab === 'software' ? 'border-brand-500 text-brand-600 dark:text-brand-300' : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300' ?>">
         Mi software
     </a>
+    <a href="<?= base_url('modules/cve?tab=reports') ?>"
+       class="px-3 py-2 -mb-px text-sm font-medium border-b-2 <?= $tab === 'reports' ? 'border-brand-500 text-brand-600 dark:text-brand-300' : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300' ?>">
+        Informes
+    </a>
 </div>
 
 <?php if (!empty($dbError)): ?>
@@ -480,6 +484,213 @@ foreach ($flashData as $type => $msg):
     })();
     </script>
     <?php endif; ?>
+<?php elseif ($tab === 'reports'): ?>
+
+    <?php if ($isAdmin): ?>
+    <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-5 mb-6">
+        <div class="flex items-start justify-between gap-4 flex-wrap">
+            <div>
+                <h2 class="text-sm font-semibold">Generar informe preventivo</h2>
+                <p class="text-xs text-gray-500 mt-1">
+                    Informe de los CVEs que afectan al software identificado, con prioridad KEV &gt; EPSS &gt; CVSS.
+                </p>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-4">
+            <label class="block">
+                <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Alcance</span>
+                <select id="report-scope" onchange="syncCveReportScope()"
+                        class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                    <option value="all">Todo el inventario</option>
+                    <option value="group">Un grupo</option>
+                    <option value="software">Un software</option>
+                </select>
+            </label>
+            <label class="block">
+                <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Grupo</span>
+                <select id="report-group" disabled
+                        class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none disabled:opacity-50">
+                    <option value="0">—</option>
+                    <?php foreach ($groups as $g): ?>
+                        <option value="<?= (int)$g['id'] ?>"><?= str_repeat('— ', (int)$g['depth']) . e($g['name']) ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </label>
+            <label class="block">
+                <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Software</span>
+                <select id="report-software" disabled
+                        class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none disabled:opacity-50">
+                    <option value="0">—</option>
+                    <?php foreach (($softwareOptions ?? []) as $so): ?>
+                        <option value="<?= (int)$so['id'] ?>">
+                            <?= e((string)$so['name']) ?><?= !empty($so['version']) ? ' · ' . e((string)$so['version']) : '' ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+            </label>
+            <label class="block">
+                <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Periodo</span>
+                <select id="report-period" onchange="syncCveReportPeriod()"
+                        class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                    <option value="7d">Últimos 7 días</option>
+                    <option value="30d" selected>Últimos 30 días</option>
+                    <option value="90d">Últimos 90 días</option>
+                    <option value="all">Todo el histórico</option>
+                </select>
+            </label>
+            <label class="block">
+                <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Severidad</span>
+                <select id="report-severity"
+                        class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                    <option value="">Todas</option>
+                    <option value="Critical">Crítica</option>
+                    <option value="High">Alta</option>
+                    <option value="Medium">Media</option>
+                    <option value="Low">Baja</option>
+                </select>
+            </label>
+            <label class="block">
+                <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">EPSS mínimo</span>
+                <input id="report-epss" type="number" min="0" max="1" step="0.01" placeholder="0.10"
+                       class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+            </label>
+            <label class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300 mt-5">
+                <input id="report-new" type="checkbox" checked class="rounded border-gray-300 text-brand-500 focus:ring-brand-500">
+                Solo nuevas o recién detectadas
+            </label>
+            <label class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300 mt-5">
+                <input id="report-kev" type="checkbox" class="rounded border-gray-300 text-brand-500 focus:ring-brand-500">
+                Solo KEV
+            </label>
+        </div>
+
+        <div class="mt-4 flex items-center gap-3 flex-wrap">
+            <button type="button" onclick="generateCveReport(this)"
+                    class="inline-flex items-center gap-2 px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors">
+                Generar informe
+            </button>
+            <span id="report-message" class="text-xs text-gray-500"></span>
+        </div>
+        <p class="text-[11px] text-gray-400 mt-2">
+            Se guardan hasta <?= number_format((int)(defined('CVE_REPORT_MAX_ROWS') ? CVE_REPORT_MAX_ROWS : 5000)) ?> afectaciones por informe.
+            Puedes exportar el resultado a CSV o imprimirlo en PDF desde la vista del informe.
+        </p>
+    </div>
+    <?php endif; ?>
+
+    <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
+        <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700">
+            <h2 class="text-sm font-semibold">Informes generados</h2>
+        </div>
+        <?php if (empty($reports)): ?>
+            <div class="p-8 text-center text-sm text-gray-500">
+                Todavía no hay informes.
+                <?php if ($isAdmin): ?>Genera el primero con el formulario de arriba.<?php endif; ?>
+            </div>
+        <?php else: ?>
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                    <thead>
+                        <tr class="border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-xs text-gray-500 uppercase">
+                            <th class="text-left px-4 py-2">Informe</th>
+                            <th class="text-left px-4 py-2">Periodo</th>
+                            <th class="text-left px-4 py-2">Resumen</th>
+                            <th class="text-left px-4 py-2">Generado</th>
+                            <th class="text-right px-4 py-2"></th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
+                        <?php foreach ($reports as $reportRow): ?>
+                            <?php
+                            $rowSummary = safe_json_decode($reportRow['summary_json'] ?? '{}', []);
+                            if (!is_array($rowSummary)) {
+                                $rowSummary = [];
+                            }
+                            $rowPeriod = !empty($reportRow['period_start'])
+                                ? format_date((string)$reportRow['period_start'], 'd/m/Y') . ' — ' . format_date((string)($reportRow['period_end'] ?? ''), 'd/m/Y')
+                                : 'Histórico';
+                            ?>
+                            <tr class="hover:bg-gray-50 dark:hover:bg-gray-800/40">
+                                <td class="px-4 py-3">
+                                    <a href="<?= base_url('modules/cve/report/' . (int)$reportRow['id']) ?>"
+                                       class="font-medium text-brand-600 dark:text-brand-400 hover:underline">
+                                        <?= e((string)$reportRow['title']) ?>
+                                    </a>
+                                </td>
+                                <td class="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">
+                                    <?= e($rowPeriod !== '' ? $rowPeriod : '—') ?>
+                                </td>
+                                <td class="px-4 py-3 text-xs text-gray-500">
+                                    <?= number_format((int)($rowSummary['unique_cves'] ?? 0)) ?> CVEs ·
+                                    <?= number_format((int)($rowSummary['software_count'] ?? 0)) ?> productos ·
+                                    <?= number_format((int)($rowSummary['kev'] ?? 0)) ?> KEV
+                                </td>
+                                <td class="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">
+                                    <?= e(format_date((string)($reportRow['generated_at'] ?? ''), 'd/m/Y H:i')) ?>
+                                </td>
+                                <td class="px-4 py-3 text-right whitespace-nowrap">
+                                    <a href="<?= base_url('modules/cve/report/' . (int)$reportRow['id']) ?>"
+                                       class="text-xs text-brand-600 dark:text-brand-400 hover:underline">Ver</a>
+                                    <a href="<?= base_url('modules/cve/report/' . (int)$reportRow['id'] . '/csv') ?>"
+                                       class="text-xs text-gray-600 dark:text-gray-300 hover:underline ml-3">CSV</a>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        <?php endif; ?>
+    </div>
+
+    <?php if ($isAdmin): ?>
+    <script>
+    function syncCveReportScope() {
+        var scope = document.getElementById('report-scope').value;
+        document.getElementById('report-group').disabled = scope !== 'group';
+        document.getElementById('report-software').disabled = scope !== 'software';
+    }
+
+    function syncCveReportPeriod() {
+        var all = document.getElementById('report-period').value === 'all';
+        document.getElementById('report-new').disabled = all;
+    }
+
+    function generateCveReport(button) {
+        var message = document.getElementById('report-message');
+        var payload = {
+            scope: document.getElementById('report-scope').value,
+            group_id: document.getElementById('report-group').value,
+            software_id: document.getElementById('report-software').value,
+            period: document.getElementById('report-period').value,
+            severity: document.getElementById('report-severity').value,
+            epss_min: document.getElementById('report-epss').value,
+            new_only: document.getElementById('report-new').checked,
+            only_kev: document.getElementById('report-kev').checked
+        };
+        message.textContent = 'Generando informe…';
+        message.className = 'text-xs text-gray-500';
+        if (button) button.disabled = true;
+        api('POST', <?= json_encode(base_url('modules/cve/reports/generate')) ?>, payload).then(function (res) {
+            if (!res.success) {
+                message.textContent = res.error || 'No se pudo generar el informe.';
+                message.className = 'text-xs text-red-500';
+                if (button) button.disabled = false;
+                return;
+            }
+            window.location.href = res.url;
+        }).catch(function () {
+            message.textContent = 'Error de conexión al generar el informe.';
+            message.className = 'text-xs text-red-500';
+            if (button) button.disabled = false;
+        });
+    }
+
+    syncCveReportScope();
+    syncCveReportPeriod();
+    </script>
+    <?php endif; ?>
+
 <?php else: ?>
 
     <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-6">

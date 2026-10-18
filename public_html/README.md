@@ -58,6 +58,10 @@ almacenamiento SQLite y arquitectura modular.
    productos», KEV y EPSS mínimo, y ordenar por CVSS, EPSS o KEV. La vista
    **Mi software** muestra por producto los CVEs, KEV y EPSS altos que le
    afectan.
+   La pestaña **Informes** genera informes preventivos por todo el inventario,
+   un grupo o un software, con periodo de 7/30/90 días o histórico. Ordena por
+   KEV &gt; EPSS &gt; CVSS, permite filtrar por severidad, KEV y EPSS mínimo,
+   y exporta a CSV o a PDF mediante la impresión del navegador.
    En **Mi software** puedes buscar CPE en NVD, añadir varios CPE por producto
    y lanzar un backfill automático al guardar. Si el hosting no permite el worker
    en segundo plano, usa **Continuar** para procesar tramos manualmente.

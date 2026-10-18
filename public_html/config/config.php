@@ -102,6 +102,7 @@ define('CVE_NVD_PAGE_SIZE', 1000);
 define('CVE_SYNC_BUDGET', 25);
 define('CVE_SYNC_STALE', 180);
 define('CVE_SYNC_WATCHDOG', 900);
+define('CVE_REPORT_MAX_ROWS', 5000);
 
 // LLM
 define('LLM_PROVIDER', $env['LLM_PROVIDER'] ?? '');
