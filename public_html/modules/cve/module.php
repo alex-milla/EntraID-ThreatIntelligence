@@ -953,13 +953,12 @@ class Module_Cve extends BaseModule
                 ], 400);
             }
 
-            $maxCves = 50;
-            $truncated = count($cveIds) > $maxCves;
-            if ($truncated) {
-                $cveIds = array_slice($cveIds, 0, $maxCves);
-            }
+            $totalCves = count($cveIds);
 
-            $facts = [];
+            // Recopila datos de TODOS los CVEs. No se recorta la lista: si el
+            // contexto es grande se compactan los detalles; si aun así no cabe,
+            // se devuelve un error claro en vez de analizar solo una parte.
+            $factRows = [];
             foreach ($cveIds as $cveId) {
                 $catalog = CveDatabase::fetchOne(
                     "SELECT cve_id, description, severity, cvss_v3_score, cvss_v2_score, published_at
@@ -976,9 +975,10 @@ class Module_Cve extends BaseModule
                 foreach ($products as $product) {
                     $label = trim((string)($product['vendor'] ?? '') . ' ' . (string)($product['product'] ?? ''));
                     if ($label !== '') {
-                        $productLabels[] = $label;
+                        $productLabels[$label] = true;
                     }
                 }
+                $productLabels = array_keys($productLabels);
 
                 $items = CveDatabase::fetchAll(
                     "SELECT i.tags, i.ai_text, i.sections_json,
@@ -997,7 +997,9 @@ class Module_Cve extends BaseModule
                     foreach (CveReportAi::decodeTags((string)($item['tags'] ?? '')) as $tag) {
                         $tags[$tag] = true;
                     }
-                    $reportLabels[] = '#' . (int)$item['report_id'] . ' ' . (string)($item['title'] ?? '');
+                    $reportTitle = trim((string)(preg_replace('/\s+/u', ' ', (string)($item['title'] ?? '')) ?? ''));
+                    $reportLabels[] = '#' . (int)$item['report_id']
+                        . ($reportTitle !== '' ? ' ' . truncate($reportTitle, 70) : '');
                     if ($previousSummary === '') {
                         $previousSummary = trim((string)($item['ai_text'] ?? ''));
                         if ($previousSummary === '') {
@@ -1019,6 +1021,9 @@ class Module_Cve extends BaseModule
                         }
                     }
                 }
+                if ($previousSummary !== '') {
+                    $previousSummary = trim((string)(preg_replace('/\s+/u', ' ', $previousSummary) ?? $previousSummary));
+                }
 
                 $exploits = CveExploit::getForCve($cveId);
                 $exploitSources = [];
@@ -1027,23 +1032,26 @@ class Module_Cve extends BaseModule
                 }
 
                 $cvss = $catalog['cvss_v3_score'] ?? $catalog['cvss_v2_score'] ?? null;
-                $facts[] = '- ' . $cveId
-                    . ' | Severidad: ' . (string)($catalog['severity'] ?? 'sin datos')
-                    . ' | CVSS: ' . ($cvss !== null ? number_format((float)$cvss, 1) : 'sin datos')
-                    . ' | EPSS: ' . (($epss['epss'] ?? null) !== null ? number_format((float)$epss['epss'] * 100, 1) . '%' : 'sin datos')
-                    . ' | KEV: ' . ($kev !== null ? 'Sí (' . (string)($kev['date_added'] ?? '') . ')' : 'No')
-                    . ' | Exploits: ' . (int)($exploits['total'] ?? 0)
-                    . ($exploitSources !== [] ? ' (' . implode(', ', $exploitSources) . ')' : '')
-                    . ' | Productos: ' . ($productLabels !== [] ? implode(', ', array_slice($productLabels, 0, 6)) : 'sin datos')
-                    . ' | Tags: ' . (array_keys($tags) !== [] ? implode(', ', array_keys($tags)) : 'sin tags')
-                    . ' | Informes: ' . ($reportLabels !== [] ? implode('; ', $reportLabels) : 'sin informe')
-                    . ' | Análisis previo: ' . ($previousSummary !== '' ? truncate($previousSummary, 500) : 'sin análisis');
+                $factRows[] = [
+                    'cve_id'   => $cveId,
+                    'severity' => (string)($catalog['severity'] ?? 'sin datos'),
+                    'cvss'     => $cvss !== null ? number_format((float)$cvss, 1) : 'sin datos',
+                    'epss'     => ($epss['epss'] ?? null) !== null ? number_format((float)$epss['epss'] * 100, 1) . '%' : 'sin datos',
+                    'kev'      => $kev !== null ? 'Sí (' . (string)($kev['date_added'] ?? '') . ')' : 'No',
+                    'exploits' => (int)($exploits['total'] ?? 0),
+                    'sources'  => $exploitSources,
+                    'products' => $productLabels,
+                    'tags'     => array_keys($tags),
+                    'reports'  => $reportLabels,
+                    'summary'  => truncate($previousSummary, 200),
+                ];
             }
 
             $groupLabel = ((string)($group['kind'] ?? '') === 'company' ? 'Empresa' : 'Grupo de aplicaciones')
                 . ' «' . (string)$group['name'] . '»';
             $system = "Eres un analista sénior de vulnerabilidades y gestión de parcheo. "
                 . "Trabajas SOLO con los CVEs proporcionados. No inventes CVEs ni incluyas otros fuera de la lista. "
+                . "Hay exactamente " . $totalCves . " CVEs. Debes clasificar los " . $totalCves . "; no omitas ninguno. "
                 . "Responde en español y en Markdown directo, sin envolver la respuesta en bloques de código ni fences, con estas secciones exactas:\n"
                 . "## Resumen ejecutivo\n"
                 . "## Clasificación por prioridad\n"
@@ -1056,24 +1064,87 @@ class Module_Cve extends BaseModule
                 . "C si EPSS >= 0.2; "
                 . "D en el resto. "
                 . "Indica plazos recomendados: A+ inmediato (48 h), A hasta 7 días, B hasta 30 días, C hasta 90 días y D siguiente ciclo. "
-                . "En «Clasificación por prioridad» lista los CVE de cada categoría. "
+                . "En «Clasificación por prioridad» lista TODOS los " . $totalCves . " CVE de cada categoría, sin omitir ninguno. "
+                . "Sé conciso para que el informe completo quepa en la respuesta. "
                 . "En «Prioridad por software» agrupa por producto/software y ordena por criticidad. "
                 . "En «Plan de parcheo» propón el orden de actuación y las acciones concretas.";
-            $user = "Contexto: " . $groupLabel . ". "
-                . "CVEs asignados directamente: " . count($cveIds) . ".\n"
-                . ($truncated ? "Nota: se analizan los primeros " . $maxCves . " CVEs del listado.\n" : '')
-                . "\nDatos de los CVEs:\n" . implode("\n", $facts)
-                . "\n\nNo menciones CVEs que no estén en esta lista. "
-                . "Si falta un dato, indícalo como «sin datos» y no lo inventes.";
+
+            $formatFact = static function (array $row, int $productLimit, int $tagLimit, int $reportLimit, int $summaryLimit): string {
+                $parts = [
+                    '- ' . $row['cve_id'],
+                    'Severidad: ' . $row['severity'],
+                    'CVSS: ' . $row['cvss'],
+                    'EPSS: ' . $row['epss'],
+                    'KEV: ' . $row['kev'],
+                    'Exploits: ' . $row['exploits']
+                        . ($row['sources'] !== [] ? ' (' . implode(', ', array_slice($row['sources'], 0, 3)) . ')' : ''),
+                    'Productos: ' . ($row['products'] !== []
+                        ? implode(', ', array_slice($row['products'], 0, $productLimit))
+                        : 'sin datos'),
+                ];
+                if ($tagLimit > 0) {
+                    $parts[] = 'Tags: ' . ($row['tags'] !== []
+                        ? implode(', ', array_slice($row['tags'], 0, $tagLimit))
+                        : 'sin tags');
+                }
+                if ($reportLimit > 0) {
+                    $parts[] = 'Informes: ' . ($row['reports'] !== []
+                        ? implode('; ', array_slice($row['reports'], 0, $reportLimit))
+                        : 'sin informe');
+                }
+                if ($summaryLimit > 0) {
+                    $parts[] = 'Análisis previo: ' . ($row['summary'] !== ''
+                        ? truncate($row['summary'], $summaryLimit)
+                        : 'sin análisis');
+                }
+                return implode(' | ', $parts);
+            };
+
+            $variants = [
+                ['name' => '', 'products' => 4, 'tags' => 5, 'reports' => 2, 'summary' => 200],
+                ['name' => 'compacto', 'products' => 3, 'tags' => 3, 'reports' => 1, 'summary' => 120],
+                ['name' => 'mínimo', 'products' => 2, 'tags' => 0, 'reports' => 0, 'summary' => 0],
+            ];
+            $user = '';
+            $contextMode = '';
+            foreach ($variants as $variant) {
+                $facts = [];
+                foreach ($factRows as $row) {
+                    $facts[] = $formatFact($row, $variant['products'], $variant['tags'], $variant['reports'], $variant['summary']);
+                }
+                $candidate = "Contexto: " . $groupLabel . ". "
+                    . "CVEs asignados directamente: " . $totalCves . ".\n"
+                    . "Debes cubrir los " . $totalCves . " CVEs; no omitas ninguno.\n"
+                    . ($variant['name'] !== ''
+                        ? "Nota: datos en modo " . $variant['name'] . " para incluir todos los CVEs.\n"
+                        : '')
+                    . "\nDatos de los CVEs:\n" . implode("\n", $facts)
+                    . "\n\nNo menciones CVEs que no estén en esta lista. "
+                    . "Si falta un dato, indícalo como «sin datos» y no lo inventes.";
+                $user = $candidate;
+                $contextMode = $variant['name'];
+                if (strlen($candidate) <= 70000) {
+                    break;
+                }
+            }
+            if (strlen($system . "\n" . $user) > 90000) {
+                json_response([
+                    'success' => false,
+                    'error'   => 'El grupo tiene ' . $totalCves . ' CVEs y el contexto generado es demasiado grande para el modelo. Reduce el grupo o usa un modelo con más contexto.',
+                ], 400);
+            }
 
             if (function_exists('release_session_lock')) {
                 release_session_lock();
             }
             @set_time_limit(0);
+            // Más CVEs requieren más tokens de salida. El timeout ampliado solo
+            // se aplica a este análisis; el resto de llamadas mantiene 120 s.
+            $maxTokens = min(6000, max(3000, 2000 + 40 * $totalCves));
             $result = $llm->chat(
                 $system,
                 $user,
-                ['max_tokens' => 2400, 'temperature' => 0.2],
+                ['max_tokens' => $maxTokens, 'temperature' => 0.2, 'timeout' => 300],
                 $profileId > 0 ? $profileId : null
             );
             if (empty($result['success'])) {
@@ -1104,7 +1175,7 @@ class Module_Cve extends BaseModule
                     $groupId,
                     $profileId > 0 ? $profileId : null,
                     $model !== '' ? $model : null,
-                    count($cveIds),
+                    $totalCves,
                     json_encode($cveIds, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
                     $content,
                     $contentHtml,
@@ -1113,10 +1184,11 @@ class Module_Cve extends BaseModule
             );
 
             log_activity('cve.ai_group_priority', [
-                'group_id'  => $groupId,
-                'cves'      => count($cveIds),
-                'profile_id'=> $profileId,
-                'model'     => $model,
+                'group_id'     => $groupId,
+                'cves'         => $totalCves,
+                'profile_id'   => $profileId,
+                'model'        => $model,
+                'context_mode' => $contextMode,
             ]);
 
             json_response([
@@ -1126,9 +1198,11 @@ class Module_Cve extends BaseModule
                     'generated_at' => date('c'),
                     'profile_id'   => $profileId,
                     'model'        => $model,
-                    'cve_count'    => count($cveIds),
+                    'cve_count'    => $totalCves,
                     'cve_ids'      => $cveIds,
-                    'truncated'    => $truncated,
+                    'truncated'    => false,
+                    'total'        => $totalCves,
+                    'context_mode' => $contextMode,
                     'content_text' => $content,
                     'content_html' => $contentHtml,
                 ],

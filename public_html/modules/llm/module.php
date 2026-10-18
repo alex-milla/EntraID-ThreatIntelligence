@@ -218,7 +218,7 @@ class Module_Llm extends BaseModule
                 $response = $this->httpPost($u, $body, [
                     'Authorization: Bearer ' . $cfg['api_key'],
                     'Content-Type: application/json',
-                ]);
+                ], (int)($options['timeout'] ?? 120));
 
                 $content = $response['choices'][0]['message']['content'] ?? null;
                 if ($content === null) {
@@ -253,7 +253,7 @@ class Module_Llm extends BaseModule
             'x-api-key: ' . $cfg['api_key'],
             'anthropic-version: 2023-06-01',
             'Content-Type: application/json',
-        ]);
+        ], (int)($options['timeout'] ?? 120));
 
         $content = $response['content'][0]['text'] ?? null;
         if ($content === null) {
@@ -333,7 +333,7 @@ class Module_Llm extends BaseModule
             $headers[] = 'Authorization: Bearer ' . $cfg['api_key'];
         }
 
-        $response = $this->httpPost($url, $body, $headers);
+        $response = $this->httpPost($url, $body, $headers, (int)($options['timeout'] ?? 120));
 
         $content = $response['message']['content'] ?? null;
         if ($content === null) {
@@ -359,7 +359,7 @@ class Module_Llm extends BaseModule
         $response = $this->httpPost($url, $body, [
             'api-key: ' . $cfg['api_key'],
             'Content-Type: application/json',
-        ]);
+        ], (int)($options['timeout'] ?? 120));
 
         $content = $response['choices'][0]['message']['content'] ?? null;
         if ($content === null) {
@@ -513,7 +513,7 @@ class Module_Llm extends BaseModule
     /**
      * HTTP POST genérico con cURL.
      */
-    private function httpPost(string $url, string $body, array $headers): array
+    private function httpPost(string $url, string $body, array $headers, int $timeout = 120): array
     {
         $ch = curl_init($url);
         curl_setopt_array($ch, [
@@ -521,7 +521,7 @@ class Module_Llm extends BaseModule
             CURLOPT_POST           => true,
             CURLOPT_POSTFIELDS     => $body,
             CURLOPT_HTTPHEADER     => $headers,
-            CURLOPT_TIMEOUT        => 120,
+            CURLOPT_TIMEOUT        => max(10, $timeout),
             CURLOPT_SSL_VERIFYPEER => true,
             CURLOPT_SSL_VERIFYHOST => 2,
         ]);

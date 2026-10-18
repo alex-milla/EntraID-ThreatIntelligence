@@ -39,6 +39,16 @@ if ($analysisText !== '') {
 $analysisCount = $groupAnalysis !== null ? (int)($groupAnalysis['cve_count'] ?? 0) : 0;
 $analysisModel = $groupAnalysis !== null ? (string)($groupAnalysis['model'] ?? '') : '';
 $analysisDate = $groupAnalysis !== null ? (string)($groupAnalysis['generated_at'] ?? '') : '';
+$currentCount = count($currentCveIds);
+$analysisShort = $groupAnalysis !== null && $analysisCount > 0 && $analysisCount < $currentCount;
+$missingCves = [];
+if ($groupAnalysis !== null && $analysisText !== '' && !$analysisShort) {
+    foreach ($currentCveIds as $cveId) {
+        if (preg_match('/\b' . preg_quote($cveId, '/') . '\b/i', $analysisText) !== 1) {
+            $missingCves[] = $cveId;
+        }
+    }
+}
 $groupKindLabel = $selectedGroupIsCompany ? 'empresa' : 'grupo de aplicaciones';
 ?>
 
@@ -120,7 +130,7 @@ $groupKindLabel = $selectedGroupIsCompany ? 'empresa' : 'grupo de aplicaciones';
             <?php if ($groupAnalysis !== null): ?>
                 <p class="text-xs text-gray-500 mt-1">
                     <?= e($analysisDate !== '' ? format_db_date($analysisDate, 'd/m/Y H:i') : '—') ?>
-                    · <?= (int)$analysisCount ?> <?= $analysisCount === 1 ? 'CVE' : 'CVEs' ?>
+                    · <?= (int)$analysisCount ?> <?= $analysisCount === 1 ? 'CVE' : 'CVEs' ?><?php if ($analysisShort): ?> de <?= (int)$currentCount ?><?php endif; ?>
                     <?php if ($analysisModel !== ''): ?> · <?= e($analysisModel) ?><?php endif; ?>
                 </p>
             <?php else: ?>
@@ -145,9 +155,20 @@ $groupKindLabel = $selectedGroupIsCompany ? 'empresa' : 'grupo de aplicaciones';
         </div>
     </div>
 
-    <?php if ($analysisStale): ?>
+    <?php if ($analysisShort): ?>
+        <div class="px-5 py-2 bg-amber-50 dark:bg-amber-900/20 border-b border-amber-200 dark:border-amber-800 text-[11px] text-amber-700 dark:text-amber-300">
+            Este análisis cubre <?= (int)$analysisCount ?> de <?= (int)$currentCount ?> CVEs. Recalcula para analizarlos todos.
+        </div>
+    <?php elseif ($analysisStale): ?>
         <div class="px-5 py-2 bg-amber-50 dark:bg-amber-900/20 border-b border-amber-200 dark:border-amber-800 text-[11px] text-amber-700 dark:text-amber-300">
             El listado de CVEs asignados ha cambiado desde este análisis. Recalcula para actualizarlo.
+        </div>
+    <?php endif; ?>
+    <?php if ($missingCves !== []): ?>
+        <div class="px-5 py-2 bg-red-50 dark:bg-red-900/20 border-b border-red-200 dark:border-red-800 text-[11px] text-red-700 dark:text-red-300">
+            La IA no mencionó <?= count($missingCves) ?> de los <?= (int)$currentCount ?> CVEs:
+            <?= e(implode(', ', array_slice($missingCves, 0, 8))) ?><?= count($missingCves) > 8 ? '…' : '' ?>.
+            Recalcula o revisa el informe.
         </div>
     <?php endif; ?>
 
