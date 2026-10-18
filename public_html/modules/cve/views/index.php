@@ -1840,6 +1840,7 @@ $pendingAiCount = count($pendingAiReports);
                     updateToolbar();
                     var total = parseInt(res.total || 0, 10);
                     var processed = parseInt(res.processed || 0, 10);
+                    setReportRowStatus(state.id, 'running', processed, total);
                     if (total > 0) {
                         setBanner('Analizando CVE ' + Math.max(1, Math.min(processed + 1, total)) + ' de ' + total + '…');
                     }
@@ -1849,8 +1850,15 @@ $pendingAiCount = count($pendingAiReports);
                     }
                 }
                 if (res.status === 'done' || res.status === 'error' || res.status === 'canceled') {
+                    setReportRowStatus(
+                        state.id,
+                        res.status,
+                        parseInt(res.processed || 0, 10),
+                        parseInt(res.total || 0, 10)
+                    );
                     stopPolling();
                     load(state.id, false);
+                    refreshReportList().catch(function () {});
                 }
             }).catch(function () { /* se reintenta */ });
         }, 3000);
@@ -2006,15 +2014,20 @@ $pendingAiCount = count($pendingAiReports);
         }
         state.status = 'running';
         state.running = true;
+        setReportRowStatus(state.id, 'running', 0, 1);
         updateToolbar();
         startPolling();
         setBanner('Preparando el análisis… si la conexión se corta, seguiremos consultando el estado.');
 
         postJson(RUN_URL + '/' + state.id, {}).then(function (res) {
             if (res && (res.status === 'done' || res.status === 'error' || res.status === 'canceled' || res.url)) {
+                var finalStatus = res.status || (res.success ? 'done' : 'error');
+                setReportRowStatus(state.id, finalStatus, finalStatus === 'done' ? 1 : 0, 1);
                 stopPolling();
                 load(state.id, false);
+                refreshReportList().catch(function () {});
             } else if (res && res.error) {
+                setReportRowStatus(state.id, 'error', 0, 1);
                 setBanner(res.error);
             }
         }).catch(function (err) {
@@ -2283,7 +2296,9 @@ $pendingAiCount = count($pendingAiReports);
             }
             return res.text();
         }).then(function (html) {
+            var scrollTop = list.scrollTop;
             list.innerHTML = html;
+            list.scrollTop = scrollTop;
             updateReportSelection();
             var search = document.getElementById('ai-list-search');
             if (search && search.value) {
@@ -2312,12 +2327,12 @@ $pendingAiCount = count($pendingAiReports);
                         failures++;
                     }
                     if (typeof hooks.onResult === 'function') {
-                        hooks.onResult(id, res || {});
+                        return hooks.onResult(id, res || {});
                     }
                 }).catch(function (err) {
                     failures++;
                     if (typeof hooks.onError === 'function') {
-                        hooks.onError(id, err);
+                        return hooks.onError(id, err);
                     }
                 }).then(function () {
                     next(index + 1);
@@ -2327,9 +2342,33 @@ $pendingAiCount = count($pendingAiReports);
         });
     }
 
-    function runBatch(ids) {
+    var listReconcileTimer = null;
+
+    function startListReconcile() {
+        if (listReconcileTimer) {
+            return;
+        }
+        listReconcileTimer = setInterval(function () {
+            if (!batchRunning) {
+                stopListReconcile();
+                return;
+            }
+            refreshReportList().catch(function () {
+                // La reconciliación es una red de seguridad.
+            });
+        }, 5000);
+    }
+
+    function stopListReconcile() {
+        if (listReconcileTimer) {
+            clearInterval(listReconcileTimer);
+            listReconcileTimer = null;
+        }
+    }
+
+    function beginBatch(ids) {
         if (batchRunning || !Array.isArray(ids) || !ids.length) {
-            return Promise.resolve({ failures: 0 });
+            return false;
         }
         batchRunning = true;
         batchQueueIds = {};
@@ -2338,7 +2377,11 @@ $pendingAiCount = count($pendingAiReports);
             pendingButton.disabled = true;
         }
         setBatchBanner('Generando 0/' + ids.length + '…');
+        startListReconcile();
+        return true;
+    }
 
+    function executeBatch(ids) {
         return runReportQueue(ids, {
             onStart: function (done, total, id) {
                 setBatchBanner('Generando ' + done + '/' + total + '…');
@@ -2350,18 +2393,23 @@ $pendingAiCount = count($pendingAiReports);
                 if (state.id === id) {
                     load(id, false);
                 }
+                return refreshReportList().catch(function () {
+                    // Las filas ya se han actualizado en memoria.
+                });
             },
             onError: function (id) {
                 setReportRowStatus(id, 'error', 0, 1);
+                return refreshReportList().catch(function () {});
             }
         }).then(function (result) {
             batchRunning = false;
             batchQueueIds = {};
+            stopListReconcile();
             if (pendingButton) {
                 pendingButton.disabled = false;
             }
             return refreshReportList().catch(function () {
-                // Si falla el refresco, las filas ya se han ido actualizando.
+                // Si falla el refresco final, las filas ya se han actualizado.
             }).then(function () {
                 updatePendingButton();
                 if (result.failures > 0) {
@@ -2375,6 +2423,13 @@ $pendingAiCount = count($pendingAiReports);
                 return result;
             });
         });
+    }
+
+    function runBatch(ids) {
+        if (!beginBatch(ids)) {
+            return Promise.resolve({ failures: 0 });
+        }
+        return executeBatch(ids);
     }
 
     window.cveAiGenerate = function (button) {
@@ -2448,12 +2503,20 @@ $pendingAiCount = count($pendingAiReports);
             if (titleEl) {
                 titleEl.textContent = 'Informes en cola';
             }
+            if (!beginBatch(ids)) {
+                message.textContent = 'Ya hay una generación en curso.';
+                message.className = 'text-xs text-amber-600 dark:text-amber-400';
+                if (button) {
+                    button.disabled = false;
+                }
+                return;
+            }
             setBatchBanner('Actualizando lista…');
 
             refreshReportList().catch(function () {
                 // La cola sigue aunque falle el refresco de la lista.
             }).then(function () {
-                return runBatch(ids);
+                return executeBatch(ids);
             }).then(function (result) {
                 if (result.failures > 0) {
                     appAlert('Se crearon ' + ids.length + ' informes, pero ' + result.failures
