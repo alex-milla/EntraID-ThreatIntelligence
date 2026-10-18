@@ -1015,6 +1015,10 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
                         Todos
                     </label>
                     <span id="ai-reports-selected-count" class="text-gray-500 dark:text-gray-400"></span>
+                    <button type="button" id="ai-reports-bulk-retry" onclick="cveAiBulkRetryOpen()"
+                            class="hidden px-2 py-1 rounded border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 font-medium hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">
+                        Reintentar
+                    </button>
                     <button type="button" id="ai-reports-bulk-group" onclick="cveAiBulkGroupOpen()"
                             class="hidden ml-auto px-2 py-1 rounded border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 font-medium hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">
                         Enviar a grupo
@@ -1573,7 +1577,7 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
     <div class="relative mx-auto mt-24 w-[calc(100%-2rem)] max-w-md bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 shadow-xl p-5">
         <div class="flex items-start justify-between gap-3">
             <div>
-                <h3 class="text-sm font-semibold">Reintentar informe <span id="ai-retry-id"></span></h3>
+                <h3 class="text-sm font-semibold"><span id="ai-retry-title">Reintentar informe</span> <span id="ai-retry-id"></span></h3>
                 <p class="text-xs text-gray-500 mt-1">Elige el perfil de IA con el que quieres volver a generarlo.</p>
             </div>
             <button type="button" onclick="cveAiRetryClose()" class="text-xs text-gray-400 hover:text-gray-600">Cerrar</button>
@@ -1581,6 +1585,7 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
 
         <p id="ai-retry-model" class="mt-3 text-xs text-gray-400"></p>
         <div id="ai-retry-error" class="hidden mt-3 px-3 py-2 rounded-lg bg-red-50 dark:bg-red-900/20 text-[11px] text-red-700 dark:text-red-300 max-h-24 overflow-y-auto"></div>
+        <div id="ai-retry-bulk-summary" class="hidden mt-3 px-3 py-2 rounded-lg bg-amber-50 dark:bg-amber-900/20 text-[11px] text-amber-700 dark:text-amber-300"></div>
 
         <label class="block mt-4">
             <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Perfil de IA</span>
@@ -1853,6 +1858,7 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
     var statusFilter = document.getElementById('ai-list-status-filter');
     var assignmentFilter = document.getElementById('ai-list-assignment-filter');
     var filterEmpty = document.getElementById('ai-list-filter-empty');
+    var reportsBulkRetry = document.getElementById('ai-reports-bulk-retry');
     var reportsBulkGroup = document.getElementById('ai-reports-bulk-group');
     var reportsBulkDelete = document.getElementById('ai-reports-bulk-delete');
     var newForm = document.getElementById('ai-new-form');
@@ -1870,6 +1876,8 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
     var batchRunning = false;
     var batchQueueIds = {};
     var retryReportId = 0;
+    var retryReportIds = [];
+    var retryBulkMode = false;
     var pendingCreatePayload = null;
     var pendingCreateButton = null;
     var pendingCreateMessage = null;
@@ -2227,31 +2235,26 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
         });
     };
 
-    window.cveAiRetry = function (id) {
-        if (!id) {
+    function retryProfileLabel(report) {
+        var label = report.profileName || (report.profileId > 0 ? 'Perfil #' + report.profileId : 'Automático');
+        var model = report.model || report.profileModel || '';
+        return label + (model !== '' ? ' · ' + model : '');
+    }
+
+    function openRetryModal(reports, skipped, forceBulk) {
+        if (!reports.length) {
             return;
         }
-        retryReportId = id;
-        var row = list ? list.querySelector('.ai-report-item[data-id="' + id + '"]') : null;
-        var body = detail ? detail.querySelector('.ai-report-body') : null;
-        var profileId = row ? (parseInt(row.dataset.profileId, 10) || 0) : 0;
-        var profileName = row ? (row.dataset.aiProfileName || '') : '';
-        var profileModel = row ? (row.dataset.aiProfileModel || '') : '';
-        var model = row ? (row.dataset.aiModel || '') : '';
-        var error = row ? (row.dataset.aiError || '') : '';
-        var status = row ? (row.dataset.status || '') : '';
-        if (!row && body) {
-            profileId = parseInt(body.dataset.profileId, 10) || 0;
-            profileName = body.dataset.aiProfileName || '';
-            profileModel = body.dataset.aiProfileModel || '';
-            model = body.dataset.aiModel || '';
-            error = body.dataset.aiError || '';
-            status = body.dataset.status || '';
-        }
+        var bulkMode = !!forceBulk || reports.length > 1;
+        retryBulkMode = bulkMode;
+        retryReportIds = reports.map(function (report) { return report.id; });
+        retryReportId = retryReportIds[0];
 
         var idEl = document.getElementById('ai-retry-id');
+        var titleEl = document.getElementById('ai-retry-title');
         var modelEl = document.getElementById('ai-retry-model');
         var errorEl = document.getElementById('ai-retry-error');
+        var bulkEl = document.getElementById('ai-retry-bulk-summary');
         var profileEl = document.getElementById('ai-retry-profile');
         var allEl = document.getElementById('ai-retry-all');
         var modal = document.getElementById('ai-retry-modal');
@@ -2259,21 +2262,47 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
             return;
         }
 
-        var failedModel = model || profileModel;
-        var failedLabel = profileName || (profileId > 0 ? 'Perfil #' + profileId : 'Automático');
-        if (failedModel !== '') {
-            failedLabel += ' · ' + failedModel;
+        var failedCounts = {};
+        var failedOrder = [];
+        reports.forEach(function (report) {
+            var key = String(report.profileId || 0);
+            if (!failedCounts[key]) {
+                failedCounts[key] = { count: 0, label: retryProfileLabel(report) };
+                failedOrder.push(key);
+            }
+            failedCounts[key].count++;
+        });
+
+        if (titleEl) {
+            titleEl.textContent = reports.length === 1 ? 'Reintentar informe' : 'Reintentar informes';
+        }
+        if (idEl) {
+            idEl.textContent = reports.length === 1 ? '#' + reports[0].id : '(' + reports.length + ')';
         }
 
-        if (idEl) { idEl.textContent = '#' + id; }
-        if (errorEl) {
-            errorEl.textContent = error !== '' ? error : '';
-            errorEl.classList.toggle('hidden', error === '');
+        if (bulkMode) {
+            if (bulkEl) {
+                bulkEl.textContent = 'Se reintentarán ' + reports.length + ' informes.'
+                    + (skipped > 0 ? ' Se omiten ' + skipped + ' por no estar en error/cancelado.' : '');
+                bulkEl.classList.remove('hidden');
+            }
+            if (errorEl) {
+                errorEl.classList.add('hidden');
+                errorEl.textContent = '';
+            }
+        } else {
+            if (bulkEl) {
+                bulkEl.classList.add('hidden');
+            }
+            if (errorEl) {
+                var error = reports[0].error || '';
+                errorEl.textContent = error;
+                errorEl.classList.toggle('hidden', error === '');
+            }
         }
 
         var onlyFailed = false;
         if (profileEl) {
-            // Limpiar marcas temporales de aperturas anteriores.
             Array.prototype.slice.call(profileEl.querySelectorAll('option[data-temp-failed="1"]')).forEach(function (option) {
                 option.remove();
             });
@@ -2285,48 +2314,106 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
                 option.textContent = option.dataset.baseLabel;
             });
 
-            var failedOption = options.find(function (option) {
-                return parseInt(option.value, 10) === profileId && option.value !== '0';
+            var failedIds = {};
+            failedOrder.forEach(function (key) {
+                var profileId = parseInt(key, 10) || 0;
+                if (profileId <= 0) {
+                    return;
+                }
+                failedIds[profileId] = true;
+                var option = options.find(function (candidate) {
+                    return parseInt(candidate.value, 10) === profileId;
+                });
+                if (!option) {
+                    option = document.createElement('option');
+                    option.value = String(profileId);
+                    option.disabled = true;
+                    option.dataset.tempFailed = '1';
+                    option.dataset.baseLabel = 'Perfil #' + profileId;
+                    option.textContent = option.dataset.baseLabel + ' — falló';
+                    profileEl.insertBefore(option, profileEl.options[1] || null);
+                } else {
+                    option.textContent = (option.dataset.baseLabel || option.textContent) + ' — falló';
+                }
             });
-
-            if (profileId > 0 && !failedOption) {
-                failedOption = document.createElement('option');
-                failedOption.value = String(profileId);
-                failedOption.disabled = true;
-                failedOption.dataset.tempFailed = '1';
-                failedOption.dataset.baseLabel = 'Perfil #' + profileId;
-                failedOption.textContent = failedOption.dataset.baseLabel + ' — falló';
-                profileEl.insertBefore(failedOption, profileEl.options[1] || null);
-                options = Array.prototype.slice.call(profileEl.options);
-            }
-
-            if (failedOption) {
-                failedOption.textContent = (failedOption.dataset.baseLabel || failedOption.textContent) + ' — falló';
-            }
+            options = Array.prototype.slice.call(profileEl.options);
 
             var candidates = options.filter(function (option) {
                 return option.value !== '0'
                     && !option.disabled
-                    && parseInt(option.value, 10) !== profileId;
+                    && !failedIds[parseInt(option.value, 10) || 0];
             });
             if (candidates.length > 0) {
                 profileEl.value = candidates[0].value;
-            } else if (failedOption && !failedOption.disabled) {
-                profileEl.value = failedOption.value;
             } else {
-                profileEl.value = '0';
+                var fallback = options.find(function (option) {
+                    return !option.disabled && failedIds[parseInt(option.value, 10) || 0];
+                });
+                profileEl.value = fallback ? fallback.value : '0';
+                onlyFailed = Object.keys(failedIds).length > 0;
             }
-            onlyFailed = profileId > 0 && candidates.length === 0;
         }
 
         if (modelEl) {
             modelEl.className = 'mt-3 text-xs font-medium text-red-600 dark:text-red-400';
-            var prefix = status === 'canceled' ? 'Perfil del informe: ' : 'Perfil que falló: ';
-            modelEl.textContent = prefix + failedLabel
+            var prefix = (!bulkMode && reports[0].status === 'canceled')
+                ? 'Perfil del informe: '
+                : 'Perfiles que fallaron: ';
+            if (!bulkMode) {
+                prefix = reports[0].status === 'canceled' ? 'Perfil del informe: ' : 'Perfil que falló: ';
+            }
+            modelEl.textContent = prefix + failedOrder.map(function (key) {
+                var info = failedCounts[key];
+                return info.label + (bulkMode ? ' (' + info.count + ')' : '');
+            }).join(' · ')
                 + (onlyFailed ? ' · no hay otro perfil disponible' : '');
         }
+
         if (allEl) { allEl.checked = false; }
         modal.classList.remove('hidden');
+    }
+
+    window.cveAiRetry = function (id) {
+        if (!id) {
+            return;
+        }
+        var row = list ? list.querySelector('.ai-report-item[data-id="' + id + '"]') : null;
+        var body = detail ? detail.querySelector('.ai-report-body') : null;
+        var report = {
+            id: id,
+            status: row ? (row.dataset.status || '') : '',
+            profileId: row ? (parseInt(row.dataset.profileId, 10) || 0) : 0,
+            profileName: row ? (row.dataset.aiProfileName || '') : '',
+            profileModel: row ? (row.dataset.aiProfileModel || '') : '',
+            model: row ? (row.dataset.aiModel || '') : '',
+            error: row ? (row.dataset.aiError || '') : ''
+        };
+        if (!row && body) {
+            report.status = body.dataset.status || '';
+            report.profileId = parseInt(body.dataset.profileId, 10) || 0;
+            report.profileName = body.dataset.aiProfileName || '';
+            report.profileModel = body.dataset.aiProfileModel || '';
+            report.model = body.dataset.aiModel || '';
+            report.error = body.dataset.aiError || '';
+        }
+        openRetryModal([report], 0, false);
+    };
+
+    window.cveAiBulkRetryOpen = function () {
+        if (batchRunning) {
+            appAlert('Espera a que termine la generación actual antes de reintentar.', { title: 'Cola activa' });
+            return;
+        }
+        if (!list) {
+            return;
+        }
+        var selectedCount = list.querySelectorAll('.ai-report-check:checked').length;
+        var reports = selectedRetryableReports();
+        if (!reports.length) {
+            appAlert('Selecciona informes en estado Error o Cancelado.', { title: 'Sin informes reintentables' });
+            return;
+        }
+        openRetryModal(reports, selectedCount - reports.length, true);
     };
 
     window.cveAiRetryClose = function () {
@@ -2334,35 +2421,105 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
         if (modal) {
             modal.classList.add('hidden');
         }
+        retryReportIds = [];
+        retryReportId = 0;
+        retryBulkMode = false;
     };
 
     window.cveAiRetrySubmit = function (button) {
-        if (!retryReportId) {
+        var ids = retryReportIds.slice();
+        var bulkMode = retryBulkMode || ids.length > 1;
+        if (!ids.length) {
             return;
         }
         var profileEl = document.getElementById('ai-retry-profile');
         var allEl = document.getElementById('ai-retry-all');
-        if (button) {
-            button.disabled = true;
-        }
-        postJson(RETRY_URL + '/' + retryReportId, {
-            profile_id: profileEl ? profileEl.value : 0,
-            regenerate_all: (allEl && allEl.checked) ? 1 : 0
-        }).then(function (res) {
-            if (!res.success) {
-                appAlert(res.error || 'No se pudo reintentar el informe.', { title: 'No se pudo reintentar' });
+        var profileId = profileEl ? profileEl.value : 0;
+        var regenerateAll = (allEl && allEl.checked) ? 1 : 0;
+
+        if (!bulkMode) {
+            if (button) {
+                button.disabled = true;
+            }
+            postJson(RETRY_URL + '/' + ids[0], {
+                profile_id: profileId,
+                regenerate_all: regenerateAll
+            }).then(function (res) {
+                if (!res.success) {
+                    appAlert(res.error || 'No se pudo reintentar el informe.', { title: 'No se pudo reintentar' });
+                    if (button) {
+                        button.disabled = false;
+                    }
+                    return;
+                }
+                window.cveAiRetryClose();
+                window.location.href = PAGE_URL + '&report=' + ids[0];
+            }).catch(function (err) {
+                appAlert('No se pudo reintentar: ' + errorText(err), { title: 'No se pudo reintentar' });
                 if (button) {
                     button.disabled = false;
                 }
-                return;
+            });
+            return;
+        }
+
+        if (button) {
+            button.disabled = true;
+        }
+        window.cveAiRetryClose();
+        if (button) {
+            button.disabled = false;
+        }
+
+        var successIds = [];
+        var failures = 0;
+        setBatchBanner('Reencolando 0/' + ids.length + '…');
+        if (statusFilter) {
+            statusFilter.value = '';
+        }
+        applyReportFilters();
+        var chain = Promise.resolve();
+        ids.forEach(function (id, index) {
+            chain = chain.then(function () {
+                return postJson(RETRY_URL + '/' + id, {
+                    profile_id: profileId,
+                    regenerate_all: regenerateAll
+                }).then(function (res) {
+                    if (res && res.success) {
+                        successIds.push(id);
+                        setReportRowStatus(id, 'pending', 0, 1);
+                    } else {
+                        failures++;
+                    }
+                }).catch(function () {
+                    failures++;
+                }).then(function () {
+                    setBatchBanner('Reencolando ' + (index + 1) + '/' + ids.length + '…');
+                });
+            });
+        });
+
+        chain.then(function () {
+            if (statusFilter) {
+                statusFilter.value = '';
             }
-            window.cveAiRetryClose();
-            window.location.href = PAGE_URL + '&report=' + retryReportId;
+            applyReportFilters();
+            return refreshReportList().catch(function () {}).then(function () {
+                if (successIds.length === 0) {
+                    setBatchBanner('', false);
+                    appAlert('No se pudo reencolar ningún informe.', { title: 'Sin cambios' });
+                    return;
+                }
+                return runBatch(successIds).then(function () {
+                    if (failures > 0) {
+                        appAlert('Se reintentaron ' + successIds.length + ' informes; ' + failures
+                            + ' no se pudieron reencolar.', { title: 'Reintento parcial' });
+                    }
+                });
+            });
         }).catch(function (err) {
-            appAlert('No se pudo reintentar: ' + errorText(err), { title: 'No se pudo reintentar' });
-            if (button) {
-                button.disabled = false;
-            }
+            setBatchBanner('', false);
+            appAlert('No se pudo reintentar el lote: ' + errorText(err), { title: 'Error' });
         });
     };
 
@@ -2883,6 +3040,9 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
         if (modal) {
             modal.classList.add('hidden');
         }
+        if (button) {
+            button.disabled = false;
+        }
         pendingCreatePayload = null;
         pendingCreateDuplicates = [];
 
@@ -3089,6 +3249,35 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
             });
     }
 
+    function selectedRetryableReports() {
+        if (!list) {
+            return [];
+        }
+        return Array.prototype.slice.call(list.querySelectorAll('.ai-report-check:checked'))
+            .map(function (checkbox) {
+                var row = checkbox.closest('.ai-report-item');
+                if (!row) {
+                    return null;
+                }
+                var status = row.dataset.status || '';
+                if (status !== 'error' && status !== 'canceled') {
+                    return null;
+                }
+                return {
+                    id: parseInt(row.dataset.id, 10) || 0,
+                    status: status,
+                    profileId: parseInt(row.dataset.profileId, 10) || 0,
+                    profileName: row.dataset.aiProfileName || '',
+                    profileModel: row.dataset.aiProfileModel || '',
+                    model: row.dataset.aiModel || '',
+                    error: row.dataset.aiError || ''
+                };
+            })
+            .filter(function (row) {
+                return row && row.id > 0;
+            });
+    }
+
     function updateReportSelection() {
         var ids = reportSelectedIds();
         var visible = visibleReportChecks();
@@ -3100,6 +3289,13 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
             reportsSelectedCount.textContent = ids.length > 0
                 ? ids.length + (ids.length === 1 ? ' seleccionado' : ' seleccionados')
                 : '';
+        }
+        var retryableCount = selectedRetryableReports().length;
+        if (reportsBulkRetry) {
+            reportsBulkRetry.classList.toggle('hidden', retryableCount === 0);
+            reportsBulkRetry.textContent = retryableCount > 0
+                ? 'Reintentar (' + retryableCount + ')'
+                : 'Reintentar';
         }
         if (reportsBulkGroup) {
             reportsBulkGroup.classList.toggle('hidden', ids.length === 0);
