@@ -47,6 +47,9 @@ if (($filters['epss_min'] ?? null) !== null) {
 if (!empty($filters['new_only'])) {
     $reportFilterLabels[] = 'Solo nuevas o recién detectadas';
 }
+
+$tab = 'reports';
+require __DIR__ . '/_tabs.php';
 ?>
 
 <?php if ($report === null): ?>

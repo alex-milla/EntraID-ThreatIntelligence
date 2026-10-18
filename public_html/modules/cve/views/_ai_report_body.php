@@ -98,7 +98,7 @@ $linkLabel = static function (string $url): string {
     return $label;
 };
 ?>
-<div class="ai-report-body" data-report-id="<?= (int)($report['id'] ?? 0) ?>" data-status="<?= e($bodyStatus) ?>">
+<div class="ai-report-body" data-report-id="<?= (int)($report['id'] ?? 0) ?>" data-status="<?= e($bodyStatus) ?>" data-group-id="<?= (int)($report['group_id'] ?? 0) ?>">
 
     <?php if ($bodyProcessing): ?>
         <div class="mb-5 px-4 py-3 rounded-lg text-sm bg-blue-50 text-blue-700 flex items-start justify-between gap-3 flex-wrap no-print" id="ai-processing-banner">
@@ -188,7 +188,15 @@ $linkLabel = static function (string $url): string {
                 <?php if (!empty($report['ai_duration_ms'])): ?>
                     <span>· <?= e(number_format((int)$report['ai_duration_ms'] / 1000, 1, ',', '.')) ?> s</span>
                 <?php endif; ?>
-                <span>· <?= e(format_db_date((string)($report['created_at'] ?? ''), 'd/m/Y H:i')) ?></span>
+                <?php $revision = max(1, (int)($report['revision'] ?? 1)); ?>
+                <?php if ($revision > 1): ?>
+                    <span>· v<?= $revision ?> · actualizado <?= e(format_db_date((string)($report['updated_at'] ?? $report['created_at'] ?? ''), 'd/m/Y H:i')) ?></span>
+                <?php else: ?>
+                    <span>· generado <?= e(format_db_date((string)($report['created_at'] ?? ''), 'd/m/Y H:i')) ?></span>
+                <?php endif; ?>
+                <?php if (!empty($report['group_name'])): ?>
+                    <span>· grupo: <?= e((string)$report['group_name']) ?></span>
+                <?php endif; ?>
             </div>
         </header>
 
@@ -234,8 +242,9 @@ $linkLabel = static function (string $url): string {
                 $priority = (string)($item['priority'] ?? '');
                 $vector = (string)($item['vector'] ?? '');
                 $published = (string)($item['published_at'] ?? '');
-                $description = trim((string)($item['description'] ?? ''));
-                $shortDescription = $description !== '' ? truncate($description, 380) : '';
+                $descriptionEs = trim((string)($item['description_es'] ?? ''));
+                $description = $descriptionEs !== '' ? $descriptionEs : trim((string)($item['description'] ?? ''));
+                $descriptionLang = $descriptionEs !== '' ? 'es' : 'en';
                 $github = is_array($item['github'] ?? null) ? $item['github'] : [];
                 $references = is_array($item['references'] ?? null) ? $item['references'] : [];
                 $isKev = !empty($item['kev']);
@@ -306,16 +315,13 @@ $linkLabel = static function (string $url): string {
 
                     <?php if ($description !== ''): ?>
                         <div class="mt-4">
-                            <p class="text-[10px] font-semibold uppercase tracking-wide text-gray-400 mb-1">Descripción</p>
-                            <p class="text-sm leading-relaxed text-gray-600"><?= e($shortDescription) ?></p>
-                            <?php if ($shortDescription !== $description): ?>
-                                <details class="mt-1 group">
-                                    <summary class="text-xs font-medium text-brand-600 cursor-pointer hover:underline list-none">
-                                        Ver descripción completa
-                                    </summary>
-                                    <p class="text-sm leading-relaxed text-gray-600 mt-2"><?= e($description) ?></p>
-                                </details>
-                            <?php endif; ?>
+                            <div class="flex items-center gap-2">
+                                <p class="text-[10px] font-semibold uppercase tracking-wide text-gray-400">Descripción</p>
+                                <span class="text-[10px] text-gray-400">
+                                    <?= $descriptionLang === 'es' ? 'catálogo local' : 'original (inglés)' ?>
+                                </span>
+                            </div>
+                            <p class="text-sm leading-relaxed text-gray-600 mt-1"><?= e($description) ?></p>
                         </div>
                     <?php endif; ?>
 

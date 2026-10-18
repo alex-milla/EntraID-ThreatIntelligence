@@ -43,6 +43,8 @@ class CveDatabase
         $db->exec("CREATE TABLE IF NOT EXISTS cve_catalog (
             cve_id TEXT PRIMARY KEY,
             description TEXT,
+            description_es TEXT,
+            description_es_hash TEXT,
             description_lang TEXT,
             published_at TEXT,
             last_modified_at TEXT,
@@ -209,7 +211,10 @@ class CveDatabase
             token TEXT,
             generated_by INTEGER,
             no_ai INTEGER NOT NULL DEFAULT 0,
+            revision INTEGER NOT NULL DEFAULT 1,
+            group_id INTEGER REFERENCES software_groups(id) ON DELETE SET NULL,
             started_at TEXT,
+            updated_at TEXT,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             finished_at TEXT
         )");
@@ -272,6 +277,27 @@ class CveDatabase
         // v0.2.7.13: respuesta de la IA sin formatear (la vista es HTML).
         if (!isset($aiCols['ai_text'])) {
             $db->exec("ALTER TABLE cve_ai_reports ADD COLUMN ai_text TEXT");
+        }
+        if (!isset($aiCols['revision'])) {
+            $db->exec("ALTER TABLE cve_ai_reports ADD COLUMN revision INTEGER NOT NULL DEFAULT 1");
+        }
+        if (!isset($aiCols['group_id'])) {
+            $db->exec("ALTER TABLE cve_ai_reports ADD COLUMN group_id INTEGER REFERENCES software_groups(id) ON DELETE SET NULL");
+        }
+        if (!isset($aiCols['updated_at'])) {
+            $db->exec("ALTER TABLE cve_ai_reports ADD COLUMN updated_at TEXT");
+        }
+
+        // v0.2.7.15: descripción traducida y hash del texto original.
+        $catCols = [];
+        foreach ($db->query("PRAGMA table_info(cve_catalog)") as $col) {
+            $catCols[$col['name']] = true;
+        }
+        if (!isset($catCols['description_es'])) {
+            $db->exec("ALTER TABLE cve_catalog ADD COLUMN description_es TEXT");
+        }
+        if (!isset($catCols['description_es_hash'])) {
+            $db->exec("ALTER TABLE cve_catalog ADD COLUMN description_es_hash TEXT");
         }
     }
 

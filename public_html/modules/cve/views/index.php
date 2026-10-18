@@ -80,20 +80,7 @@ foreach ($flashData as $type => $msg):
     <?php endif; ?>
 </div>
 
-<div class="flex items-center gap-2 mb-5 border-b border-gray-200 dark:border-gray-700">
-    <a href="<?= base_url('modules/cve?tab=catalog') ?>"
-       class="px-3 py-2 -mb-px text-sm font-medium border-b-2 <?= $tab === 'catalog' ? 'border-brand-500 text-brand-600 dark:text-brand-300' : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300' ?>">
-        Catálogo
-    </a>
-    <a href="<?= base_url('modules/cve?tab=software') ?>"
-       class="px-3 py-2 -mb-px text-sm font-medium border-b-2 <?= $tab === 'software' ? 'border-brand-500 text-brand-600 dark:text-brand-300' : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300' ?>">
-        Mi software
-    </a>
-    <a href="<?= base_url('modules/cve?tab=reports') ?>"
-       class="px-3 py-2 -mb-px text-sm font-medium border-b-2 <?= $tab === 'reports' ? 'border-brand-500 text-brand-600 dark:text-brand-300' : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300' ?>">
-        Informes
-    </a>
-</div>
+<?php require __DIR__ . '/_tabs.php'; ?>
 
 <?php if (!empty($dbError)): ?>
     <div class="bg-white dark:bg-surface-dark rounded-xl border border-red-200 dark:border-red-800 p-6">
@@ -855,6 +842,12 @@ $aiStatusText = [
                             <span class="text-[10px] text-gray-400 truncate">
                                 <?= e((string)($aiRow['ai_model'] ?? '')) ?>
                             </span>
+                            <?php if ((int)($aiRow['revision'] ?? 1) > 1): ?>
+                                <span class="text-[10px] font-semibold text-gray-500 shrink-0">v<?= (int)$aiRow['revision'] ?></span>
+                            <?php endif; ?>
+                            <?php if (!empty($aiRow['group_name'])): ?>
+                                <span class="text-[10px] text-gray-400 truncate">· <?= e((string)$aiRow['group_name']) ?></span>
+                            <?php endif; ?>
                             <span class="ml-auto flex items-center gap-1 shrink-0">
                                 <?php if ($isAdmin && in_array($aiRowStatus, ['pending', 'running'], true)): ?>
                                     <button type="button" title="Cancelar" onclick="event.stopPropagation(); cveAiCancel(<?= $aiRowId ?>)"
@@ -887,6 +880,16 @@ $aiStatusText = [
         <div class="no-print px-4 py-2 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between gap-2">
             <p id="ai-detail-title" class="text-xs text-gray-500 truncate"></p>
             <div class="flex items-center gap-2 shrink-0">
+                <?php if ($isAdmin): ?>
+                    <button type="button" id="ai-refresh-btn" onclick="cveAiRefresh()"
+                            class="hidden px-3 py-1.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">
+                        Actualizar
+                    </button>
+                    <button type="button" id="ai-group-btn" onclick="cveAiAssignOpen()"
+                            class="hidden px-3 py-1.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">
+                        Enviar a grupo
+                    </button>
+                <?php endif; ?>
                 <button type="button" id="ai-print-btn" onclick="window.print()"
                         class="hidden px-3 py-1.5 bg-gray-900 hover:bg-black text-white text-xs font-medium rounded-lg transition-colors">
                     Imprimir / PDF
@@ -991,6 +994,45 @@ $aiStatusText = [
             </div>
         </div>
     </section>
+
+    <!-- Modal: enviar a grupo -->
+    <div id="ai-group-modal" class="hidden fixed inset-0 z-50 no-print">
+        <div class="absolute inset-0 bg-black/40" onclick="cveAiAssignClose()"></div>
+        <div class="relative mx-auto mt-24 w-[calc(100%-2rem)] max-w-md bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 shadow-xl p-5">
+            <h3 class="text-sm font-semibold">Enviar informe a un grupo</h3>
+            <p class="text-xs text-gray-500 mt-1">Asigna el informe a un grupo de aplicaciones. Si el grupo no existe, se crea.</p>
+    
+            <label class="block mt-4">
+                <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Grupo existente</span>
+                <select id="ai-group-select"
+                        class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                    <option value="0">— Sin grupo —</option>
+                    <?php foreach (($groups ?? []) as $group): ?>
+                        <option value="<?= (int)$group['id'] ?>">
+                            <?= str_repeat('— ', (int)($group['depth'] ?? 0)) . e((string)$group['name']) ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+            </label>
+    
+            <label class="block mt-3">
+                <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">o crear un grupo nuevo</span>
+                <input id="ai-group-new" type="text" maxlength="120" placeholder="Nombre del grupo"
+                       class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+            </label>
+    
+            <div class="mt-4 flex items-center justify-end gap-2">
+                <button type="button" onclick="cveAiAssignClose()"
+                        class="px-3 py-1.5 border border-gray-300 dark:border-gray-600 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark">
+                    Cancelar
+                </button>
+                <button type="button" onclick="cveAiAssignSubmit(this)"
+                        class="px-3 py-1.5 bg-brand-500 hover:bg-brand-600 text-white text-xs font-semibold rounded-lg">
+                    Enviar
+                </button>
+            </div>
+        </div>
+    </div>
 </div>
 
 <!-- Informes preventivos (plegados) -->
@@ -1193,6 +1235,8 @@ $aiStatusText = [
     var CANCEL_URL = <?= json_encode(base_url('modules/cve/reports/ai-cancel')) ?>;
     var DELETE_URL = <?= json_encode(base_url('modules/cve/reports/ai-delete')) ?>;
     var STATUS_URL = <?= json_encode(base_url('modules/cve/reports/ai-status')) ?>;
+    var REFRESH_URL = <?= json_encode(base_url('modules/cve/reports/ai-refresh')) ?>;
+    var ASSIGN_URL  = <?= json_encode(base_url('modules/cve/reports/ai-assign')) ?>;
     var IS_ADMIN   = <?= $isAdmin ? 'true' : 'false' ?>;
 
     var detail = document.getElementById('ai-detail');
@@ -1201,6 +1245,8 @@ $aiStatusText = [
     var newForm = document.getElementById('ai-new-form');
     var printBtn = document.getElementById('ai-print-btn');
     var deleteBtn = document.getElementById('ai-delete-btn');
+    var refreshBtn = document.getElementById('ai-refresh-btn');
+    var groupBtn = document.getElementById('ai-group-btn');
     var titleEl = document.getElementById('ai-detail-title');
 
     var state = { id: 0, status: '', poll: null, running: false };
@@ -1288,6 +1334,12 @@ $aiStatusText = [
 
         if (printBtn) {
             printBtn.classList.toggle('hidden', !body || processing);
+        }
+        if (refreshBtn) {
+            refreshBtn.classList.toggle('hidden', !IS_ADMIN || !id || processing);
+        }
+        if (groupBtn) {
+            groupBtn.classList.toggle('hidden', !IS_ADMIN || !id);
         }
         if (deleteBtn) {
             deleteBtn.classList.toggle('hidden', !IS_ADMIN || !id);
@@ -1607,6 +1659,80 @@ $aiStatusText = [
         } else if (el.requestFullscreen) {
             el.requestFullscreen().catch(function () {});
         }
+    };
+
+    window.cveAiRefresh = function () {
+        withStateId(function (id) {
+            if (!window.confirm('¿Actualizar el informe con los datos actuales del catálogo? Si hay cambios se regenerará el análisis.')) {
+                return;
+            }
+            postJson(REFRESH_URL + '/' + id, {}).then(function (res) {
+                if (!res.success) {
+                    alert(res.error || 'No se pudo actualizar el informe.');
+                    return;
+                }
+                if (!res.changed && res.status !== 'pending') {
+                    alert(res.message || 'Sin cambios desde la última versión.');
+                    return;
+                }
+                window.location.href = PAGE_URL + '&report=' + id;
+            }).catch(function (err) {
+                alert('No se pudo actualizar: ' + errorText(err));
+            });
+        });
+    };
+
+    window.cveAiAssignOpen = function () {
+        var modal = document.getElementById('ai-group-modal');
+        var body = detail ? detail.querySelector('.ai-report-body') : null;
+        if (!modal || !body) {
+            return;
+        }
+        var select = document.getElementById('ai-group-select');
+        var input = document.getElementById('ai-group-new');
+        if (select) {
+            select.value = body.dataset.groupId || '0';
+        }
+        if (input) {
+            input.value = '';
+        }
+        modal.classList.remove('hidden');
+    };
+
+    window.cveAiAssignClose = function () {
+        var modal = document.getElementById('ai-group-modal');
+        if (modal) {
+            modal.classList.add('hidden');
+        }
+    };
+
+    window.cveAiAssignSubmit = function (button) {
+        withStateId(function (id) {
+            var select = document.getElementById('ai-group-select');
+            var input = document.getElementById('ai-group-new');
+            var payload = {
+                group_id: select ? select.value : 0,
+                new_group: input ? input.value.trim() : ''
+            };
+            if (button) {
+                button.disabled = true;
+            }
+            postJson(ASSIGN_URL + '/' + id, payload).then(function (res) {
+                if (!res.success) {
+                    alert(res.error || 'No se pudo asignar el grupo.');
+                    if (button) {
+                        button.disabled = false;
+                    }
+                    return;
+                }
+                window.location.href = PAGE_URL + '&report=' + id;
+            }).catch(function (err) {
+                alert('No se pudo asignar: ' + errorText(err));
+                if (button) {
+                    button.disabled = false;
+                }
+            });
+        });
     };
 
     function ready(fn) {

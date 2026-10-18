@@ -168,9 +168,20 @@ final class CveReportAi
 
             $isKev = $kevRow !== null;
 
+            $description = trim((string)($row['description'] ?? ''));
+            $descriptionEs = '';
+            $cachedEs = trim((string)($row['description_es'] ?? ''));
+            if ($cachedEs !== '' && hash_equals((string)($row['description_es_hash'] ?? ''), sha1($description))) {
+                $descriptionEs = $cachedEs;
+            } elseif (str_starts_with(strtolower((string)($row['description_lang'] ?? '')), 'es')) {
+                $descriptionEs = $description;
+            }
+
             $items[] = [
                 'cve_id'          => (string)$row['cve_id'],
-                'description'     => trim((string)($row['description'] ?? '')),
+                'description'     => $description,
+                'description_es'  => $descriptionEs,
+                'description_lang'=> (string)($row['description_lang'] ?? ''),
                 'published_at'    => self::shortDate((string)($row['published_at'] ?? '')),
                 'severity'        => (string)($row['severity'] ?? ''),
                 'cvss'            => $cvss,
@@ -605,6 +616,116 @@ final class CveReportAi
     }
 
     /**
+     * Traduce al español las descripciones que aún no tienen traducción cacheada.
+     * El resultado se guarda en cve_catalog y se reutiliza en informes futuros.
+     *
+     * @param array<int,array<string,mixed>> $items
+     */
+    public static function ensureSpanishDescriptions(array &$items, ?int $profileId = null): void
+    {
+        $pending = [];
+        foreach ($items as $index => $item) {
+            if (trim((string)($item['description'] ?? '')) === '') {
+                continue;
+            }
+            if (trim((string)($item['description_es'] ?? '')) !== '') {
+                continue;
+            }
+            $pending[$index] = $item;
+        }
+        if ($pending === [] || !class_exists('Module_Llm')) {
+            return;
+        }
+
+        $blocks = [];
+        foreach ($pending as $item) {
+            $blocks[] = 'CVE: ' . $item['cve_id'] . "\n"
+                . 'DESCRIPCION: ' . truncate((string)$item['description'], 1200);
+        }
+
+        $system = 'Eres un traductor técnico especializado en ciberseguridad. Traduces al español '
+            . 'manteniendo en inglés los términos técnicos habituales (RCE, buffer overflow, heap, '
+            . 'checksum, kernel, privilege escalation, etc.). No añades información ni opiniones.';
+
+        $prompt = "Traduce al español cada descripción de vulnerabilidad.\n\n"
+            . "Reglas:\n"
+            . "- Devuelve EXACTAMENTE un bloque por CVE con este formato, sin nada más:\n"
+            . "CVE: CVE-AAAA-NNNN\n"
+            . "DESCRIPCION_ES: texto traducido en una sola línea\n"
+            . "- Mantén los términos técnicos en inglés cuando sea lo habitual.\n"
+            . "- No inventes datos ni añadas URLs.\n"
+            . "- No resumas: traduce el contenido completo.\n\n"
+            . "DESCRIPCIONES:\n" . implode("\n\n", $blocks);
+
+        $maxTokens = min(3000, max(600, 350 * count($pending)));
+        $started = microtime(true);
+
+        try {
+            $llm = new Module_Llm();
+            $result = $llm->chat(
+                $system,
+                $prompt,
+                ['max_tokens' => $maxTokens, 'temperature' => 0.1],
+                $profileId
+            );
+        } catch (Throwable $e) {
+            app_log('warning', 'cve_ai', 'No se pudieron traducir las descripciones', ['error' => $e->getMessage()]);
+            return;
+        }
+
+        if (empty($result['success'])) {
+            app_log('warning', 'cve_ai', 'Traducción de descripciones fallida', [
+                'error' => (string)($result['error'] ?? ''),
+            ]);
+            return;
+        }
+
+        $text = (string)($result['content'] ?? '');
+        $translated = 0;
+
+        if (preg_match_all(
+            '/(?:^|\n)\s*CVE:\s*(CVE-\d{4}-\d{4,7})\s*\n\s*DESCRIPCION_ES:\s*(.+?)(?=\n\s*CVE:|\z)/is',
+            $text,
+            $matches,
+            PREG_SET_ORDER
+        )) {
+            foreach ($matches as $match) {
+                $cveId = strtoupper(trim($match[1]));
+                $translation = trim(preg_replace('/\s+/u', ' ', $match[2]) ?? '');
+                if ($translation === '') {
+                    continue;
+                }
+
+                $source = '';
+                foreach ($items as &$item) {
+                    if ((string)$item['cve_id'] === $cveId) {
+                        $source = (string)$item['description'];
+                        $item['description_es'] = $translation;
+                        break;
+                    }
+                }
+                unset($item);
+
+                if ($source === '') {
+                    continue;
+                }
+
+                CveDatabase::query(
+                    "UPDATE cve_catalog SET description_es = ?, description_es_hash = ? WHERE cve_id = ?",
+                    [$translation, sha1($source), $cveId]
+                );
+                $translated++;
+            }
+        }
+
+        app_log($translated > 0 ? 'info' : 'warning', 'cve_ai', 'Traducción de descripciones', [
+            'requested'  => count($pending),
+            'translated' => $translated,
+            'ms'         => (int)round((microtime(true) - $started) * 1000),
+        ]);
+    }
+
+    /**
      * Compila los datos en texto plano y construye el prompt de 4 secciones.
      *
      * @param array<int,array<string,mixed>> $items
@@ -619,7 +740,10 @@ final class CveReportAi
                 ? number_format((float)$item['cvss'], 1, '.', '') . ' (' . self::severityLabel((string)$item['severity']) . ')'
                 : 'Desconocida');
             $data[] = 'Vector: ' . ($item['vector'] !== '' ? $item['vector'] : 'Desconocido');
-            $data[] = 'Descripción: ' . ($item['description'] !== '' ? truncate($item['description'], 1500) : 'Desconocida');
+            $descriptionForPrompt = (string)($item['description_es'] ?? '') !== ''
+                ? (string)$item['description_es']
+                : (string)($item['description'] ?? '');
+            $data[] = 'Descripción: ' . ($descriptionForPrompt !== '' ? truncate($descriptionForPrompt, 1200) : 'Desconocida');
             $data[] = 'EPSS: ' . ($item['epss'] !== null
                 ? number_format((float)$item['epss'] * 100, 2, '.', '') . '%'
                 : 'Desconocido');
@@ -661,6 +785,7 @@ final class CveReportAi
             . "- Cada viñeta debe ocupar una sola línea y tener 20 palabras como máximo.\n"
             . "- No escribas párrafos, introducciones ni conclusiones fuera de las cuatro secciones.\n"
             . "- No repitas CVSS, EPSS, KEV, fechas ni la descripción literal: ya aparecen en el informe.\n"
+            . "- La descripción del CVE ya se muestra en el informe; no la reescribas, resumes ni traduzcas.\n"
             . "- No incluyas URLs ni enlaces: las referencias se muestran aparte.\n"
             . "- Sin Markdown (nada de **, #, `), sin emojis, sin tablas.\n"
             . "- Español técnico y directo. Si un dato es desconocido, escribe una viñeta con \"Desconocido\".\n"
@@ -930,12 +1055,6 @@ final class CveReportAi
                 throw new RuntimeException('Ninguno de los CVEs está en el catálogo local.');
             }
 
-            $dataJson = json_encode($items, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
-            CveDatabase::query(
-                "UPDATE cve_ai_reports SET data_json = ? WHERE id = ?",
-                [$dataJson !== false ? $dataJson : null, $id]
-            );
-
             $profileId = (int)($row['ai_profile_id'] ?? 0);
             $aiText = null;
             $aiError = '';
@@ -957,6 +1076,17 @@ final class CveReportAi
                     app_log('warning', 'cve_ai', 'Sin datos relevantes: se omite la IA', ['id' => $id]);
                 }
             }
+
+            // Descripción: se traduce una sola vez por CVE y se cachea en el catálogo.
+            if (!$localOnly) {
+                self::ensureSpanishDescriptions($items, $profileId > 0 ? $profileId : null);
+            }
+
+            $dataJson = json_encode($items, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
+            CveDatabase::query(
+                "UPDATE cve_ai_reports SET data_json = ? WHERE id = ?",
+                [$dataJson !== false ? $dataJson : null, $id]
+            );
 
             if ($localOnly) {
                 $model = 'local';
@@ -1006,7 +1136,7 @@ final class CveReportAi
             $saved = CveDatabase::update(
                 "UPDATE cve_ai_reports
                  SET ai_text = ?, content_text = NULL, status = ?, ai_error = ?, ai_model = ?,
-                     ai_duration_ms = ?, finished_at = datetime('now'), token = NULL
+                     ai_duration_ms = ?, finished_at = datetime('now'), updated_at = datetime('now'), token = NULL
                  WHERE id = ? AND status = 'running'",
                 [
                     $aiText,

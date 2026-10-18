@@ -14,6 +14,9 @@ $isAdmin = $isAdmin ?? Auth::isAdmin();
 
 $status = (string)($report['status'] ?? 'pending');
 $isProcessing = in_array($status, ['pending', 'running'], true);
+
+$tab = 'reports';
+require __DIR__ . '/_tabs.php';
 ?>
 <?php if ($report === null): ?>
     <div class="bg-white rounded-xl border border-red-200 p-6">
@@ -29,6 +32,10 @@ $isProcessing = in_array($status, ['pending', 'running'], true);
             Informes CVE
         </a>
         <div class="flex items-center gap-2 flex-wrap">
+            <a href="<?= base_url('modules/cve?tab=reports&report=' . (int)$report['id']) ?>"
+               class="px-3 py-2 border border-gray-300 dark:border-gray-600 text-sm font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">
+                Abrir en el workspace
+            </a>
             <?php if (!$isProcessing): ?>
                 <button type="button" onclick="window.print()"
                         class="px-3 py-2 bg-gray-900 hover:bg-black text-white text-sm font-medium rounded-lg transition-colors">

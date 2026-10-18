@@ -12,6 +12,9 @@ $severityClasses = [
     'Low'      => 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300',
 ];
 $severityClass = $severityClasses[$severity] ?? 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300';
+
+$tab = 'catalog';
+require __DIR__ . '/_tabs.php';
 ?>
 
 <div class="mb-5">
@@ -59,10 +62,10 @@ $severityClass = $severityClasses[$severity] ?? 'bg-gray-100 text-gray-600 dark:
         <div class="lg:col-span-2 space-y-6">
             <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-6">
                 <h2 class="text-sm font-semibold mb-3">Descripción</h2>
-                <?php if (!empty($cve['description'])): ?>
-                    <p class="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-line leading-relaxed"><?= e((string)$cve['description']) ?></p>
-                    <?php if (($cve['description_lang'] ?? '') !== 'es'): ?>
-                        <p class="text-xs text-gray-400 mt-3">Descripción original en inglés (NVD no dispone de traducción al español para este CVE).</p>
+                <?php if (!empty($cve['description_display'])): ?>
+                    <p class="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-line leading-relaxed"><?= e((string)$cve['description_display']) ?></p>
+                    <?php if (($cve['description_display_lang'] ?? '') !== 'es'): ?>
+                        <p class="text-xs text-gray-400 mt-3">Descripción original en inglés; se traducirá al generar un informe con IA.</p>
                     <?php endif; ?>
                 <?php else: ?>
                     <p class="text-sm text-gray-500">NVD no devolvió descripción para este CVE.</p>

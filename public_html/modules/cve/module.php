@@ -45,6 +45,8 @@ class Module_Cve extends BaseModule
             ['method' => 'POST', 'pattern' => 'reports/ai-delete/{id}', 'handler' => [$this, 'deleteAiReport']],
             ['method' => 'POST', 'pattern' => 'reports/ai-generate', 'handler' => [$this, 'startAiReport']],
             ['method' => 'POST', 'pattern' => 'reports/ai-retry/{id}', 'handler' => [$this, 'retryAiReport']],
+            ['method' => 'POST', 'pattern' => 'reports/ai-refresh/{id}', 'handler' => [$this, 'refreshAiReport']],
+            ['method' => 'POST', 'pattern' => 'reports/ai-assign/{id}', 'handler' => [$this, 'assignAiReport']],
             ['method' => 'GET',  'pattern' => 'reports/ai-status/{id}', 'handler' => [$this, 'aiReportStatus']],
             ['method' => 'GET',  'pattern' => 'report/{id}/csv',  'handler' => [$this, 'reportCsv']],
             ['method' => 'GET',  'pattern' => 'report-ai/{id}',   'handler' => [$this, 'aiReportView']],
@@ -495,6 +497,18 @@ class Module_Cve extends BaseModule
         }
 
         http_response_code($cve !== null ? 200 : 404);
+
+        if ($cve !== null) {
+            $sourceDescription = (string)($cve['description'] ?? '');
+            $cachedEs = trim((string)($cve['description_es'] ?? ''));
+            if ($cachedEs !== '' && hash_equals((string)($cve['description_es_hash'] ?? ''), sha1($sourceDescription))) {
+                $cve['description_display'] = $cachedEs;
+                $cve['description_display_lang'] = 'es';
+            } else {
+                $cve['description_display'] = $sourceDescription;
+                $cve['description_display_lang'] = (string)($cve['description_lang'] ?? 'en');
+            }
+        }
 
         echo $this->page('detail', [
             'cveId'      => $cveId,
@@ -1222,6 +1236,186 @@ class Module_Cve extends BaseModule
     }
 
     /**
+     * Actualiza los datos del informe desde el catálogo local y, si han
+     * cambiado, incrementa la revisión y lo vuelve a encolar.
+     */
+    public function refreshAiReport(array $params = []): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        try {
+            $id = (int)($params['id'] ?? 0);
+            $row = $id > 0 ? CveDatabase::fetchOne("SELECT * FROM cve_ai_reports WHERE id = ?", [$id]) : null;
+            if ($row === null) {
+                json_response(['success' => false, 'error' => 'Informe no encontrado.'], 404);
+            }
+
+            $status = (string)($row['status'] ?? '');
+            if (in_array($status, ['pending', 'running'], true)) {
+                json_response([
+                    'success' => false,
+                    'error'   => 'El informe está en curso. Espera a que termine o cancélalo.',
+                ], 409);
+            }
+
+            $ids = safe_json_decode((string)($row['cve_ids'] ?? ''), []);
+            if (!is_array($ids) || $ids === []) {
+                json_response(['success' => false, 'error' => 'El informe no tiene CVEs válidos.'], 400);
+            }
+
+            $items = CveReportAi::buildData($ids);
+            if ($items === []) {
+                json_response(['success' => false, 'error' => 'Ninguno de los CVEs está en el catálogo local.'], 400);
+            }
+
+            $newJson = json_encode($items, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
+            if ($newJson === false) {
+                json_response(['success' => false, 'error' => 'No se pudieron serializar los datos.'], 500);
+            }
+
+            $changed = ((string)($row['data_json'] ?? '')) !== $newJson;
+
+            // Sin cambios y ya está listo: no se gasta ninguna llamada a la IA.
+            if (!$changed && $status === 'done') {
+                json_response([
+                    'success'  => true,
+                    'id'       => $id,
+                    'changed'  => false,
+                    'status'   => 'done',
+                    'revision' => (int)($row['revision'] ?? 1),
+                    'message'  => 'Sin cambios desde la última versión.',
+                ]);
+            }
+
+            $token = bin2hex(random_bytes(24));
+
+            if ($changed) {
+                CveDatabase::update(
+                    "UPDATE cve_ai_reports
+                     SET data_json = ?, status = 'pending', token = ?, ai_error = NULL,
+                         started_at = NULL, finished_at = NULL, updated_at = NULL,
+                         revision = revision + 1
+                     WHERE id = ?",
+                    [$newJson, $token, $id]
+                );
+            } else {
+                // Mismos datos (error/cancelado): reintento sin subir revisión.
+                CveDatabase::update(
+                    "UPDATE cve_ai_reports
+                     SET status = 'pending', token = ?, ai_error = NULL,
+                         started_at = NULL, finished_at = NULL
+                     WHERE id = ?",
+                    [$token, $id]
+                );
+            }
+
+            app_log('info', 'cve_ai', 'Informe actualizado desde el catálogo', [
+                'id'      => $id,
+                'changed' => $changed,
+                'cves'    => $ids,
+            ]);
+
+            json_response([
+                'success'  => true,
+                'id'       => $id,
+                'changed'  => $changed,
+                'status'   => 'pending',
+                'revision' => $changed ? (int)($row['revision'] ?? 1) + 1 : (int)($row['revision'] ?? 1),
+                'message'  => $changed
+                    ? 'Datos actualizados; se regenerará el análisis.'
+                    : 'Sin cambios en los datos; se regenerará el análisis.',
+            ]);
+        } catch (Throwable $e) {
+            app_log('error', 'cve_ai', 'Error actualizando el informe', [
+                'id'    => $params['id'] ?? null,
+                'error' => $e->getMessage(),
+            ]);
+            json_response(['success' => false, 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Asigna el informe a un grupo de aplicaciones (lo crea si no existe).
+     */
+    public function assignAiReport(array $params = []): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        try {
+            $raw = file_get_contents('php://input');
+            $input = json_decode((string)$raw, true);
+            if (!is_array($input)) {
+                $input = $_POST;
+            }
+
+            $id = (int)($params['id'] ?? 0);
+            $row = $id > 0
+                ? CveDatabase::fetchOne("SELECT id, group_id FROM cve_ai_reports WHERE id = ?", [$id])
+                : null;
+            if ($row === null) {
+                json_response(['success' => false, 'error' => 'Informe no encontrado.'], 404);
+            }
+
+            $groupId = (int)($input['group_id'] ?? 0);
+            $newName = trim((string)($input['new_group'] ?? ''));
+            $groupName = '';
+
+            if ($newName !== '') {
+                if ($this->textLength($newName) > 120) {
+                    json_response(['success' => false, 'error' => 'El nombre del grupo es demasiado largo (máximo 120).'], 400);
+                }
+
+                $existing = CveDatabase::fetchOne(
+                    "SELECT id, name FROM software_groups WHERE lower(name) = lower(?) ORDER BY id LIMIT 1",
+                    [$newName]
+                );
+                if ($existing !== null) {
+                    $groupId = (int)$existing['id'];
+                    $groupName = (string)$existing['name'];
+                } else {
+                    $groupId = CveDatabase::insert(
+                        "INSERT INTO software_groups (name, parent_id, position) VALUES (?, NULL, 0)",
+                        [$newName]
+                    );
+                    $groupName = $newName;
+                    log_activity('cve.group_created', ['id' => $groupId, 'name' => $newName, 'from' => 'report']);
+                }
+            } elseif ($groupId > 0) {
+                $group = CveDatabase::fetchOne("SELECT id, name FROM software_groups WHERE id = ?", [$groupId]);
+                if ($group === null) {
+                    json_response(['success' => false, 'error' => 'El grupo seleccionado no existe.'], 400);
+                }
+                $groupName = (string)$group['name'];
+            }
+
+            CveDatabase::update(
+                "UPDATE cve_ai_reports SET group_id = ? WHERE id = ?",
+                [$groupId > 0 ? $groupId : null, $id]
+            );
+
+            app_log('info', 'cve_ai', 'Informe asignado a grupo', [
+                'id'    => $id,
+                'group' => $groupName,
+            ]);
+
+            json_response([
+                'success'    => true,
+                'id'         => $id,
+                'group_id'   => $groupId,
+                'group_name' => $groupName,
+            ]);
+        } catch (Throwable $e) {
+            app_log('error', 'cve_ai', 'Error asignando el informe', [
+                'id'    => $params['id'] ?? null,
+                'error' => $e->getMessage(),
+            ]);
+            json_response(['success' => false, 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
      * Datos completos de un informe para la página y para el panel derecho.
      */
     private function aiReportPayload(int $id): ?array
@@ -1244,6 +1438,15 @@ class Module_Cve extends BaseModule
         if ($aiText === '' && empty($report['no_ai'])) {
             // Compatibilidad: informes antiguos guardados en formato ASCII.
             $aiText = CveReportAi::extractAiTextFromContent((string)($report['content_text'] ?? ''));
+        }
+
+        $report['group_name'] = '';
+        if (!empty($report['group_id'])) {
+            $group = CveDatabase::fetchOne(
+                "SELECT name FROM software_groups WHERE id = ?",
+                [(int)$report['group_id']]
+            );
+            $report['group_name'] = (string)($group['name'] ?? '');
         }
 
         return [
@@ -1291,9 +1494,12 @@ class Module_Cve extends BaseModule
     {
         $limit = max(1, min(200, $limit));
         return CveDatabase::fetchAll(
-            "SELECT id, cve_ids, title, status, ai_model, ai_error, no_ai, created_at, finished_at
-             FROM cve_ai_reports
-             ORDER BY created_at DESC, id DESC
+            "SELECT r.id, r.cve_ids, r.title, r.status, r.ai_model, r.ai_error, r.no_ai,
+                    r.revision, r.updated_at, r.group_id, g.name AS group_name,
+                    r.created_at, r.finished_at
+             FROM cve_ai_reports r
+             LEFT JOIN software_groups g ON g.id = r.group_id
+             ORDER BY r.created_at DESC, r.id DESC
              LIMIT ?",
             [$limit]
         );
