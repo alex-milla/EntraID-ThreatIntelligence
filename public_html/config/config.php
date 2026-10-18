@@ -104,6 +104,19 @@ define('CVE_SYNC_STALE', 180);
 define('CVE_SYNC_WATCHDOG', 900);
 define('CVE_CRON_ACTIVE_GRACE', 45);
 define('CVE_REPORT_MAX_ROWS', 5000);
+
+// Exploits públicos para informes (solo CVEs del informe).
+define('CVE_EXPLOIT_TTL_DAYS', 7);
+define('CVE_EXPLOIT_EMPTY_TTL_HOURS', 24);
+define('CVE_EXPLOIT_ERROR_TTL_HOURS', 6);
+define('CVE_EXPLOIT_TIMEOUT', 8);
+define('CVE_EXPLOIT_RATE_MS', 1000);
+define('CVE_EXPLOIT_RAW_RATE_MS', 250);
+define('CVE_EXPLOIT_MAX_RETRIES', 2);
+define('CVE_EXPLOIT_BUDGET', 35);
+define('CVE_EXPLOIT_GITHUB_URL', 'https://poc-in-github.motikan2010.net/api/v1/');
+define('CVE_EXPLOIT_NUCLEI_RAW_BASE', 'https://raw.githubusercontent.com/projectdiscovery/nuclei-templates/main');
+define('CVE_EXPLOIT_NUCLEI_BLOB_BASE', 'https://github.com/projectdiscovery/nuclei-templates/blob/main');
 // NVD API 2.0: 5 peticiones/30 s sin API key y 50/30 s con API key.
 define('CVE_NVD_RATE_WINDOW', 30);
 define('CVE_NVD_RATE_MAX', 0); // 0 = automático según la API key

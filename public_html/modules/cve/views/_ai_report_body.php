@@ -290,6 +290,8 @@ $exposureLabel = static function (string $value): string {
                 $description = $descriptionEs !== '' ? $descriptionEs : trim((string)($item['description'] ?? ''));
                 $descriptionLang = $descriptionEs !== '' ? 'es' : 'en';
                 $github = is_array($item['github'] ?? null) ? $item['github'] : [];
+                $exploits = is_array($item['exploits'] ?? null) ? $item['exploits'] : [];
+                $exploitItems = is_array($exploits['items'] ?? null) ? $exploits['items'] : [];
                 $references = is_array($item['references'] ?? null) ? $item['references'] : [];
                 $isKev = !empty($item['kev']);
                 $kevActionEs = CveReportAi::cleanTranslatedText((string)($item['kev_action_es'] ?? ''));
@@ -502,24 +504,61 @@ $exposureLabel = static function (string $value): string {
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-5">
                         <div class="report-links-card rounded-lg border border-gray-200 p-4">
                             <p class="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
-                                Exploits públicos (<?= count($github) ?>)
+                                Exploits públicos (<?= count($exploitItems) ?>)
                             </p>
-                            <?php if ($github === []): ?>
-                                <p class="text-sm text-gray-500 mt-2">Sin exploits conocidos en el catálogo local.</p>
+                            <?php if ($exploitItems === [] && $github === []): ?>
+                                <p class="text-sm text-gray-500 mt-2">Sin exploits en las fuentes consultadas (GitHub PoC, Nuclei).</p>
                             <?php else: ?>
-                                <ul class="mt-2 space-y-1.5">
-                                    <?php foreach (array_slice($github, 0, 12) as $url): ?>
-                                        <li>
-                                            <a href="<?= e((string)$url) ?>" target="_blank" rel="noopener noreferrer"
-                                               class="text-sm text-brand-600 hover:underline break-all">
-                                                <?= e($linkLabel((string)$url)) ?> <span class="print-hide">↗</span>
-                                            </a>
-                                            <span class="print-url"><?= e((string)$url) ?></span>
-                                        </li>
-                                    <?php endforeach; ?>
-                                </ul>
-                                <?php if (count($github) > 12): ?>
-                                    <p class="text-[11px] text-gray-400 mt-1">… y <?= count($github) - 12 ?> más</p>
+                                <?php if ($exploitItems !== []): ?>
+                                    <ul class="mt-2 space-y-2">
+                                        <?php foreach (array_slice($exploitItems, 0, 12) as $exploit): ?>
+                                            <?php
+                                            $exploitSource = (string)($exploit['source_label'] ?? $exploit['source'] ?? 'Exploit');
+                                            $exploitUrl = (string)($exploit['url'] ?? '');
+                                            $exploitTitle = trim((string)($exploit['title'] ?? ''));
+                                            $exploitDate = trim((string)($exploit['published_at'] ?? ''));
+                                            ?>
+                                            <li>
+                                                <p class="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+                                                    <?= e($exploitSource) ?>
+                                                    <?php if ($exploitDate !== ''): ?>
+                                                        · <?= e(format_db_date($exploitDate, 'd/m/Y')) ?>
+                                                    <?php endif; ?>
+                                                </p>
+                                                <?php if ($exploitTitle !== '' && $exploitTitle !== $exploitUrl): ?>
+                                                    <p class="text-xs text-gray-600 mt-0.5"><?= e(truncate($exploitTitle, 140)) ?></p>
+                                                <?php endif; ?>
+                                                <a href="<?= e($exploitUrl) ?>" target="_blank" rel="noopener noreferrer"
+                                                   class="text-sm text-brand-600 hover:underline break-all">
+                                                    <?= e($linkLabel($exploitUrl)) ?> <span class="print-hide">↗</span>
+                                                </a>
+                                                <span class="print-url"><?= e($exploitUrl) ?></span>
+                                            </li>
+                                        <?php endforeach; ?>
+                                    </ul>
+                                    <?php if (count($exploitItems) > 12): ?>
+                                        <p class="text-[11px] text-gray-400 mt-1">… y <?= count($exploitItems) - 12 ?> más</p>
+                                    <?php endif; ?>
+                                <?php endif; ?>
+
+                                <?php if ($github !== []): ?>
+                                    <p class="text-[10px] font-semibold uppercase tracking-wide text-gray-400 mt-3">
+                                        Referencias GitHub (sin verificar) (<?= count($github) ?>)
+                                    </p>
+                                    <ul class="mt-1 space-y-1">
+                                        <?php foreach (array_slice($github, 0, 6) as $url): ?>
+                                            <li>
+                                                <a href="<?= e((string)$url) ?>" target="_blank" rel="noopener noreferrer"
+                                                   class="text-xs text-gray-500 hover:underline break-all">
+                                                    <?= e($linkLabel((string)$url)) ?> <span class="print-hide">↗</span>
+                                                </a>
+                                                <span class="print-url"><?= e((string)$url) ?></span>
+                                            </li>
+                                        <?php endforeach; ?>
+                                    </ul>
+                                    <?php if (count($github) > 6): ?>
+                                        <p class="text-[11px] text-gray-400 mt-1">… y <?= count($github) - 6 ?> más</p>
+                                    <?php endif; ?>
                                 <?php endif; ?>
                             <?php endif; ?>
                             <a href="<?= e($packetStormUrl) ?>"
@@ -649,7 +688,7 @@ $exposureLabel = static function (string $value): string {
         </div>
 
         <footer class="px-7 py-5 border-t border-gray-200 text-[11px] leading-relaxed text-gray-400">
-            <p>Fuentes: NVD · CISA KEV · EPSS. Prioridad calculada con la fórmula de SploitScan (KEV, CVSS, EPSS y exploits públicos).</p>
+            <p>Fuentes: NVD · CISA KEV · EPSS · GitHub PoC · Nuclei. Prioridad calculada con la fórmula de SploitScan (KEV, CVSS, EPSS y exploits públicos).</p>
             <p class="mt-1">La evaluación de riesgo es una estimación generada por IA; verifica siempre la información antes de tomar decisiones.</p>
         </footer>
     </article>

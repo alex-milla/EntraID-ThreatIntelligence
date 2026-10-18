@@ -1457,6 +1457,15 @@ class Module_Cve extends BaseModule
                 json_response(['success' => false, 'error' => 'El informe no tiene CVEs válidos.'], 400);
             }
 
+            try {
+                CveExploit::enrich($ids);
+            } catch (Throwable $e) {
+                app_log('warning', 'cve_exploit', 'No se pudieron actualizar los exploits', [
+                    'id'    => $id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+
             $items = CveReportAi::buildData($ids);
             if ($items === []) {
                 json_response(['success' => false, 'error' => 'Ninguno de los CVEs está en el catálogo local.'], 400);

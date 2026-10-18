@@ -248,6 +248,30 @@ class CveDatabase
             UNIQUE(report_id, cve_id)
         )");
 
+        // v0.2.8.9: exploits públicos por CVE (solo CVEs usados en informes).
+        $db->exec("CREATE TABLE IF NOT EXISTS cve_exploit (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cve_id TEXT NOT NULL,
+            source TEXT NOT NULL,
+            title TEXT,
+            url TEXT NOT NULL,
+            published_at TEXT,
+            meta_json TEXT,
+            fetched_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(cve_id, source, url)
+        )");
+        $db->exec("CREATE TABLE IF NOT EXISTS cve_exploit_fetch (
+            cve_id TEXT NOT NULL,
+            source TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            error TEXT,
+            fetched_at TEXT,
+            next_retry_at TEXT,
+            PRIMARY KEY (cve_id, source)
+        ) WITHOUT ROWID");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_cve_exploit_cve ON cve_exploit(cve_id)");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_cve_exploit_fetch_retry ON cve_exploit_fetch(next_retry_at)");
+
         $db->exec("CREATE INDEX IF NOT EXISTS idx_cve_catalog_severity ON cve_catalog(severity)");
         $db->exec("CREATE INDEX IF NOT EXISTS idx_cve_ai_items_report ON cve_ai_report_items(report_id, position)");
         $db->exec("CREATE INDEX IF NOT EXISTS idx_cve_reports_generated ON cve_reports(generated_at DESC)");

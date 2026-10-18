@@ -223,6 +223,7 @@ final class CveReportAi
                 [$cveId]
             );
             $kevRow = CveDatabase::fetchOne("SELECT * FROM cve_kev WHERE cve_id = ?", [$cveId]);
+            $exploits = CveExploit::getForCve((string)$row['cve_id']);
 
             $github = [];
             $others = [];
@@ -287,8 +288,9 @@ final class CveReportAi
                 'kev_action_es'   => $kevActionEs,
                 'kev_name'        => trim((string)($kevRow['vulnerability_name'] ?? '')),
                 'github'          => $github,
+                'exploits'        => $exploits,
                 'references'      => $others,
-                'priority'        => self::calculatePriority($cvss, $epss, $isKev, $github !== []),
+                'priority'        => self::calculatePriority($cvss, $epss, $isKev, (int)($exploits['total'] ?? 0) > 0),
             ];
         }
 
@@ -461,23 +463,30 @@ final class CveReportAi
         }
         $out = array_merge($out, self::section($L['sec_kev'], $lines, $L));
 
-        // --- Exploits públicos (referencias GitHub del propio CVE) ---
+        // --- Exploits públicos (fuentes consultadas) ---
         $github = is_array($item['github']) ? $item['github'] : [];
-        $total = count($github);
+        $exploits = is_array($item['exploits'] ?? null) ? $item['exploits'] : [];
+        $exploitItems = is_array($exploits['items'] ?? null) ? $exploits['items'] : [];
+        $total = count($exploitItems);
         $lines = [];
-        $lines[] = '├ ' . $L['github'];
         if ($total === 0) {
-            $lines[] = '│  └ ' . $L['github_none'];
+            $lines[] = '└ Sin exploits en las fuentes consultadas (GitHub PoC, Nuclei).';
         } else {
             $i = 0;
-            foreach ($github as $url) {
+            foreach ($exploitItems as $exploit) {
                 $i++;
-                $lines[] = '│  ' . ($i === $total ? '└' : '├') . ' ' . $url;
+                $label = (string)($exploit['source_label'] ?? $exploit['source'] ?? 'Exploit');
+                $exploitUrl = (string)($exploit['url'] ?? '');
+                $lines[] = ($i === $total ? '└' : '├') . ' [' . $label . '] ' . $exploitUrl;
             }
         }
-        $lines[] = '│';
-        $lines[] = '└ ' . $L['other'];
-        $lines[] = '   └ ' . $L['packetstorm'] . ': ' . self::packetStormUrl($cveId);
+        if ($github !== []) {
+            $lines[] = '│';
+            $lines[] = '└ Referencias GitHub (sin verificar): ' . count($github);
+            foreach (array_slice($github, 0, 5) as $url) {
+                $lines[] = '   · ' . $url;
+            }
+        }
         $out = array_merge($out, self::section(sprintf($L['sec_exploits'], $total), $lines, $L));
 
         // --- Más referencias ---
@@ -894,7 +903,16 @@ final class CveReportAi
                 $data[] = 'Acción requerida (CISA): ' . $actionForPrompt;
             }
             $github = is_array($item['github']) ? $item['github'] : [];
-            $data[] = 'Exploits públicos en GitHub: ' . count($github)
+            $exploits = is_array($item['exploits'] ?? null) ? $item['exploits'] : [];
+            $exploitItems = is_array($exploits['items'] ?? null) ? $exploits['items'] : [];
+            $exploitText = [];
+            foreach (array_slice($exploitItems, 0, 10) as $exploit) {
+                $exploitText[] = '[' . (string)($exploit['source_label'] ?? $exploit['source'] ?? '') . '] '
+                    . (string)($exploit['url'] ?? '');
+            }
+            $data[] = 'Exploits públicos: ' . count($exploitItems)
+                . ($exploitText !== [] ? ' — ' . implode(', ', $exploitText) : '');
+            $data[] = 'Referencias GitHub (sin verificar): ' . count($github)
                 . ($github !== [] ? ' — ' . implode(', ', array_slice($github, 0, 10)) : '');
             $data[] = 'Prioridad calculada: ' . (!empty($item['priority']) ? $item['priority'] : 'Sin datos');
             $refs = is_array($item['references']) ? array_slice($item['references'], 0, 8) : [];
@@ -1008,8 +1026,20 @@ final class CveReportAi
         }
 
         $github = is_array($item['github'] ?? null) ? $item['github'] : [];
+        $exploits = is_array($item['exploits'] ?? null) ? $item['exploits'] : [];
+        $exploitItems = is_array($exploits['items'] ?? null) ? $exploits['items'] : [];
+        if ($exploitItems !== []) {
+            $exploitLines = [];
+            foreach (array_slice($exploitItems, 0, 10) as $exploit) {
+                $exploitLines[] = '[' . (string)($exploit['source_label'] ?? $exploit['source'] ?? '') . '] '
+                    . (string)($exploit['url'] ?? '');
+            }
+            $lines[] = 'Exploits públicos: ' . implode(', ', $exploitLines);
+        } else {
+            $lines[] = 'Exploits públicos: ninguno en las fuentes consultadas (GitHub PoC, Nuclei).';
+        }
         if ($github !== []) {
-            $lines[] = 'Exploits públicos en GitHub: ' . implode(', ', array_slice($github, 0, 8));
+            $lines[] = 'Referencias GitHub (sin verificar): ' . implode(', ', array_slice($github, 0, 8));
         }
         $refs = is_array($item['references'] ?? null) ? array_slice($item['references'], 0, 8) : [];
         if ($refs !== []) {
@@ -1687,6 +1717,21 @@ final class CveReportAi
                 throw new RuntimeException('La lista de CVEs del informe está vacía.');
             }
 
+            // Exploits públicos: solo los CVEs del informe, con caché y presupuesto.
+            try {
+                $exploitStats = CveExploit::enrich($ids);
+                app_log('info', 'cve_exploit', 'Fuentes de exploits consultadas', [
+                    'id'     => $id,
+                    'cves'   => count($ids),
+                    'stats'  => $exploitStats,
+                ]);
+            } catch (Throwable $e) {
+                app_log('warning', 'cve_exploit', 'No se pudieron preparar los exploits', [
+                    'id'    => $id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+
             $items = self::buildData($ids);
             if ($items === []) {
                 throw new RuntimeException('Ninguno de los CVEs está en el catálogo local.');
@@ -1703,7 +1748,8 @@ final class CveReportAi
                 $hasFacts = false;
                 foreach ($items as $item) {
                     if ($item['cvss'] !== null || $item['epss'] !== null || !empty($item['kev'])
-                        || (string)$item['description'] !== '' || !empty($item['github'])) {
+                        || (string)$item['description'] !== '' || !empty($item['github'])
+                        || (int)($item['exploits']['total'] ?? 0) > 0) {
                         $hasFacts = true;
                         break;
                     }
