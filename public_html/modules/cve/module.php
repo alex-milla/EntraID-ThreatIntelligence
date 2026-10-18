@@ -64,6 +64,7 @@ class Module_Cve extends BaseModule
             ['method' => 'GET',  'pattern' => 'report/{id}/csv',  'handler' => [$this, 'reportCsv']],
             ['method' => 'GET',  'pattern' => 'reports/ai-list', 'handler' => [$this, 'aiReportList']],
             ['method' => 'POST', 'pattern' => 'reports/ai-duplicates', 'handler' => [$this, 'aiReportDuplicates']],
+            ['method' => 'POST', 'pattern' => 'reports/ai-priority', 'handler' => [$this, 'generateGroupPriorityAnalysis']],
             ['method' => 'GET',  'pattern' => 'report-ai/{id}/panel', 'handler' => [$this, 'aiReportPanel']],
             ['method' => 'GET',  'pattern' => 'report-ai/{id}',   'handler' => [$this, 'aiReportView']],
             ['method' => 'GET',  'pattern' => 'report/{id}',      'handler' => [$this, 'reportView']],
@@ -96,6 +97,7 @@ class Module_Cve extends BaseModule
         $groups = [];
         $software = [];
         $assignedCves = [];
+        $groupAnalysis = null;
         $reports = [];
         $aiReports = [];
         $selectedAiId = 0;
@@ -123,6 +125,10 @@ class Module_Cve extends BaseModule
             if ($tab === 'software') {
                 $software = $this->listSoftware($selectedGroup, $q);
                 $assignedCves = $this->listAssignedCves($selectedGroup);
+                $llmProfiles = llm_profile_list();
+                if ($selectedGroup > 0) {
+                    $groupAnalysis = $this->getGroupPriorityAnalysis($selectedGroup);
+                }
             } elseif ($tab === 'reports') {
                 $softwareOptions = $this->listSoftware(0, '');
                 $reports = $this->listReports(30);
@@ -209,6 +215,7 @@ class Module_Cve extends BaseModule
             'groups'        => $groups,
             'software'      => $software,
             'assignedCves'  => $assignedCves,
+            'groupAnalysis' => $groupAnalysis,
             'reports'       => $reports,
             'aiReports'     => $aiReports,
             'assignmentFilter' => $assignmentFilter,
@@ -836,6 +843,266 @@ class Module_Cve extends BaseModule
             ]);
         } catch (Throwable $e) {
             app_log('error', 'cve_ai', 'Error buscando informes recientes', ['error' => $e->getMessage()]);
+            json_response(['success' => false, 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Último análisis de prioridad de parcheo de una empresa/grupo.
+     */
+    private function getGroupPriorityAnalysis(int $groupId): ?array
+    {
+        if ($groupId <= 0) {
+            return null;
+        }
+        $row = CveDatabase::fetchOne(
+            "SELECT * FROM cve_ai_group_analyses WHERE group_id = ?",
+            [$groupId]
+        );
+        if ($row === null) {
+            return null;
+        }
+        $row['cve_ids_array'] = safe_json_decode((string)($row['cve_ids'] ?? ''), []);
+        if (!is_array($row['cve_ids_array'])) {
+            $row['cve_ids_array'] = [];
+        }
+        return $row;
+    }
+
+    /**
+     * Genera (o recalcula) el análisis de prioridad de parcheo para una
+     * empresa/grupo concreto. Solo usa los CVEs asignados directamente a ese
+     * group_id, nunca una lista enviada por el cliente.
+     */
+    public function generateGroupPriorityAnalysis(array $params = []): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        try {
+            $raw = file_get_contents('php://input');
+            $input = json_decode((string)$raw, true);
+            if (!is_array($input)) {
+                $input = $_POST;
+            }
+
+            $groupId = (int)($input['group_id'] ?? 0);
+            $profileId = max(0, (int)($input['profile_id'] ?? 0));
+            $group = $groupId > 0 ? $this->getGroup($groupId) : null;
+            if ($group === null) {
+                json_response(['success' => false, 'error' => 'La empresa o grupo no existe.'], 404);
+            }
+
+            if ($profileId > 0 && llm_profile_get($profileId) === null) {
+                json_response(['success' => false, 'error' => 'El perfil de IA seleccionado no existe.'], 400);
+            }
+            if (!class_exists('Module_Llm')) {
+                json_response(['success' => false, 'error' => 'El módulo de IA no está activo.'], 400);
+            }
+            $llm = new Module_Llm();
+            if (!$llm->isConfigured($profileId > 0 ? $profileId : null)) {
+                json_response(['success' => false, 'error' => 'La IA no está configurada. Revisa Admin → APIs.'], 400);
+            }
+
+            $rows = CveDatabase::fetchAll(
+                "SELECT DISTINCT cve_id
+                 FROM cve_ai_report_items
+                 WHERE group_id = ?
+                 ORDER BY cve_id",
+                [$groupId]
+            );
+            $cveIds = array_values(array_filter(array_map(
+                static fn(array $row): string => strtoupper((string)($row['cve_id'] ?? '')),
+                $rows
+            )));
+            $cveIds = array_values(array_unique(array_filter($cveIds, static fn(string $id): bool => $id !== '')));
+            if ($cveIds === []) {
+                json_response([
+                    'success' => false,
+                    'error'   => 'No hay CVEs asignados directamente a esta empresa/grupo.',
+                ], 400);
+            }
+
+            $maxCves = 50;
+            $truncated = count($cveIds) > $maxCves;
+            if ($truncated) {
+                $cveIds = array_slice($cveIds, 0, $maxCves);
+            }
+
+            $facts = [];
+            foreach ($cveIds as $cveId) {
+                $catalog = CveDatabase::fetchOne(
+                    "SELECT cve_id, description, severity, cvss_v3_score, cvss_v2_score, published_at
+                     FROM cve_catalog WHERE cve_id = ?",
+                    [$cveId]
+                );
+                $kev = CveDatabase::fetchOne("SELECT cve_id, date_added FROM cve_kev WHERE cve_id = ?", [$cveId]);
+                $epss = CveDatabase::fetchOne("SELECT epss, percentile FROM cve_epss WHERE cve_id = ?", [$cveId]);
+                $products = CveDatabase::fetchAll(
+                    "SELECT vendor, product FROM cve_product WHERE cve_id = ? ORDER BY vendor, product",
+                    [$cveId]
+                );
+                $productLabels = [];
+                foreach ($products as $product) {
+                    $label = trim((string)($product['vendor'] ?? '') . ' ' . (string)($product['product'] ?? ''));
+                    if ($label !== '') {
+                        $productLabels[] = $label;
+                    }
+                }
+
+                $items = CveDatabase::fetchAll(
+                    "SELECT i.tags, i.ai_text, i.sections_json,
+                            r.id AS report_id, r.title, r.status, r.created_at
+                     FROM cve_ai_report_items i
+                     JOIN cve_ai_reports r ON r.id = i.report_id
+                     WHERE i.group_id = ? AND i.cve_id = ?
+                     ORDER BY r.created_at DESC, r.id DESC
+                     LIMIT 5",
+                    [$groupId, $cveId]
+                );
+                $tags = [];
+                $reportLabels = [];
+                $previousSummary = '';
+                foreach ($items as $item) {
+                    foreach (CveReportAi::decodeTags((string)($item['tags'] ?? '')) as $tag) {
+                        $tags[$tag] = true;
+                    }
+                    $reportLabels[] = '#' . (int)$item['report_id'] . ' ' . (string)($item['title'] ?? '');
+                    if ($previousSummary === '') {
+                        $previousSummary = trim((string)($item['ai_text'] ?? ''));
+                        if ($previousSummary === '') {
+                            $sections = safe_json_decode((string)($item['sections_json'] ?? ''), []);
+                            if (is_array($sections)) {
+                                $parts = [];
+                                foreach (array_slice($sections, 0, 2) as $section) {
+                                    $title = trim((string)($section['title'] ?? ''));
+                                    $bullets = is_array($section['bullets'] ?? null) ? $section['bullets'] : [];
+                                    if ($title !== '') {
+                                        $parts[] = $title;
+                                    }
+                                    foreach (array_slice($bullets, 0, 2) as $bullet) {
+                                        $parts[] = trim((string)$bullet);
+                                    }
+                                }
+                                $previousSummary = implode(' ', $parts);
+                            }
+                        }
+                    }
+                }
+
+                $exploits = CveExploit::getForCve($cveId);
+                $exploitSources = [];
+                foreach (($exploits['by_source'] ?? []) as $source => $sourceItems) {
+                    $exploitSources[] = $source . ':' . count($sourceItems);
+                }
+
+                $cvss = $catalog['cvss_v3_score'] ?? $catalog['cvss_v2_score'] ?? null;
+                $facts[] = '- ' . $cveId
+                    . ' | Severidad: ' . (string)($catalog['severity'] ?? 'sin datos')
+                    . ' | CVSS: ' . ($cvss !== null ? number_format((float)$cvss, 1) : 'sin datos')
+                    . ' | EPSS: ' . (($epss['epss'] ?? null) !== null ? number_format((float)$epss['epss'] * 100, 1) . '%' : 'sin datos')
+                    . ' | KEV: ' . ($kev !== null ? 'Sí (' . (string)($kev['date_added'] ?? '') . ')' : 'No')
+                    . ' | Exploits: ' . (int)($exploits['total'] ?? 0)
+                    . ($exploitSources !== [] ? ' (' . implode(', ', $exploitSources) . ')' : '')
+                    . ' | Productos: ' . ($productLabels !== [] ? implode(', ', array_slice($productLabels, 0, 6)) : 'sin datos')
+                    . ' | Tags: ' . (array_keys($tags) !== [] ? implode(', ', array_keys($tags)) : 'sin tags')
+                    . ' | Informes: ' . ($reportLabels !== [] ? implode('; ', $reportLabels) : 'sin informe')
+                    . ' | Análisis previo: ' . ($previousSummary !== '' ? truncate($previousSummary, 500) : 'sin análisis');
+            }
+
+            $groupLabel = ((string)($group['kind'] ?? '') === 'company' ? 'Empresa' : 'Grupo de aplicaciones')
+                . ' «' . (string)$group['name'] . '»';
+            $system = "Eres un analista sénior de vulnerabilidades y gestión de parcheo. "
+                . "Trabajas SOLO con los CVEs proporcionados. No inventes CVEs ni incluyas otros fuera de la lista. "
+                . "Responde en español y en Markdown, con estas secciones exactas:\n"
+                . "## Resumen ejecutivo\n"
+                . "## Clasificación por prioridad\n"
+                . "## Prioridad por software\n"
+                . "## Plan de parcheo\n\n"
+                . "Usa esta escala de prioridad: "
+                . "A+ si está en CISA KEV o tiene exploit público; "
+                . "A si CVSS >= 6 y EPSS >= 0.2; "
+                . "B si CVSS >= 6; "
+                . "C si EPSS >= 0.2; "
+                . "D en el resto. "
+                . "Indica plazos recomendados: A+ inmediato (48 h), A hasta 7 días, B hasta 30 días, C hasta 90 días y D siguiente ciclo. "
+                . "En «Clasificación por prioridad» lista los CVE de cada categoría. "
+                . "En «Prioridad por software» agrupa por producto/software y ordena por criticidad. "
+                . "En «Plan de parcheo» propón el orden de actuación y las acciones concretas.";
+            $user = "Contexto: " . $groupLabel . ". "
+                . "CVEs asignados directamente: " . count($cveIds) . ".\n"
+                . ($truncated ? "Nota: se analizan los primeros " . $maxCves . " CVEs del listado.\n" : '')
+                . "\nDatos de los CVEs:\n" . implode("\n", $facts)
+                . "\n\nNo menciones CVEs que no estén en esta lista. "
+                . "Si falta un dato, indícalo como «sin datos» y no lo inventes.";
+
+            if (function_exists('release_session_lock')) {
+                release_session_lock();
+            }
+            @set_time_limit(0);
+            $result = $llm->chat(
+                $system,
+                $user,
+                ['max_tokens' => 2400, 'temperature' => 0.2],
+                $profileId > 0 ? $profileId : null
+            );
+            if (empty($result['success'])) {
+                json_response([
+                    'success' => false,
+                    'error'   => (string)($result['error'] ?? 'La IA no pudo completar el análisis.'),
+                ], 502);
+            }
+
+            $content = trim((string)($result['content'] ?? ''));
+            if ($content === '') {
+                json_response(['success' => false, 'error' => 'La IA devolvió un análisis vacío.'], 502);
+            }
+            $contentHtml = (string)($result['content_html'] ?? '');
+            if ($contentHtml === '' && function_exists('render_markdown')) {
+                $contentHtml = render_markdown($content);
+            }
+            $model = (string)($result['model'] ?? '');
+
+            CveDatabase::query(
+                "INSERT OR REPLACE INTO cve_ai_group_analyses
+                 (group_id, generated_at, updated_at, profile_id, model, cve_count, cve_ids,
+                  content_text, content_html, generated_by)
+                 VALUES (?, datetime('now'), datetime('now'), ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    $groupId,
+                    $profileId > 0 ? $profileId : null,
+                    $model !== '' ? $model : null,
+                    count($cveIds),
+                    json_encode($cveIds, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                    $content,
+                    $contentHtml,
+                    Auth::id(),
+                ]
+            );
+
+            log_activity('cve.ai_group_priority', [
+                'group_id'  => $groupId,
+                'cves'      => count($cveIds),
+                'profile_id'=> $profileId,
+                'model'     => $model,
+            ]);
+
+            json_response([
+                'success' => true,
+                'analysis' => [
+                    'group_id'     => $groupId,
+                    'generated_at' => date('c'),
+                    'profile_id'   => $profileId,
+                    'model'        => $model,
+                    'cve_count'    => count($cveIds),
+                    'cve_ids'      => $cveIds,
+                    'truncated'    => $truncated,
+                    'content_text' => $content,
+                    'content_html' => $contentHtml,
+                ],
+            ]);
+        } catch (Throwable $e) {
+            app_log('error', 'cve_ai', 'Error generando análisis de prioridad', ['error' => $e->getMessage()]);
             json_response(['success' => false, 'error' => $e->getMessage()], 500);
         }
     }

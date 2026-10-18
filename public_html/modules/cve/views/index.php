@@ -4484,8 +4484,16 @@ syncCveReportPeriod();
                                 <?= count($assignedCves) ?> <?= count($assignedCves) === 1 ? 'CVE' : 'CVEs' ?>
                             </p>
                         </div>
-                        <a href="<?= base_url('modules/cve?tab=reports') ?>"
-                           class="text-xs text-brand-600 dark:text-brand-400 hover:underline">Ir a Informes</a>
+                        <div class="flex items-center gap-3">
+                            <?php if ($isAdmin && $assignedCves !== []): ?>
+                                <button type="button" onclick="cvePriorityOpen(<?= (int)$selectedGroup ?>)"
+                                        class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-brand-500 hover:bg-brand-600 text-white text-xs font-semibold rounded-lg transition-colors">
+                                    Analizar prioridad con IA
+                                </button>
+                            <?php endif; ?>
+                            <a href="<?= base_url('modules/cve?tab=reports') ?>"
+                               class="text-xs text-brand-600 dark:text-brand-400 hover:underline">Ir a Informes</a>
+                        </div>
                     </div>
 
                     <?php if ($assignedCves === []): ?>
@@ -4679,6 +4687,8 @@ syncCveReportPeriod();
                         </div>
                     <?php endif; ?>
                 </div>
+
+                <?php require __DIR__ . '/_group_priority_analysis.php'; ?>
             <?php endif; ?>
 
             <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
@@ -4944,6 +4954,140 @@ syncCveReportPeriod();
             <?php endif; ?>
         </div>
     </div>
+
+    <!-- Modal: análisis de prioridad de parcheo por empresa/grupo -->
+    <div id="cve-priority-modal" class="hidden fixed inset-0 z-50 no-print">
+        <div class="absolute inset-0 bg-black/40" onclick="cvePriorityClose()"></div>
+        <div class="relative mx-auto mt-24 w-[calc(100%-2rem)] max-w-md bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 shadow-xl p-5">
+            <div class="flex items-start justify-between gap-3">
+                <div>
+                    <h3 class="text-sm font-semibold">Análisis de prioridad de parcheo</h3>
+                    <p class="text-xs text-gray-500 mt-1" id="cve-priority-scope"></p>
+                </div>
+                <button type="button" onclick="cvePriorityClose()" class="text-xs text-gray-400 hover:text-gray-600">Cerrar</button>
+            </div>
+
+            <p class="mt-3 px-3 py-2 rounded-lg bg-brand-50 dark:bg-brand-950/40 text-[11px] text-brand-700 dark:text-brand-300">
+                Solo se usarán los CVEs asignados a esta empresa/grupo. No se incluirán CVEs de otras fichas.
+            </p>
+
+            <label class="block mt-4">
+                <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Perfil de IA</span>
+                <select id="cve-priority-profile"
+                        class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                    <option value="0">Automático (predeterminado)</option>
+                    <?php foreach (($llmProfiles ?? []) as $profile): ?>
+                        <option value="<?= (int)$profile['id'] ?>">
+                            <?= e((string)$profile['name']) ?> · <?= e((string)$profile['provider']) ?><?= !empty($profile['model']) ? ' · ' . e((string)$profile['model']) : '' ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+            </label>
+
+            <p id="cve-priority-message" class="mt-3 text-xs text-gray-500"></p>
+
+            <div class="mt-4 flex items-center justify-end gap-2">
+                <button type="button" onclick="cvePriorityClose()"
+                        class="px-3 py-1.5 border border-gray-300 dark:border-gray-600 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark">
+                    Cancelar
+                </button>
+                <button type="button" id="cve-priority-submit" onclick="cvePrioritySubmit(this)"
+                        class="px-3 py-1.5 bg-brand-500 hover:bg-brand-600 text-white text-xs font-semibold rounded-lg">
+                    Analizar
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    (function () {
+        'use strict';
+        var PRIORITY_URL = <?= json_encode(base_url('modules/cve/reports/ai-priority')) ?>;
+        var priorityGroupId = <?= (int)$selectedGroup ?>;
+        var priorityGroupLabel = <?= json_encode($selectedGroupIsCompany ? 'Empresa' : 'Grupo de aplicaciones') ?>;
+        var priorityGroupName = <?= json_encode($selectedGroupName, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
+        var priorityCount = <?= (int)count($assignedCves) ?>;
+
+        window.cvePriorityOpen = function (groupId) {
+            if (groupId) {
+                priorityGroupId = parseInt(groupId, 10) || priorityGroupId;
+            }
+            var modal = document.getElementById('cve-priority-modal');
+            var scope = document.getElementById('cve-priority-scope');
+            var message = document.getElementById('cve-priority-message');
+            var profile = document.getElementById('cve-priority-profile');
+            if (!modal) {
+                return;
+            }
+            if (scope) {
+                scope.textContent = priorityGroupLabel + ' «' + priorityGroupName + '» · '
+                    + priorityCount + (priorityCount === 1 ? ' CVE asignado' : ' CVEs asignados');
+            }
+            if (message) {
+                message.textContent = '';
+                message.className = 'mt-3 text-xs text-gray-500';
+            }
+            if (profile) {
+                profile.value = '0';
+            }
+            modal.classList.remove('hidden');
+        };
+
+        window.cvePriorityClose = function () {
+            var modal = document.getElementById('cve-priority-modal');
+            if (modal) {
+                modal.classList.add('hidden');
+            }
+        };
+
+        window.cvePrioritySubmit = function (button) {
+            if (!priorityGroupId) {
+                return;
+            }
+            var profile = document.getElementById('cve-priority-profile');
+            var message = document.getElementById('cve-priority-message');
+            if (button) {
+                button.disabled = true;
+            }
+            if (message) {
+                message.textContent = 'Analizando prioridad con IA. Puede tardar un momento…';
+                message.className = 'mt-3 text-xs text-blue-600 dark:text-blue-400';
+            }
+            fetch(PRIORITY_URL, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'X-CSRF-Token': (document.querySelector('input[name="csrf_token"]') || {}).value || ''
+                },
+                credentials: 'same-origin',
+                body: JSON.stringify({
+                    group_id: priorityGroupId,
+                    profile_id: profile ? profile.value : 0
+                })
+            }).then(function (res) {
+                return res.json().then(function (body) {
+                    if (!res.ok || !body.success) {
+                        throw new Error(body && body.error ? body.error : 'HTTP ' + res.status);
+                    }
+                    return body;
+                });
+            }).then(function () {
+                window.cvePriorityClose();
+                window.location.reload();
+            }).catch(function (err) {
+                if (message) {
+                    message.textContent = 'No se pudo generar el análisis: '
+                        + (err && err.message ? err.message : 'error desconocido');
+                    message.className = 'mt-3 text-xs text-red-500';
+                }
+                if (button) {
+                    button.disabled = false;
+                }
+            });
+        };
+    })();
+    </script>
 
     <script>
     (function () {

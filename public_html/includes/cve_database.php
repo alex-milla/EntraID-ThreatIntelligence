@@ -270,6 +270,20 @@ class CveDatabase
             next_retry_at TEXT,
             PRIMARY KEY (cve_id, source)
         ) WITHOUT ROWID");
+        // v0.2.8.20: último análisis de prioridad de parcheo por empresa/grupo.
+        $db->exec("CREATE TABLE IF NOT EXISTS cve_ai_group_analyses (
+            group_id INTEGER PRIMARY KEY REFERENCES software_groups(id) ON DELETE CASCADE,
+            generated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            profile_id INTEGER,
+            model TEXT,
+            cve_count INTEGER NOT NULL DEFAULT 0,
+            cve_ids TEXT,
+            content_text TEXT,
+            content_html TEXT,
+            generated_by INTEGER
+        ) WITHOUT ROWID");
+
         $db->exec("CREATE INDEX IF NOT EXISTS idx_cve_exploit_cve ON cve_exploit(cve_id)");
         $db->exec("CREATE INDEX IF NOT EXISTS idx_cve_exploit_fetch_retry ON cve_exploit_fetch(next_retry_at)");
 
