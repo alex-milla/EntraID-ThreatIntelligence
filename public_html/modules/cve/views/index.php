@@ -2160,12 +2160,18 @@ $pendingAiCount = count($pendingAiReports);
         var row = list ? list.querySelector('.ai-report-item[data-id="' + id + '"]') : null;
         var body = detail ? detail.querySelector('.ai-report-body') : null;
         var profileId = row ? (parseInt(row.dataset.profileId, 10) || 0) : 0;
+        var profileName = row ? (row.dataset.aiProfileName || '') : '';
+        var profileModel = row ? (row.dataset.aiProfileModel || '') : '';
         var model = row ? (row.dataset.aiModel || '') : '';
         var error = row ? (row.dataset.aiError || '') : '';
+        var status = row ? (row.dataset.status || '') : '';
         if (!row && body) {
             profileId = parseInt(body.dataset.profileId, 10) || 0;
+            profileName = body.dataset.aiProfileName || '';
+            profileModel = body.dataset.aiProfileModel || '';
             model = body.dataset.aiModel || '';
             error = body.dataset.aiError || '';
+            status = body.dataset.status || '';
         }
 
         var idEl = document.getElementById('ai-retry-id');
@@ -2177,17 +2183,73 @@ $pendingAiCount = count($pendingAiReports);
         if (!modal) {
             return;
         }
-        if (idEl) { idEl.textContent = '#' + id; }
-        if (modelEl) {
-            modelEl.textContent = model !== ''
-                ? 'Modelo anterior: ' + model
-                : 'Modelo anterior: sin datos';
+
+        var failedModel = model || profileModel;
+        var failedLabel = profileName || (profileId > 0 ? 'Perfil #' + profileId : 'Automático');
+        if (failedModel !== '') {
+            failedLabel += ' · ' + failedModel;
         }
+
+        if (idEl) { idEl.textContent = '#' + id; }
         if (errorEl) {
             errorEl.textContent = error !== '' ? error : '';
             errorEl.classList.toggle('hidden', error === '');
         }
-        if (profileEl) { profileEl.value = String(profileId); }
+
+        var onlyFailed = false;
+        if (profileEl) {
+            // Limpiar marcas temporales de aperturas anteriores.
+            Array.prototype.slice.call(profileEl.querySelectorAll('option[data-temp-failed="1"]')).forEach(function (option) {
+                option.remove();
+            });
+            var options = Array.prototype.slice.call(profileEl.options);
+            options.forEach(function (option) {
+                if (!option.dataset.baseLabel) {
+                    option.dataset.baseLabel = option.textContent.trim();
+                }
+                option.textContent = option.dataset.baseLabel;
+            });
+
+            var failedOption = options.find(function (option) {
+                return parseInt(option.value, 10) === profileId && option.value !== '0';
+            });
+
+            if (profileId > 0 && !failedOption) {
+                failedOption = document.createElement('option');
+                failedOption.value = String(profileId);
+                failedOption.disabled = true;
+                failedOption.dataset.tempFailed = '1';
+                failedOption.dataset.baseLabel = 'Perfil #' + profileId;
+                failedOption.textContent = failedOption.dataset.baseLabel + ' — falló';
+                profileEl.insertBefore(failedOption, profileEl.options[1] || null);
+                options = Array.prototype.slice.call(profileEl.options);
+            }
+
+            if (failedOption) {
+                failedOption.textContent = (failedOption.dataset.baseLabel || failedOption.textContent) + ' — falló';
+            }
+
+            var candidates = options.filter(function (option) {
+                return option.value !== '0'
+                    && !option.disabled
+                    && parseInt(option.value, 10) !== profileId;
+            });
+            if (candidates.length > 0) {
+                profileEl.value = candidates[0].value;
+            } else if (failedOption && !failedOption.disabled) {
+                profileEl.value = failedOption.value;
+            } else {
+                profileEl.value = '0';
+            }
+            onlyFailed = profileId > 0 && candidates.length === 0;
+        }
+
+        if (modelEl) {
+            modelEl.className = 'mt-3 text-xs font-medium text-red-600 dark:text-red-400';
+            var prefix = status === 'canceled' ? 'Perfil del informe: ' : 'Perfil que falló: ';
+            modelEl.textContent = prefix + failedLabel
+                + (onlyFailed ? ' · no hay otro perfil disponible' : '');
+        }
         if (allEl) { allEl.checked = false; }
         modal.classList.remove('hidden');
     };

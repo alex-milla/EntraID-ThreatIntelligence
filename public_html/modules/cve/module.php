@@ -711,6 +711,7 @@ class Module_Cve extends BaseModule
                 static fn(array $row): bool => empty($row['has_defender'])
             ));
         }
+        $llmProfiles = llm_profile_list();
         $selectedAiId = 0;
 
         header('Content-Type: text/html; charset=utf-8');
@@ -3139,6 +3140,18 @@ class Module_Cve extends BaseModule
             );
             $report['group_name'] = (string)($group['name'] ?? '');
             $report['group_kind'] = (string)($group['kind'] ?? '');
+        }
+
+        $report['ai_profile_name'] = '';
+        $report['ai_profile_model'] = '';
+        if (!empty($report['ai_profile_id'])) {
+            $profile = llm_profile_get((int)$report['ai_profile_id']);
+            if ($profile !== null) {
+                $report['ai_profile_name'] = (string)($profile['name'] ?? '');
+                $report['ai_profile_model'] = (string)($profile['model'] ?? '');
+            } else {
+                $report['ai_profile_name'] = 'Perfil #' . (int)$report['ai_profile_id'];
+            }
         }
 
         $defender = null;

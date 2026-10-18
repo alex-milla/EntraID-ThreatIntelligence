@@ -122,7 +122,7 @@ $exposureLabel = static function (string $value): string {
     return $map[$key] ?? $value;
 };
 ?>
-<div class="ai-report-body" data-report-id="<?= (int)($report['id'] ?? 0) ?>" data-status="<?= e($bodyStatus) ?>" data-group-id="<?= (int)($report['group_id'] ?? 0) ?>" data-profile-id="<?= (int)($report['ai_profile_id'] ?? 0) ?>" data-ai-model="<?= e((string)($report['ai_model'] ?? '')) ?>" data-ai-error="<?= e((string)($report['ai_error'] ?? '')) ?>">
+<div class="ai-report-body" data-report-id="<?= (int)($report['id'] ?? 0) ?>" data-status="<?= e($bodyStatus) ?>" data-group-id="<?= (int)($report['group_id'] ?? 0) ?>" data-profile-id="<?= (int)($report['ai_profile_id'] ?? 0) ?>" data-ai-profile-name="<?= e((string)($report['ai_profile_name'] ?? '')) ?>" data-ai-profile-model="<?= e((string)($report['ai_profile_model'] ?? '')) ?>" data-ai-model="<?= e((string)($report['ai_model'] ?? '')) ?>" data-ai-error="<?= e((string)($report['ai_error'] ?? '')) ?>">
 
     <?php if ($bodyProcessing): ?>
         <div class="mb-5 px-4 py-3 rounded-lg text-sm bg-blue-50 text-blue-700 flex items-start justify-between gap-3 flex-wrap no-print" id="ai-processing-banner">

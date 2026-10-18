@@ -28,6 +28,11 @@ $aiStatusText = $aiStatusText ?? [
 $aiReports = is_array($aiReports ?? null) ? $aiReports : [];
 $selectedAiId = (int)($selectedAiId ?? 0);
 $isAdmin = !empty($isAdmin);
+$llmProfiles = is_array($llmProfiles ?? null) ? $llmProfiles : [];
+$profileMap = [];
+foreach ($llmProfiles as $llmProfile) {
+    $profileMap[(int)($llmProfile['id'] ?? 0)] = $llmProfile;
+}
 ?>
 <?php if (empty($aiReports)): ?>
     <div class="p-5 text-center text-xs text-gray-500">
@@ -48,12 +53,23 @@ $isAdmin = !empty($isAdmin);
         $aiSearch = strtolower(implode(' ', array_map('strval', $aiRowIds)) . ' ' . (string)$aiRow['title']);
         $aiRowTags = CveReportAi::decodeTags((string)($aiRow['tags'] ?? ''));
         $aiErrorText = trim((string)($aiRow['ai_error'] ?? ''));
+        $aiRowProfileId = (int)($aiRow['ai_profile_id'] ?? 0);
+        $aiRowProfile = $profileMap[$aiRowProfileId] ?? null;
+        $aiRowProfileName = $aiRowProfile !== null
+            ? (string)($aiRowProfile['name'] ?? '')
+            : ($aiRowProfileId > 0 ? 'Perfil #' . $aiRowProfileId : 'Automático');
+        $aiRowProfileModel = $aiRowProfile !== null ? trim((string)($aiRowProfile['model'] ?? '')) : '';
+        $aiRowModel = trim((string)($aiRow['ai_model'] ?? ''));
+        $aiRowModelLabel = $aiRowModel !== '' ? $aiRowModel : $aiRowProfileModel;
+        $aiRowFailedLabel = $aiRowProfileName . ($aiRowModelLabel !== '' ? ' · ' . $aiRowModelLabel : '');
         ?>
         <div class="ai-report-item group border-b border-gray-100 dark:border-gray-800 px-3 py-2.5 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/40 <?= $selectedAiId === $aiRowId ? 'bg-brand-50 dark:bg-brand-950/40' : '' ?>"
              data-id="<?= $aiRowId ?>"
              data-status="<?= e($aiRowStatus) ?>"
-             data-profile-id="<?= (int)($aiRow['ai_profile_id'] ?? 0) ?>"
-             data-ai-model="<?= e((string)($aiRow['ai_model'] ?? '')) ?>"
+             data-profile-id="<?= $aiRowProfileId ?>"
+             data-ai-profile-name="<?= e($aiRowProfileName) ?>"
+             data-ai-profile-model="<?= e($aiRowProfileModel) ?>"
+             data-ai-model="<?= e($aiRowModel) ?>"
              data-ai-error="<?= e($aiErrorText) ?>"
              data-search="<?= e($aiSearch) ?>"
              role="button" tabindex="0"
@@ -80,7 +96,7 @@ $isAdmin = !empty($isAdmin);
                     </span>
                 <?php endif; ?>
                 <span class="text-[10px] text-gray-400 truncate">
-                    <?= e((string)($aiRow['ai_model'] ?? '')) ?>
+                    <?= e($aiRowModelLabel) ?>
                 </span>
                 <?php if ((int)($aiRow['revision'] ?? 1) > 1): ?>
                     <span class="text-[10px] font-semibold text-gray-500 shrink-0">v<?= (int)$aiRow['revision'] ?></span>
@@ -125,6 +141,12 @@ $isAdmin = !empty($isAdmin);
                     <?php endif; ?>
                 </span>
             </div>
+            <?php if ($aiRowStatus === 'error'): ?>
+                <p class="text-[10px] text-red-500 dark:text-red-400 mt-1 pl-4 truncate"
+                   title="Modelo que falló: <?= e($aiRowFailedLabel) ?>">
+                    Falló: <?= e($aiRowFailedLabel) ?>
+                </p>
+            <?php endif; ?>
             <?php if ($aiRowTags !== []): ?>
                 <div class="flex items-center gap-1.5 flex-wrap mt-1 pl-4">
                     <?php foreach ($aiRowTags as $tag): ?>
