@@ -957,6 +957,8 @@ $pendingAiCount = count($pendingAiReports);
     </button>
 </div>
 
+<div id="ai-batch-banner" class="hidden no-print mb-4 px-4 py-3 rounded-lg border border-brand-200 dark:border-brand-800 bg-brand-50 dark:bg-brand-950/40 text-sm font-medium text-brand-700 dark:text-brand-300"></div>
+
 <div id="ai-workspace"
      class="ai-workspace bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden flex flex-col lg:flex-row"
      style="height: calc(100vh - 215px); min-height: 540px;">
@@ -973,12 +975,10 @@ $pendingAiCount = count($pendingAiReports);
                         class="mt-2 w-full px-3 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 text-xs font-semibold rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">
                     Desde Defender
                 </button>
-                <?php if ($pendingAiCount > 0): ?>
-                    <button type="button" id="ai-reports-run-pending" onclick="cveAiRunPending(this)"
-                            class="mt-2 w-full px-3 py-2 border border-amber-300 dark:border-amber-700 text-amber-700 dark:text-amber-300 text-xs font-semibold rounded-lg hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors">
-                        Generar pendientes (<?= (int)$pendingAiCount ?>)
-                    </button>
-                <?php endif; ?>
+                <button type="button" id="ai-reports-run-pending" onclick="cveAiRunPending(this)"
+                        class="<?= $pendingAiCount > 0 ? '' : 'hidden' ?> mt-2 w-full px-3 py-2 border border-amber-300 dark:border-amber-700 text-amber-700 dark:text-amber-300 text-xs font-semibold rounded-lg hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors">
+                    Generar pendientes (<?= (int)$pendingAiCount ?>)
+                </button>
             <?php endif; ?>
             <input id="ai-list-search" type="search" oninput="cveAiFilterList(this.value)"
                    placeholder="Buscar por CVE o título…"
@@ -1005,107 +1005,7 @@ $pendingAiCount = count($pendingAiReports);
         </div>
 
         <div id="ai-report-list" class="flex-1 overflow-y-auto">
-            <?php if (empty($aiReports)): ?>
-                <div class="p-5 text-center text-xs text-gray-500">
-                    Todavía no hay informes con IA.
-                </div>
-            <?php else: ?>
-                <?php foreach ($aiReports as $aiRow): ?>
-                    <?php
-                    $aiRowId = (int)$aiRow['id'];
-                    $aiRowStatus = (string)($aiRow['status'] ?? 'pending');
-                    $aiRowIds = safe_json_decode((string)($aiRow['cve_ids'] ?? ''), []);
-                    if (!is_array($aiRowIds)) {
-                        $aiRowIds = [];
-                    }
-                    $aiRowLabel = count($aiRowIds) === 1
-                        ? (string)($aiRowIds[0] ?? '')
-                        : count($aiRowIds) . ' CVEs';
-                    $aiSearch = strtolower(implode(' ', array_map('strval', $aiRowIds)) . ' ' . (string)$aiRow['title']);
-                    $aiRowTags = CveReportAi::decodeTags((string)($aiRow['tags'] ?? ''));
-                    ?>
-                    <div class="ai-report-item group border-b border-gray-100 dark:border-gray-800 px-3 py-2.5 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/40 <?= $selectedAiId === $aiRowId ? 'bg-brand-50 dark:bg-brand-950/40' : '' ?>"
-                         data-id="<?= $aiRowId ?>"
-                         data-status="<?= e($aiRowStatus) ?>"
-                         data-search="<?= e($aiSearch) ?>"
-                         role="button" tabindex="0"
-                         onclick="cveAiSelect(<?= $aiRowId ?>)"
-                         onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); cveAiSelect(<?= $aiRowId ?>); }">
-                        <div class="flex items-center gap-2">
-                            <?php if ($isAdmin): ?>
-                                <input type="checkbox" class="ai-report-check rounded border-gray-300 text-brand-500 focus:ring-brand-500 shrink-0"
-                                       data-id="<?= $aiRowId ?>" title="Seleccionar informe"
-                                       onclick="event.stopPropagation()" onkeydown="event.stopPropagation()">
-                            <?php endif; ?>
-                            <span class="ai-status-dot w-2 h-2 rounded-full shrink-0 <?= $aiStatusDots[$aiRowStatus] ?? $aiStatusDots['pending'] ?>"></span>
-                            <span class="text-xs font-mono font-medium truncate"><?= e($aiRowLabel) ?></span>
-                            <span class="ml-auto text-[10px] text-gray-400 shrink-0"><?= e(format_db_date((string)($aiRow['created_at'] ?? ''), 'd/m H:i')) ?></span>
-                        </div>
-                        <div class="flex items-center gap-2 mt-1 pl-4">
-                            <span class="ai-status-text text-[10px] font-medium <?= $aiStatusText[$aiRowStatus] ?? $aiStatusText['pending'] ?>">
-                                <?= e($aiStatusLabels[$aiRowStatus] ?? $aiRowStatus) ?>
-                            </span>
-                            <?php if (in_array($aiRowStatus, ['pending', 'running'], true) && (int)($aiRow['total_items'] ?? 0) > 0): ?>
-                                <span class="text-[10px] text-gray-400">
-                                    <?= (int)($aiRow['processed_items'] ?? 0) ?>/<?= (int)$aiRow['total_items'] ?>
-                                </span>
-                            <?php endif; ?>
-                            <span class="text-[10px] text-gray-400 truncate">
-                                <?= e((string)($aiRow['ai_model'] ?? '')) ?>
-                            </span>
-                            <?php if ((int)($aiRow['revision'] ?? 1) > 1): ?>
-                                <span class="text-[10px] font-semibold text-gray-500 shrink-0">v<?= (int)$aiRow['revision'] ?></span>
-                            <?php endif; ?>
-                            <?php if (!empty($aiRow['group_name'])): ?>
-                                <span class="text-[10px] text-gray-400 truncate">
-                                    · <?= (string)($aiRow['group_kind'] ?? '') === 'company' ? 'Empresa' : 'Grupo' ?>:
-                                    <?= e((string)$aiRow['group_name']) ?>
-                                </span>
-                            <?php endif; ?>
-                            <?php if (!empty($aiRow['item_groups'])): ?>
-                                <span class="text-[10px] text-gray-400 truncate">· <?= e((string)$aiRow['item_groups']) ?></span>
-                            <?php endif; ?>
-                            <?php if (!empty($aiRow['has_defender'])): ?>
-                                <span class="px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 text-[10px] font-semibold shrink-0">Defender</span>
-                            <?php endif; ?>
-                            <span class="ml-auto flex items-center gap-1 shrink-0">
-                                <?php if ($isAdmin && in_array($aiRowStatus, ['pending', 'running'], true)): ?>
-                                    <button type="button" title="Cancelar" onclick="event.stopPropagation(); cveAiCancel(<?= $aiRowId ?>)"
-                                            class="p-1 rounded text-gray-400 hover:text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-900/20">
-                                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-                                    </button>
-                                <?php endif; ?>
-                                <?php if ($isAdmin && in_array($aiRowStatus, ['error', 'canceled'], true)): ?>
-                                    <button type="button" title="Reintentar" onclick="event.stopPropagation(); cveAiRetry(<?= $aiRowId ?>)"
-                                            class="p-1 rounded text-gray-400 hover:text-brand-600 hover:bg-brand-50 dark:hover:bg-brand-950">
-                                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4 4v5h5M20 20v-5h-5M5.3 9A7 7 0 0118 6.3M18.7 15A7 7 0 016 17.7"/></svg>
-                                    </button>
-                                <?php endif; ?>
-                                <?php if ($isAdmin && count($aiRowIds) > 1 && $aiRowStatus !== 'running'): ?>
-                                    <button type="button" title="Separar en informes individuales"
-                                            onclick="event.stopPropagation(); cveAiSplit(<?= $aiRowId ?>)"
-                                            class="px-1.5 py-1 rounded text-[10px] font-medium text-gray-500 hover:text-brand-600 hover:bg-brand-50 dark:hover:bg-brand-950">
-                                        Separar
-                                    </button>
-                                <?php endif; ?>
-                                <?php if ($isAdmin): ?>
-                                    <button type="button" title="Eliminar" onclick="event.stopPropagation(); cveAiDelete(<?= $aiRowId ?>)"
-                                            class="p-1 rounded text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20">
-                                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-                                    </button>
-                                <?php endif; ?>
-                            </span>
-                        </div>
-                        <?php if ($aiRowTags !== []): ?>
-                            <div class="flex items-center gap-1.5 flex-wrap mt-1 pl-4">
-                                <?php foreach ($aiRowTags as $tag): ?>
-                                    <span class="text-[9px] font-medium text-brand-600 dark:text-brand-400">#<?= e($tag) ?></span>
-                                <?php endforeach; ?>
-                            </div>
-                        <?php endif; ?>
-                    </div>
-                <?php endforeach; ?>
-            <?php endif; ?>
+            <?php require __DIR__ . '/_ai_report_list.php'; ?>
         </div>
     </aside>
 
@@ -1816,6 +1716,7 @@ $pendingAiCount = count($pendingAiReports);
     var BULK_DELETE_URL = <?= json_encode(base_url('modules/cve/reports/ai-delete-bulk')) ?>;
     var BULK_GROUP_URL = <?= json_encode(base_url('modules/cve/reports/ai-assign-bulk')) ?>;
     var SPLIT_URL = <?= json_encode(base_url('modules/cve/reports/ai-split')) ?>;
+    var LIST_URL = <?= json_encode(base_url('modules/cve/reports/ai-list')) ?>;
     var STATUS_URL = <?= json_encode(base_url('modules/cve/reports/ai-status')) ?>;
     var REFRESH_URL = <?= json_encode(base_url('modules/cve/reports/ai-refresh')) ?>;
     var ASSIGN_URL  = <?= json_encode(base_url('modules/cve/reports/ai-assign')) ?>;
@@ -1846,6 +1747,10 @@ $pendingAiCount = count($pendingAiReports);
     var titleEl = document.getElementById('ai-detail-title');
 
     var state = { id: 0, status: '', poll: null, running: false };
+    var batchRunning = false;
+    var batchQueueIds = {};
+    var batchBanner = document.getElementById('ai-batch-banner');
+    var pendingButton = document.getElementById('ai-reports-run-pending');
 
     function csrfToken() {
         var el = document.querySelector('input[name="csrf_token"]');
@@ -2049,7 +1954,11 @@ $pendingAiCount = count($pendingAiReports);
         updateToolbar();
 
         if (state.status === 'pending') {
-            runReport();
+            if (batchRunning && batchQueueIds[state.id]) {
+                setBatchBanner('Este informe está en cola dentro del lote actual.');
+            } else {
+                runReport();
+            }
         } else if (state.status === 'running') {
             startPolling();
         }
@@ -2294,7 +2203,99 @@ $pendingAiCount = count($pendingAiReports);
         }
     };
 
-    function runReportQueue(ids, onProgress) {
+    function setBatchBanner(text, visible) {
+        if (!batchBanner) {
+            return;
+        }
+        if (text) {
+            batchBanner.textContent = text;
+        }
+        batchBanner.classList.toggle('hidden', visible === false || !text);
+    }
+
+    function updatePendingButton() {
+        if (!pendingButton || !list) {
+            return;
+        }
+        var count = list.querySelectorAll('.ai-report-item[data-status="pending"]').length;
+        pendingButton.classList.toggle('hidden', count === 0);
+        pendingButton.textContent = count > 0
+            ? 'Generar pendientes (' + count + ')'
+            : 'Generar pendientes';
+    }
+
+    function setReportRowStatus(id, status, processed, total) {
+        if (!list) {
+            return;
+        }
+        var row = list.querySelector('.ai-report-item[data-id="' + id + '"]');
+        if (!row) {
+            return;
+        }
+        var dots = {
+            pending: 'bg-gray-400',
+            running: 'bg-blue-500',
+            done: 'bg-green-500',
+            error: 'bg-red-500',
+            canceled: 'bg-amber-500'
+        };
+        var textClasses = {
+            pending: 'text-gray-500',
+            running: 'text-blue-600 dark:text-blue-400',
+            done: 'text-green-600 dark:text-green-400',
+            error: 'text-red-600 dark:text-red-400',
+            canceled: 'text-amber-600 dark:text-amber-400'
+        };
+        var labels = {
+            pending: 'En cola',
+            running: 'Generando',
+            done: 'Listo',
+            error: 'Error IA',
+            canceled: 'Cancelado'
+        };
+        row.dataset.status = status;
+        var dot = row.querySelector('.ai-status-dot');
+        if (dot) {
+            dot.className = 'ai-status-dot w-2 h-2 rounded-full shrink-0 ' + (dots[status] || dots.pending);
+        }
+        var text = row.querySelector('.ai-status-text');
+        if (text) {
+            text.className = 'ai-status-text text-[10px] font-medium ' + (textClasses[status] || textClasses.pending);
+            text.textContent = labels[status] || status;
+        }
+        var progress = row.querySelector('.ai-status-progress');
+        if (progress && typeof processed === 'number' && typeof total === 'number' && total > 0) {
+            progress.textContent = processed + '/' + total;
+        }
+        updatePendingButton();
+    }
+
+    function refreshReportList() {
+        if (!list) {
+            return Promise.resolve();
+        }
+        return fetch(LIST_URL, {
+            headers: { 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'text/html' },
+            credentials: 'same-origin'
+        }).then(function (res) {
+            if (!res.ok) {
+                throw new Error('HTTP ' + res.status);
+            }
+            return res.text();
+        }).then(function (html) {
+            list.innerHTML = html;
+            updateReportSelection();
+            var search = document.getElementById('ai-list-search');
+            if (search && search.value) {
+                cveAiFilterList(search.value);
+            }
+            markSelected(state.id);
+            updatePendingButton();
+        });
+    }
+
+    function runReportQueue(ids, hooks) {
+        hooks = hooks || {};
         return new Promise(function (resolve) {
             var failures = 0;
             function next(index) {
@@ -2302,20 +2303,77 @@ $pendingAiCount = count($pendingAiReports);
                     resolve({ failures: failures });
                     return;
                 }
-                if (typeof onProgress === 'function') {
-                    onProgress(index + 1, ids.length);
+                var id = ids[index];
+                if (typeof hooks.onStart === 'function') {
+                    hooks.onStart(index + 1, ids.length, id);
                 }
-                postJson(RUN_URL + '/' + ids[index], {}).then(function (res) {
+                postJson(RUN_URL + '/' + id, {}).then(function (res) {
                     if (!res || (!res.success && res.status !== 'done')) {
                         failures++;
                     }
-                }).catch(function () {
+                    if (typeof hooks.onResult === 'function') {
+                        hooks.onResult(id, res || {});
+                    }
+                }).catch(function (err) {
                     failures++;
+                    if (typeof hooks.onError === 'function') {
+                        hooks.onError(id, err);
+                    }
                 }).then(function () {
                     next(index + 1);
                 });
             }
             next(0);
+        });
+    }
+
+    function runBatch(ids) {
+        if (batchRunning || !Array.isArray(ids) || !ids.length) {
+            return Promise.resolve({ failures: 0 });
+        }
+        batchRunning = true;
+        batchQueueIds = {};
+        ids.forEach(function (id) { batchQueueIds[id] = true; });
+        if (pendingButton) {
+            pendingButton.disabled = true;
+        }
+        setBatchBanner('Generando 0/' + ids.length + '…');
+
+        return runReportQueue(ids, {
+            onStart: function (done, total, id) {
+                setBatchBanner('Generando ' + done + '/' + total + '…');
+                setReportRowStatus(id, 'running', 0, 1);
+            },
+            onResult: function (id, res) {
+                var status = res && res.status ? res.status : (res && res.success ? 'done' : 'error');
+                setReportRowStatus(id, status, status === 'done' ? 1 : 0, 1);
+                if (state.id === id) {
+                    load(id, false);
+                }
+            },
+            onError: function (id) {
+                setReportRowStatus(id, 'error', 0, 1);
+            }
+        }).then(function (result) {
+            batchRunning = false;
+            batchQueueIds = {};
+            if (pendingButton) {
+                pendingButton.disabled = false;
+            }
+            return refreshReportList().catch(function () {
+                // Si falla el refresco, las filas ya se han ido actualizando.
+            }).then(function () {
+                updatePendingButton();
+                if (result.failures > 0) {
+                    setBatchBanner('Generación parcial: ' + result.failures + ' con error.');
+                } else {
+                    setBatchBanner('Generación completada.');
+                }
+                setTimeout(function () {
+                    setBatchBanner('', false);
+                }, 5000);
+                return result;
+            });
         });
     }
 
@@ -2327,6 +2385,11 @@ $pendingAiCount = count($pendingAiReports);
         var extended = document.getElementById('ai-report-extended');
         var message = document.getElementById('ai-report-message');
         if (!input || !message) {
+            return;
+        }
+        if (batchRunning) {
+            message.textContent = 'Espera a que termine la generación actual antes de crear otro lote.';
+            message.className = 'text-xs text-amber-600 dark:text-amber-400';
             return;
         }
 
@@ -2374,23 +2437,32 @@ $pendingAiCount = count($pendingAiReports);
                 return;
             }
 
-            message.textContent = 'Generando 0/' + ids.length + '…';
-            runReportQueue(ids, function (done, total) {
-                message.textContent = 'Generando ' + done + '/' + total + '…';
+            message.textContent = 'Informes creados. Iniciando generación…';
+            message.className = 'text-xs text-gray-500';
+            if (newForm) {
+                newForm.classList.add('hidden');
+            }
+            if (detail) {
+                detail.innerHTML = '<div class="h-full flex items-center justify-center"><p class="text-sm text-gray-500">Generando informes individuales…</p></div>';
+            }
+            if (titleEl) {
+                titleEl.textContent = 'Informes en cola';
+            }
+            setBatchBanner('Actualizando lista…');
+
+            refreshReportList().catch(function () {
+                // La cola sigue aunque falle el refresco de la lista.
+            }).then(function () {
+                return runBatch(ids);
             }).then(function (result) {
-                if (ids.length === 1) {
-                    window.location.href = PAGE_URL + '&report=' + ids[0];
-                    return;
-                }
                 if (result.failures > 0) {
                     appAlert('Se crearon ' + ids.length + ' informes, pero ' + result.failures
                         + ' no se pudieron generar. Puedes reintentarlos con «Generar pendientes».',
-                        { title: 'Generación parcial' }).then(function () {
-                        window.location.href = PAGE_URL;
-                    });
-                    return;
+                        { title: 'Generación parcial' });
                 }
-                window.location.href = PAGE_URL;
+                if (button) {
+                    button.disabled = false;
+                }
             });
         }).catch(function (err) {
             message.textContent = 'No se pudo crear: ' + errorText(err);
@@ -2420,19 +2492,14 @@ $pendingAiCount = count($pendingAiReports);
             if (button) {
                 button.disabled = true;
             }
-            runReportQueue(ids, function (done, total) {
+            runBatch(ids).then(function (result) {
                 if (button) {
-                    button.textContent = 'Generando ' + done + '/' + total + '…';
+                    button.disabled = false;
                 }
-            }).then(function (result) {
                 if (result.failures > 0) {
                     appAlert('Se procesaron ' + ids.length + ' informes; ' + result.failures
-                        + ' siguen con error o pendientes.', { title: 'Generación parcial' }).then(function () {
-                        window.location.reload();
-                    });
-                    return;
+                        + ' siguen con error o pendientes.', { title: 'Generación parcial' });
                 }
-                window.location.reload();
             });
         });
     };
@@ -3280,6 +3347,7 @@ $pendingAiCount = count($pendingAiReports);
     ready(function () {
         activate();
         updateReportSelection();
+        updatePendingButton();
 
         if (state.status === 'pending' || state.status === 'running') {
             setTimeout(function () {

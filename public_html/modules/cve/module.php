@@ -62,6 +62,7 @@ class Module_Cve extends BaseModule
             ['method' => 'POST', 'pattern' => 'reports/ai-scheduled-defender', 'handler' => [$this, 'runScheduledDefenderReport']],
             ['method' => 'GET',  'pattern' => 'reports/ai-status/{id}', 'handler' => [$this, 'aiReportStatus']],
             ['method' => 'GET',  'pattern' => 'report/{id}/csv',  'handler' => [$this, 'reportCsv']],
+            ['method' => 'GET',  'pattern' => 'reports/ai-list', 'handler' => [$this, 'aiReportList']],
             ['method' => 'GET',  'pattern' => 'report-ai/{id}/panel', 'handler' => [$this, 'aiReportPanel']],
             ['method' => 'GET',  'pattern' => 'report-ai/{id}',   'handler' => [$this, 'aiReportView']],
             ['method' => 'GET',  'pattern' => 'report/{id}',      'handler' => [$this, 'reportView']],
@@ -693,6 +694,28 @@ class Module_Cve extends BaseModule
             app_log('error', 'cve_exploit', 'Error buscando exploits de un CVE', ['error' => $e->getMessage()]);
             json_response(['success' => false, 'error' => $e->getMessage()], 500);
         }
+    }
+
+    /**
+     * HTML de la lista de informes para actualizarla por AJAX.
+     */
+    public function aiReportList(array $params = []): void
+    {
+        Auth::require();
+
+        $isAdmin = Auth::isAdmin();
+        $aiReports = $this->listAiReports(100);
+        if (!$isAdmin) {
+            $aiReports = array_values(array_filter(
+                $aiReports,
+                static fn(array $row): bool => empty($row['has_defender'])
+            ));
+        }
+        $selectedAiId = 0;
+
+        header('Content-Type: text/html; charset=utf-8');
+        header('Cache-Control: no-store, no-cache, must-revalidate');
+        require __DIR__ . '/views/_ai_report_list.php';
     }
 
     /**
