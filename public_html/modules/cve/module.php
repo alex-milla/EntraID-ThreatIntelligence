@@ -45,6 +45,7 @@ class Module_Cve extends BaseModule
             ['method' => 'POST', 'pattern' => 'reports/ai-delete/{id}', 'handler' => [$this, 'deleteAiReport']],
             ['method' => 'POST', 'pattern' => 'reports/ai-delete-bulk', 'handler' => [$this, 'deleteAiReportsBulk']],
             ['method' => 'POST', 'pattern' => 'reports/ai-assign-bulk', 'handler' => [$this, 'assignAiReportsBulk']],
+            ['method' => 'POST', 'pattern' => 'reports/ai-unassign-cve', 'handler' => [$this, 'unassignAiCve']],
             ['method' => 'POST', 'pattern' => 'reports/ai-generate', 'handler' => [$this, 'startAiReport']],
             ['method' => 'POST', 'pattern' => 'reports/ai-retry/{id}', 'handler' => [$this, 'retryAiReport']],
             ['method' => 'POST', 'pattern' => 'reports/ai-refresh/{id}', 'handler' => [$this, 'refreshAiReport']],
@@ -88,6 +89,7 @@ class Module_Cve extends BaseModule
 
         $groups = [];
         $software = [];
+        $assignedCves = [];
         $reports = [];
         $aiReports = [];
         $selectedAiId = 0;
@@ -113,6 +115,7 @@ class Module_Cve extends BaseModule
             $groups = $this->groupTree();
             if ($tab === 'software') {
                 $software = $this->listSoftware($selectedGroup, $q);
+                $assignedCves = $this->listAssignedCves($selectedGroup);
             } elseif ($tab === 'reports') {
                 $softwareOptions = $this->listSoftware(0, '');
                 $reports = $this->listReports(30);
@@ -194,6 +197,7 @@ class Module_Cve extends BaseModule
             'tab'           => $tab,
             'groups'        => $groups,
             'software'      => $software,
+            'assignedCves'  => $assignedCves,
             'reports'       => $reports,
             'aiReports'     => $aiReports,
             'selectedAiId'  => $selectedAiId,
@@ -1943,6 +1947,91 @@ class Module_Cve extends BaseModule
     }
 
     /**
+     * Quita un CVE de una empresa/grupo concreto sin borrar el informe.
+     */
+    public function unassignAiCve(array $params = []): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        $groupId = (int)($_POST['group_id'] ?? 0);
+        $cveIds = CveReportAi::normalizeCveIds((string)($_POST['cve_id'] ?? ''), 1);
+        $cveId = (string)($cveIds[0] ?? '');
+        $backUrl = base_url('modules/cve?tab=software' . ($groupId > 0 ? '&group=' . $groupId : ''));
+
+        if ($groupId <= 0 || $cveId === '') {
+            flash('error', 'No se pudo identificar el CVE o el grupo.');
+            redirect($backUrl);
+        }
+
+        $group = $this->getGroup($groupId);
+        if ($group === null) {
+            flash('error', 'La empresa o grupo ya no existe.');
+            redirect(base_url('modules/cve?tab=software'));
+        }
+
+        try {
+            $affected = 0;
+            CveDatabase::transaction(function (PDO $db) use ($groupId, $cveId, &$affected): void {
+                $reportsStmt = $db->prepare(
+                    "SELECT DISTINCT report_id
+                     FROM cve_ai_report_items
+                     WHERE group_id = ? AND cve_id = ?"
+                );
+                $reportsStmt->execute([$groupId, $cveId]);
+                $reportIds = array_map(
+                    static fn(array $row): int => (int)$row['report_id'],
+                    $reportsStmt->fetchAll()
+                );
+
+                $update = $db->prepare(
+                    "UPDATE cve_ai_report_items
+                     SET group_id = NULL, updated_at = datetime('now')
+                     WHERE group_id = ? AND cve_id = ?"
+                );
+                $update->execute([$groupId, $cveId]);
+                $affected = $update->rowCount();
+
+                $remaining = $db->prepare(
+                    "SELECT COUNT(*) AS c
+                     FROM cve_ai_report_items
+                     WHERE report_id = ? AND group_id = ?"
+                );
+                $clearReport = $db->prepare(
+                    "UPDATE cve_ai_reports
+                     SET group_id = NULL, updated_at = datetime('now')
+                     WHERE id = ? AND group_id = ?"
+                );
+                foreach ($reportIds as $reportId) {
+                    $remaining->execute([$reportId, $groupId]);
+                    if ((int)($remaining->fetch()['c'] ?? 0) === 0) {
+                        $clearReport->execute([$reportId, $groupId]);
+                    }
+                }
+            });
+
+            log_activity('cve.cve_unassigned', [
+                'group_id' => $groupId,
+                'cve_id'   => $cveId,
+                'items'    => $affected,
+            ]);
+
+            flash('success', $affected > 0
+                ? 'CVE ' . $cveId . ' quitado de «' . (string)$group['name'] . '».'
+                : 'El CVE no estaba asignado a esta empresa/grupo.');
+        } catch (Throwable $e) {
+            app_log('error', 'cve_ai', 'Error quitando un CVE del grupo', [
+                'group_id' => $groupId,
+                'cve_id'   => $cveId,
+                'error'    => $e->getMessage(),
+            ]);
+            flash('error', 'No se pudo quitar el CVE: ' . $e->getMessage());
+        }
+
+        redirect($backUrl);
+    }
+
+    /**
      * Sugerencias de tags y grupos para los CVEs seleccionados.
      */
     public function aiTagSuggestions(array $params = []): void
@@ -3253,7 +3342,11 @@ class Module_Cve extends BaseModule
     private function groupTree(): array
     {
         $rows = CveDatabase::fetchAll(
-            "SELECT g.*, (SELECT COUNT(*) FROM software_watchlist w WHERE w.group_id = g.id) AS software_count
+            "SELECT g.*,
+                    (SELECT COUNT(*) FROM software_watchlist w WHERE w.group_id = g.id) AS software_count,
+                    (SELECT COUNT(DISTINCT i.cve_id)
+                     FROM cve_ai_report_items i
+                     WHERE i.group_id = g.id) AS assigned_cve_count
              FROM software_groups g
              ORDER BY g.position ASC, g.name ASC"
         );
@@ -3309,6 +3402,88 @@ class Module_Cve extends BaseModule
             [$groupId]
         );
         return array_map(static fn(array $r): int => (int)$r['id'], $rows);
+    }
+
+    /**
+     * CVEs asignados directamente a una empresa/grupo desde informes.
+     * No incluye los CVEs detectados por software inventariado ni los de subgrupos.
+     */
+    private function listAssignedCves(int $groupId): array
+    {
+        if ($groupId <= 0) {
+            return [];
+        }
+
+        $rows = CveDatabase::fetchAll(
+            "SELECT i.cve_id, i.report_id, i.tags, i.updated_at AS item_updated_at,
+                    r.title AS report_title, r.created_at AS report_created_at,
+                    c.severity, c.cvss_v3_score, c.cvss_v2_score, c.description, c.published_at,
+                    k.cve_id AS kev_id, k.date_added AS kev_date,
+                    e.epss, e.percentile AS epss_percentile
+             FROM cve_ai_report_items i
+             JOIN cve_ai_reports r ON r.id = i.report_id
+             LEFT JOIN cve_catalog c ON c.cve_id = i.cve_id
+             LEFT JOIN cve_kev k ON k.cve_id = i.cve_id
+             LEFT JOIN cve_epss e ON e.cve_id = i.cve_id
+             WHERE i.group_id = ?
+             ORDER BY CASE c.severity
+                          WHEN 'Critical' THEN 0
+                          WHEN 'High' THEN 1
+                          WHEN 'Medium' THEN 2
+                          WHEN 'Low' THEN 3
+                          ELSE 4
+                      END ASC,
+                      COALESCE(c.cvss_v3_score, c.cvss_v2_score) DESC,
+                      i.cve_id ASC,
+                      r.created_at DESC",
+            [$groupId]
+        );
+
+        $out = [];
+        foreach ($rows as $row) {
+            $cveId = (string)$row['cve_id'];
+            if (!isset($out[$cveId])) {
+                $out[$cveId] = [
+                    'cve_id'       => $cveId,
+                    'severity'     => (string)($row['severity'] ?? ''),
+                    'cvss_v3_score'=> $row['cvss_v3_score'],
+                    'cvss_v2_score'=> $row['cvss_v2_score'],
+                    'description'  => (string)($row['description'] ?? ''),
+                    'published_at' => $row['published_at'] ?? null,
+                    'kev_id'       => $row['kev_id'] ?? null,
+                    'kev_date'     => $row['kev_date'] ?? null,
+                    'epss'         => $row['epss'] ?? null,
+                    'epss_percentile' => $row['epss_percentile'] ?? null,
+                    'assigned_at'  => (string)($row['item_updated_at'] ?? $row['report_created_at'] ?? ''),
+                    'tags'         => [],
+                    'reports'      => [],
+                ];
+            }
+
+            $reportId = (int)$row['report_id'];
+            $out[$cveId]['reports'][$reportId] = [
+                'id'         => $reportId,
+                'title'      => (string)($row['report_title'] ?? ''),
+                'created_at' => (string)($row['report_created_at'] ?? ''),
+            ];
+
+            $assignedAt = (string)($row['item_updated_at'] ?? $row['report_created_at'] ?? '');
+            if ($assignedAt > (string)$out[$cveId]['assigned_at']) {
+                $out[$cveId]['assigned_at'] = $assignedAt;
+            }
+
+            foreach (CveReportAi::decodeTags((string)($row['tags'] ?? '')) as $tag) {
+                $out[$cveId]['tags'][$tag] = true;
+            }
+        }
+
+        foreach ($out as &$cve) {
+            $cve['tags'] = array_keys($cve['tags']);
+            $cve['reports'] = array_values($cve['reports']);
+        }
+        unset($cve);
+
+        return array_values($out);
     }
 
     private function listSoftware(int $groupId, string $q): array

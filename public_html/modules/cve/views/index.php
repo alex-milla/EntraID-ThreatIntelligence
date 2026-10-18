@@ -3253,14 +3253,18 @@ syncCveReportPeriod();
     </div>
 
     <?php
-    $selectedGroupIsApplication = false;
+    $selectedGroupRow = null;
     foreach ($groups as $groupRow) {
-        if ((int)$groupRow['id'] === $selectedGroup
-            && (string)($groupRow['kind'] ?? 'application') === 'application') {
-            $selectedGroupIsApplication = true;
+        if ((int)$groupRow['id'] === $selectedGroup) {
+            $selectedGroupRow = $groupRow;
             break;
         }
     }
+    $selectedGroupKind = (string)($selectedGroupRow['kind'] ?? '');
+    $selectedGroupIsCompany = $selectedGroupKind === 'company';
+    $selectedGroupIsApplication = $selectedGroupKind === 'application';
+    $selectedGroupName = (string)($selectedGroupRow['name'] ?? '');
+    $assignedCves = is_array($assignedCves ?? null) ? $assignedCves : [];
     $newGroupParentId = $selectedGroupIsApplication ? $selectedGroup : 0;
     ?>
 
@@ -3290,7 +3294,9 @@ syncCveReportPeriod();
                                    class="text-sm truncate <?= $selectedGroup === (int)$g['id'] ? 'font-semibold text-brand-600 dark:text-brand-300' : 'text-gray-700 dark:text-gray-300' ?>">
                                     <?= e($g['name']) ?>
                                 </a>
-                                <span class="text-[10px] text-gray-400"><?= (int)($g['software_count'] ?? 0) ?></span>
+                                <span class="text-[10px] text-gray-400 whitespace-nowrap" title="CVEs asignados · software inventariado">
+                                    <?= (int)($g['assigned_cve_count'] ?? 0) ?> CVEs · <?= (int)($g['software_count'] ?? 0) ?> sw
+                                </span>
                                 <?php if ($isAdmin): ?>
                                     <span class="ml-auto flex items-center gap-1">
                                         <a href="<?= base_url('modules/cve?tab=software&edit_group=' . (int)$g['id']) ?>" class="p-1 text-gray-400 hover:text-brand-500" title="Editar empresa">
@@ -3341,7 +3347,9 @@ syncCveReportPeriod();
                                 <?php if ($gCompanyName !== ''): ?>
                                     <span class="px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 text-[9px] font-medium truncate max-w-[120px]" title="Empresa vinculada"><?= e($gCompanyName) ?></span>
                                 <?php endif; ?>
-                                <span class="text-[10px] text-gray-400"><?= (int)($g['software_count'] ?? 0) ?></span>
+                                <span class="text-[10px] text-gray-400 whitespace-nowrap" title="CVEs asignados · software inventariado">
+                                    <?= (int)($g['assigned_cve_count'] ?? 0) ?> CVEs · <?= (int)($g['software_count'] ?? 0) ?> sw
+                                </span>
                                 <?php if ($isAdmin): ?>
                                     <span class="ml-auto flex items-center gap-1">
                                         <a href="<?= base_url('modules/cve?tab=software&edit_group=' . (int)$g['id']) ?>" class="p-1 text-gray-400 hover:text-brand-500" title="Editar grupo">
@@ -3465,6 +3473,141 @@ syncCveReportPeriod();
 
         <!-- Software -->
         <div class="lg:col-span-2 space-y-4">
+            <?php if ($selectedGroup > 0 && $selectedGroupRow !== null): ?>
+                <?php
+                $assignedSeverityClasses = [
+                    'Critical' => 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',
+                    'High'     => 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300',
+                    'Medium'   => 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300',
+                    'Low'      => 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300',
+                ];
+                $selectedGroupEntity = $selectedGroupIsCompany ? 'empresa' : 'grupo de aplicaciones';
+                ?>
+                <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
+                    <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between gap-3 flex-wrap">
+                        <div>
+                            <h2 class="text-sm font-semibold">CVEs asignados</h2>
+                            <p class="text-xs text-gray-500 mt-1">
+                                <?= $selectedGroupIsCompany ? 'Empresa' : 'Grupo de aplicaciones' ?>
+                                «<?= e($selectedGroupName) ?>» ·
+                                <?= count($assignedCves) ?> <?= count($assignedCves) === 1 ? 'CVE' : 'CVEs' ?>
+                            </p>
+                        </div>
+                        <a href="<?= base_url('modules/cve?tab=reports') ?>"
+                           class="text-xs text-brand-600 dark:text-brand-400 hover:underline">Ir a Informes</a>
+                    </div>
+
+                    <?php if ($assignedCves === []): ?>
+                        <div class="px-5 py-8 text-center">
+                            <p class="text-sm text-gray-500">
+                                No hay CVEs asignados directamente a este <?= e($selectedGroupEntity) ?>.
+                            </p>
+                            <p class="text-xs text-gray-400 mt-1">
+                                Asígnalos desde Informes con «Enviar informe a grupo» o «Enviar seleccionados».
+                            </p>
+                        </div>
+                    <?php else: ?>
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-sm">
+                                <thead>
+                                    <tr class="border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-xs text-gray-500 uppercase">
+                                        <th class="text-left px-4 py-2">CVE</th>
+                                        <th class="text-left px-4 py-2">Severidad</th>
+                                        <th class="text-left px-4 py-2">CVSS / EPSS</th>
+                                        <th class="text-left px-4 py-2">KEV</th>
+                                        <th class="text-left px-4 py-2">Informes</th>
+                                        <th class="text-left px-4 py-2">Asignado</th>
+                                        <th class="text-right px-4 py-2"></th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-gray-100 dark:divide-gray-700/50">
+                                    <?php foreach ($assignedCves as $assignedCve): ?>
+                                        <?php
+                                        $assignedCveId = (string)($assignedCve['cve_id'] ?? '');
+                                        $assignedSeverity = (string)($assignedCve['severity'] ?? '');
+                                        $assignedSeverityClass = $assignedSeverityClasses[$assignedSeverity] ?? 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300';
+                                        $assignedCvss = $assignedCve['cvss_v3_score'] ?? $assignedCve['cvss_v2_score'] ?? null;
+                                        $assignedEpss = $assignedCve['epss'] ?? null;
+                                        $assignedReports = is_array($assignedCve['reports'] ?? null) ? $assignedCve['reports'] : [];
+                                        $assignedTags = is_array($assignedCve['tags'] ?? null) ? $assignedCve['tags'] : [];
+                                        ?>
+                                        <tr class="hover:bg-gray-50 dark:hover:bg-gray-800/50">
+                                            <td class="px-4 py-3">
+                                                <a href="<?= base_url('modules/cve/detail/' . rawurlencode($assignedCveId)) ?>"
+                                                   class="font-mono text-xs font-semibold text-brand-600 dark:text-brand-400 hover:underline">
+                                                    <?= e($assignedCveId) ?>
+                                                </a>
+                                                <?php if ($assignedTags !== []): ?>
+                                                    <p class="text-[10px] text-gray-400 mt-0.5">
+                                                        <?php foreach ($assignedTags as $assignedTag): ?>
+                                                            #<?= e((string)$assignedTag) ?>
+                                                        <?php endforeach; ?>
+                                                    </p>
+                                                <?php endif; ?>
+                                            </td>
+                                            <td class="px-4 py-3">
+                                                <?php if ($assignedSeverity !== ''): ?>
+                                                    <span class="inline-flex px-2 py-0.5 text-[10px] rounded-full <?= $assignedSeverityClass ?>">
+                                                        <?= e($assignedSeverity) ?>
+                                                    </span>
+                                                <?php else: ?>
+                                                    <span class="text-xs text-gray-400">—</span>
+                                                <?php endif; ?>
+                                            </td>
+                                            <td class="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">
+                                                <?= $assignedCvss !== null ? 'CVSS ' . number_format((float)$assignedCvss, 1) : 'CVSS —' ?>
+                                                <span class="text-gray-300 dark:text-gray-600">·</span>
+                                                <?= $assignedEpss !== null ? 'EPSS ' . number_format((float)$assignedEpss * 100, 1) . ' %' : 'EPSS —' ?>
+                                            </td>
+                                            <td class="px-4 py-3 text-xs whitespace-nowrap">
+                                                <?php if (!empty($assignedCve['kev_id'])): ?>
+                                                    <span class="inline-flex px-2 py-0.5 text-[10px] rounded-full bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300"
+                                                          title="<?= e((string)($assignedCve['kev_date'] ?? '')) ?>">KEV</span>
+                                                <?php else: ?>
+                                                    <span class="text-gray-400">—</span>
+                                                <?php endif; ?>
+                                            </td>
+                                            <td class="px-4 py-3 text-xs text-gray-500">
+                                                <?php if ($assignedReports === []): ?>
+                                                    —
+                                                <?php else: ?>
+                                                    <div class="flex flex-col gap-0.5">
+                                                        <?php foreach ($assignedReports as $assignedReport): ?>
+                                                            <a href="<?= base_url('modules/cve?tab=reports&report=' . (int)$assignedReport['id']) ?>"
+                                                               class="text-brand-600 dark:text-brand-400 hover:underline truncate max-w-[220px]"
+                                                               title="<?= e((string)($assignedReport['title'] ?? '')) ?>">
+                                                                Informe #<?= (int)$assignedReport['id'] ?>
+                                                            </a>
+                                                        <?php endforeach; ?>
+                                                    </div>
+                                                <?php endif; ?>
+                                            </td>
+                                            <td class="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">
+                                                <?php
+                                                $assignedAt = (string)($assignedCve['assigned_at'] ?? '');
+                                                echo $assignedAt !== '' ? e(format_db_date($assignedAt, 'd/m/Y H:i')) : '—';
+                                                ?>
+                                            </td>
+                                            <td class="px-4 py-3 text-right whitespace-nowrap">
+                                                <form method="POST" action="<?= base_url('modules/cve/reports/ai-unassign-cve') ?>"
+                                                      class="inline"
+                                                      data-confirm="¿Quitar <?= e($assignedCveId) ?> de este <?= e($selectedGroupEntity) ?>? El informe no se borra."
+                                                      data-confirm-danger>
+                                                    <?= Csrf::field() ?>
+                                                    <input type="hidden" name="group_id" value="<?= (int)$selectedGroup ?>">
+                                                    <input type="hidden" name="cve_id" value="<?= e($assignedCveId) ?>">
+                                                    <button type="submit" class="text-xs text-gray-400 hover:text-red-500">Quitar</button>
+                                                </form>
+                                            </td>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                </tbody>
+                            </table>
+                        </div>
+                    <?php endif; ?>
+                </div>
+            <?php endif; ?>
+
             <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
                 <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between gap-3 flex-wrap">
                     <h2 class="text-sm font-semibold">Software identificado</h2>
