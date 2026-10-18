@@ -599,6 +599,25 @@ class AdminController
             // El panel sigue funcionando aunque el log no esté disponible.
         }
 
+        // Informe automático desde Defender (Fase C).
+        $defReport = [
+            'enabled'   => setting_get('cve_def_report_enabled', '0') === '1',
+            'limit'     => max(1, min(50, (int)setting_get('cve_def_report_limit', '10'))),
+            'tenant_id' => (int)setting_get('cve_def_report_tenant', '0'),
+            'group_id'  => (int)setting_get('cve_def_report_group', '0'),
+            'severity'  => (string)setting_get('cve_def_report_severity', ''),
+            'exploited' => setting_get('cve_def_report_exploited', '0') === '1',
+            'kev'       => setting_get('cve_def_report_kev', '0') === '1',
+            'no_ai'     => setting_get('cve_def_report_no_ai', '0') === '1',
+        ];
+        $cveGroups = [];
+        try {
+            $cveGroups = CveDatabase::fetchAll("SELECT id, name FROM software_groups ORDER BY name");
+        } catch (Throwable $e) {
+            $cveGroups = [];
+        }
+        $tenants = Database::fetchAll("SELECT id, name FROM tenants ORDER BY name");
+
         require VIEWS_PATH . '/layout/header.php';
         require VIEWS_PATH . '/layout/sidebar.php';
         require VIEWS_PATH . '/admin/apis.php';
@@ -772,6 +791,56 @@ class AdminController
             'key_set'   => $clearKey ? false : ($key !== '' || setting_get('cve_nvd_api_key', CVE_NVD_API_KEY) !== ''),
         ]);
         flash('success', 'Configuración de fuentes de CVEs guardada.');
+        redirect(base_url('admin/apis'));
+    }
+
+    /**
+     * Guarda la configuración del informe automático desde Defender.
+     */
+    public static function cveDefenderReportSave(): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        $enabled = !empty($_POST['def_enabled']) ? '1' : '0';
+        $limit = max(1, min(50, (int)($_POST['def_limit'] ?? 10)));
+        $tenantId = max(0, (int)($_POST['def_tenant'] ?? 0));
+        $groupId = max(0, (int)($_POST['def_group'] ?? 0));
+        $severity = (string)($_POST['def_severity'] ?? '');
+        if (!in_array($severity, ['', 'Critical', 'High', 'Medium', 'Low'], true)) {
+            $severity = '';
+        }
+        $exploited = !empty($_POST['def_exploited']) ? '1' : '0';
+        $kev = !empty($_POST['def_kev']) ? '1' : '0';
+        $noAi = !empty($_POST['def_no_ai']) ? '1' : '0';
+
+        if ($tenantId > 0 && Database::fetchOne("SELECT id FROM tenants WHERE id = ?", [$tenantId]) === null) {
+            flash('error', 'El tenant seleccionado no existe.');
+            redirect(base_url('admin/apis'));
+        }
+        if ($groupId > 0 && CveDatabase::fetchOne("SELECT id FROM software_groups WHERE id = ?", [$groupId]) === null) {
+            flash('error', 'El grupo seleccionado no existe.');
+            redirect(base_url('admin/apis'));
+        }
+
+        setting_set('cve_def_report_enabled', $enabled);
+        setting_set('cve_def_report_limit', (string)$limit);
+        setting_set('cve_def_report_tenant', (string)$tenantId);
+        setting_set('cve_def_report_group', (string)$groupId);
+        setting_set('cve_def_report_severity', $severity);
+        setting_set('cve_def_report_exploited', $exploited);
+        setting_set('cve_def_report_kev', $kev);
+        setting_set('cve_def_report_no_ai', $noAi);
+
+        log_activity('cve.defender_report_saved', [
+            'enabled'   => $enabled,
+            'limit'     => $limit,
+            'tenant_id' => $tenantId,
+            'group_id'  => $groupId,
+            'severity'  => $severity,
+        ]);
+
+        flash('success', 'Configuración del informe automático desde Defender guardada.');
         redirect(base_url('admin/apis'));
     }
 
@@ -1562,6 +1631,7 @@ $adminRoutes = [
         'apis/tasks'       => 'apisTasks',
         'apis/cve-save'    => 'cveSave',
         'apis/cve-test'    => 'cveTest',
+        'apis/cve-defender-report-save' => 'cveDefenderReportSave',
         'logs/clear'       => 'logsClear',
         'updates'          => 'updates',
         'change-password'  => 'changePassword',

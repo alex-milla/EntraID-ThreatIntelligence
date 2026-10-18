@@ -325,6 +325,138 @@ $cveScope = (string)($cve['scope'] ?? 'full');
     </p>
 </form>
 
+<form method="POST" action="<?= base_url('admin/apis/cve-defender-report-save') ?>" class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-6 mb-6 space-y-4">
+    <?= Csrf::field() ?>
+    <div class="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+            <h2 class="text-lg font-semibold">Informe automático desde Defender</h2>
+            <p class="text-xs text-gray-500 mt-1">
+                Genera un informe con los CVEs de mayor exposición según Defender y lo asigna al grupo elegido.
+                Requiere el módulo <strong>Vulnerabilidades</strong> sincronizado.
+            </p>
+        </div>
+        <label class="inline-flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300">
+            <input type="checkbox" name="def_enabled" value="1" <?= !empty($defReport['enabled']) ? 'checked' : '' ?>
+                   class="rounded border-gray-300 text-brand-500 focus:ring-brand-500">
+            Activo en el cron
+        </label>
+    </div>
+
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <label class="block">
+            <span class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">CVEs por informe</span>
+            <input type="number" name="def_limit" min="1" max="50" value="<?= (int)($defReport['limit'] ?? 10) ?>"
+                   class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+        </label>
+        <label class="block">
+            <span class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Tenant</span>
+            <select name="def_tenant" class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+                <option value="0">Todos</option>
+                <?php foreach (($tenants ?? []) as $tenant): ?>
+                    <option value="<?= (int)$tenant['id'] ?>" <?= (int)($defReport['tenant_id'] ?? 0) === (int)$tenant['id'] ? 'selected' : '' ?>>
+                        <?= e((string)$tenant['name']) ?>
+                    </option>
+                <?php endforeach; ?>
+            </select>
+        </label>
+        <label class="block">
+            <span class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Grupo destino</span>
+            <select name="def_group" class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+                <option value="0">Sin grupo</option>
+                <?php foreach (($cveGroups ?? []) as $group): ?>
+                    <option value="<?= (int)$group['id'] ?>" <?= (int)($defReport['group_id'] ?? 0) === (int)$group['id'] ? 'selected' : '' ?>>
+                        <?= e((string)$group['name']) ?>
+                    </option>
+                <?php endforeach; ?>
+            </select>
+        </label>
+        <label class="block">
+            <span class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Severidad mínima</span>
+            <select name="def_severity" class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+                <option value="">Todas</option>
+                <option value="Critical" <?= ($defReport['severity'] ?? '') === 'Critical' ? 'selected' : '' ?>>Crítica</option>
+                <option value="High" <?= ($defReport['severity'] ?? '') === 'High' ? 'selected' : '' ?>>Alta</option>
+                <option value="Medium" <?= ($defReport['severity'] ?? '') === 'Medium' ? 'selected' : '' ?>>Media</option>
+                <option value="Low" <?= ($defReport['severity'] ?? '') === 'Low' ? 'selected' : '' ?>>Baja</option>
+            </select>
+        </label>
+        <label class="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
+            <input type="checkbox" name="def_exploited" value="1" <?= !empty($defReport['exploited']) ? 'checked' : '' ?>
+                   class="rounded border-gray-300 text-brand-500 focus:ring-brand-500">
+            Solo con exploit público
+        </label>
+        <label class="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
+            <input type="checkbox" name="def_kev" value="1" <?= !empty($defReport['kev']) ? 'checked' : '' ?>
+                   class="rounded border-gray-300 text-brand-500 focus:ring-brand-500">
+            Solo en CISA KEV
+        </label>
+        <label class="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
+            <input type="checkbox" name="def_no_ai" value="1" <?= !empty($defReport['no_ai']) ? 'checked' : '' ?>
+                   class="rounded border-gray-300 text-brand-500 focus:ring-brand-500">
+            Solo datos (sin IA)
+        </label>
+    </div>
+
+    <div class="flex items-center gap-3 pt-2 border-t border-gray-100 dark:border-gray-700 flex-wrap">
+        <button type="submit" class="px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors">Guardar</button>
+        <button type="button" onclick="runCveDefenderReportNow(this)"
+                class="px-4 py-2 bg-gray-900 hover:bg-black text-white text-sm font-medium rounded-lg transition-colors">
+            Generar ahora
+        </button>
+        <span id="def-report-message" class="text-xs text-gray-500"></span>
+    </div>
+    <p class="text-xs text-gray-400">
+        Cron recomendado: <code class="font-mono">php public_html/cron/cve-defender-report.php</code> · el envío por email/Teams sigue pendiente.
+    </p>
+    <p class="text-xs text-gray-400">
+        Sin API key de NVD, los CVEs que falten en el catálogo pueden no descargarse por el límite de peticiones.
+    </p>
+</form>
+
+<script>
+function runCveDefenderReportNow(button) {
+    var message = document.getElementById('def-report-message');
+    if (message) {
+        message.textContent = 'Generando informe…';
+        message.className = 'text-xs text-gray-500';
+    }
+    if (button) {
+        button.disabled = true;
+    }
+    api('POST', <?= json_encode(base_url('modules/cve/reports/ai-scheduled-defender')) ?>, {}).then(function (res) {
+        if (res && res.created && res.url) {
+            window.location.href = res.url;
+            return;
+        }
+        if (!res || !res.success) {
+            if (message) {
+                message.textContent = (res && res.error) ? res.error : 'No se pudo generar el informe.';
+                message.className = 'text-xs text-red-500';
+            }
+            if (button) {
+                button.disabled = false;
+            }
+            return;
+        }
+        if (message) {
+            message.textContent = res.message || 'Sin CVEs que cumplan los filtros.';
+            message.className = 'text-xs text-amber-600';
+        }
+        if (button) {
+            button.disabled = false;
+        }
+    }).catch(function (err) {
+        if (message) {
+            message.textContent = 'Error: ' + ((err && err.message) ? err.message : 'de red');
+            message.className = 'text-xs text-red-500';
+        }
+        if (button) {
+            button.disabled = false;
+        }
+    });
+}
+</script>
+
 <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 mb-6 overflow-hidden">
     <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700">
         <h2 class="text-sm font-semibold">Log de sincronización CVE</h2>
