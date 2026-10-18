@@ -1006,3 +1006,57 @@ if (!function_exists('render_markdown')) {
         return '<pre class="whitespace-pre-wrap">' . e($md) . '</pre>';
     }
 }
+
+if (!function_exists('normalize_ai_markdown')) {
+    /**
+     * Normaliza la respuesta Markdown de un LLM.
+     *
+     * Algunos modelos envuelven todo el informe en un fence ```markdown ... ```
+     * y Parsedown lo pinta como bloque de código: el usuario ve el Markdown sin
+     * procesar. Aquí se elimina únicamente el fence que envuelve TODO el texto;
+     * los bloques de código internos se conservan.
+     */
+    function normalize_ai_markdown(?string $markdown): string
+    {
+        $md = str_replace(["\r\n", "\r"], "\n", (string)($markdown ?? ''));
+        $md = trim($md);
+        if ($md === '') {
+            return '';
+        }
+
+        $fencePatterns = [
+            '/^(`{3,})[ \t]*[a-zA-Z0-9_+.\-]*[ \t]*\n(.*?)\n?\1[ \t]*$/us',
+            '/^(~{3,})[ \t]*[a-zA-Z0-9_+.\-]*[ \t]*\n(.*?)\n?\1[ \t]*$/us',
+        ];
+        foreach ($fencePatterns as $pattern) {
+            if (preg_match($pattern, $md, $m) === 1) {
+                return trim((string)$m[2]);
+            }
+        }
+
+        return $md;
+    }
+}
+
+if (!function_exists('render_ai_markdown')) {
+    /**
+     * Normaliza y renderiza Markdown de IA de forma segura.
+     */
+    function render_ai_markdown(?string $markdown): string
+    {
+        $normalized = normalize_ai_markdown($markdown);
+        $html = render_markdown($normalized);
+
+        // Si el modelo añadió una introducción y luego envolvió el informe en
+        // un fence ```markdown, Parsedown deja un bloque de código. Cuando ese
+        // bloque contiene encabezados Markdown, es el informe: se renderiza.
+        if (preg_match('/<pre><code class="language-(?:markdown|md)">(.*?)<\/code><\/pre>/is', $html, $m) === 1) {
+            $inner = html_entity_decode((string)$m[1], ENT_QUOTES | ENT_HTML5, 'UTF-8');
+            if (preg_match('/^#{1,6}\s/m', $inner) === 1) {
+                $html = str_replace($m[0], render_markdown($inner), $html);
+            }
+        }
+
+        return $html;
+    }
+}

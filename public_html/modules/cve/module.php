@@ -866,6 +866,36 @@ class Module_Cve extends BaseModule
         if (!is_array($row['cve_ids_array'])) {
             $row['cve_ids_array'] = [];
         }
+
+        // Repara análisis guardados con versiones anteriores: si el modelo
+        // envolvió todo en un fence o el HTML quedó vacío, se normaliza y se
+        // regenera el HTML para que también sirva en futuras exportaciones.
+        $contentText = (string)($row['content_text'] ?? '');
+        if (trim($contentText) !== '') {
+            $normalized = normalize_ai_markdown($contentText);
+            $rendered = function_exists('render_ai_markdown')
+                ? render_ai_markdown($normalized)
+                : render_markdown($normalized);
+            $storedHtml = (string)($row['content_html'] ?? '');
+            $row['content_text'] = $normalized;
+            $row['content_html'] = $rendered;
+            if ($normalized !== $contentText || $rendered !== $storedHtml) {
+                try {
+                    CveDatabase::query(
+                        "UPDATE cve_ai_group_analyses
+                         SET content_text = ?, content_html = ?
+                         WHERE group_id = ?",
+                        [$normalized, $rendered, $groupId]
+                    );
+                } catch (Throwable $e) {
+                    app_log('warning', 'cve_ai', 'No se pudo reparar el HTML del análisis de prioridad', [
+                        'group_id' => $groupId,
+                        'error'    => $e->getMessage(),
+                    ]);
+                }
+            }
+        }
+
         return $row;
     }
 
@@ -1014,7 +1044,7 @@ class Module_Cve extends BaseModule
                 . ' «' . (string)$group['name'] . '»';
             $system = "Eres un analista sénior de vulnerabilidades y gestión de parcheo. "
                 . "Trabajas SOLO con los CVEs proporcionados. No inventes CVEs ni incluyas otros fuera de la lista. "
-                . "Responde en español y en Markdown, con estas secciones exactas:\n"
+                . "Responde en español y en Markdown directo, sin envolver la respuesta en bloques de código ni fences, con estas secciones exactas:\n"
                 . "## Resumen ejecutivo\n"
                 . "## Clasificación por prioridad\n"
                 . "## Prioridad por software\n"
@@ -1053,14 +1083,16 @@ class Module_Cve extends BaseModule
                 ], 502);
             }
 
-            $content = trim((string)($result['content'] ?? ''));
+            $content = normalize_ai_markdown((string)($result['content'] ?? ''));
             if ($content === '') {
                 json_response(['success' => false, 'error' => 'La IA devolvió un análisis vacío.'], 502);
             }
-            $contentHtml = (string)($result['content_html'] ?? '');
-            if ($contentHtml === '' && function_exists('render_markdown')) {
-                $contentHtml = render_markdown($content);
-            }
+            // El HTML se genera siempre desde el texto normalizado. Así no se
+            // guarda un <pre><code> cuando el modelo envuelve el informe en un
+            // fence de Markdown.
+            $contentHtml = function_exists('render_ai_markdown')
+                ? render_ai_markdown($content)
+                : render_markdown($content);
             $model = (string)($result['model'] ?? '');
 
             CveDatabase::query(

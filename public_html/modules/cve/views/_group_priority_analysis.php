@@ -25,8 +25,17 @@ $analysisCveIds = is_array($groupAnalysis['cve_ids_array'] ?? null)
     : [];
 sort($analysisCveIds);
 $analysisStale = $groupAnalysis !== null && $analysisCveIds !== $currentCveIds;
-$analysisHtml = $groupAnalysis !== null ? (string)($groupAnalysis['content_html'] ?? '') : '';
 $analysisText = $groupAnalysis !== null ? (string)($groupAnalysis['content_text'] ?? '') : '';
+// El texto es la fuente de verdad: se normaliza y renderiza en cada carga.
+// Así se reparan análisis antiguos guardados como bloque de código.
+$analysisHtml = '';
+if ($analysisText !== '') {
+    $analysisHtml = function_exists('render_ai_markdown')
+        ? render_ai_markdown($analysisText)
+        : render_markdown($analysisText);
+} elseif ($groupAnalysis !== null) {
+    $analysisHtml = (string)($groupAnalysis['content_html'] ?? '');
+}
 $analysisCount = $groupAnalysis !== null ? (int)($groupAnalysis['cve_count'] ?? 0) : 0;
 $analysisModel = $groupAnalysis !== null ? (string)($groupAnalysis['model'] ?? '') : '';
 $analysisDate = $groupAnalysis !== null ? (string)($groupAnalysis['generated_at'] ?? '') : '';
@@ -55,9 +64,56 @@ $groupKindLabel = $selectedGroupIsCompany ? 'empresa' : 'grupo de aplicaciones';
     .cve-priority-content td { border: 1px solid rgba(148, 163, 184, .35); padding: .35rem .5rem; text-align: left; vertical-align: top; }
     .cve-priority-content th { background: rgba(148, 163, 184, .12); font-weight: 600; }
     .cve-priority-content code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .75rem; }
+
+    @page { margin: 12mm; }
+
+    @media print {
+        body { background: #fff !important; }
+        body * { visibility: hidden !important; }
+        #cve-priority-print,
+        #cve-priority-print * { visibility: visible !important; }
+        #cve-priority-print {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100%;
+            margin: 0 !important;
+            border: 0 !important;
+            border-radius: 0 !important;
+            box-shadow: none !important;
+            background: #fff !important;
+            color: #000 !important;
+        }
+        #cve-priority-print .no-print { display: none !important; }
+        #cve-priority-print .cve-priority-content {
+            color: #000 !important;
+            font-size: 10pt;
+            line-height: 1.45;
+        }
+        #cve-priority-print .cve-priority-content h1,
+        #cve-priority-print .cve-priority-content h2,
+        #cve-priority-print .cve-priority-content h3 {
+            color: #000 !important;
+            break-after: avoid;
+            page-break-after: avoid;
+        }
+        #cve-priority-print .cve-priority-content table { font-size: 9pt; }
+        #cve-priority-print .cve-priority-content th,
+        #cve-priority-print .cve-priority-content td {
+            border: 1px solid #555 !important;
+            color: #000 !important;
+        }
+        #cve-priority-print .cve-priority-content th { background: #eee !important; }
+        #cve-priority-print .cve-priority-content tr {
+            break-inside: avoid;
+            page-break-inside: avoid;
+        }
+        #cve-priority-print .cve-priority-content thead { display: table-header-group; }
+        #cve-priority-print .cve-priority-content a { color: #000 !important; text-decoration: underline; }
+    }
 </style>
 
-<div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden mt-4">
+<div id="cve-priority-print" class="cve-priority-card bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden mt-4">
     <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700 flex items-start justify-between gap-3 flex-wrap">
         <div>
             <h2 class="text-sm font-semibold">Prioridad de parcheo (IA)</h2>
@@ -73,12 +129,20 @@ $groupKindLabel = $selectedGroupIsCompany ? 'empresa' : 'grupo de aplicaciones';
                 </p>
             <?php endif; ?>
         </div>
-        <?php if ($isAdmin): ?>
-            <button type="button" onclick="cvePriorityOpen(<?= (int)$selectedGroup ?>)"
-                    class="<?= $groupAnalysis !== null ? 'px-3 py-1.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-muted-dark' : 'px-3 py-1.5 bg-brand-500 hover:bg-brand-600 text-white' ?> text-xs font-medium rounded-lg transition-colors">
-                <?= $groupAnalysis !== null ? 'Recalcular' : 'Generar análisis' ?>
-            </button>
-        <?php endif; ?>
+        <div class="flex items-center gap-2 no-print">
+            <?php if ($groupAnalysis !== null): ?>
+                <button type="button" onclick="window.print()"
+                        class="px-3 py-1.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-muted-dark text-xs font-medium rounded-lg transition-colors">
+                    Imprimir
+                </button>
+            <?php endif; ?>
+            <?php if ($isAdmin): ?>
+                <button type="button" onclick="cvePriorityOpen(<?= (int)$selectedGroup ?>)"
+                        class="<?= $groupAnalysis !== null ? 'px-3 py-1.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-muted-dark' : 'px-3 py-1.5 bg-brand-500 hover:bg-brand-600 text-white' ?> text-xs font-medium rounded-lg transition-colors">
+                    <?= $groupAnalysis !== null ? 'Recalcular' : 'Generar análisis' ?>
+                </button>
+            <?php endif; ?>
+        </div>
     </div>
 
     <?php if ($analysisStale): ?>
