@@ -17,6 +17,10 @@ $usedPct = ($disk['total'] > 0) ? round($disk['used'] / $disk['total'] * 100, 1)
 $lowSpace = ($disk['total'] > 0) && ($disk['free'] < max(200 * 1024 * 1024, $disk['total'] * 0.1));
 $db = $stats['db'] ?? [];
 $tables = $db['tables'] ?? [];
+$cveDb = $stats['cve_db'] ?? [];
+$cveTables = $cveDb['tables'] ?? [];
+$cveDbTotal = (int)($cveDb['size'] ?? 0) + (int)($cveDb['wal'] ?? 0) + (int)($cveDb['shm'] ?? 0);
+$cveCatalogRows = (int)($cveTables['cve_catalog'] ?? 0);
 $dirs = $stats['dirs'] ?? [];
 $php = $stats['php'] ?? [];
 $dbTotal = (int)($db['size'] ?? 0) + (int)($db['wal'] ?? 0) + (int)($db['shm'] ?? 0);
@@ -73,6 +77,49 @@ $dbTotal = (int)($db['size'] ?? 0) + (int)($db['wal'] ?? 0) + (int)($db['shm'] ?
             <div><dt class="text-xs text-gray-500">Tamaño página</dt><dd class="font-medium"><?= e($fb($db['page_size'] ?? 0)) ?></dd></div>
         </dl>
     </div>
+</div>
+
+<!-- Catálogo CVE (BD independiente) -->
+<div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-5 mb-6">
+    <div class="flex items-start justify-between gap-3 flex-wrap mb-4">
+        <div>
+            <h3 class="text-sm font-semibold">Catálogo CVE (SQLite)</h3>
+            <p class="text-xs text-gray-400 mt-1">Base de datos independiente del catálogo NVD, CISA KEV y EPSS.</p>
+        </div>
+        <?php if (!empty($cveDb['exists'])): ?>
+            <span class="text-xs px-2 py-1 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300">
+                <?= number_format($cveCatalogRows) ?> CVEs
+            </span>
+        <?php endif; ?>
+    </div>
+
+    <?php if (empty($cveDb['exists'])): ?>
+        <p class="text-sm text-gray-500">
+            Todavía no se ha creado el catálogo CVE
+            (<span class="font-mono text-xs"><?= e((string)($cveDb['path'] ?? '')) ?></span>).
+        </p>
+    <?php else: ?>
+        <p class="text-sm mb-1"><span class="text-gray-500">Tamaño total:</span> <strong><?= e($fb($cveDbTotal)) ?></strong></p>
+        <p class="text-xs text-gray-400 mb-4 font-mono break-all"><?= e((string)($cveDb['path'] ?? '')) ?></p>
+        <dl class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm mb-4">
+            <div><dt class="text-xs text-gray-500">BD</dt><dd class="font-medium"><?= e($fb($cveDb['size'] ?? 0)) ?></dd></div>
+            <div><dt class="text-xs text-gray-500">WAL</dt><dd class="font-medium"><?= e($fb($cveDb['wal'] ?? 0)) ?></dd></div>
+            <div><dt class="text-xs text-gray-500">Tablas</dt><dd class="font-medium"><?= (int)($cveDb['table_count'] ?? 0) ?></dd></div>
+            <div><dt class="text-xs text-gray-500">Filas (total)</dt><dd class="font-medium"><?= number_format((int)($cveDb['total_rows'] ?? 0)) ?></dd></div>
+            <div><dt class="text-xs text-gray-500">Páginas</dt><dd class="font-medium"><?= number_format((int)($cveDb['page_count'] ?? 0)) ?></dd></div>
+            <div><dt class="text-xs text-gray-500">Tamaño página</dt><dd class="font-medium"><?= e($fb($cveDb['page_size'] ?? 0)) ?></dd></div>
+        </dl>
+        <?php if (!empty($cveTables)): ?>
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 max-h-56 overflow-y-auto text-sm">
+                <?php foreach ($cveTables as $name => $rows): ?>
+                    <div class="flex items-center justify-between py-1.5 border-b border-gray-50 dark:border-gray-800">
+                        <span class="font-mono text-xs text-gray-600 dark:text-gray-300 truncate"><?= e($name) ?></span>
+                        <span class="text-gray-500 shrink-0 ml-2"><?= number_format((int)$rows) ?></span>
+                    </div>
+                <?php endforeach; ?>
+            </div>
+        <?php endif; ?>
+    <?php endif; ?>
 </div>
 
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">

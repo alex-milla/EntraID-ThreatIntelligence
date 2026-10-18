@@ -1052,7 +1052,9 @@ class AdminController
         Auth::requireAdmin();
 
         $refresh = !empty($_GET['refresh']);
-        $cacheKey = 'storage_stats_cache';
+        // v2: incluye el desglose del catálogo CVE (cve.sqlite). El cambio de
+        // clave invalida las estadísticas antiguas cacheadas sin ese bloque.
+        $cacheKey = 'storage_stats_cache_v2';
         $stats = null;
 
         if (!$refresh) {
@@ -1110,6 +1112,39 @@ class AdminController
         try { $pageCount = (int)Database::fetchOne("PRAGMA page_count")['page_count']; } catch (Throwable $e) {}
         try { $pageSize = (int)Database::fetchOne("PRAGMA page_size")['page_size']; } catch (Throwable $e) {}
 
+        // Catálogo CVE: base de datos independiente (cve.sqlite), la que más
+        // crece con el catálogo NVD. Se mide aparte para poder controlarla.
+        $cveDbPath = defined('CVE_DB_PATH') ? CVE_DB_PATH : (STORAGE_PATH . '/cve.sqlite');
+        $cveDbSize = is_file($cveDbPath) ? (int)filesize($cveDbPath) : 0;
+        $cveWalSize = is_file($cveDbPath . '-wal') ? (int)filesize($cveDbPath . '-wal') : 0;
+        $cveShmSize = is_file($cveDbPath . '-shm') ? (int)filesize($cveDbPath . '-shm') : 0;
+        $cveTables = [];
+        $cveTotalRows = 0;
+        $cvePageCount = 0;
+        $cvePageSize = 0;
+
+        // Si aún no existe, no se instancia CveDatabase (crearía el fichero y
+        // el esquema solo por visitar este panel).
+        if ($cveDbSize > 0) {
+            try {
+                foreach (CveDatabase::fetchAll("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name") as $t) {
+                    $name = (string)$t['name'];
+                    try {
+                        $c = (int)CveDatabase::fetchOne('SELECT COUNT(*) AS c FROM "' . $name . '"')['c'];
+                    } catch (Throwable $e) {
+                        $c = 0;
+                    }
+                    $cveTables[$name] = $c;
+                    $cveTotalRows += $c;
+                }
+                arsort($cveTables);
+                try { $cvePageCount = (int)CveDatabase::fetchOne("PRAGMA page_count")['page_count']; } catch (Throwable $e) {}
+                try { $cvePageSize = (int)CveDatabase::fetchOne("PRAGMA page_size")['page_size']; } catch (Throwable $e) {}
+            } catch (Throwable $e) {
+                // El panel debe seguir funcionando aunque cve.sqlite esté bloqueada.
+            }
+        }
+
         $diskTotal = function_exists('disk_total_space') ? (int)@disk_total_space(ROOT_PATH) : 0;
         $diskFree = function_exists('disk_free_space') ? (int)@disk_free_space(ROOT_PATH) : 0;
         $diskUsed = $diskTotal > 0 ? $diskTotal - $diskFree : 0;
@@ -1120,12 +1155,19 @@ class AdminController
                 'page_count' => $pageCount, 'page_size' => $pageSize,
                 'tables' => $tables, 'table_count' => count($tables), 'total_rows' => $totalRows,
             ],
+            'cve_db' => [
+                'path' => $cveDbPath, 'size' => $cveDbSize, 'wal' => $cveWalSize, 'shm' => $cveShmSize,
+                'page_count' => $cvePageCount, 'page_size' => $cvePageSize,
+                'tables' => $cveTables, 'table_count' => count($cveTables), 'total_rows' => $cveTotalRows,
+                'exists' => $cveDbSize > 0,
+            ],
             'disk' => ['total' => $diskTotal, 'free' => $diskFree, 'used' => $diskUsed],
             'dirs' => [
                 'storage'           => self::dirSize(STORAGE_PATH),
                 'storage/backups'   => self::dirSize(STORAGE_PATH . '/backups'),
                 'storage/exports'   => self::dirSize(STORAGE_PATH . '/exports'),
                 'storage/cache'     => self::dirSize(STORAGE_PATH . '/cache'),
+                'storage/cve.sqlite' => $cveDbSize + $cveWalSize + $cveShmSize,
                 'app (public_html)' => self::dirSize(ROOT_PATH),
             ],
             'php' => [
