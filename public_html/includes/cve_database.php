@@ -217,6 +217,7 @@ class CveDatabase
             generated_by INTEGER,
             no_ai INTEGER NOT NULL DEFAULT 0,
             revision INTEGER NOT NULL DEFAULT 1,
+            archived INTEGER NOT NULL DEFAULT 0,
             group_id INTEGER REFERENCES software_groups(id) ON DELETE SET NULL,
             mode TEXT NOT NULL DEFAULT 'extended',
             tags TEXT,
@@ -497,6 +498,25 @@ class CveDatabase
         }
         if (!isset($aiCols['total_items'])) {
             $db->exec("ALTER TABLE cve_ai_reports ADD COLUMN total_items INTEGER NOT NULL DEFAULT 0");
+        }
+        // v0.2.8.12: informes agrupados antiguos que se separan por CVE.
+        if (!isset($aiCols['archived'])) {
+            $db->exec("ALTER TABLE cve_ai_reports ADD COLUMN archived INTEGER NOT NULL DEFAULT 0");
+        }
+
+        // Separación automática de informes agrupados sin Defender.
+        // Es idempotente: los originales quedan archivados.
+        if (is_file(__DIR__ . '/cve_report_split.php')) {
+            require_once __DIR__ . '/cve_report_split.php';
+            try {
+                CveReportSplit::splitLegacyReports();
+            } catch (Throwable $e) {
+                if (function_exists('app_log')) {
+                    app_log('error', 'cve_ai', 'Error separando informes agrupados', [
+                        'error' => $e->getMessage(),
+                    ]);
+                }
+            }
         }
 
         // v0.2.8.8: informes antiguos o incompletos sin filas por CVE.

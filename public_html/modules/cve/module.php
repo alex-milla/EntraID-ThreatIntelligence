@@ -47,6 +47,7 @@ class Module_Cve extends BaseModule
             ['method' => 'POST', 'pattern' => 'reports/ai-delete/{id}', 'handler' => [$this, 'deleteAiReport']],
             ['method' => 'POST', 'pattern' => 'reports/ai-delete-bulk', 'handler' => [$this, 'deleteAiReportsBulk']],
             ['method' => 'POST', 'pattern' => 'reports/ai-assign-bulk', 'handler' => [$this, 'assignAiReportsBulk']],
+            ['method' => 'POST', 'pattern' => 'reports/ai-split/{id}', 'handler' => [$this, 'splitAiReport']],
             ['method' => 'POST', 'pattern' => 'reports/ai-unassign-cve', 'handler' => [$this, 'unassignAiCve']],
             ['method' => 'POST', 'pattern' => 'reports/ai-generate', 'handler' => [$this, 'startAiReport']],
             ['method' => 'POST', 'pattern' => 'reports/ai-retry/{id}', 'handler' => [$this, 'retryAiReport']],
@@ -1171,16 +1172,37 @@ class Module_Cve extends BaseModule
                 }
             }
 
-            $result = $this->queueAiReport($found, $profileId, $noAi, null, $tags, $mode);
-            app_log('info', 'cve_ai', 'Informe IA creado', [
-                'id'     => (int)$result['report_id'],
+            // Un informe independiente por CVE: cada uno se puede mover a su
+            // empresa/grupo y la lista muestra una entrada por CVE.
+            $reportIds = CveDatabase::transaction(function () use ($found, $profileId, $noAi, $tags, $mode): array {
+                $ids = [];
+                foreach ($found as $cveId) {
+                    $created = $this->queueAiReport([$cveId], $profileId, $noAi, null, $tags, $mode);
+                    $ids[] = (int)$created['report_id'];
+                }
+                return $ids;
+            });
+            $firstId = (int)($reportIds[0] ?? 0);
+            $result = [
+                'success'    => true,
+                'report_id'  => $firstId,
+                'report_ids' => $reportIds,
+                'count'      => count($reportIds),
+                'status'     => 'pending',
+                'no_ai'      => $noAi,
+                'defender'   => false,
+                'url'        => base_url('modules/cve/report-ai/' . $firstId),
+            ];
+            app_log('info', 'cve_ai', 'Informes individuales creados', [
+                'ids'    => $reportIds,
                 'cves'   => $found,
                 'no_ai'  => $noAi,
                 'profile'=> $profileId,
             ]);
             log_activity('cve.ai_report_created', [
-                'report_id' => (int)$result['report_id'],
-                'cves'      => $found,
+                'report_id'  => $firstId,
+                'report_ids' => $reportIds,
+                'cves'       => $found,
             ]);
             json_response($result);
         } catch (Throwable $e) {
@@ -2105,6 +2127,35 @@ class Module_Cve extends BaseModule
             json_response(['success' => false, 'error' => $e->getMessage()], 400);
         } catch (Throwable $e) {
             app_log('error', 'cve_ai', 'Error asignando informes en lote', ['error' => $e->getMessage()]);
+            json_response(['success' => false, 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Separa un informe agrupado en un informe individual por CVE.
+     */
+    public function splitAiReport(array $params = []): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        try {
+            $id = (int)($params['id'] ?? 0);
+            $result = CveReportSplit::splitReport($id);
+            json_response([
+                'success'    => true,
+                'id'         => $id,
+                'report_ids' => $result['report_ids'],
+                'pending'    => (int)$result['pending'],
+                'count'      => count($result['report_ids']),
+            ]);
+        } catch (InvalidArgumentException $e) {
+            json_response(['success' => false, 'error' => $e->getMessage()], 400);
+        } catch (Throwable $e) {
+            app_log('error', 'cve_ai', 'Error separando un informe', [
+                'id'    => $params['id'] ?? null,
+                'error' => $e->getMessage(),
+            ]);
             json_response(['success' => false, 'error' => $e->getMessage()], 500);
         }
     }
@@ -3099,6 +3150,7 @@ class Module_Cve extends BaseModule
                     r.created_at, r.finished_at
              FROM cve_ai_reports r
              LEFT JOIN software_groups g ON g.id = r.group_id
+             WHERE COALESCE(r.archived, 0) = 0
              ORDER BY r.created_at DESC, r.id DESC
              LIMIT ?",
             [$limit]

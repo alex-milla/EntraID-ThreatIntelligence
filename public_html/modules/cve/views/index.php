@@ -938,6 +938,11 @@ $aiStatusText = [
     'error'    => 'text-red-600 dark:text-red-400',
     'canceled' => 'text-amber-600 dark:text-amber-400',
 ];
+$pendingAiReports = array_values(array_filter(
+    is_array($aiReports ?? null) ? $aiReports : [],
+    static fn(array $row): bool => (string)($row['status'] ?? '') === 'pending'
+));
+$pendingAiCount = count($pendingAiReports);
 ?>
 
 <div class="no-print mb-4 flex items-center justify-between gap-3 flex-wrap">
@@ -968,6 +973,12 @@ $aiStatusText = [
                         class="mt-2 w-full px-3 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 text-xs font-semibold rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">
                     Desde Defender
                 </button>
+                <?php if ($pendingAiCount > 0): ?>
+                    <button type="button" id="ai-reports-run-pending" onclick="cveAiRunPending(this)"
+                            class="mt-2 w-full px-3 py-2 border border-amber-300 dark:border-amber-700 text-amber-700 dark:text-amber-300 text-xs font-semibold rounded-lg hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors">
+                        Generar pendientes (<?= (int)$pendingAiCount ?>)
+                    </button>
+                <?php endif; ?>
             <?php endif; ?>
             <input id="ai-list-search" type="search" oninput="cveAiFilterList(this.value)"
                    placeholder="Buscar por CVE o título…"
@@ -1068,6 +1079,13 @@ $aiStatusText = [
                                     <button type="button" title="Reintentar" onclick="event.stopPropagation(); cveAiRetry(<?= $aiRowId ?>)"
                                             class="p-1 rounded text-gray-400 hover:text-brand-600 hover:bg-brand-50 dark:hover:bg-brand-950">
                                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4 4v5h5M20 20v-5h-5M5.3 9A7 7 0 0118 6.3M18.7 15A7 7 0 016 17.7"/></svg>
+                                    </button>
+                                <?php endif; ?>
+                                <?php if ($isAdmin && count($aiRowIds) > 1 && $aiRowStatus !== 'running'): ?>
+                                    <button type="button" title="Separar en informes individuales"
+                                            onclick="event.stopPropagation(); cveAiSplit(<?= $aiRowId ?>)"
+                                            class="px-1.5 py-1 rounded text-[10px] font-medium text-gray-500 hover:text-brand-600 hover:bg-brand-50 dark:hover:bg-brand-950">
+                                        Separar
                                     </button>
                                 <?php endif; ?>
                                 <?php if ($isAdmin): ?>
@@ -1233,8 +1251,9 @@ $aiStatusText = [
                         <span id="ai-report-message" class="text-xs text-gray-500"></span>
                     </div>
                     <p class="text-[11px] text-gray-400 mt-2">
-                        Máximo <?= (int)CveReportAi::MAX_CVES ?> CVEs por informe. El análisis extendido hace una llamada a la IA por CVE
-                        y puede tardar varios minutos; verás el progreso en el informe.
+                        Máximo <?= (int)CveReportAi::MAX_CVES ?> CVEs por creación. Se creará un informe individual por CVE.
+                        El análisis extendido hace una llamada a la IA por CVE y puede tardar varios minutos; verás el progreso
+                        y podrás retomar los pendientes desde la lista.
                     </p>
                 </div>
             </div>
@@ -1796,6 +1815,7 @@ $aiStatusText = [
     var DELETE_URL = <?= json_encode(base_url('modules/cve/reports/ai-delete')) ?>;
     var BULK_DELETE_URL = <?= json_encode(base_url('modules/cve/reports/ai-delete-bulk')) ?>;
     var BULK_GROUP_URL = <?= json_encode(base_url('modules/cve/reports/ai-assign-bulk')) ?>;
+    var SPLIT_URL = <?= json_encode(base_url('modules/cve/reports/ai-split')) ?>;
     var STATUS_URL = <?= json_encode(base_url('modules/cve/reports/ai-status')) ?>;
     var REFRESH_URL = <?= json_encode(base_url('modules/cve/reports/ai-refresh')) ?>;
     var ASSIGN_URL  = <?= json_encode(base_url('modules/cve/reports/ai-assign')) ?>;
@@ -2274,6 +2294,31 @@ $aiStatusText = [
         }
     };
 
+    function runReportQueue(ids, onProgress) {
+        return new Promise(function (resolve) {
+            var failures = 0;
+            function next(index) {
+                if (index >= ids.length) {
+                    resolve({ failures: failures });
+                    return;
+                }
+                if (typeof onProgress === 'function') {
+                    onProgress(index + 1, ids.length);
+                }
+                postJson(RUN_URL + '/' + ids[index], {}).then(function (res) {
+                    if (!res || (!res.success && res.status !== 'done')) {
+                        failures++;
+                    }
+                }).catch(function () {
+                    failures++;
+                }).then(function () {
+                    next(index + 1);
+                });
+            }
+            next(0);
+        });
+    }
+
     window.cveAiGenerate = function (button) {
         var input = document.getElementById('ai-report-cves');
         var profile = document.getElementById('ai-report-profile');
@@ -2315,13 +2360,107 @@ $aiStatusText = [
                 }
                 return;
             }
-            window.location.href = PAGE_URL + '&report=' + res.report_id;
+
+            var ids = Array.isArray(res.report_ids) && res.report_ids.length
+                ? res.report_ids
+                : [res.report_id];
+            ids = ids.map(function (id) { return parseInt(id, 10) || 0; }).filter(function (id) { return id > 0; });
+            if (!ids.length) {
+                message.textContent = 'No se creó ningún informe.';
+                message.className = 'text-xs text-red-500';
+                if (button) {
+                    button.disabled = false;
+                }
+                return;
+            }
+
+            message.textContent = 'Generando 0/' + ids.length + '…';
+            runReportQueue(ids, function (done, total) {
+                message.textContent = 'Generando ' + done + '/' + total + '…';
+            }).then(function (result) {
+                if (ids.length === 1) {
+                    window.location.href = PAGE_URL + '&report=' + ids[0];
+                    return;
+                }
+                if (result.failures > 0) {
+                    appAlert('Se crearon ' + ids.length + ' informes, pero ' + result.failures
+                        + ' no se pudieron generar. Puedes reintentarlos con «Generar pendientes».',
+                        { title: 'Generación parcial' }).then(function () {
+                        window.location.href = PAGE_URL;
+                    });
+                    return;
+                }
+                window.location.href = PAGE_URL;
+            });
         }).catch(function (err) {
             message.textContent = 'No se pudo crear: ' + errorText(err);
             message.className = 'text-xs text-red-500';
             if (button) {
                 button.disabled = false;
             }
+        });
+    };
+
+    window.cveAiRunPending = function (button) {
+        if (!list) {
+            return;
+        }
+        var ids = Array.prototype.slice.call(list.querySelectorAll('.ai-report-item[data-status="pending"]'))
+            .map(function (el) { return parseInt(el.dataset.id, 10) || 0; })
+            .filter(function (id) { return id > 0; });
+        if (!ids.length) {
+            appAlert('No hay informes pendientes.', { title: 'Sin pendientes' });
+            return;
+        }
+        appConfirm('¿Generar ' + ids.length + (ids.length === 1 ? ' informe pendiente' : ' informes pendientes') + '?',
+            { title: 'Generar pendientes', confirmText: 'Generar' }).then(function (ok) {
+            if (!ok) {
+                return;
+            }
+            if (button) {
+                button.disabled = true;
+            }
+            runReportQueue(ids, function (done, total) {
+                if (button) {
+                    button.textContent = 'Generando ' + done + '/' + total + '…';
+                }
+            }).then(function (result) {
+                if (result.failures > 0) {
+                    appAlert('Se procesaron ' + ids.length + ' informes; ' + result.failures
+                        + ' siguen con error o pendientes.', { title: 'Generación parcial' }).then(function () {
+                        window.location.reload();
+                    });
+                    return;
+                }
+                window.location.reload();
+            });
+        });
+    };
+
+    window.cveAiSplit = function (id) {
+        if (!id) {
+            return;
+        }
+        appConfirm('¿Separar este informe en un informe por CVE? El informe original se archivará y se conservarán los análisis existentes.',
+            { title: 'Separar informe', confirmText: 'Separar' }).then(function (ok) {
+            if (!ok) {
+                return;
+            }
+            postJson(SPLIT_URL + '/' + id, {}).then(function (res) {
+                if (!res || !res.success) {
+                    appAlert((res && res.error) ? res.error : 'No se pudo separar el informe.', { title: 'No se pudo separar' });
+                    return;
+                }
+                var message = 'Se crearon ' + (res.count || 0) + ' informes individuales.';
+                if (res.pending > 0) {
+                    message += ' ' + res.pending + ' quedan pendientes de generar.';
+                }
+                appAlert(message, { title: 'Informe separado' }).then(function () {
+                    window.location.reload();
+                });
+            }).catch(function (err) {
+                appAlert('No se pudo separar: ' + errorText(err), { title: 'No se pudo separar' });
+            });
         });
     };
 
