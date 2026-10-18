@@ -102,7 +102,7 @@ foreach ($flashData as $type => $msg):
         $ts = str_contains($syncUpdated, 'T') ? strtotime($syncUpdated) : strtotime($syncUpdated . ' UTC');
         $syncAge = $ts !== false ? max(0, time() - $ts) : 0;
     }
-    $showStep = $isAdmin && $syncRunning && ($syncAge > 30 || str_contains($syncMessage, 'No se pudo lanzar'));
+    $showStep = $isAdmin && $syncRunning && $syncAge > 30;
     $severityClasses = [
         'Critical' => 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',
         'High'     => 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300',
@@ -131,7 +131,7 @@ foreach ($flashData as $type => $msg):
                         Todavía no se ha completado ninguna sincronización.
                     <?php endif; ?>
                     <?php if ($syncRunning && $syncAge > 30): ?>
-                        <span class="text-amber-600 dark:text-amber-400">Sin progreso reciente; puedes usar «Continuar».</span>
+                        <span class="text-amber-600 dark:text-amber-400">Sin progreso reciente; pulsa «Continuar» para retomar la descarga.</span>
                     <?php endif; ?>
                 </p>
             </div>
@@ -172,6 +172,9 @@ foreach ($flashData as $type => $msg):
             </div>
             <p id="cve-sync-counts" class="text-[11px] text-gray-400 mt-1">
                 <?= number_format($syncProcessed) ?><?= $syncTotal > 0 ? ' / ' . number_format($syncTotal) : '' ?> CVEs procesados
+            </p>
+            <p class="text-[11px] text-gray-400 mt-1">
+                La descarga continua se ejecuta en esta pestaña. Si la cierras, se reanuda desde el último CVE al volver.
             </p>
         </div>
     </div>
@@ -375,15 +378,95 @@ foreach ($flashData as $type => $msg):
     (function() {
         var STATUS_URL = '<?= base_url('modules/cve/active') ?>';
         var SYNC_URL = '<?= base_url('modules/cve/sync') ?>';
+        var STREAM_URL = '<?= base_url('modules/cve/stream') ?>';
         var CANCEL_URL = '<?= base_url('modules/cve/cancel') ?>';
         var STEP_URL = '<?= base_url('modules/cve/step') ?>';
         var wasRunning = <?= $syncRunning ? 'true' : 'false' ?>;
         var pollTimer = null;
+        var streaming = false;
+        var stopped = false;
+        var streamRetries = 0;
+        var lastProcessed = <?= (int)$syncProcessed ?>;
+        var rateAt = 0;
+        var rateProcessed = 0;
+        var rateValue = 0;
 
         function parseDbTime(v) {
             if (!v) return 0;
             if (v.indexOf('T') >= 0) return Date.parse(v);
             return Date.parse(v.replace(' ', 'T') + 'Z');
+        }
+
+        function buildCounts(processed, total, phase) {
+            var txt = processed.toLocaleString('es-ES') + (total > 0 ? ' / ' + total.toLocaleString('es-ES') : '') + ' CVEs procesados';
+            if (rateValue > 0 && total > processed) {
+                var left = (total - processed) / rateValue;
+                var mins = Math.max(1, Math.round(left / 60));
+                txt += ' · ' + rateValue.toFixed(1) + ' CVE/s · ~' + mins + ' min restantes';
+            } else if (phase === 'kev' || phase === 'epss') {
+                txt += ' · actualizando ' + phase.toUpperCase();
+            }
+            return txt;
+        }
+
+        function applyState(st) {
+            if (!st) return;
+            var processed = parseInt(st.processed || 0, 10);
+            var total = parseInt(st.total || 0, 10);
+            var pct = total > 0 ? Math.min(100, Math.round(processed / total * 100)) : 0;
+            var bar = document.getElementById('cve-sync-progress');
+            var counts = document.getElementById('cve-sync-counts');
+            var msg = document.getElementById('cve-sync-message');
+            var badge = document.getElementById('cve-sync-status');
+            var progress = document.getElementById('cve-sync-progress-wrap');
+
+            var now = Date.now();
+            if (rateAt > 0 && processed > rateProcessed) {
+                var dt = (now - rateAt) / 1000;
+                if (dt > 0.5) { rateValue = (processed - rateProcessed) / dt; }
+            }
+            if (processed !== rateProcessed) { rateAt = now; rateProcessed = processed; }
+            if (processed > lastProcessed) { lastProcessed = processed; streamRetries = 0; }
+
+            if (bar) bar.style.width = pct + '%';
+            if (counts) counts.textContent = buildCounts(processed, total, st.phase || '');
+            if (msg && st.message) msg.textContent = st.message;
+            if (badge) {
+                badge.textContent = (st.status === 'queued' || st.status === 'running' || !st.status)
+                    ? 'Sincronizando'
+                    : (st.status || 'idle');
+            }
+            if (progress) progress.classList.remove('hidden');
+        }
+
+        function setRunningUi(running) {
+            var start = document.getElementById('cve-start-btn');
+            var rebuild = document.getElementById('cve-rebuild-btn');
+            var sources = document.getElementById('cve-sources-btn');
+            var cancel = document.getElementById('cve-cancel-btn');
+            var progress = document.getElementById('cve-sync-progress-wrap');
+            if (start) start.classList.toggle('hidden', running);
+            if (rebuild) rebuild.classList.toggle('hidden', running);
+            if (sources) sources.classList.toggle('hidden', running);
+            if (cancel) cancel.classList.toggle('hidden', !running);
+            if (progress) progress.classList.toggle('hidden', !running);
+        }
+
+        function showResumeButton(label) {
+            var step = document.getElementById('cve-step-btn');
+            if (!step) return;
+            step.classList.remove('hidden');
+            step.textContent = label || 'Reanudar';
+            step.setAttribute('onclick', 'resumeCveSync()');
+        }
+
+        function showError(message, errorId) {
+            var prefix = errorId ? ('Error #' + errorId + ': ') : 'Error: ';
+            toast(prefix + (message || 'La sincronización se detuvo'), 'error');
+            var msg = document.getElementById('cve-sync-message');
+            if (msg) msg.textContent = prefix + (message || '');
+            var badge = document.getElementById('cve-sync-status');
+            if (badge) badge.textContent = 'Error';
         }
 
         window.startCveSync = function(mode) {
@@ -394,28 +477,41 @@ foreach ($flashData as $type => $msg):
             if (mode === 'kev' && !window.confirm('Se actualizarán solo CISA KEV y EPSS. ¿Continuar?')) {
                 return;
             }
-            api('POST', SYNC_URL, { mode: mode }).then(function(res) {
-                if (!res || !res.success) { toast((res && res.error) ? res.error : 'No se pudo iniciar', 'error'); return; }
-                wasRunning = true;
-                toast(res.message || 'Sincronización iniciada', res.worker_started ? 'success' : 'info');
-                var start = document.getElementById('cve-start-btn');
-                var rebuild = document.getElementById('cve-rebuild-btn');
-                var sources = document.getElementById('cve-sources-btn');
-                var cancel = document.getElementById('cve-cancel-btn');
-                var progress = document.getElementById('cve-sync-progress-wrap');
-                if (start) start.classList.add('hidden');
-                if (rebuild) rebuild.classList.add('hidden');
-                if (sources) sources.classList.add('hidden');
-                if (cancel) cancel.classList.remove('hidden');
-                if (progress) progress.classList.remove('hidden');
+            api('POST', SYNC_URL, { mode: mode, stream: true }).then(function(res) {
+                if (!res || !res.success) {
+                    // Si ya había un job activo, lo retomamos en vez de fallar.
+                    var err = (res && res.error) ? String(res.error) : '';
+                    if (err.indexOf('Ya hay una sincronización') >= 0) {
+                        setRunningUi(true);
+                        streamLoop();
+                        return;
+                    }
+                    toast(err || 'No se pudo iniciar', 'error');
+                    return;
+                }
+                toast(res.message || 'Sincronización iniciada', 'success');
+                setRunningUi(true);
                 var step = document.getElementById('cve-step-btn');
-                if (step && !res.worker_started) step.classList.remove('hidden');
-                pollCveSync();
+                if (step) {
+                    step.textContent = 'Continuar';
+                    step.setAttribute('onclick', 'stepCveSync()');
+                    step.classList.add('hidden');
+                }
+                stopped = false;
+                streamRetries = 0;
+                streamLoop();
             }).catch(function() { toast('Error de conexión', 'error'); });
         };
 
+        window.resumeCveSync = function() {
+            stopped = false;
+            streamRetries = 0;
+            window.startCveSync('auto');
+        };
+
         window.cancelCveSync = function() {
-            api('POST', CANCEL_URL, {}).then(function(res) {
+            stopped = true;
+            api('POST', CANCEL_URL, {}).then(function() {
                 toast('Sincronización cancelada', 'success');
                 setTimeout(function() { location.reload(); }, 800);
             }).catch(function() { toast('Error de conexión', 'error'); });
@@ -424,16 +520,192 @@ foreach ($flashData as $type => $msg):
         window.stepCveSync = function() {
             var btn = document.getElementById('cve-step-btn');
             if (btn) { btn.disabled = true; btn.textContent = 'Procesando…'; }
-            api('POST', STEP_URL, {}).then(function(res) {
+            api('POST', STEP_URL, { seconds: 30 }).then(function(res) {
+                var r = (res && res.result) ? res.result : {};
+                if (r && r.state) { applyState(r.state); }
                 if (!res || !res.success) {
-                    toast((res && res.error) ? res.error : 'No se pudo procesar el tramo', 'error');
+                    var err = (res && res.error) || (r && r.error) || '';
+                    if (err) {
+                        showError(err, (res && res.error_id) || (r && r.error_id) || 0);
+                        return;
+                    }
+                    toast('No se pudo procesar el tramo', 'error');
+                    return;
                 }
-                pollCveSync();
+                if (r.done) {
+                    toast('Sincronización completada', 'success');
+                    setTimeout(function() { location.reload(); }, 900);
+                    return;
+                }
+                streamLoop();
             }).catch(function() { toast('Error de conexión', 'error'); })
               .finally(function() {
-                  if (btn) { btn.disabled = false; btn.textContent = 'Continuar'; }
+                  if (btn) { btn.disabled = false; }
+                  var step = document.getElementById('cve-step-btn');
+                  if (step && step.textContent === 'Procesando…') step.textContent = 'Continuar';
               });
         };
+
+        function handleEvent(evt) {
+            if (!evt || !evt.type) return null;
+            if (evt.type === 'start') { applyState(evt.state); return null; }
+            if (evt.type === 'progress') {
+                applyState({
+                    processed: evt.processed,
+                    total: evt.total,
+                    message: evt.message,
+                    phase: evt.phase,
+                    status: 'running'
+                });
+                return null;
+            }
+            if (evt.type === 'phase') {
+                applyState({ processed: evt.processed, total: evt.total, message: evt.message, phase: evt.phase, status: 'running' });
+                return null;
+            }
+            if (evt.type === 'partial') { applyState(evt.state); return 'partial'; }
+            if (evt.type === 'done') { applyState(evt.state); return 'done'; }
+            if (evt.type === 'idle') {
+                applyState(evt.state);
+                if (evt.state && evt.state.status === 'error') {
+                    showError(evt.state.message || '', 0);
+                    return 'error';
+                }
+                return 'idle';
+            }
+            if (evt.type === 'error') {
+                showError(evt.error || evt.message || '', evt.error_id || 0);
+                return 'error';
+            }
+            return null;
+        }
+
+        function streamOnce() {
+            return fetch(STREAM_URL, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'X-CSRF-Token': getCsrfToken()
+                },
+                credentials: 'same-origin',
+                cache: 'no-store',
+                body: '{}'
+            }).then(function(res) {
+                if (res.status === 401) {
+                    window.location.href = (window.APP_URL || '') + '/admin/login';
+                    throw new Error('No autorizado');
+                }
+                if (!res.ok) {
+                    throw new Error('HTTP ' + res.status);
+                }
+                if (!res.body || !res.body.getReader) {
+                    return 'fallback';
+                }
+                var reader = res.body.getReader();
+                var decoder = new TextDecoder('utf-8');
+                var buffer = '';
+                var outcome = 'interrupted';
+
+                function pump() {
+                    return reader.read().then(function(r) {
+                        if (r.done) { return outcome; }
+                        buffer += decoder.decode(r.value, { stream: true });
+                        var idx;
+                        while ((idx = buffer.indexOf('\n')) >= 0) {
+                            var line = buffer.slice(0, idx).trim();
+                            buffer = buffer.slice(idx + 1);
+                            if (!line) { continue; }
+                            var evt;
+                            try { evt = JSON.parse(line); } catch (e) { continue; }
+                            var result = handleEvent(evt);
+                            if (result) {
+                                outcome = result;
+                                try { reader.cancel(); } catch (e) {}
+                                return outcome;
+                            }
+                        }
+                        return pump();
+                    });
+                }
+                return pump();
+            });
+        }
+
+        function streamLoop() {
+            if (stopped) { return; }
+            streaming = true;
+            streamOnce().then(function(outcome) {
+                if (outcome === 'done') {
+                    stopped = true;
+                    streaming = false;
+                    toast('Sincronización completada', 'success');
+                    setTimeout(function() { location.reload(); }, 1200);
+                    return;
+                }
+                if (outcome === 'error') { stopped = true; streaming = false; setRunningUi(false); showResumeButton('Reanudar'); return; }
+                if (outcome === 'idle') { stopped = true; streaming = false; setTimeout(function() { location.reload(); }, 800); return; }
+                if (outcome === 'fallback') { stepFallback(); return; }
+                if (outcome === 'partial') {
+                    setTimeout(streamLoop, 150);
+                    return;
+                }
+                // Conexión cortada por el hosting: reconectar y seguir desde el cursor.
+                streamRetries++;
+                if (streamRetries > 6) {
+                    streaming = false;
+                    toast('La descarga se ha interrumpido. Pulsa «Reanudar» para continuar.', 'error');
+                    showResumeButton('Reanudar');
+                    return;
+                }
+                var wait = Math.min(15000, 1000 * Math.pow(2, streamRetries));
+                setTimeout(streamLoop, wait);
+            }).catch(function() {
+                streamRetries++;
+                if (streamRetries > 6) {
+                    streaming = false;
+                    toast('La descarga se ha interrumpido. Pulsa «Reanudar» para continuar.', 'error');
+                    showResumeButton('Reanudar');
+                    return;
+                }
+                setTimeout(streamLoop, Math.min(15000, 500 * Math.pow(2, streamRetries)));
+            });
+        }
+
+        function stepFallback() {
+            if (stopped) { return; }
+            api('POST', STEP_URL, { seconds: 30 }).then(function(res) {
+                var r = (res && res.result) ? res.result : {};
+                if (r && r.state) { applyState(r.state); }
+                if (!res || !res.success) {
+                    var err = (res && res.error) || (r && r.error) || '';
+                    if (err) {
+                        stopped = true;
+                        streaming = false;
+                        showError(err, (res && res.error_id) || (r && r.error_id) || 0);
+                        showResumeButton('Reanudar');
+                        return;
+                    }
+                }
+                if (r.done) {
+                    stopped = true;
+                    streaming = false;
+                    toast('Sincronización completada', 'success');
+                    setTimeout(function() { location.reload(); }, 1000);
+                    return;
+                }
+                streamRetries = 0;
+                setTimeout(stepFallback, 200);
+            }).catch(function() {
+                streamRetries++;
+                if (streamRetries > 6) {
+                    streaming = false;
+                    showResumeButton('Reanudar');
+                    return;
+                }
+                setTimeout(stepFallback, Math.min(15000, 1500 * streamRetries));
+            });
+        }
 
         function pollCveSync() {
             if (pollTimer) clearTimeout(pollTimer);
@@ -441,46 +713,35 @@ foreach ($flashData as $type => $msg):
                 if (!res || !res.state) return;
                 var s = res.state;
                 var running = s.status === 'queued' || s.status === 'running';
-                var processed = parseInt(s.processed || 0, 10);
-                var total = parseInt(s.total || 0, 10);
-                var pct = total > 0 ? Math.min(100, Math.round(processed / total * 100)) : 0;
-                var bar = document.getElementById('cve-sync-progress');
-                var counts = document.getElementById('cve-sync-counts');
-                var msg = document.getElementById('cve-sync-message');
-                var badge = document.getElementById('cve-sync-status');
-                var step = document.getElementById('cve-step-btn');
+                applyState(s);
                 var start = document.getElementById('cve-start-btn');
                 var rebuild = document.getElementById('cve-rebuild-btn');
                 var sources = document.getElementById('cve-sources-btn');
                 var cancel = document.getElementById('cve-cancel-btn');
                 var progress = document.getElementById('cve-sync-progress-wrap');
-                if (bar) bar.style.width = pct + '%';
-                if (counts) counts.textContent = processed.toLocaleString('es-ES') + (total > 0 ? ' / ' + total.toLocaleString('es-ES') : '') + ' CVEs procesados';
-                if (msg) msg.textContent = s.message || (running ? 'Sincronizando…' : 'Listo.');
-                if (badge) badge.textContent = running ? 'Sincronizando' : (s.status || 'idle');
-                if (progress) progress.classList.toggle('hidden', !running);
                 if (start) start.classList.toggle('hidden', running);
                 if (rebuild) rebuild.classList.toggle('hidden', running);
                 if (sources) sources.classList.toggle('hidden', running);
                 if (cancel) cancel.classList.toggle('hidden', !running);
-                if (step) {
+                if (progress) progress.classList.toggle('hidden', !running && s.status !== 'error');
+                if (running && !streaming) {
                     var updated = parseDbTime(s.updated_at || '');
-                    var stale = !updated || (Date.now() - updated) > 30000 || (s.message || '').indexOf('No se pudo lanzar') >= 0;
-                    step.classList.toggle('hidden', !(running && stale));
+                    var stale = !updated || (Date.now() - updated) > 30000;
+                    if (stale) { showResumeButton('Continuar'); }
                 }
-                if (running) {
-                    wasRunning = true;
-                    pollTimer = setTimeout(pollCveSync, 2500);
-                } else if (wasRunning) {
-                    wasRunning = false;
-                    setTimeout(function() { location.reload(); }, 1200);
+                if (running || streaming) {
+                    pollTimer = setTimeout(pollCveSync, 5000);
                 }
             }).catch(function() {
-                pollTimer = setTimeout(pollCveSync, 5000);
+                if (wasRunning || streaming) {
+                    pollTimer = setTimeout(pollCveSync, 10000);
+                }
             });
         }
 
-        if (wasRunning) pollCveSync();
+        if (wasRunning) {
+            pollCveSync();
+        }
     })();
     </script>
     <?php endif; ?>

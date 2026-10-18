@@ -42,6 +42,7 @@ class Module_Cve extends BaseModule
             ['method' => 'GET',  'pattern' => 'report/{id}/csv',  'handler' => [$this, 'reportCsv']],
             ['method' => 'GET',  'pattern' => 'report/{id}',      'handler' => [$this, 'reportView']],
             ['method' => 'POST', 'pattern' => 'sync',            'handler' => [$this, 'triggerSync']],
+            ['method' => 'POST', 'pattern' => 'stream',          'handler' => [$this, 'streamSync']],
             ['method' => 'POST', 'pattern' => 'step',            'handler' => [$this, 'stepSync']],
             ['method' => 'POST', 'pattern' => 'cancel',          'handler' => [$this, 'cancelSync']],
             ['method' => 'POST', 'pattern' => 'groups/save',     'handler' => [$this, 'saveGroup']],
@@ -489,17 +490,145 @@ class Module_Cve extends BaseModule
 
         try {
             $raw = file_get_contents('php://input');
-            $input = json_decode((string)$raw, true);
+            $input = is_string($raw) && $raw !== '' ? json_decode($raw, true) : null;
             $mode = null;
             if (is_array($input) && isset($input['mode'])) {
                 $mode = (string)$input['mode'];
             } elseif (isset($_POST['mode'])) {
                 $mode = (string)$_POST['mode'];
             }
-            json_response((new CveSync())->start($mode));
+            // stream=1: el propio navegador procesará los tramos (descarga
+            // continua); no lanzamos el worker HTTP para evitar dos procesos
+            // compitiendo por el mismo token.
+            $stream = (is_array($input) && !empty($input['stream'])) || !empty($_POST['stream']);
+            json_response((new CveSync())->start($mode, !$stream));
         } catch (Throwable $e) {
             json_response(['success' => false, 'error' => $e->getMessage()], 500);
         }
+    }
+
+    /**
+     * Descarga continua por web (sin cron ni loopback).
+     *
+     * Emite NDJSON con el progreso y procesa tramos hasta que el job termina
+     * o se agota la ventana de esta petición (~45 s). Si el hosting corta la
+     * conexión, el navegador reconecta y el job sigue desde el último cursor.
+     */
+    public function streamSync(array $params = []): void
+    {
+        // Autenticación propia para poder responder NDJSON (y 401) en vez de
+        // una redirección HTML si la sesión caduca a mitad de la descarga.
+        if (!Auth::check() || !Auth::isAdmin()) {
+            $this->ndjsonStart();
+            http_response_code(401);
+            $this->ndjsonEmit(['type' => 'error', 'error' => 'Sesión expirada. Vuelve a iniciar sesión.']);
+            exit;
+        }
+        Csrf::validateOrFail();
+        @set_time_limit(0);
+        release_session_lock();
+
+        $sync = new CveSync();
+        $state = $sync->state();
+
+        $seconds = (int)($_GET['seconds'] ?? $_POST['seconds'] ?? CVE_STEP_SECONDS);
+        $seconds = max(10, min((int)CVE_STEP_SECONDS_MAX, $seconds));
+
+        $this->ndjsonStart();
+
+        if (
+            !$state
+            || !in_array((string)($state['status'] ?? ''), ['queued', 'running'], true)
+            || empty($state['token'])
+        ) {
+            $this->ndjsonEmit([
+                'type'  => 'idle',
+                'state' => $sync->publicState($state),
+            ]);
+            exit;
+        }
+
+        $token = (string)$state['token'];
+        $this->ndjsonEmit(['type' => 'start', 'state' => $sync->publicState($state)]);
+
+        $deadline = microtime(true) + $seconds;
+        $emittedError = false;
+
+        try {
+            while (microtime(true) < $deadline) {
+                $remaining = max(1.0, $deadline - microtime(true));
+                $chunk = $sync->runChunk(
+                    $token,
+                    $remaining,
+                    function (array $payload) use (&$emittedError): void {
+                        if (($payload['type'] ?? '') === 'error') {
+                            $emittedError = true;
+                        }
+                        $this->ndjsonEmit($payload);
+                    }
+                );
+
+                if (!empty($chunk['error'])) {
+                    if (!$emittedError) {
+                        $this->ndjsonEmit([
+                            'type'     => 'error',
+                            'error'    => (string)$chunk['error'],
+                            'error_id' => (int)($chunk['error_id'] ?? 0),
+                        ]);
+                    }
+                    exit;
+                }
+
+                if (!empty($chunk['done'])) {
+                    $fresh = $sync->state();
+                    $this->ndjsonEmit([
+                        'type'   => 'done',
+                        'state'  => $sync->publicState($fresh),
+                        'counts' => $sync->counts(),
+                    ]);
+                    exit;
+                }
+
+                $fresh = $sync->state();
+                if ($fresh === null || !hash_equals((string)($fresh['token'] ?? ''), $token)) {
+                    $this->ndjsonEmit(['type' => 'done', 'state' => $sync->publicState($fresh)]);
+                    exit;
+                }
+            }
+
+            $this->ndjsonEmit([
+                'type'            => 'partial',
+                'state'           => $sync->publicState($sync->state()),
+                'resume_after_ms' => 200,
+            ]);
+            exit;
+        } catch (Throwable $e) {
+            $this->ndjsonEmit(['type' => 'error', 'error' => $e->getMessage()]);
+            exit;
+        }
+    }
+
+    private function ndjsonStart(): void
+    {
+        header('Content-Type: application/x-ndjson; charset=utf-8');
+        header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+        header('X-Accel-Buffering: no');
+        @ini_set('zlib.output_compression', '0');
+        @ini_set('output_buffering', '0');
+        @ini_set('implicit_flush', '1');
+        while (ob_get_level() > 0) {
+            @ob_end_flush();
+        }
+        @ob_implicit_flush(true);
+    }
+
+    private function ndjsonEmit(array $payload): void
+    {
+        echo json_encode(
+            $payload,
+            JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE
+        ) . "\n";
+        @flush();
     }
 
     public function syncStatus(array $params = []): void
@@ -570,12 +699,44 @@ class Module_Cve extends BaseModule
         release_session_lock();
 
         try {
+            $raw = file_get_contents('php://input');
+            $input = is_string($raw) && $raw !== '' ? json_decode($raw, true) : null;
+            $seconds = 0;
+            if (is_array($input) && isset($input['seconds'])) {
+                $seconds = (int)$input['seconds'];
+            } elseif (isset($_POST['seconds'])) {
+                $seconds = (int)$_POST['seconds'];
+            }
+
             $sync = new CveSync();
             $state = $sync->state();
             if (!$state || !in_array((string)$state['status'], ['queued', 'running'], true) || empty($state['token'])) {
                 json_response(['success' => false, 'error' => 'No hay una sincronización activa.']);
             }
-            $result = $sync->runChunk((string)$state['token']);
+
+            $token = (string)$state['token'];
+            $result = null;
+
+            if ($seconds > 0) {
+                // Varios tramos en la misma petición (respaldo sin streaming).
+                $deadline = microtime(true) + max(5, min((int)CVE_STEP_SECONDS_MAX, $seconds));
+                do {
+                    $result = $sync->runChunk($token, max(1.0, $deadline - microtime(true)));
+                    if (!empty($result['done']) || !empty($result['error'])) {
+                        break;
+                    }
+                    $state = $sync->state();
+                } while (
+                    microtime(true) < $deadline
+                    && $state !== null
+                    && in_array((string)($state['status'] ?? ''), ['queued', 'running'], true)
+                    && hash_equals((string)($state['token'] ?? ''), $token)
+                );
+            } else {
+                $result = $sync->runChunk($token);
+            }
+
+            $result = is_array($result) ? $result : ['done' => false];
             unset($result['token'], $result['base_url']);
             if (isset($result['state']) && is_array($result['state'])) {
                 $result['state'] = $sync->publicState($result['state']);
@@ -583,6 +744,8 @@ class Module_Cve extends BaseModule
             json_response([
                 'success' => empty($result['error']),
                 'result'  => $result,
+                'error'   => $result['error'] ?? null,
+                'error_id'=> $result['error_id'] ?? 0,
             ]);
         } catch (Throwable $e) {
             json_response(['success' => false, 'error' => $e->getMessage()], 500);

@@ -15,6 +15,14 @@ class CveClient
     private string $kevFallbackUrl;
     private string $epssUrl;
     private int $timeout;
+    private int $rateWindow;
+    private int $rateMax;
+    private int $maxRetries;
+    private int $lastNvdAttempts = 0;
+
+    /** Marcas de tiempo (microtime) de las últimas peticiones a NVD. */
+    private array $nvdRequestTimes = [];
+    private bool $throttlePrimed = false;
 
     public function __construct(array $config = [])
     {
@@ -25,6 +33,9 @@ class CveClient
         $this->kevFallbackUrl = (string)($config['kev_fallback_url'] ?? CVE_KEV_FALLBACK_URL);
         $this->epssUrl = (string)($config['epss_url'] ?? CVE_EPSS_CSV_URL);
         $this->timeout = (int)($config['timeout'] ?? 45);
+        $this->rateWindow = max(1, (int)($config['rate_window'] ?? CVE_NVD_RATE_WINDOW));
+        $this->rateMax = max(0, (int)($config['rate_max'] ?? CVE_NVD_RATE_MAX));
+        $this->maxRetries = max(1, (int)($config['max_retries'] ?? CVE_SYNC_MAX_RETRIES));
     }
 
     /**
@@ -45,6 +56,9 @@ class CveClient
             'epss_url'        => (string)setting_get('cve_epss_url', CVE_EPSS_CSV_URL),
             'auto_sync'       => (int)setting_get('cve_auto_sync', 1),
             'interval_hours'  => (int)setting_get('cve_interval_hours', 24),
+            'rate_window'     => (int)CVE_NVD_RATE_WINDOW,
+            'rate_max'        => (int)CVE_NVD_RATE_MAX,
+            'max_retries'     => (int)CVE_SYNC_MAX_RETRIES,
         ];
     }
 
@@ -56,6 +70,118 @@ class CveClient
     public function hasApiKey(): bool
     {
         return $this->nvdKey !== '';
+    }
+
+    /**
+     * Peticiones permitidas por ventana según las normas de NVD API 2.0:
+     * 5/30 s sin API key y 50/30 s con API key (o el override configurado).
+     */
+    public function effectiveRateLimit(): int
+    {
+        return $this->rateMax > 0 ? $this->rateMax : ($this->hasApiKey() ? 50 : 5);
+    }
+
+    public function rateWindowSeconds(): int
+    {
+        return $this->rateWindow;
+    }
+
+    /**
+     * Espera lo necesario para no superar el límite de NVD en una ventana
+     * deslizante (no un sleep fijo por petición). La primera petición de cada
+     * proceso deja pasar el hueco mínimo entre peticiones para no encadenar
+     * ventanas entre peticiones HTTP distintas (descarga continua web).
+     */
+    private function throttleNvd(bool $prime = false): void
+    {
+        $limit = max(1, $this->effectiveRateLimit());
+        $window = $this->rateWindow;
+
+        if (!$this->throttlePrimed) {
+            $this->throttlePrimed = true;
+            if ($prime) {
+                $gap = $window / $limit;
+                if ($gap > 0) {
+                    usleep((int)($gap * 1000000));
+                }
+            }
+        }
+
+        $filter = static function (array $times, float $now) use ($window): array {
+            return array_values(array_filter(
+                $times,
+                static fn(float $t): bool => ($now - $t) < $window
+            ));
+        };
+
+        $now = microtime(true);
+        $this->nvdRequestTimes = $filter($this->nvdRequestTimes, $now);
+
+        while (count($this->nvdRequestTimes) >= $limit) {
+            $oldest = min($this->nvdRequestTimes);
+            $wait = $window - ($now - $oldest);
+            if ($wait <= 0) {
+                break;
+            }
+            usleep((int)(($wait + 0.05) * 1000000));
+            $now = microtime(true);
+            $this->nvdRequestTimes = $filter($this->nvdRequestTimes, $now);
+        }
+
+        $this->nvdRequestTimes[] = microtime(true);
+    }
+
+    /**
+     * GET a NVD con reintentos y backoff. Respeta Retry-After en 429/503 y
+     * limpia la ventana de rate limit cuando NVD pide esperar.
+     */
+    private function nvdGetWithRetries(string $url, array $headers, int $timeout = 120): array
+    {
+        $attempts = max(1, $this->maxRetries);
+        $res = ['http' => 0, 'body' => '', 'headers' => [], 'error' => null];
+        $slept = 0;
+
+        for ($attempt = 1; $attempt <= $attempts; $attempt++) {
+            $this->lastNvdAttempts = $attempt;
+            $this->throttleNvd(true);
+            try {
+                $res = $this->httpGet($url, $headers, $timeout, false);
+            } catch (Throwable $e) {
+                $res = [
+                    'http'    => 0,
+                    'body'    => '',
+                    'headers' => [],
+                    'error'   => $e->getMessage(),
+                ];
+            }
+
+            $message = (string)($res['error'] ?? '');
+            $permanent = $res['http'] === 0
+                && (str_contains($message, 'extensión cURL') || str_contains($message, 'URL de NVD no válida'));
+
+            $retryable = !$permanent && ($res['http'] === 429 || $res['http'] === 0 || $res['http'] >= 500);
+            if (!$retryable || $attempt === $attempts) {
+                break;
+            }
+
+            $retryAfter = (int)($res['headers']['retry-after'] ?? 0);
+            if ($res['http'] === 429) {
+                // La IP del hosting puede compartir cuota: reiniciamos la ventana.
+                $this->nvdRequestTimes = [];
+            }
+
+            // Tope global de espera para no agotar el tiempo de la petición web.
+            $remainingBudget = 45 - $slept;
+            if ($remainingBudget <= 0) {
+                break;
+            }
+            $backoff = $retryAfter > 0 ? $retryAfter : (10 * $attempt);
+            $backoff = max(5, min(45, $backoff, $remainingBudget));
+            sleep($backoff);
+            $slept += $backoff;
+        }
+
+        return $res;
     }
 
     /**
@@ -135,14 +261,18 @@ class CveClient
             $headers[] = 'apiKey: ' . $this->nvdKey;
         }
 
-        $res = $this->httpGet($url, $headers, 120, false);
-        for ($attempt = 1; $attempt <= 2 && ($res['http'] === 429 || $res['http'] >= 500); $attempt++) {
-            sleep(15 * $attempt);
-            $res = $this->httpGet($url, $headers, 120, false);
-        }
+        $res = $this->nvdGetWithRetries($url, $headers, 120);
         if ($res['http'] !== 200) {
+            $attemptsUsed = max(1, $this->lastNvdAttempts);
+            if ($res['http'] === 0) {
+                $detail = trim((string)($res['error'] ?? ''));
+                throw new RuntimeException(
+                    'No se pudo conectar con NVD tras ' . $attemptsUsed . ' intento(s): '
+                    . ($detail !== '' ? $detail : 'error de red')
+                );
+            }
             $detail = trim(strip_tags(substr((string)$res['body'], 0, 500)));
-            $message = 'NVD respondió HTTP ' . $res['http'];
+            $message = 'NVD respondió HTTP ' . $res['http'] . ' tras ' . $attemptsUsed . ' intento(s)';
             if ($res['http'] === 403 || $res['http'] === 401) {
                 $message .= ' (API key inválida o sin permisos)';
             } elseif ($res['http'] === 429) {
@@ -191,6 +321,7 @@ class CveClient
             $headers[] = 'apiKey: ' . $this->nvdKey;
         }
 
+        $this->throttleNvd();
         $res = $this->httpGet($url, $headers, 45, false);
         if ($res['http'] !== 200) {
             throw new RuntimeException('NVD CPE respondió HTTP ' . $res['http'] . '.');

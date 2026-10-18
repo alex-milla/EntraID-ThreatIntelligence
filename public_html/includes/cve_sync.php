@@ -155,13 +155,19 @@ class CveSync
         $windowStart = null;
         $windowEnd = null;
 
-        if ($state && in_array((string)$state['status'], ['queued', 'running'], true)) {
+        $currentStatus = $state !== null ? (string)($state['status'] ?? '') : '';
+        if ($state && in_array($currentStatus, ['queued', 'running', 'error'], true)) {
             $lastUpdate = $this->dbTime($state['updated_at'] ?? null);
-            if ($lastUpdate > 0 && (time() - $lastUpdate) < (int)CVE_SYNC_STALE) {
+            if ($currentStatus !== 'error' && $lastUpdate > 0 && (time() - $lastUpdate) < (int)CVE_SYNC_STALE) {
                 return ['success' => false, 'error' => 'Ya hay una sincronización en curso.'];
             }
-            // Reanudar el mismo modo/fase en vez de empezar de cero.
-            if ((string)($state['mode'] ?? '') === $mode && (string)($state['phase'] ?? '') === 'nvd') {
+            // Reanudar el mismo modo/fase en vez de empezar de cero. También
+            // tras un error reanudable (429, timeout, 5xx) para no repetir la
+            // descarga completa desde el principio.
+            $statePhase = (string)($state['phase'] ?? '');
+            $canResumePhase = ($statePhase === 'nvd' && (int)($state['cursor'] ?? 0) > 0)
+                || in_array($statePhase, ['kev', 'epss'], true);
+            if ((string)($state['mode'] ?? '') === $mode && $canResumePhase) {
                 $resume = true;
                 $cursor = (int)($state['cursor'] ?? 0);
                 $total = (int)($state['total'] ?? 0);
@@ -210,8 +216,11 @@ class CveSync
 
         $token = bin2hex(random_bytes(32));
         $baseUrl = $this->baseUrl();
-        $pageSize = max(1, min(2000, (int)($cfg['nvd_page_size'] ?? CVE_NVD_PAGE_SIZE)));
+        $pageSize = $this->resolvePageSize($cfg);
         $initialPhase = $mode === 'kev' ? 'kev' : 'nvd';
+        if ($resume && in_array((string)($state['phase'] ?? ''), ['kev', 'epss'], true)) {
+            $initialPhase = (string)$state['phase'];
+        }
 
         // Guardar el tamaño de página elegido para este job.
         setting_set('cve_job_page_size', (string)$pageSize);
@@ -284,13 +293,15 @@ class CveSync
      * Ejecuta una sincronización completa o reanuda la activa desde cron/CLI.
      *
      * No lanza el worker HTTP: procesa los tramos en el propio proceso hasta
-     * terminar o agotar $maxSeconds. Si se agota, deja el job en estado
-     * queued/running para que la siguiente ejecución lo reanude.
+     * terminar o agotar $maxSeconds. $maxSeconds = 0 significa sin límite:
+     * descarga hasta que el catálogo esté completo, respetando el rate limit
+     * de NVD. Si se agota un tope, deja el job reanudable para la siguiente
+     * ejecución.
      */
-    public function runScheduled(?string $mode = null, int $maxSeconds = 240): array
+    public function runScheduled(?string $mode = null, int $maxSeconds = 0): array
     {
-        $maxSeconds = max(30, min(1800, $maxSeconds));
-        $deadline = microtime(true) + $maxSeconds;
+        $maxSeconds = $maxSeconds <= 0 ? 0 : max(30, min(3600, $maxSeconds));
+        $deadline = $maxSeconds > 0 ? microtime(true) + $maxSeconds : PHP_FLOAT_MAX;
 
         $state = $this->state();
         $resumed = $state !== null && in_array((string)($state['status'] ?? ''), ['queued', 'running'], true);
@@ -342,7 +353,9 @@ class CveSync
 
         while (microtime(true) < $deadline) {
             try {
-                $chunk = $this->runChunk($token);
+                // Si hay tope, se lo pasamos al tramo; 0 = sin límite interno.
+                $remaining = $maxSeconds > 0 ? max(1.0, $deadline - microtime(true)) : 0.0;
+                $chunk = $this->runChunk($token, $remaining);
             } catch (Throwable $e) {
                 return [
                     'success' => false,
@@ -445,9 +458,10 @@ class CveSync
         $updatedCount = 0;
         $targetIndex = 0;
 
-        if ($state && in_array((string)$state['status'], ['queued', 'running'], true)) {
+        $currentStatus = $state !== null ? (string)($state['status'] ?? '') : '';
+        if ($state && in_array($currentStatus, ['queued', 'running', 'error'], true)) {
             $lastUpdate = $this->dbTime($state['updated_at'] ?? null);
-            if ($lastUpdate > 0 && (time() - $lastUpdate) < (int)CVE_SYNC_STALE) {
+            if ($currentStatus !== 'error' && $lastUpdate > 0 && (time() - $lastUpdate) < (int)CVE_SYNC_STALE) {
                 return ['success' => false, 'error' => 'Hay una sincronización en curso. Inténtalo cuando termine.'];
             }
             if (
@@ -469,7 +483,7 @@ class CveSync
         $cfg = CveClient::config();
         $token = bin2hex(random_bytes(32));
         $baseUrl = $this->baseUrl();
-        $pageSize = max(1, min(2000, (int)($cfg['nvd_page_size'] ?? CVE_NVD_PAGE_SIZE)));
+        $pageSize = $this->resolvePageSize($cfg);
         setting_set('cve_job_page_size', (string)$pageSize);
 
         CveDatabase::query(
@@ -727,7 +741,7 @@ class CveSync
     /**
      * Procesa un tramo del job. Devuelve done/token/base_url para el worker.
      */
-    public function runChunk(string $token): array
+    public function runChunk(string $token, ?float $budgetSeconds = null, ?callable $onProgress = null): array
     {
         $state = $this->state();
         if (!$state || !hash_equals((string)($state['token'] ?? ''), $token)) {
@@ -754,11 +768,11 @@ class CveSync
         }
 
         $cfg = CveClient::config();
-        $pageSize = max(1, min(2000, (int)($cfg['nvd_page_size'] ?? CVE_NVD_PAGE_SIZE)));
+        $pageSize = $this->resolvePageSize($cfg);
         $this->minCvss = max(0.0, min(10.0, (float)($cfg['min_cvss'] ?? 0)));
         $jobPageSize = (int)(setting_get('cve_job_page_size', (string)$pageSize));
-        if ($jobPageSize >= 1 && $jobPageSize <= 2000) {
-            $pageSize = $jobPageSize;
+        if ($jobPageSize >= 1 && $jobPageSize <= (int)CVE_NVD_MAX_PAGE_SIZE) {
+            $pageSize = $this->clampPageSize($jobPageSize);
         }
 
         $this->watchlistMap = $this->watchlistCpeMap();
@@ -772,8 +786,8 @@ class CveSync
             }
         }
 
-        $deadline = microtime(true) + (float)CVE_SYNC_BUDGET;
-        $delay = $this->client()->hasApiKey() ? 0.6 : 6.0;
+        $budget = $budgetSeconds === null ? (float)CVE_SYNC_BUDGET : (float)$budgetSeconds;
+        $deadline = $budget > 0 ? microtime(true) + $budget : PHP_FLOAT_MAX;
 
         try {
             while (microtime(true) < $deadline) {
@@ -793,37 +807,58 @@ class CveSync
                 }
 
                 if ((string)$state['phase'] === 'kev') {
+                    $kevStatus = 'ok';
                     try {
                         $kev = $this->syncKev();
                         $message = 'KEV actualizado: ' . number_format((int)$kev['count']) . ' CVEs'
                             . (!empty($kev['version']) ? ' (catálogo ' . $kev['version'] . ')' : '')
                             . ' · fuente: ' . ($kev['source'] ?? 'cisa') . '.';
+                        $kevRecords = (int)$kev['count'];
                     } catch (Throwable $e) {
                         $message = 'KEV no disponible: ' . substr($e->getMessage(), 0, 300);
+                        $kevStatus = 'warning';
+                        $kevRecords = 0;
                     }
+                    $this->logEvent('kev', $kevStatus, $kevRecords, $kevStatus === 'ok' ? null : $message, (string)($state['mode'] ?? ''));
                     $this->updateState(['phase' => 'epss', 'message' => $message], $token);
+                    $this->emitProgress($onProgress, [
+                        'type'      => 'phase',
+                        'phase'     => 'epss',
+                        'message'   => $message,
+                        'processed' => (int)$state['processed'],
+                        'total'     => (int)$state['total'],
+                        'cursor'    => (int)$state['cursor'],
+                    ]);
                     continue;
                 }
 
                 if ((string)$state['phase'] === 'epss') {
                     $kevMessage = (string)($state['message'] ?? '');
+                    $epssStatus = 'ok';
                     try {
                         $epss = $this->syncEpss();
                         $epssMessage = 'EPSS actualizado: ' . number_format((int)$epss['count'])
                             . ' CVEs (score ' . $epss['score_date'] . ').';
+                        $epssRecords = (int)$epss['count'];
                     } catch (Throwable $e) {
                         $epssMessage = 'EPSS no disponible: ' . substr($e->getMessage(), 0, 300);
+                        $epssStatus = 'warning';
+                        $epssRecords = 0;
                     }
+                    $this->logEvent('epss', $epssStatus, $epssRecords, $epssStatus === 'ok' ? null : $epssMessage, (string)($state['mode'] ?? ''));
                     $finalMessage = trim($kevMessage . ' ' . $epssMessage);
                     $this->updateState(['phase' => 'done', 'message' => $finalMessage], $token);
                     $this->finish((int)$state['processed'], $token, $finalMessage);
+                    $this->emitProgress($onProgress, [
+                        'type'      => 'phase',
+                        'phase'     => 'done',
+                        'message'   => $finalMessage,
+                        'processed' => (int)$state['processed'],
+                        'total'     => (int)$state['total'],
+                        'cursor'    => (int)$state['cursor'],
+                    ]);
                     return ['done' => true, 'state' => $this->state()];
                 }
-
-                if (microtime(true) + $delay >= $deadline) {
-                    break;
-                }
-                usleep((int)($delay * 1000000));
 
                 $mode = (string)($state['mode'] ?? 'full');
                 $pubStart = ($mode === 'recent') ? ($state['window_start'] ?? null) : null;
@@ -929,6 +964,17 @@ class CveSync
                     'message'      => $message,
                 ], $token);
 
+                $this->emitProgress($onProgress, [
+                    'type'      => 'progress',
+                    'phase'     => $phase,
+                    'cursor'    => $cursor,
+                    'total'     => $total,
+                    'processed' => $processed,
+                    'inserted'  => $inserted,
+                    'updated'   => $updated,
+                    'message'   => $message,
+                ]);
+
                 if ($done) {
                     $this->finish($processed, $token);
                     return ['done' => true, 'state' => $this->state()];
@@ -944,13 +990,37 @@ class CveSync
             ];
         } catch (Throwable $e) {
             $message = substr($e->getMessage(), 0, 1000);
+            $stateNow = $this->state();
+            $errorId = $this->logEvent(
+                'nvd',
+                'error',
+                (int)($stateNow['processed'] ?? 0),
+                $message,
+                (string)($stateNow['mode'] ?? '')
+            );
+            $display = $errorId > 0 ? 'Error #' . $errorId . ': ' . $message : $message;
             CveDatabase::query(
                 "UPDATE cve_sync_state
                  SET status = 'error', message = ?, finished_at = datetime('now'), updated_at = datetime('now')
                  WHERE id = 1 AND token = ?",
-                [$message, $token]
+                [$display, $token]
             );
-            return ['done' => true, 'error' => $message, 'state' => $this->state()];
+            $this->emitProgress($onProgress, [
+                'type'      => 'error',
+                'error'     => $message,
+                'error_id'  => $errorId,
+                'processed' => (int)($stateNow['processed'] ?? 0),
+                'total'     => (int)($stateNow['total'] ?? 0),
+                'cursor'    => (int)($stateNow['cursor'] ?? 0),
+                'phase'     => (string)($stateNow['phase'] ?? ''),
+                'message'   => $display,
+            ]);
+            return [
+                'done'     => true,
+                'error'    => $message,
+                'error_id' => $errorId,
+                'state'    => $this->state(),
+            ];
         }
     }
 
@@ -1453,6 +1523,13 @@ class CveSync
     {
         $state = $this->state();
         $mode = (string)($state['mode'] ?? '');
+
+        // Registrar el cierre del job en el log visible (una sola vez).
+        if ($state !== null && (string)($state['status'] ?? '') !== 'idle') {
+            $source = $mode === 'backfill' ? 'backfill' : ($mode === 'kev' ? 'kev' : 'nvd');
+            $this->logEvent($source, 'ok', $processed, null, $mode);
+        }
+
         if (in_array($mode, ['full', 'recent', 'incremental'], true)) {
             try {
                 setting_set('cve_catalog_initialized', '1');
@@ -1504,6 +1581,108 @@ class CveSync
             $params[] = $token;
         }
         CveDatabase::query($sql, $params);
+    }
+
+    /**
+     * Escribe una entrada en cve_sync_log y devuelve su id (nº de error).
+     */
+    private function logEvent(string $source, string $status, int $records, ?string $error = null, string $mode = ''): int
+    {
+        try {
+            CveDatabase::query(
+                "INSERT INTO cve_sync_log (source, mode, status, records, error, started_at, finished_at)
+                 VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))",
+                [$source, $mode !== '' ? $mode : null, $status, $records, $error]
+            );
+            return (int)CveDatabase::getInstance()->lastInsertId();
+        } catch (Throwable $e) {
+            return 0;
+        }
+    }
+
+    private function emitProgress(?callable $onProgress, array $payload): void
+    {
+        if ($onProgress === null) {
+            return;
+        }
+        try {
+            $onProgress($payload);
+        } catch (Throwable $e) {
+            // La salida de progreso nunca debe tumbar la sincronización.
+        }
+    }
+
+    /**
+     * Tamaño de página efectivo: setting guardado, migración única a 2000 y
+     * degradación a 1000 si memory_limit es menor de 256 MB.
+     */
+    private function resolvePageSize(array $cfg): int
+    {
+        $configured = (int)($cfg['nvd_page_size'] ?? CVE_NVD_PAGE_SIZE);
+
+        try {
+            if ((string)setting_get('cve_page_size_v278', '0') !== '1') {
+                $configured = (int)CVE_NVD_PAGE_SIZE;
+                setting_set('cve_nvd_page_size', (string)$configured);
+                setting_set('cve_page_size_v278', '1');
+            }
+        } catch (Throwable $e) {
+            // No bloquear el arranque por un fallo de settings.
+        }
+
+        return $this->clampPageSize($configured);
+    }
+
+    private function clampPageSize(int $size): int
+    {
+        $max = defined('CVE_NVD_MAX_PAGE_SIZE') ? (int)CVE_NVD_MAX_PAGE_SIZE : 2000;
+        $size = max(1, min($max, $size));
+        $limit = $this->memoryLimitBytes();
+        $guard = defined('CVE_PAGE_SIZE_MEMORY_GUARD') ? (int)CVE_PAGE_SIZE_MEMORY_GUARD : 268435456;
+        if ($limit > 0 && $limit < $guard) {
+            $size = min($size, 1000);
+        }
+        return $size;
+    }
+
+    private function memoryLimitBytes(): int
+    {
+        $raw = trim((string)ini_get('memory_limit'));
+        if ($raw === '' || $raw === '-1') {
+            return 0;
+        }
+        $unit = strtolower(substr($raw, -1));
+        $value = (float)$raw;
+        return (int)match ($unit) {
+            'g'     => $value * 1073741824,
+            'm'     => $value * 1048576,
+            'k'     => $value * 1024,
+            default => $value,
+        };
+    }
+
+    /**
+     * Información del tamaño de página y del rate limit para Admin → APIs.
+     */
+    public static function pageSizeStatus(): array
+    {
+        $cfg = CveClient::config();
+        $configured = max(1, min((int)CVE_NVD_MAX_PAGE_SIZE, (int)($cfg['nvd_page_size'] ?? CVE_NVD_PAGE_SIZE)));
+
+        $self = new self();
+        $effective = $self->clampPageSize($configured);
+        $memory = $self->memoryLimitBytes();
+        $client = CveClient::fromSettings();
+
+        return [
+            'configured' => $configured,
+            'effective'  => $effective,
+            'memory'     => $memory,
+            'degraded'   => $effective < $configured,
+            'has_key'    => $client->hasApiKey(),
+            'rate_max'   => $client->effectiveRateLimit(),
+            'rate_window'=> $client->rateWindowSeconds(),
+        ];
     }
 
     private function dbTime(?string $value): int

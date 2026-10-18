@@ -580,6 +580,24 @@ class AdminController
             $cveError = $e->getMessage();
         }
 
+        // Log visible de sincronización (errores y cierres) + tamaño efectivo.
+        $cveLog = [];
+        $cvePage = [
+            'configured' => 0,
+            'effective'  => 0,
+            'memory'     => 0,
+            'degraded'   => false,
+            'has_key'    => false,
+            'rate_max'   => 5,
+            'rate_window'=> 30,
+        ];
+        try {
+            $cveLog = CveDatabase::fetchAll("SELECT * FROM cve_sync_log ORDER BY id DESC LIMIT 15");
+            $cvePage = CveSync::pageSizeStatus();
+        } catch (Throwable $e) {
+            // El panel sigue funcionando aunque el log no esté disponible.
+        }
+
         require VIEWS_PATH . '/layout/header.php';
         require VIEWS_PATH . '/layout/sidebar.php';
         require VIEWS_PATH . '/admin/apis.php';

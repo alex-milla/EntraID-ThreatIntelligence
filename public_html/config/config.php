@@ -98,12 +98,21 @@ define('CVE_KEV_URL', 'https://www.cisa.gov/sites/default/files/feeds/known_expl
 define('CVE_KEV_FALLBACK_URL', 'https://raw.githubusercontent.com/cisagov/kev-data/develop/known_exploited_vulnerabilities.json');
 define('CVE_EPSS_CSV_URL', 'https://epss.empiricalsecurity.com/epss_scores-current.csv.gz');
 define('CVE_NVD_API_KEY', $env['NVD_API_KEY'] ?? '');
-define('CVE_NVD_PAGE_SIZE', 1000);
+define('CVE_NVD_PAGE_SIZE', 2000);
 define('CVE_SYNC_BUDGET', 25);
 define('CVE_SYNC_STALE', 180);
 define('CVE_SYNC_WATCHDOG', 900);
 define('CVE_CRON_ACTIVE_GRACE', 45);
 define('CVE_REPORT_MAX_ROWS', 5000);
+// NVD API 2.0: 5 peticiones/30 s sin API key y 50/30 s con API key.
+define('CVE_NVD_RATE_WINDOW', 30);
+define('CVE_NVD_RATE_MAX', 0); // 0 = automático según la API key
+define('CVE_SYNC_MAX_RETRIES', 4);
+define('CVE_NVD_MAX_PAGE_SIZE', 2000);
+define('CVE_PAGE_SIZE_MEMORY_GUARD', 268435456); // <256M => página de 1000
+// Tramos de la descarga continua por web (segundos por petición HTTP).
+define('CVE_STEP_SECONDS', 45);
+define('CVE_STEP_SECONDS_MAX', 90);
 
 // LLM
 define('LLM_PROVIDER', $env['LLM_PROVIDER'] ?? '');

@@ -180,6 +180,8 @@ $cve = is_array($cve ?? null) ? $cve : [];
 $cveCounts = is_array($cveCounts ?? null) ? $cveCounts : [];
 $cveState = is_array($cveState ?? null) ? $cveState : [];
 $cveError = $cveError ?? null;
+$cveLog = is_array($cveLog ?? null) ? $cveLog : [];
+$cvePage = is_array($cvePage ?? null) ? $cvePage : [];
 $cveScope = (string)($cve['scope'] ?? 'full');
 ?>
 <!-- Fuentes públicas de CVEs -->
@@ -206,7 +208,8 @@ $cveScope = (string)($cve['scope'] ?? 'full');
                 <input type="checkbox" name="clear_nvd_key" value="1" class="rounded border-gray-300 text-brand-500 focus:ring-brand-500">
                 Borrar la API key guardada
             </label>
-            <p class="text-xs text-gray-400 mt-1">Sin key: 5 peticiones/30 s. Con key: 50 peticiones/30 s.</p>
+            <p class="text-xs text-gray-400 mt-1">Sin key: 5 peticiones/30 s (≈6 s entre páginas). Con key: 50/30 s (≈0,6 s).</p>
+            <p class="text-xs text-gray-400 mt-1">La primera carga completa baja de ~20 min a ~3-4 min con API key y página de 2.000.</p>
         </div>
         <div>
             <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Alcance de la primera carga</label>
@@ -226,9 +229,20 @@ $cveScope = (string)($cve['scope'] ?? 'full');
             <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Tamaño de página</label>
             <select name="nvd_page_size" class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
                 <?php foreach ([500, 1000, 2000] as $size): ?>
-                    <option value="<?= $size ?>" <?= (int)($cve['nvd_page_size'] ?? 1000) === $size ? 'selected' : '' ?>><?= number_format($size) ?> CVEs/petición</option>
+                    <option value="<?= $size ?>" <?= (int)($cve['nvd_page_size'] ?? 2000) === $size ? 'selected' : '' ?>><?= number_format($size) ?> CVEs/petición<?= $size === 2000 ? ' — recomendado' : '' ?></option>
                 <?php endforeach; ?>
             </select>
+            <?php
+            $cvePageEffective = (int)($cvePage['effective'] ?? 0);
+            $cvePageMemory = (int)($cvePage['memory'] ?? 0);
+            $cveRate = (int)($cvePage['rate_max'] ?? 5) . '/' . (int)($cvePage['rate_window'] ?? 30) . ' s';
+            ?>
+            <p class="text-xs text-gray-400 mt-1">
+                En uso: <?= number_format($cvePageEffective) ?> CVEs/petición · rate limit <?= e($cveRate) ?>
+                <?php if (!empty($cvePage['degraded'])): ?>
+                    <span class="text-amber-600 dark:text-amber-400">(reducido a 1.000 por memory_limit de <?= number_format(max(1, (int)round($cvePageMemory / 1048576))) ?> MB)</span>
+                <?php endif; ?>
+            </p>
         </div>
         <div>
             <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Años recientes</label>
@@ -310,6 +324,53 @@ $cveScope = (string)($cve['scope'] ?? 'full');
         La API key de NVD se guarda cifrada (AES-256-GCM) y nunca se muestra ni se envía al navegador.
     </p>
 </form>
+
+<div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 mb-6 overflow-hidden">
+    <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700">
+        <h2 class="text-sm font-semibold">Log de sincronización CVE</h2>
+        <p class="text-xs text-gray-500 mt-1">
+            Últimos 15 eventos (cierres y errores). El número de error (#ID) es el que se muestra al detener una descarga.
+        </p>
+    </div>
+    <?php if (empty($cveLog)): ?>
+        <p class="px-5 py-6 text-xs text-gray-400">Todavía no hay eventos registrados.</p>
+    <?php else: ?>
+        <div class="overflow-x-auto">
+            <table class="w-full text-xs">
+                <thead>
+                    <tr class="border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-500 uppercase">
+                        <th class="text-left px-4 py-2">#</th>
+                        <th class="text-left px-4 py-2">Fecha</th>
+                        <th class="text-left px-4 py-2">Fuente</th>
+                        <th class="text-left px-4 py-2">Modo</th>
+                        <th class="text-left px-4 py-2">Estado</th>
+                        <th class="text-right px-4 py-2">Registros</th>
+                        <th class="text-left px-4 py-2">Detalle</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($cveLog as $entry): ?>
+                        <?php
+                        $entryStatus = (string)($entry['status'] ?? '');
+                        $statusClass = $entryStatus === 'error'
+                            ? 'text-red-600 dark:text-red-400'
+                            : ($entryStatus === 'warning' ? 'text-amber-600 dark:text-amber-400' : 'text-green-600 dark:text-green-400');
+                        ?>
+                        <tr class="border-b border-gray-100 dark:border-gray-800 align-top">
+                            <td class="px-4 py-2 text-gray-400">#<?= (int)($entry['id'] ?? 0) ?></td>
+                            <td class="px-4 py-2 whitespace-nowrap text-gray-500"><?= e((string)($entry['finished_at'] ?? $entry['started_at'] ?? '')) ?></td>
+                            <td class="px-4 py-2 uppercase text-gray-500"><?= e((string)($entry['source'] ?? '')) ?></td>
+                            <td class="px-4 py-2 text-gray-500"><?= e((string)($entry['mode'] ?? '—')) ?></td>
+                            <td class="px-4 py-2 font-medium <?= $statusClass ?>"><?= e($entryStatus) ?></td>
+                            <td class="px-4 py-2 text-right text-gray-500"><?= number_format((int)($entry['records'] ?? 0)) ?></td>
+                            <td class="px-4 py-2 text-gray-500 break-all max-w-[520px]"><?= e((string)($entry['error'] ?? '')) ?></td>
+                        </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+    <?php endif; ?>
+</div>
 
 <div class="bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 rounded-xl p-4">
     <p class="text-xs text-amber-700 dark:text-amber-300">
