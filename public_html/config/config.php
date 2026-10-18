@@ -104,6 +104,7 @@ define('CVE_SYNC_STALE', 180);
 define('CVE_SYNC_WATCHDOG', 900);
 define('CVE_CRON_ACTIVE_GRACE', 45);
 define('CVE_REPORT_MAX_ROWS', 5000);
+define('CVE_AI_RECENT_DAYS', 30);
 
 // Exploits públicos para informes (solo CVEs del informe).
 define('CVE_EXPLOIT_TTL_DAYS', 7);

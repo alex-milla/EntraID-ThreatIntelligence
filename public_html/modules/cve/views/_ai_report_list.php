@@ -36,7 +36,7 @@ foreach ($llmProfiles as $llmProfile) {
 ?>
 <?php if (empty($aiReports)): ?>
     <div class="p-5 text-center text-xs text-gray-500">
-        Todavía no hay informes con IA.
+        No hay informes en esta vista.
     </div>
 <?php else: ?>
     <?php foreach ($aiReports as $aiRow): ?>

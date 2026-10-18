@@ -943,6 +943,10 @@ $pendingAiReports = array_values(array_filter(
     static fn(array $row): bool => (string)($row['status'] ?? '') === 'pending'
 ));
 $pendingAiCount = count($pendingAiReports);
+$assignmentFilter = (string)($assignmentFilter ?? 'unassigned');
+if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
+    $assignmentFilter = 'unassigned';
+}
 ?>
 
 <div class="no-print mb-4 flex items-center justify-between gap-3 flex-wrap">
@@ -980,14 +984,21 @@ $pendingAiCount = count($pendingAiReports);
                     Generar pendientes (<?= (int)$pendingAiCount ?>)
                 </button>
             <?php endif; ?>
-            <div class="mt-2 flex items-center gap-2">
-                <input id="ai-list-search" type="search" oninput="cveAiFilterList(this.value)"
-                       placeholder="Buscar por CVE o título…"
-                       class="flex-1 min-w-0 px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+            <input id="ai-list-search" type="search" oninput="cveAiFilterList(this.value)"
+                   placeholder="Buscar por CVE o título…"
+                   class="mt-2 w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+            <div class="mt-2 grid grid-cols-2 gap-2">
+                <select id="ai-list-assignment-filter" onchange="cveAiFilterAssignment(this.value)"
+                        title="Filtrar por asignación"
+                        class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                    <option value="unassigned" <?= $assignmentFilter === 'unassigned' ? 'selected' : '' ?>>Sin asignar</option>
+                    <option value="all" <?= $assignmentFilter === 'all' ? 'selected' : '' ?>>Todos</option>
+                    <option value="assigned" <?= $assignmentFilter === 'assigned' ? 'selected' : '' ?>>Asignados</option>
+                </select>
                 <select id="ai-list-status-filter" onchange="cveAiFilterStatus(this.value)"
                         title="Filtrar por estado"
-                        class="w-[122px] shrink-0 px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
-                    <option value="">Todos</option>
+                        class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                    <option value="">Todos los estados</option>
                     <option value="done">Listos</option>
                     <option value="pending">Pendientes</option>
                     <option value="running">Generando</option>
@@ -1516,6 +1527,46 @@ $pendingAiCount = count($pendingAiReports);
     </div>
 </div>
 
+<!-- Modal: CVEs con informe reciente -->
+<div id="ai-duplicates-modal" class="hidden fixed inset-0 z-50 no-print">
+    <div class="absolute inset-0 bg-black/40" onclick="cveAiDuplicatesCancel()"></div>
+    <div class="relative mx-auto mt-20 w-[calc(100%-2rem)] max-w-lg bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 shadow-xl p-5">
+        <div class="flex items-start justify-between gap-3">
+            <div>
+                <h3 class="text-sm font-semibold">CVEs con informe reciente</h3>
+                <p class="text-xs text-gray-500 mt-1" id="ai-duplicates-summary"></p>
+            </div>
+            <button type="button" onclick="cveAiDuplicatesCancel()" class="text-xs text-gray-400 hover:text-gray-600">Cerrar</button>
+        </div>
+
+        <div id="ai-duplicates-list" class="mt-3 max-h-64 overflow-y-auto border border-gray-200 dark:border-gray-700 rounded-lg divide-y divide-gray-100 dark:divide-gray-800"></div>
+
+        <div id="ai-duplicates-warning" class="hidden mt-3 px-3 py-2 rounded-lg bg-amber-50 dark:bg-amber-900/20 text-[11px] text-amber-700 dark:text-amber-300"></div>
+
+        <p class="mt-3 text-[11px] text-gray-400">
+            «Actualizar existentes» regenera el análisis y conserva la empresa/grupo actual.
+            «Crear nuevos» crea entradas nuevas sin asignar para que puedas moverlas a otro grupo.
+        </p>
+
+        <div class="mt-5 flex items-center justify-between gap-2 flex-wrap">
+            <button type="button" onclick="cveAiDuplicatesCancel()"
+                    class="px-3 py-1.5 border border-gray-300 dark:border-gray-600 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark">
+                Cancelar
+            </button>
+            <div class="flex items-center gap-2">
+                <button type="button" id="ai-duplicates-create" onclick="cveAiDuplicatesNew(this)"
+                        class="px-3 py-1.5 border border-gray-300 dark:border-gray-600 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark">
+                    Crear nuevos igualmente
+                </button>
+                <button type="button" id="ai-duplicates-update" onclick="cveAiDuplicatesUpdate(this)"
+                        class="px-3 py-1.5 bg-brand-500 hover:bg-brand-600 text-white text-xs font-semibold rounded-lg">
+                    Actualizar existentes
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Modal: reintentar informe con otro perfil de IA -->
 <div id="ai-retry-modal" class="hidden fixed inset-0 z-50 no-print">
     <div class="absolute inset-0 bg-black/40" onclick="cveAiRetryClose()"></div>
@@ -1774,6 +1825,7 @@ $pendingAiCount = count($pendingAiReports);
     var PAGE_URL   = <?= json_encode(base_url('modules/cve?tab=reports')) ?>;
     var PARTIAL    = <?= json_encode(base_url('modules/cve/report-ai')) ?>;
     var START_URL  = <?= json_encode(base_url('modules/cve/reports/ai-start')) ?>;
+    var DUPLICATES_URL = <?= json_encode(base_url('modules/cve/reports/ai-duplicates')) ?>;
     var RUN_URL    = <?= json_encode(base_url('modules/cve/reports/ai-run')) ?>;
     var RETRY_URL  = <?= json_encode(base_url('modules/cve/reports/ai-retry')) ?>;
     var CANCEL_URL = <?= json_encode(base_url('modules/cve/reports/ai-cancel')) ?>;
@@ -1799,6 +1851,7 @@ $pendingAiCount = count($pendingAiReports);
     var reportsSelectAll = document.getElementById('ai-reports-select-all');
     var reportsSelectedCount = document.getElementById('ai-reports-selected-count');
     var statusFilter = document.getElementById('ai-list-status-filter');
+    var assignmentFilter = document.getElementById('ai-list-assignment-filter');
     var filterEmpty = document.getElementById('ai-list-filter-empty');
     var reportsBulkGroup = document.getElementById('ai-reports-bulk-group');
     var reportsBulkDelete = document.getElementById('ai-reports-bulk-delete');
@@ -1817,6 +1870,10 @@ $pendingAiCount = count($pendingAiReports);
     var batchRunning = false;
     var batchQueueIds = {};
     var retryReportId = 0;
+    var pendingCreatePayload = null;
+    var pendingCreateButton = null;
+    var pendingCreateMessage = null;
+    var pendingCreateDuplicates = [];
     var batchBanner = document.getElementById('ai-batch-banner');
     var pendingButton = document.getElementById('ai-reports-run-pending');
 
@@ -2471,11 +2528,17 @@ $pendingAiCount = count($pendingAiReports);
         applyReportFilters();
     }
 
-    function refreshReportList() {
+    function refreshReportList(assignment) {
         if (!list) {
             return Promise.resolve();
         }
-        return fetch(LIST_URL, {
+        var currentAssignment = assignment
+            || (assignmentFilter ? assignmentFilter.value : 'unassigned');
+        if (assignmentFilter) {
+            assignmentFilter.value = currentAssignment;
+        }
+        var url = LIST_URL + '?assignment=' + encodeURIComponent(currentAssignment);
+        return fetch(url, {
             headers: { 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'text/html' },
             credentials: 'same-origin'
         }).then(function (res) {
@@ -2616,6 +2679,269 @@ $pendingAiCount = count($pendingAiReports);
         return executeBatch(ids);
     }
 
+    function splitCveInput(value) {
+        return (value || '').split(/[\s,;]+/)
+            .map(function (cve) { return cve.trim().toUpperCase(); })
+            .filter(function (cve) { return /^CVE-\d{4}-\d{4,}$/.test(cve); });
+    }
+
+    function requestCreateReports(payload) {
+        return postJson(START_URL, payload).then(function (res) {
+            if (!res || !res.success) {
+                throw new Error((res && res.error) ? res.error : 'No se pudo crear el informe.');
+            }
+            var ids = Array.isArray(res.report_ids) && res.report_ids.length
+                ? res.report_ids
+                : [res.report_id];
+            ids = ids.map(function (id) { return parseInt(id, 10) || 0; })
+                .filter(function (id) { return id > 0; });
+            if (!ids.length) {
+                throw new Error('No se creó ningún informe.');
+            }
+            return ids;
+        });
+    }
+
+    function startCreatedReports(ids, button, message, assignment) {
+        if (message) {
+            message.textContent = 'Informes creados. Iniciando generación…';
+            message.className = 'text-xs text-gray-500';
+        }
+        if (newForm) {
+            newForm.classList.add('hidden');
+        }
+        if (detail) {
+            detail.innerHTML = '<div class="h-full flex items-center justify-center"><p class="text-sm text-gray-500">Generando informes individuales…</p></div>';
+        }
+        if (titleEl) {
+            titleEl.textContent = 'Informes en cola';
+        }
+        if (!beginBatch(ids)) {
+            if (message) {
+                message.textContent = 'Ya hay una generación en curso.';
+                message.className = 'text-xs text-amber-600 dark:text-amber-400';
+            }
+            if (button) {
+                button.disabled = false;
+            }
+            return Promise.resolve({ failures: 0 });
+        }
+        setBatchBanner('Actualizando lista…');
+
+        return refreshReportList(assignment).catch(function () {
+            // La cola sigue aunque falle el refresco de la lista.
+        }).then(function () {
+            return executeBatch(ids);
+        }).then(function (result) {
+            if (result.failures > 0) {
+                appAlert('Se crearon ' + ids.length + ' informes, pero ' + result.failures
+                    + ' no se pudieron generar. Puedes reintentarlos con «Generar pendientes».',
+                    { title: 'Generación parcial' });
+            }
+            if (button) {
+                button.disabled = false;
+            }
+            return result;
+        });
+    }
+
+    function createReportsFromPayload(payload, button, message, assignment) {
+        return requestCreateReports(payload).then(function (ids) {
+            return startCreatedReports(ids, button, message, assignment);
+        }).catch(function (err) {
+            if (message) {
+                message.textContent = 'No se pudo crear: ' + errorText(err);
+                message.className = 'text-xs text-red-500';
+            }
+            if (button) {
+                button.disabled = false;
+            }
+            return { failures: 1 };
+        });
+    }
+
+    function duplicateStatusLabel(status) {
+        var labels = {
+            pending: 'En cola',
+            running: 'Generando',
+            done: 'Listo',
+            error: 'Error',
+            canceled: 'Cancelado'
+        };
+        return labels[status] || status;
+    }
+
+    function renderDuplicates(duplicates, totalCves) {
+        var listEl = document.getElementById('ai-duplicates-list');
+        var summary = document.getElementById('ai-duplicates-summary');
+        var warning = document.getElementById('ai-duplicates-warning');
+        var updateButton = document.getElementById('ai-duplicates-update');
+        if (!listEl) {
+            return;
+        }
+
+        listEl.innerHTML = '';
+        duplicates.forEach(function (dup) {
+            var row = document.createElement('div');
+            row.className = 'px-3 py-2 flex items-start justify-between gap-3 text-xs';
+
+            var left = document.createElement('div');
+            left.className = 'min-w-0';
+            var cve = document.createElement('p');
+            cve.className = 'font-mono font-semibold text-gray-700 dark:text-gray-200';
+            cve.textContent = dup.cve_id || '';
+            var meta = document.createElement('p');
+            meta.className = 'text-[10px] text-gray-400 mt-0.5';
+            meta.textContent = 'Informe #' + (parseInt(dup.report_id, 10) || 0)
+                + ' · ' + (dup.created_at ? String(dup.created_at).slice(0, 16) : '')
+                + ' · ' + duplicateStatusLabel(dup.status);
+            left.appendChild(cve);
+            left.appendChild(meta);
+
+            var right = document.createElement('span');
+            right.className = 'shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium '
+                + (dup.group_name
+                    ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
+                    : 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400');
+            right.textContent = dup.group_name
+                ? ((dup.group_kind === 'company' ? 'Empresa' : 'Grupo') + ': ' + dup.group_name)
+                : 'Sin asignar';
+
+            row.appendChild(left);
+            row.appendChild(right);
+            listEl.appendChild(row);
+        });
+
+        var pendingCount = duplicates.filter(function (dup) {
+            return dup.status === 'pending' || dup.status === 'running';
+        }).length;
+        var newCount = Math.max(0, totalCves - duplicates.length);
+        if (summary) {
+            summary.textContent = duplicates.length + ' con informe reciente · ' + newCount + ' nuevos';
+        }
+        if (updateButton) {
+            updateButton.disabled = pendingCount > 0;
+        }
+        if (warning) {
+            warning.classList.toggle('hidden', pendingCount === 0);
+            warning.textContent = pendingCount > 0
+                ? 'Hay ' + pendingCount + ' informe(s) en cola o generándose. Espera a que terminen o crea informes nuevos.'
+                : '';
+        }
+    }
+
+    window.cveAiDuplicatesCancel = function () {
+        var modal = document.getElementById('ai-duplicates-modal');
+        if (modal) {
+            modal.classList.add('hidden');
+        }
+        if (pendingCreateButton) {
+            pendingCreateButton.disabled = false;
+        }
+        if (pendingCreateMessage) {
+            pendingCreateMessage.textContent = 'Creación cancelada.';
+            pendingCreateMessage.className = 'text-xs text-gray-500';
+        }
+        pendingCreatePayload = null;
+        pendingCreateDuplicates = [];
+    };
+
+    window.cveAiDuplicatesNew = function () {
+        var payload = pendingCreatePayload;
+        var button = pendingCreateButton;
+        var message = pendingCreateMessage;
+        var modal = document.getElementById('ai-duplicates-modal');
+        if (modal) {
+            modal.classList.add('hidden');
+        }
+        pendingCreatePayload = null;
+        pendingCreateDuplicates = [];
+        if (!payload) {
+            return;
+        }
+        createReportsFromPayload(payload, button, message);
+    };
+
+    window.cveAiDuplicatesUpdate = function (button) {
+        var payload = pendingCreatePayload;
+        var createButton = pendingCreateButton;
+        var message = pendingCreateMessage;
+        var duplicates = pendingCreateDuplicates.slice();
+        if (!payload) {
+            return;
+        }
+        if (duplicates.some(function (dup) {
+            return dup.status === 'pending' || dup.status === 'running';
+        })) {
+            return;
+        }
+        if (button) {
+            button.disabled = true;
+        }
+
+        var modal = document.getElementById('ai-duplicates-modal');
+        if (modal) {
+            modal.classList.add('hidden');
+        }
+        pendingCreatePayload = null;
+        pendingCreateDuplicates = [];
+
+        var duplicateIds = [];
+        var failures = 0;
+        var chain = Promise.resolve();
+        duplicates.forEach(function (dup) {
+            chain = chain.then(function () {
+                return postJson(RETRY_URL + '/' + dup.report_id, {
+                    profile_id: payload.profile_id,
+                    regenerate_all: 1
+                }).then(function (res) {
+                    if (res && res.success) {
+                        duplicateIds.push(parseInt(res.report_id || dup.report_id, 10));
+                    } else {
+                        failures++;
+                    }
+                }).catch(function () {
+                    failures++;
+                });
+            });
+        });
+
+        chain.then(function () {
+            var allCves = splitCveInput(payload.cve_ids);
+            var duplicateSet = {};
+            duplicates.forEach(function (dup) { duplicateSet[dup.cve_id] = true; });
+            var newCves = allCves.filter(function (cve) { return !duplicateSet[cve]; });
+            if (newCves.length === 0) {
+                return { ids: duplicateIds, failures: failures };
+            }
+            return requestCreateReports(Object.assign({}, payload, {
+                cve_ids: newCves.join(',')
+            })).then(function (ids) {
+                return { ids: duplicateIds.concat(ids), failures: failures };
+            }).catch(function () {
+                return { ids: duplicateIds, failures: failures + 1 };
+            });
+        }).then(function (result) {
+            if (result.ids.length === 0) {
+                if (createButton) {
+                    createButton.disabled = false;
+                }
+                appAlert('No se pudo actualizar ni crear ningún informe.', { title: 'Sin cambios' });
+                return;
+            }
+            if (result.failures > 0) {
+                appAlert('Algunos informes no se pudieron actualizar. Se generarán los que sí se prepararon.',
+                    { title: 'Actualización parcial' });
+            }
+            startCreatedReports(result.ids, createButton, message, 'all');
+        }).catch(function (err) {
+            if (createButton) {
+                createButton.disabled = false;
+            }
+            appAlert('No se pudieron actualizar los informes: ' + errorText(err), { title: 'Error' });
+        });
+    };
+
     window.cveAiGenerate = function (button) {
         var input = document.getElementById('ai-report-cves');
         var profile = document.getElementById('ai-report-profile');
@@ -2641,82 +2967,45 @@ $pendingAiCount = count($pendingAiReports);
         }
 
         var noAi = !!(local && local.checked);
-        message.textContent = 'Creando informe…';
-        message.className = 'text-xs text-gray-500';
-        if (button) {
-            button.disabled = true;
-        }
-
-        postJson(START_URL, {
+        var payload = {
             cve_ids: cves,
             profile_id: profile ? profile.value : 0,
             no_ai: noAi ? 1 : 0,
             tags: tagsInput ? tagsInput.value : '',
             mode: (extended && extended.checked) ? 'extended' : 'summary'
-        }).then(function (res) {
-            if (!res.success) {
-                message.textContent = res.error || 'No se pudo crear el informe.';
-                message.className = 'text-xs text-red-500';
-                if (button) {
-                    button.disabled = false;
-                }
-                return;
-            }
+        };
 
-            var ids = Array.isArray(res.report_ids) && res.report_ids.length
-                ? res.report_ids
-                : [res.report_id];
-            ids = ids.map(function (id) { return parseInt(id, 10) || 0; }).filter(function (id) { return id > 0; });
-            if (!ids.length) {
-                message.textContent = 'No se creó ningún informe.';
-                message.className = 'text-xs text-red-500';
-                if (button) {
-                    button.disabled = false;
-                }
-                return;
-            }
+        pendingCreatePayload = payload;
+        pendingCreateButton = button;
+        pendingCreateMessage = message;
+        pendingCreateDuplicates = [];
+        message.textContent = 'Comprobando informes recientes…';
+        message.className = 'text-xs text-gray-500';
+        if (button) {
+            button.disabled = true;
+        }
 
-            message.textContent = 'Informes creados. Iniciando generación…';
-            message.className = 'text-xs text-gray-500';
-            if (newForm) {
-                newForm.classList.add('hidden');
-            }
-            if (detail) {
-                detail.innerHTML = '<div class="h-full flex items-center justify-center"><p class="text-sm text-gray-500">Generando informes individuales…</p></div>';
-            }
-            if (titleEl) {
-                titleEl.textContent = 'Informes en cola';
-            }
-            if (!beginBatch(ids)) {
-                message.textContent = 'Ya hay una generación en curso.';
+        postJson(DUPLICATES_URL, { cve_ids: cves }).then(function (res) {
+            var duplicates = (res && res.success && Array.isArray(res.duplicates))
+                ? res.duplicates
+                : [];
+            if (duplicates.length > 0) {
+                pendingCreateDuplicates = duplicates;
+                renderDuplicates(duplicates, splitCveInput(cves).length);
+                var modal = document.getElementById('ai-duplicates-modal');
+                if (modal) {
+                    modal.classList.remove('hidden');
+                }
+                message.textContent = 'Revisa los informes recientes antes de continuar.';
                 message.className = 'text-xs text-amber-600 dark:text-amber-400';
-                if (button) {
-                    button.disabled = false;
-                }
                 return;
             }
-            setBatchBanner('Actualizando lista…');
-
-            refreshReportList().catch(function () {
-                // La cola sigue aunque falle el refresco de la lista.
-            }).then(function () {
-                return executeBatch(ids);
-            }).then(function (result) {
-                if (result.failures > 0) {
-                    appAlert('Se crearon ' + ids.length + ' informes, pero ' + result.failures
-                        + ' no se pudieron generar. Puedes reintentarlos con «Generar pendientes».',
-                        { title: 'Generación parcial' });
-                }
-                if (button) {
-                    button.disabled = false;
-                }
-            });
-        }).catch(function (err) {
-            message.textContent = 'No se pudo crear: ' + errorText(err);
-            message.className = 'text-xs text-red-500';
-            if (button) {
-                button.disabled = false;
-            }
+            pendingCreatePayload = null;
+            createReportsFromPayload(payload, button, message);
+        }).catch(function () {
+            // Si falla la comprobación, no bloqueamos la creación.
+            pendingCreatePayload = null;
+            createReportsFromPayload(payload, button, message);
         });
     };
 
@@ -2924,7 +3213,9 @@ $pendingAiCount = count($pendingAiReports);
                 message += ' Se omitieron ' + res.skipped.length + ' informe(s) en curso.';
             }
             appAlert(message, { title: 'Grupo asignado' }).then(function () {
-                window.location.reload();
+                refreshReportList().catch(function () {
+                    window.location.reload();
+                });
             });
         }).catch(function (err) {
             appAlert('No se pudieron asignar: ' + errorText(err), { title: 'No se pudo asignar' });
@@ -2980,6 +3271,15 @@ $pendingAiCount = count($pendingAiReports);
             statusFilter.value = value;
         }
         applyReportFilters();
+    };
+
+    window.cveAiFilterAssignment = function (value) {
+        if (assignmentFilter) {
+            assignmentFilter.value = value;
+        }
+        refreshReportList(value).catch(function () {
+            appAlert('No se pudo cambiar el filtro de asignación.', { title: 'Error de filtro' });
+        });
     };
 
     window.toggleCveAiFullscreen = function () {
@@ -3082,7 +3382,17 @@ $pendingAiCount = count($pendingAiReports);
                     }
                     return;
                 }
-                window.location.href = PAGE_URL + '&report=' + id;
+                window.cveAiAssignClose();
+                refreshReportList().then(function () {
+                    var row = list ? list.querySelector('.ai-report-item[data-id="' + id + '"]') : null;
+                    if (row) {
+                        load(id, false);
+                    } else if (detail) {
+                        detail.innerHTML = '<div class="h-full flex items-center justify-center p-6"><p class="text-sm text-gray-500 text-center">Informe asignado correctamente.<br><span class="text-xs">Ya no aparece en la vista actual. Cambia a «Todos» o «Asignados» para verlo.</span></p></div>';
+                    }
+                }).catch(function () {
+                    load(id, false);
+                });
             }).catch(function (err) {
                 var status = err && err.httpStatus ? err.httpStatus : 0;
                 var uncertain = status >= 500 || status === 0 || !!(err && err.serverHtml);
@@ -3315,6 +3625,7 @@ $pendingAiCount = count($pendingAiReports);
             }
             window.cveAiItemsGroupClose();
             load(state.id, false);
+            refreshReportList().catch(function () {});
         }).catch(function (err) {
             var status = err && err.httpStatus ? err.httpStatus : 0;
             var uncertain = status >= 500 || status === 0 || !!(err && err.serverHtml);

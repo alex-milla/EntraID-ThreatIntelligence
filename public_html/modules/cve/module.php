@@ -63,6 +63,7 @@ class Module_Cve extends BaseModule
             ['method' => 'GET',  'pattern' => 'reports/ai-status/{id}', 'handler' => [$this, 'aiReportStatus']],
             ['method' => 'GET',  'pattern' => 'report/{id}/csv',  'handler' => [$this, 'reportCsv']],
             ['method' => 'GET',  'pattern' => 'reports/ai-list', 'handler' => [$this, 'aiReportList']],
+            ['method' => 'POST', 'pattern' => 'reports/ai-duplicates', 'handler' => [$this, 'aiReportDuplicates']],
             ['method' => 'GET',  'pattern' => 'report-ai/{id}/panel', 'handler' => [$this, 'aiReportPanel']],
             ['method' => 'GET',  'pattern' => 'report-ai/{id}',   'handler' => [$this, 'aiReportView']],
             ['method' => 'GET',  'pattern' => 'report/{id}',      'handler' => [$this, 'reportView']],
@@ -115,6 +116,7 @@ class Module_Cve extends BaseModule
         $softwareOptions = [];
         $syncState = null;
         $newCves = '';
+        $assignmentFilter = 'unassigned';
 
         try {
             $groups = $this->groupTree();
@@ -124,7 +126,11 @@ class Module_Cve extends BaseModule
             } elseif ($tab === 'reports') {
                 $softwareOptions = $this->listSoftware(0, '');
                 $reports = $this->listReports(30);
-                $aiReports = $this->listAiReports(100);
+                $requestedAssignment = (string)($_GET['assignment'] ?? 'unassigned');
+                $assignmentFilter = in_array($requestedAssignment, ['unassigned', 'assigned', 'all'], true)
+                    ? $requestedAssignment
+                    : 'unassigned';
+                $aiReports = $this->listAiReports(100, $assignmentFilter);
                 if (!$isAdmin) {
                     // Los informes con exposición de Defender solo los ve un admin.
                     $aiReports = array_values(array_filter(
@@ -205,6 +211,7 @@ class Module_Cve extends BaseModule
             'assignedCves'  => $assignedCves,
             'reports'       => $reports,
             'aiReports'     => $aiReports,
+            'assignmentFilter' => $assignmentFilter,
             'selectedAiId'  => $selectedAiId,
             'selectedAiData'=> $selectedAiData,
             'llmProfiles'   => $llmProfiles,
@@ -704,7 +711,11 @@ class Module_Cve extends BaseModule
         Auth::require();
 
         $isAdmin = Auth::isAdmin();
-        $aiReports = $this->listAiReports(100);
+        $requestedAssignment = (string)($_GET['assignment'] ?? 'unassigned');
+        $assignmentFilter = in_array($requestedAssignment, ['unassigned', 'assigned', 'all'], true)
+            ? $requestedAssignment
+            : 'unassigned';
+        $aiReports = $this->listAiReports(100, $assignmentFilter);
         if (!$isAdmin) {
             $aiReports = array_values(array_filter(
                 $aiReports,
@@ -717,6 +728,116 @@ class Module_Cve extends BaseModule
         header('Content-Type: text/html; charset=utf-8');
         header('Cache-Control: no-store, no-cache, must-revalidate');
         require __DIR__ . '/views/_ai_report_list.php';
+    }
+
+    /**
+     * Busca informes recientes para los CVEs antes de crear otros nuevos.
+     */
+    public function aiReportDuplicates(array $params = []): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        try {
+            $raw = file_get_contents('php://input');
+            $input = json_decode((string)$raw, true);
+            if (!is_array($input)) {
+                $input = $_POST;
+            }
+
+            $cveIds = CveReportAi::normalizeCveIds($input['cve_ids'] ?? '', 20);
+            if ($cveIds === []) {
+                json_response(['success' => false, 'error' => 'Introduce al menos un CVE válido.'], 400);
+            }
+
+            $days = defined('CVE_AI_RECENT_DAYS') ? max(1, (int)CVE_AI_RECENT_DAYS) : 30;
+            $placeholders = implode(',', array_fill(0, count($cveIds), '?'));
+            $rows = CveDatabase::fetchAll(
+                "SELECT i.cve_id, r.id AS report_id, r.title, r.status, r.created_at,
+                        r.ai_profile_id, r.ai_model, r.ai_error,
+                        COALESCE(i.group_id, r.group_id) AS group_id,
+                        g.name AS group_name, g.kind AS group_kind
+                 FROM cve_ai_report_items i
+                 JOIN cve_ai_reports r ON r.id = i.report_id
+                 LEFT JOIN software_groups g ON g.id = COALESCE(i.group_id, r.group_id)
+                 WHERE i.cve_id IN ($placeholders)
+                   AND COALESCE(r.archived, 0) = 0
+                   AND r.created_at >= datetime('now', ?)
+                 ORDER BY i.cve_id ASC, r.created_at DESC, r.id DESC",
+                array_merge($cveIds, ['-' . $days . ' days'])
+            );
+
+            $duplicates = [];
+            foreach ($rows as $row) {
+                $cveId = (string)($row['cve_id'] ?? '');
+                if ($cveId === '' || isset($duplicates[$cveId])) {
+                    continue;
+                }
+                $duplicates[$cveId] = [
+                    'cve_id'       => $cveId,
+                    'report_id'    => (int)($row['report_id'] ?? 0),
+                    'title'        => (string)($row['title'] ?? ''),
+                    'status'       => (string)($row['status'] ?? ''),
+                    'created_at'   => (string)($row['created_at'] ?? ''),
+                    'ai_profile_id'=> (int)($row['ai_profile_id'] ?? 0),
+                    'ai_model'     => (string)($row['ai_model'] ?? ''),
+                    'ai_error'     => (string)($row['ai_error'] ?? ''),
+                    'group_id'     => (int)($row['group_id'] ?? 0),
+                    'group_name'   => (string)($row['group_name'] ?? ''),
+                    'group_kind'   => (string)($row['group_kind'] ?? ''),
+                ];
+            }
+
+            // Fallback para informes antiguos sin filas de items.
+            $missing = array_values(array_diff($cveIds, array_keys($duplicates)));
+            if ($missing !== []) {
+                $recent = CveDatabase::fetchAll(
+                    "SELECT id, cve_ids, title, status, created_at, ai_profile_id, ai_model, ai_error, group_id
+                     FROM cve_ai_reports
+                     WHERE COALESCE(archived, 0) = 0
+                       AND created_at >= datetime('now', ?)
+                     ORDER BY created_at DESC, id DESC",
+                    ['-' . $days . ' days']
+                );
+                foreach ($recent as $report) {
+                    $reportCves = safe_json_decode((string)($report['cve_ids'] ?? ''), []);
+                    if (!is_array($reportCves)) {
+                        continue;
+                    }
+                    $groupId = (int)($report['group_id'] ?? 0);
+                    $group = $groupId > 0 ? $this->getGroup($groupId) : null;
+                    foreach ($reportCves as $reportCve) {
+                        $cveId = strtoupper(trim((string)$reportCve));
+                        if (!in_array($cveId, $missing, true) || isset($duplicates[$cveId])) {
+                            continue;
+                        }
+                        $duplicates[$cveId] = [
+                            'cve_id'       => $cveId,
+                            'report_id'    => (int)($report['id'] ?? 0),
+                            'title'        => (string)($report['title'] ?? ''),
+                            'status'       => (string)($report['status'] ?? ''),
+                            'created_at'   => (string)($report['created_at'] ?? ''),
+                            'ai_profile_id'=> (int)($report['ai_profile_id'] ?? 0),
+                            'ai_model'     => (string)($report['ai_model'] ?? ''),
+                            'ai_error'     => (string)($report['ai_error'] ?? ''),
+                            'group_id'     => $groupId,
+                            'group_name'   => (string)($group['name'] ?? ''),
+                            'group_kind'   => (string)($group['kind'] ?? ''),
+                        ];
+                    }
+                }
+            }
+
+            ksort($duplicates);
+            json_response([
+                'success'    => true,
+                'days'       => $days,
+                'duplicates' => array_values($duplicates),
+            ]);
+        } catch (Throwable $e) {
+            app_log('error', 'cve_ai', 'Error buscando informes recientes', ['error' => $e->getMessage()]);
+            json_response(['success' => false, 'error' => $e->getMessage()], 500);
+        }
     }
 
     /**
@@ -3220,9 +3341,27 @@ class Module_Cve extends BaseModule
         ];
     }
 
-    private function listAiReports(int $limit = 30): array
+    private function listAiReports(int $limit = 30, string $assignment = 'unassigned'): array
     {
         $limit = max(1, min(200, $limit));
+        $assignment = in_array($assignment, ['unassigned', 'assigned', 'all'], true)
+            ? $assignment
+            : 'unassigned';
+
+        $assignedSql = "(r.group_id IS NOT NULL OR (
+            EXISTS (SELECT 1 FROM cve_ai_report_items ia WHERE ia.report_id = r.id)
+            AND NOT EXISTS (
+                SELECT 1 FROM cve_ai_report_items iu
+                WHERE iu.report_id = r.id AND iu.group_id IS NULL
+            )
+        ))";
+        $where = "COALESCE(r.archived, 0) = 0";
+        if ($assignment === 'unassigned') {
+            $where .= " AND NOT $assignedSql";
+        } elseif ($assignment === 'assigned') {
+            $where .= " AND $assignedSql";
+        }
+
         return CveDatabase::fetchAll(
             "SELECT r.id, r.cve_ids, r.title, r.status, r.ai_profile_id, r.ai_model, r.ai_error, r.no_ai,
                     r.revision, r.updated_at, r.group_id, g.name AS group_name, g.kind AS group_kind,
@@ -3235,7 +3374,7 @@ class Module_Cve extends BaseModule
                     r.created_at, r.finished_at
              FROM cve_ai_reports r
              LEFT JOIN software_groups g ON g.id = r.group_id
-             WHERE COALESCE(r.archived, 0) = 0
+             WHERE $where
              ORDER BY r.created_at DESC, r.id DESC
              LIMIT ?",
             [$limit]
