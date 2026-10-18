@@ -272,6 +272,29 @@ class CveDatabase
         $db->exec("CREATE INDEX IF NOT EXISTS idx_cve_exploit_cve ON cve_exploit(cve_id)");
         $db->exec("CREATE INDEX IF NOT EXISTS idx_cve_exploit_fetch_retry ON cve_exploit_fetch(next_retry_at)");
 
+        // v0.2.8.10: índices periódicos de Exploit-DB y Metasploit.
+        $db->exec("CREATE TABLE IF NOT EXISTS cve_exploit_index (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source TEXT NOT NULL,
+            cve_id TEXT NOT NULL,
+            entry_id TEXT NOT NULL,
+            title TEXT,
+            url TEXT NOT NULL,
+            published_at TEXT,
+            meta_json TEXT,
+            indexed_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(source, cve_id, entry_id)
+        )");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_cve_exploit_index_cve ON cve_exploit_index(cve_id, source)");
+        $db->exec("CREATE TABLE IF NOT EXISTS cve_exploit_index_meta (
+            source TEXT PRIMARY KEY,
+            status TEXT NOT NULL DEFAULT 'never',
+            entries INTEGER NOT NULL DEFAULT 0,
+            error TEXT,
+            source_updated_at TEXT,
+            updated_at TEXT
+        ) WITHOUT ROWID");
+
         $db->exec("CREATE INDEX IF NOT EXISTS idx_cve_catalog_severity ON cve_catalog(severity)");
         $db->exec("CREATE INDEX IF NOT EXISTS idx_cve_ai_items_report ON cve_ai_report_items(report_id, position)");
         $db->exec("CREATE INDEX IF NOT EXISTS idx_cve_reports_generated ON cve_reports(generated_at DESC)");

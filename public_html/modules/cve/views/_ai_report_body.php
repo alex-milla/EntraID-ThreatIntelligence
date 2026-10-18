@@ -688,7 +688,7 @@ $exposureLabel = static function (string $value): string {
         </div>
 
         <footer class="px-7 py-5 border-t border-gray-200 text-[11px] leading-relaxed text-gray-400">
-            <p>Fuentes: NVD · CISA KEV · EPSS · GitHub PoC · Nuclei. Prioridad calculada con la fórmula de SploitScan (KEV, CVSS, EPSS y exploits públicos).</p>
+            <p>Fuentes: NVD · CISA KEV · EPSS · GitHub PoC · Nuclei · Exploit-DB · Metasploit. Prioridad calculada con la fórmula de SploitScan (KEV, CVSS, EPSS y exploits públicos).</p>
             <p class="mt-1">La evaluación de riesgo es una estimación generada por IA; verifica siempre la información antes de tomar decisiones.</p>
         </footer>
     </article>

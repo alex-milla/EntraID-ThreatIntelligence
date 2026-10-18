@@ -117,6 +117,13 @@ define('CVE_EXPLOIT_BUDGET', 35);
 define('CVE_EXPLOIT_GITHUB_URL', 'https://poc-in-github.motikan2010.net/api/v1/');
 define('CVE_EXPLOIT_NUCLEI_RAW_BASE', 'https://raw.githubusercontent.com/projectdiscovery/nuclei-templates/main');
 define('CVE_EXPLOIT_NUCLEI_BLOB_BASE', 'https://github.com/projectdiscovery/nuclei-templates/blob/main');
+
+// Índices periódicos (Fase 2): se descargan por cron, no al generar informes.
+define('CVE_EXPLOIT_EXPLOITDB_URL', 'https://gitlab.com/exploit-database/exploitdb/-/raw/main/files_exploits.csv?ref_type=heads');
+define('CVE_EXPLOIT_METASPLOIT_URL', 'https://raw.githubusercontent.com/rapid7/metasploit-framework/master/db/modules_metadata_base.json');
+define('CVE_EXPLOIT_EXPLOITDB_TTL_DAYS', 3);
+define('CVE_EXPLOIT_METASPLOIT_TTL_DAYS', 7);
+define('CVE_EXPLOIT_INDEX_TIMEOUT', 180);
 // NVD API 2.0: 5 peticiones/30 s sin API key y 50/30 s con API key.
 define('CVE_NVD_RATE_WINDOW', 30);
 define('CVE_NVD_RATE_MAX', 0); // 0 = automático según la API key
