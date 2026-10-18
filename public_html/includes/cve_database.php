@@ -216,13 +216,38 @@ class CveDatabase
             no_ai INTEGER NOT NULL DEFAULT 0,
             revision INTEGER NOT NULL DEFAULT 1,
             group_id INTEGER REFERENCES software_groups(id) ON DELETE SET NULL,
+            mode TEXT NOT NULL DEFAULT 'extended',
+            tags TEXT,
+            processed_items INTEGER NOT NULL DEFAULT 0,
+            total_items INTEGER NOT NULL DEFAULT 0,
             started_at TEXT,
             updated_at TEXT,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             finished_at TEXT
         )");
 
+        // v0.2.8.1: análisis independiente, tags y grupo por CVE.
+        $db->exec("CREATE TABLE IF NOT EXISTS cve_ai_report_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            report_id INTEGER NOT NULL REFERENCES cve_ai_reports(id) ON DELETE CASCADE,
+            cve_id TEXT NOT NULL,
+            position INTEGER NOT NULL DEFAULT 0,
+            tags TEXT,
+            group_id INTEGER REFERENCES software_groups(id) ON DELETE SET NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            ai_text TEXT,
+            sections_json TEXT,
+            ai_model TEXT,
+            ai_error TEXT,
+            started_at TEXT,
+            finished_at TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(report_id, cve_id)
+        )");
+
         $db->exec("CREATE INDEX IF NOT EXISTS idx_cve_catalog_severity ON cve_catalog(severity)");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_cve_ai_items_report ON cve_ai_report_items(report_id, position)");
         $db->exec("CREATE INDEX IF NOT EXISTS idx_cve_reports_generated ON cve_reports(generated_at DESC)");
         $db->exec("CREATE INDEX IF NOT EXISTS idx_cve_ai_reports_created ON cve_ai_reports(created_at DESC)");
         $db->exec("CREATE INDEX IF NOT EXISTS idx_cve_ai_reports_token ON cve_ai_reports(token)");
@@ -292,6 +317,19 @@ class CveDatabase
         }
         if (!isset($aiCols['defender_json'])) {
             $db->exec("ALTER TABLE cve_ai_reports ADD COLUMN defender_json TEXT");
+        }
+        // v0.2.8.1: análisis extendido por CVE, tags y progreso.
+        if (!isset($aiCols['mode'])) {
+            $db->exec("ALTER TABLE cve_ai_reports ADD COLUMN mode TEXT NOT NULL DEFAULT 'extended'");
+        }
+        if (!isset($aiCols['tags'])) {
+            $db->exec("ALTER TABLE cve_ai_reports ADD COLUMN tags TEXT");
+        }
+        if (!isset($aiCols['processed_items'])) {
+            $db->exec("ALTER TABLE cve_ai_reports ADD COLUMN processed_items INTEGER NOT NULL DEFAULT 0");
+        }
+        if (!isset($aiCols['total_items'])) {
+            $db->exec("ALTER TABLE cve_ai_reports ADD COLUMN total_items INTEGER NOT NULL DEFAULT 0");
         }
 
         // v0.2.7.15: descripción traducida y hash del texto original.

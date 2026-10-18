@@ -117,6 +117,88 @@ final class CveReportAi
     }
 
     // ============================================================
+    // Tags por CVE (v0.2.8.1)
+    // ============================================================
+
+    /**
+     * Normaliza una lista de tags: texto libre separado por comas, punto y coma
+     * o saltos de línea, o un array. Elimina duplicados sin distinguir mayúsculas.
+     *
+     * @return string[]
+     */
+    public static function normalizeTags(mixed $raw, int $max = 10): array
+    {
+        $parts = [];
+        if (is_array($raw)) {
+            foreach ($raw as $item) {
+                if (is_scalar($item)) {
+                    $parts[] = (string)$item;
+                }
+            }
+        } else {
+            $parts = preg_split('/[,;\n]+/u', (string)$raw) ?: [];
+        }
+
+        $tags = [];
+        $seen = [];
+        foreach ($parts as $part) {
+            $tag = trim((string)$part);
+            $tag = ltrim($tag, "# \t");
+            $tag = preg_replace('/\s+/u', ' ', $tag) ?? $tag;
+            $tag = preg_replace('/[\x00-\x1F\x7F]/u', '', $tag) ?? $tag;
+            if ($tag === '') {
+                continue;
+            }
+            $tag = function_exists('mb_substr')
+                ? mb_substr($tag, 0, 40, 'UTF-8')
+                : substr($tag, 0, 40);
+            $key = function_exists('mb_strtolower')
+                ? mb_strtolower($tag, 'UTF-8')
+                : strtolower($tag);
+            if (isset($seen[$key])) {
+                continue;
+            }
+            $seen[$key] = true;
+            $tags[] = $tag;
+            if (count($tags) >= max(1, $max)) {
+                break;
+            }
+        }
+
+        return $tags;
+    }
+
+    /** Serializa tags para SQLite (o null si no hay). */
+    public static function tagsJson(array $tags): ?string
+    {
+        $tags = self::normalizeTags($tags);
+        if ($tags === []) {
+            return null;
+        }
+        $json = json_encode($tags, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        return $json !== false ? $json : null;
+    }
+
+    /**
+     * Decodifica tags guardados como JSON (o texto separado por comas en datos
+     * antiguos) y los normaliza.
+     *
+     * @return string[]
+     */
+    public static function decodeTags(?string $json): array
+    {
+        $raw = trim((string)$json);
+        if ($raw === '') {
+            return [];
+        }
+        $decoded = json_decode($raw, true);
+        if (is_array($decoded)) {
+            return self::normalizeTags($decoded);
+        }
+        return self::normalizeTags($raw);
+    }
+
+    // ============================================================
     // Datos del catálogo local
     // ============================================================
 
@@ -872,6 +954,135 @@ final class CveReportAi
     }
 
     /**
+     * Prompt del análisis extendido de UN único CVE (v0.2.8.1).
+     *
+     * @param array<string,mixed>      $item
+     * @param array<string,mixed>|null $defenderCve Exposición concreta del CVE.
+     * @param string[]                 $tags
+     */
+    public static function itemPrompt(array $item, ?array $defenderCve = null, array $tags = [], string $groupName = ''): string
+    {
+        $cveId = (string)($item['cve_id'] ?? '');
+        $description = trim((string)($item['description_es'] ?? ''));
+        if ($description === '') {
+            $description = trim((string)($item['description'] ?? ''));
+        }
+        $kevAction = trim((string)($item['kev_action_es'] ?? ''));
+        if ($kevAction === '') {
+            $kevAction = trim((string)($item['kev_action'] ?? ''));
+        }
+
+        $lines = [];
+        $lines[] = 'CVE: ' . $cveId;
+        $lines[] = 'Publicado: ' . (!empty($item['published_at']) ? (string)$item['published_at'] : 'Desconocido');
+        $lines[] = 'CVSS: ' . ($item['cvss'] !== null
+            ? number_format((float)$item['cvss'], 1, '.', '') . ' (' . self::severityLabel((string)($item['severity'] ?? '')) . ')'
+            : 'Desconocido');
+        $lines[] = 'Vector: ' . (!empty($item['vector']) ? (string)$item['vector'] : 'Desconocido');
+        $lines[] = 'EPSS: ' . ($item['epss'] !== null
+            ? number_format((float)$item['epss'] * 100, 2, '.', '') . '%'
+            : 'Desconocido');
+        $kev = 'No';
+        if (!empty($item['kev'])) {
+            $kev = 'Sí';
+            if (!empty($item['kev_added'])) {
+                $kev .= ' (añadido ' . (string)$item['kev_added'] . ')';
+            }
+            if (!empty($item['kev_due'])) {
+                $kev .= '; vence ' . (string)$item['kev_due'];
+            }
+            if (strcasecmp((string)($item['kev_ransomware'] ?? ''), 'Known') === 0) {
+                $kev .= '; ransomware conocido';
+            }
+        }
+        $lines[] = 'CISA KEV: ' . $kev;
+        if ($kevAction !== '') {
+            $lines[] = 'Acción requerida (CISA): ' . truncate($kevAction, 1200);
+        }
+        $lines[] = 'Descripción: ' . ($description !== '' ? truncate($description, 1500) : 'Desconocida');
+        $lines[] = 'Prioridad calculada: ' . (!empty($item['priority']) ? (string)$item['priority'] : 'Sin datos');
+        $lines[] = 'Etiquetas/origen: ' . ($tags !== [] ? implode(', ', $tags) : 'Sin definir');
+        if ($groupName !== '') {
+            $lines[] = 'Grupo asignado: ' . $groupName;
+        }
+
+        $github = is_array($item['github'] ?? null) ? $item['github'] : [];
+        if ($github !== []) {
+            $lines[] = 'Exploits públicos en GitHub: ' . implode(', ', array_slice($github, 0, 8));
+        }
+        $refs = is_array($item['references'] ?? null) ? array_slice($item['references'], 0, 8) : [];
+        if ($refs !== []) {
+            $lines[] = 'Referencias: ' . implode(', ', $refs);
+        }
+
+        $exposureLines = [];
+        if (is_array($defenderCve)) {
+            $exposureLines[] = 'Equipos afectados: ' . (int)($defenderCve['machine_total'] ?? 0);
+            if (!empty($defenderCve['products']) && is_array($defenderCve['products'])) {
+                $exposureLines[] = 'Productos expuestos: ' . implode(', ', array_slice($defenderCve['products'], 0, 6));
+            }
+            if (!empty($defenderCve['public_exploit'])) {
+                $exposureLines[] = 'Exploit público detectado en el entorno.';
+            }
+            if (!empty($defenderCve['exploit_verified'])) {
+                $exposureLines[] = 'Exploit verificado en el entorno.';
+            }
+            if (!empty($defenderCve['machines']) && is_array($defenderCve['machines'])) {
+                $machines = [];
+                foreach (array_slice($defenderCve['machines'], 0, 8) as $machine) {
+                    $label = trim((string)($machine['name'] ?? ''));
+                    if (!empty($machine['os'])) {
+                        $label .= ' (' . (string)$machine['os'] . ')';
+                    }
+                    if (!empty($machine['exposure'])) {
+                        $label .= ' [' . (string)$machine['exposure'] . ']';
+                    }
+                    if ($label !== '') {
+                        $machines[] = $label;
+                    }
+                }
+                if ($machines !== []) {
+                    $exposureLines[] = 'Equipos: ' . implode('; ', $machines);
+                }
+            }
+        }
+
+        return "Analiza ÚNICAMENTE el CVE " . $cveId . ". No mezcles datos de otros CVEs. "
+            . "Redacta un análisis extendido para el equipo que va a remediarlo, usando SOLO los datos aportados. "
+            . "Devuelve EXACTAMENTE estas seis secciones, cada una empezando por su encabezado numerado:\n\n"
+            . "1. Naturaleza y alcance\n"
+            . "2. Evaluación de riesgo\n"
+            . "3. Escenarios de ataque\n"
+            . "4. Impacto y probabilidad\n"
+            . "5. Mitigación y parcheo\n"
+            . "6. Detección, verificación y prioridad\n\n"
+            . "Formato obligatorio:\n"
+            . "- Usa SOLO viñetas, una por línea, empezando por \"- \".\n"
+            . "- Entre 3 y 5 viñetas por sección.\n"
+            . "- Cada viñeta debe ocupar una sola línea y tener 25 palabras como máximo.\n"
+            . "- No escribas párrafos, introducciones ni conclusiones fuera de las seis secciones.\n"
+            . "- No repitas la descripción literal ni los datos CVSS/EPSS/KEV: ya aparecen en el informe; aporta análisis.\n"
+            . "- No inventes KB, versiones, productos ni URLs. Si un dato no consta, escribe \"Desconocido\".\n"
+            . "- En mitigación, distingue parche oficial, mitigación temporal y verificación.\n"
+            . "- Usa las etiquetas/origen solo para contextualizar al equipo responsable; no inventes datos sobre ellas.\n"
+            . "- Sin Markdown (nada de **, #, `), sin emojis, sin tablas. Español técnico y directo.\n\n"
+            . ($exposureLines !== []
+                ? "EXPOSICIÓN EN TU ENTORNO (Defender):\n" . implode("\n", $exposureLines) . "\n\n"
+                : "EXPOSICIÓN EN TU ENTORNO (Defender): sin datos para este CVE.\n\n")
+            . "DATOS DEL CVE:\n" . implode("\n", $lines);
+    }
+
+    /**
+     * System prompt del análisis individual.
+     */
+    public static function itemSystemPrompt(): string
+    {
+        return 'Eres un analista sénior de ciberseguridad especializado en vulnerabilidades, '
+            . 'explotación, gestión de parches y respuesta. Analizas un único CVE por respuesta, '
+            . 'escribes en español con precisión técnica y no inventas datos.';
+    }
+
+    /**
      * Convierte la respuesta de la IA en secciones con viñetas.
      * Tolera que el modelo ignore el formato y devuelva prosa.
      *
@@ -889,7 +1100,7 @@ final class CveReportAi
         $text = preg_replace('/^#{1,6}\s*/m', '', $text) ?? $text;
         $text = str_replace('`', '', $text);
 
-        $parts = preg_split('/(?=^\s*[1-4]\.\s+\S)/mu', $text) ?: [];
+        $parts = preg_split('/(?=^\s*\d{1,2}\.\s+\S)/mu', $text) ?: [];
         $sections = [];
 
         foreach ($parts as $part) {
@@ -900,7 +1111,7 @@ final class CveReportAi
 
             $lines = preg_split('/\n/', $part) ?: [];
             $title = trim((string)array_shift($lines));
-            $title = preg_replace('/^[1-4]\.\s*/u', '', $title) ?? $title;
+            $title = preg_replace('/^\d{1,2}\.\s*/u', '', $title) ?? $title;
 
             $bullets = [];
             $paragraphs = [];
@@ -1088,6 +1299,262 @@ final class CveReportAi
     }
 
     /**
+     * Crea las filas de análisis por CVE que falten y conserva tags/estado de
+     * las existentes. Se ejecuta antes de generar el informe.
+     *
+     * @param array<int,array<string,mixed>> $items
+     */
+    private static function ensureAiItems(int $reportId, array $items, ?string $reportTagsJson, int $defaultGroupId = 0): void
+    {
+        $existing = [];
+        foreach (CveDatabase::fetchAll(
+            "SELECT id, cve_id, tags FROM cve_ai_report_items WHERE report_id = ?",
+            [$reportId]
+        ) as $row) {
+            $existing[(string)$row['cve_id']] = $row;
+        }
+
+        $position = 0;
+        foreach ($items as $item) {
+            $cveId = (string)($item['cve_id'] ?? '');
+            if ($cveId === '') {
+                continue;
+            }
+            if (!isset($existing[$cveId])) {
+                CveDatabase::insert(
+                    "INSERT INTO cve_ai_report_items (report_id, cve_id, position, tags, group_id, status)
+                     VALUES (?, ?, ?, ?, ?, 'pending')",
+                    [$reportId, $cveId, $position, $reportTagsJson, $defaultGroupId > 0 ? $defaultGroupId : null]
+                );
+            } else {
+                $row = $existing[$cveId];
+                if (trim((string)($row['tags'] ?? '')) === '' && $reportTagsJson !== null) {
+                    CveDatabase::update(
+                        "UPDATE cve_ai_report_items SET tags = ? WHERE id = ?",
+                        [$reportTagsJson, (int)$row['id']]
+                    );
+                }
+                CveDatabase::update(
+                    "UPDATE cve_ai_report_items SET position = ? WHERE id = ?",
+                    [$position, (int)$row['id']]
+                );
+            }
+            $position++;
+        }
+
+        CveDatabase::update(
+            "UPDATE cve_ai_reports SET total_items = ? WHERE id = ?",
+            [count($items), $reportId]
+        );
+    }
+
+    /**
+     * Genera un análisis extendido por cada CVE pendiente. Cada llamada es
+     * independiente: un fallo en un CVE no impide analizar los demás.
+     *
+     * @param array<string,mixed>            $row
+     * @param array<int,array<string,mixed>> $items
+     * @return array<string,mixed>
+     */
+    private static function runExtendedItems(int $reportId, array $row, array $items, int $profileId, float $started): array
+    {
+        $defender = null;
+        if (!empty($row['defender_json'])) {
+            $decoded = safe_json_decode((string)$row['defender_json'], null);
+            if (is_array($decoded)) {
+                $defender = $decoded;
+            }
+        }
+
+        $itemRows = [];
+        foreach (CveDatabase::fetchAll(
+            "SELECT * FROM cve_ai_report_items WHERE report_id = ?",
+            [$reportId]
+        ) as $itemRow) {
+            $itemRows[(string)$itemRow['cve_id']] = $itemRow;
+        }
+
+        $done = 0;
+        foreach ($itemRows as $itemRow) {
+            if ((string)$itemRow['status'] === 'done') {
+                $done++;
+            }
+        }
+        CveDatabase::update(
+            "UPDATE cve_ai_reports SET processed_items = ? WHERE id = ?",
+            [$done, $reportId]
+        );
+
+        $failed = 0;
+        $model = '';
+        $total = count($items);
+        $llm = null;
+
+        foreach ($items as $item) {
+            $current = CveDatabase::fetchOne("SELECT status FROM cve_ai_reports WHERE id = ?", [$reportId]);
+            if ($current === null || (string)$current['status'] !== 'running') {
+                return [
+                    'success' => false,
+                    'id'      => $reportId,
+                    'status'  => 'canceled',
+                    'error'   => 'El informe se canceló durante la generación.',
+                ];
+            }
+
+            $cveId = (string)($item['cve_id'] ?? '');
+            $itemRow = $itemRows[$cveId] ?? null;
+            if ($itemRow === null) {
+                continue;
+            }
+            if ((string)$itemRow['status'] === 'done') {
+                continue;
+            }
+
+            CveDatabase::update(
+                "UPDATE cve_ai_report_items
+                 SET status = 'running', started_at = datetime('now'), ai_error = NULL
+                 WHERE id = ?",
+                [(int)$itemRow['id']]
+            );
+            $itemStarted = microtime(true);
+
+            try {
+                if (!class_exists('Module_Llm')) {
+                    throw new RuntimeException('El módulo de IA no está activo. Actívalo en Admin → Módulos.');
+                }
+                if ($llm === null) {
+                    $llm = new Module_Llm();
+                }
+                if (!$llm->isConfigured($profileId > 0 ? $profileId : null)) {
+                    throw new RuntimeException('La IA no está configurada. Revisa Admin → APIs.');
+                }
+
+                $tags = self::decodeTags((string)($itemRow['tags'] ?? ''));
+                $groupName = '';
+                if (!empty($itemRow['group_id'])) {
+                    $group = CveDatabase::fetchOne(
+                        "SELECT name FROM software_groups WHERE id = ?",
+                        [(int)$itemRow['group_id']]
+                    );
+                    $groupName = (string)($group['name'] ?? '');
+                }
+                $defenderCve = ($defender !== null && isset($defender['cves'][$cveId]) && is_array($defender['cves'][$cveId]))
+                    ? $defender['cves'][$cveId]
+                    : null;
+
+                $result = $llm->chat(
+                    self::itemSystemPrompt(),
+                    self::itemPrompt($item, $defenderCve, $tags, $groupName),
+                    ['max_tokens' => 1500, 'temperature' => 0.2],
+                    $profileId > 0 ? $profileId : null
+                );
+                if (empty($result['success'])) {
+                    throw new RuntimeException((string)($result['error'] ?? 'Error desconocido del proveedor de IA.'));
+                }
+                $content = trim((string)($result['content'] ?? ''));
+                if ($content === '') {
+                    throw new RuntimeException('La IA devolvió una respuesta vacía.');
+                }
+
+                $sections = self::parseAiSections($content);
+                $sectionsJson = json_encode(
+                    $sections,
+                    JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE
+                );
+                CveDatabase::update(
+                    "UPDATE cve_ai_report_items
+                     SET status = 'done', ai_text = ?, sections_json = ?, ai_model = ?, ai_error = NULL,
+                         finished_at = datetime('now'), updated_at = datetime('now')
+                     WHERE id = ?",
+                    [
+                        $content,
+                        $sectionsJson !== false ? $sectionsJson : null,
+                        (string)($result['model'] ?? ''),
+                        (int)$itemRow['id'],
+                    ]
+                );
+                $model = (string)($result['model'] ?? '');
+                $done++;
+                app_log('info', 'cve_ai', 'CVE analizado', [
+                    'id'   => $reportId,
+                    'cve'  => $cveId,
+                    'ms'   => (int)round((microtime(true) - $itemStarted) * 1000),
+                ]);
+            } catch (Throwable $e) {
+                $aiError = $e->getMessage();
+                if (stripos($aiError, 'curl_init') !== false || stripos($aiError, 'curl extension') !== false) {
+                    $aiError = 'La extensión cURL de PHP no está disponible en el servidor; no se puede llamar a la IA.';
+                }
+                CveDatabase::update(
+                    "UPDATE cve_ai_report_items
+                     SET status = 'error', ai_error = ?, finished_at = datetime('now'), updated_at = datetime('now')
+                     WHERE id = ?",
+                    [substr($aiError, 0, 2000), (int)$itemRow['id']]
+                );
+                $failed++;
+                app_log('error', 'cve_ai', 'Error analizando CVE', [
+                    'id'    => $reportId,
+                    'cve'   => $cveId,
+                    'error' => $aiError,
+                ]);
+            }
+
+            CveDatabase::update(
+                "UPDATE cve_ai_reports SET processed_items = ?, ai_model = ? WHERE id = ? AND status = 'running'",
+                [$done + $failed, $model !== '' ? $model : null, $reportId]
+            );
+        }
+
+        $status = $done > 0 ? 'done' : 'error';
+        $error = '';
+        if ($failed > 0) {
+            $error = $failed . ' de ' . $total . ' análisis fallaron. Puedes reintentarlos individualmente.';
+        } elseif ($done === 0) {
+            $error = 'No se pudo analizar ningún CVE.';
+        }
+
+        $saved = CveDatabase::update(
+            "UPDATE cve_ai_reports
+             SET ai_text = NULL, content_text = NULL, status = ?, ai_error = ?, ai_model = ?,
+                 ai_duration_ms = ?, processed_items = ?, total_items = ?,
+                 finished_at = datetime('now'), updated_at = datetime('now'), token = NULL
+             WHERE id = ? AND status = 'running'",
+            [
+                $status,
+                $error !== '' ? substr($error, 0, 2000) : null,
+                $model !== '' ? $model : null,
+                (int)round((microtime(true) - $started) * 1000),
+                $done + $failed,
+                $total,
+                $reportId,
+            ]
+        );
+        if ($saved === 0) {
+            app_log('info', 'cve_ai', 'Resultado descartado (informe cancelado o eliminado)', ['id' => $reportId]);
+            return [
+                'success' => false,
+                'id'      => $reportId,
+                'status'  => 'canceled',
+                'error'   => 'El informe se canceló durante la generación.',
+            ];
+        }
+
+        app_log('info', 'cve_ai', 'Informe extendido finalizado', [
+            'id'     => $reportId,
+            'status' => $status,
+            'done'   => $done,
+            'failed' => $failed,
+        ]);
+
+        return [
+            'success' => $status === 'done',
+            'id'      => $reportId,
+            'status'  => $status,
+            'error'   => $error !== '' ? $error : null,
+        ];
+    }
+
+    /**
      * Ejecuta un informe concreto. Reclama la fila de forma atómica para que
      * un doble clic (o el worker y la web a la vez) no lo genere dos veces.
      */
@@ -1123,6 +1590,7 @@ final class CveReportAi
 
         $started = microtime(true);
         $noAi = !empty($row['no_ai']);
+        $mode = ((string)($row['mode'] ?? 'extended')) === 'summary' ? 'summary' : 'extended';
         app_log('info', 'cve_ai', 'Informe IA iniciado', [
             'id'    => $id,
             'no_ai' => $noAi,
@@ -1130,6 +1598,14 @@ final class CveReportAi
         ]);
 
         try {
+            if ($mode === 'extended') {
+                // Evita mostrar un análisis global antiguo mientras se generan los individuales.
+                CveDatabase::update(
+                    "UPDATE cve_ai_reports SET ai_text = NULL, content_text = NULL WHERE id = ?",
+                    [$id]
+                );
+            }
+
             $ids = safe_json_decode((string)($row['cve_ids'] ?? ''), []);
             if (!is_array($ids) || $ids === []) {
                 throw new RuntimeException('La lista de CVEs del informe está vacía.');
@@ -1172,6 +1648,14 @@ final class CveReportAi
                 "UPDATE cve_ai_reports SET data_json = ? WHERE id = ?",
                 [$dataJson !== false ? $dataJson : null, $id]
             );
+
+            $reportTagsJson = self::tagsJson(self::decodeTags((string)($row['tags'] ?? '')));
+            self::ensureAiItems($id, $items, $reportTagsJson, (int)($row['group_id'] ?? 0));
+
+            // Análisis extendido: una llamada independiente por CVE.
+            if (!$localOnly && $mode === 'extended') {
+                return self::runExtendedItems($id, $row, $items, $profileId, $started);
+            }
 
             if ($localOnly) {
                 $model = 'local';
@@ -1249,6 +1733,21 @@ final class CveReportAi
                     'status'  => 'canceled',
                     'error'   => 'El informe se canceló durante la generación.',
                 ];
+            }
+
+            // Modo resumen o solo datos: los CVEs no tienen análisis propio.
+            if ($localOnly || $mode === 'summary') {
+                CveDatabase::query(
+                    "UPDATE cve_ai_report_items
+                     SET status = 'skipped', ai_error = NULL,
+                         finished_at = datetime('now'), updated_at = datetime('now')
+                     WHERE report_id = ? AND status <> 'done'",
+                    [$id]
+                );
+                CveDatabase::update(
+                    "UPDATE cve_ai_reports SET processed_items = total_items WHERE id = ?",
+                    [$id]
+                );
             }
 
             app_log('info', 'cve_ai', 'Informe IA finalizado', [

@@ -47,6 +47,10 @@ class Module_Cve extends BaseModule
             ['method' => 'POST', 'pattern' => 'reports/ai-retry/{id}', 'handler' => [$this, 'retryAiReport']],
             ['method' => 'POST', 'pattern' => 'reports/ai-refresh/{id}', 'handler' => [$this, 'refreshAiReport']],
             ['method' => 'POST', 'pattern' => 'reports/ai-assign/{id}', 'handler' => [$this, 'assignAiReport']],
+            ['method' => 'POST', 'pattern' => 'reports/ai-item-tags', 'handler' => [$this, 'updateAiItemTags']],
+            ['method' => 'POST', 'pattern' => 'reports/ai-assign-items', 'handler' => [$this, 'assignAiReportItems']],
+            ['method' => 'POST', 'pattern' => 'reports/ai-retry-item/{id}/{itemId}', 'handler' => [$this, 'retryAiReportItem']],
+            ['method' => 'GET',  'pattern' => 'reports/ai-tag-suggestions', 'handler' => [$this, 'aiTagSuggestions']],
             ['method' => 'GET',  'pattern' => 'reports/defender-list', 'handler' => [$this, 'defenderList']],
             ['method' => 'POST', 'pattern' => 'reports/ai-start-defender', 'handler' => [$this, 'startAiReportDefender']],
             ['method' => 'POST', 'pattern' => 'reports/ai-scheduled-defender', 'handler' => [$this, 'runScheduledDefenderReport']],
@@ -961,6 +965,8 @@ class Module_Cve extends BaseModule
             }
 
             $noAi = !empty($input['no_ai']);
+            $tags = CveReportAi::normalizeTags($input['tags'] ?? []);
+            $mode = ((string)($input['mode'] ?? 'extended')) === 'summary' ? 'summary' : 'extended';
             $profileId = (int)($input['profile_id'] ?? 0);
             if ($profileId <= 0) {
                 $profileId = (int)(llm_task_profile('cve_report') ?? 0);
@@ -975,7 +981,7 @@ class Module_Cve extends BaseModule
                 }
             }
 
-            $result = $this->queueAiReport($found, $profileId, $noAi);
+            $result = $this->queueAiReport($found, $profileId, $noAi, null, $tags, $mode);
             app_log('info', 'cve_ai', 'Informe IA creado', [
                 'id'     => (int)$result['report_id'],
                 'cves'   => $found,
@@ -1057,9 +1063,17 @@ class Module_Cve extends BaseModule
             $token = bin2hex(random_bytes(24));
             CveDatabase::update(
                 "UPDATE cve_ai_reports
-                 SET status = 'pending', token = ?, ai_error = NULL, finished_at = NULL, started_at = NULL
+                 SET status = 'pending', token = ?, ai_error = NULL, finished_at = NULL, started_at = NULL,
+                     processed_items = 0
                  WHERE id = ?",
                 [$token, $id]
+            );
+            // Reintentar solo los análisis que no terminaron; los «done» se conservan.
+            CveDatabase::query(
+                "UPDATE cve_ai_report_items
+                 SET status = 'pending', ai_error = NULL
+                 WHERE report_id = ? AND status IN ('error','running','pending')",
+                [$id]
             );
             app_log('info', 'cve_ai', 'Informe reencolado', ['id' => $id]);
 
@@ -1085,7 +1099,9 @@ class Module_Cve extends BaseModule
             $id = (int)($params['id'] ?? 0);
             $row = $id > 0
                 ? CveDatabase::fetchOne(
-                    "SELECT id, status, ai_error, created_at, started_at, defender_json FROM cve_ai_reports WHERE id = ?",
+                    "SELECT id, status, ai_error, created_at, started_at, defender_json,
+                            mode, processed_items, total_items
+                     FROM cve_ai_reports WHERE id = ?",
                     [$id]
                 )
                 : null;
@@ -1103,11 +1119,13 @@ class Module_Cve extends BaseModule
                     ? (string)$row['started_at']
                     : (string)($row['created_at'] ?? '');
                 $started = strtotime(str_contains($ref, 'Z') ? $ref : $ref . ' UTC');
-                $limit = $currentStatus === 'running' ? 1800 : 600;
+                $limit = $currentStatus === 'running'
+                    ? (((string)($row['mode'] ?? 'extended')) === 'extended' ? 3600 : 1800)
+                    : 600;
 
                 if ($started !== false && (time() - $started) > $limit) {
                     $message = $currentStatus === 'running'
-                        ? 'La generación no terminó a tiempo (30 minutos). Puedes reintentarlo.'
+                        ? 'La generación no terminó a tiempo. Puedes reintentarlo.'
                         : 'El informe no llegó a ejecutarse (10 minutos en cola). Pulsa Reintentar.';
                     CveDatabase::query(
                         "UPDATE cve_ai_reports
@@ -1125,11 +1143,23 @@ class Module_Cve extends BaseModule
                 }
             }
 
+            $failedItems = (int)(CveDatabase::fetchOne(
+                "SELECT COUNT(*) AS c FROM cve_ai_report_items WHERE report_id = ? AND status = 'error'",
+                [$id]
+            )['c'] ?? 0);
+            $totalItems = (int)($row['total_items'] ?? 0);
+            $processedItems = (int)($row['processed_items'] ?? 0);
+
             json_response([
                 'success'   => true,
                 'report_id' => $id,
                 'status'    => (string)$row['status'],
                 'error'     => (string)($row['ai_error'] ?? ''),
+                'mode'      => (string)($row['mode'] ?? 'extended'),
+                'processed' => $processedItems,
+                'total'     => $totalItems,
+                'failed'    => $failedItems,
+                'progress'  => $totalItems > 0 ? min(100, (int)round($processedItems * 100 / $totalItems)) : 0,
                 'url'       => base_url('modules/cve/report-ai/' . $id),
             ]);
         } catch (Throwable $e) {
@@ -1147,6 +1177,9 @@ class Module_Cve extends BaseModule
 
         $id = (int)($params['id'] ?? 0);
         $data = $this->aiReportPayload($id);
+        if ($data !== null) {
+            $data['isAdmin'] = Auth::isAdmin();
+        }
 
         if (!empty($_GET['partial'])) {
             // Documento aislado para inyectarlo en el panel derecho del workspace.
@@ -1158,13 +1191,22 @@ class Module_Cve extends BaseModule
                 return;
             }
             extract($data);
+            $interactive = true;
             require __DIR__ . '/views/_ai_report_body.php';
             return;
         }
 
         if ($data === null) {
             http_response_code(404);
-            $data = ['report' => null, 'items' => [], 'aiText' => '', 'sections' => []];
+            $data = [
+                'report'      => null,
+                'items'       => [],
+                'aiText'      => '',
+                'sections'    => [],
+                'defender'    => null,
+                'perItemMode' => false,
+                'isAdmin'     => Auth::isAdmin(),
+            ];
         }
 
         echo $this->page('ai_report', $data);
@@ -1343,7 +1385,7 @@ class Module_Cve extends BaseModule
                     "UPDATE cve_ai_reports
                      SET data_json = ?, defender_json = ?, status = 'pending', token = ?, ai_error = NULL,
                          started_at = NULL, finished_at = NULL, updated_at = NULL,
-                         revision = revision + 1
+                         processed_items = 0, revision = revision + 1
                      WHERE id = ?",
                     [$newJson, $defenderSave, $token, $id]
                 );
@@ -1352,11 +1394,19 @@ class Module_Cve extends BaseModule
                 CveDatabase::update(
                     "UPDATE cve_ai_reports
                      SET status = 'pending', token = ?, ai_error = NULL,
-                         started_at = NULL, finished_at = NULL
+                         started_at = NULL, finished_at = NULL, processed_items = 0
                      WHERE id = ?",
                     [$token, $id]
                 );
             }
+
+            // Actualizar implica recalcular los análisis individuales.
+            CveDatabase::query(
+                "UPDATE cve_ai_report_items
+                 SET status = 'pending', ai_error = NULL, sections_json = NULL, ai_text = NULL
+                 WHERE report_id = ?",
+                [$id]
+            );
 
             app_log('info', 'cve_ai', 'Informe actualizado desde el catálogo', [
                 'id'      => $id,
@@ -1442,6 +1492,14 @@ class Module_Cve extends BaseModule
                 "UPDATE cve_ai_reports SET group_id = ? WHERE id = ?",
                 [$groupId > 0 ? $groupId : null, $id]
             );
+            if ($groupId > 0) {
+                // Los CVEs sin grupo propio heredan el grupo del informe.
+                CveDatabase::query(
+                    "UPDATE cve_ai_report_items SET group_id = ?
+                     WHERE report_id = ? AND group_id IS NULL",
+                    [$groupId, $id]
+                );
+            }
 
             app_log('info', 'cve_ai', 'Informe asignado a grupo', [
                 'id'    => $id,
@@ -1461,6 +1519,322 @@ class Module_Cve extends BaseModule
             ]);
             json_response(['success' => false, 'error' => $e->getMessage()], 500);
         }
+    }
+
+    /**
+     * Aplica tags a los CVEs seleccionados de un informe.
+     */
+    public function updateAiItemTags(array $params = []): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        try {
+            $raw = file_get_contents('php://input');
+            $input = json_decode((string)$raw, true);
+            if (!is_array($input)) {
+                $input = $_POST;
+            }
+
+            $reportId = (int)($input['report_id'] ?? 0);
+            $report = $reportId > 0
+                ? CveDatabase::fetchOne("SELECT id FROM cve_ai_reports WHERE id = ?", [$reportId])
+                : null;
+            if ($report === null) {
+                json_response(['success' => false, 'error' => 'Informe no encontrado.'], 404);
+            }
+
+            $itemIds = $this->normalizeItemIds($input['item_ids'] ?? []);
+            if ($itemIds === []) {
+                json_response(['success' => false, 'error' => 'Selecciona al menos un CVE.'], 400);
+            }
+
+            $tags = CveReportAi::normalizeTags($input['tags'] ?? []);
+            $append = !empty($input['append']);
+            $updated = 0;
+
+            foreach ($itemIds as $itemId) {
+                $item = CveDatabase::fetchOne(
+                    "SELECT id, tags FROM cve_ai_report_items WHERE id = ? AND report_id = ?",
+                    [$itemId, $reportId]
+                );
+                if ($item === null) {
+                    continue;
+                }
+                $newTags = $append
+                    ? array_merge(CveReportAi::decodeTags((string)($item['tags'] ?? '')), $tags)
+                    : $tags;
+                CveDatabase::update(
+                    "UPDATE cve_ai_report_items SET tags = ?, updated_at = datetime('now')
+                     WHERE id = ? AND report_id = ?",
+                    [CveReportAi::tagsJson($newTags), $itemId, $reportId]
+                );
+                $updated++;
+            }
+
+            log_activity('cve.ai_report_items_tagged', [
+                'report_id' => $reportId,
+                'items'     => $itemIds,
+                'tags'      => $tags,
+            ]);
+
+            json_response([
+                'success' => true,
+                'updated' => $updated,
+                'tags'    => $tags,
+            ]);
+        } catch (Throwable $e) {
+            app_log('error', 'cve_ai', 'Error etiquetando CVEs', ['error' => $e->getMessage()]);
+            json_response(['success' => false, 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Envía los CVEs seleccionados de un informe a un grupo de aplicaciones.
+     */
+    public function assignAiReportItems(array $params = []): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        try {
+            $raw = file_get_contents('php://input');
+            $input = json_decode((string)$raw, true);
+            if (!is_array($input)) {
+                $input = $_POST;
+            }
+
+            $reportId = (int)($input['report_id'] ?? 0);
+            $report = $reportId > 0
+                ? CveDatabase::fetchOne("SELECT id FROM cve_ai_reports WHERE id = ?", [$reportId])
+                : null;
+            if ($report === null) {
+                json_response(['success' => false, 'error' => 'Informe no encontrado.'], 404);
+            }
+
+            $itemIds = $this->normalizeItemIds($input['item_ids'] ?? []);
+            if ($itemIds === []) {
+                json_response(['success' => false, 'error' => 'Selecciona al menos un CVE.'], 400);
+            }
+
+            $groupId = (int)($input['group_id'] ?? 0);
+            $newName = trim((string)($input['new_group'] ?? ''));
+            $groupName = '';
+
+            if ($newName !== '') {
+                if ($this->textLength($newName) > 120) {
+                    json_response(['success' => false, 'error' => 'El nombre del grupo es demasiado largo (máximo 120).'], 400);
+                }
+                $existing = CveDatabase::fetchOne(
+                    "SELECT id, name FROM software_groups WHERE lower(name) = lower(?) ORDER BY id LIMIT 1",
+                    [$newName]
+                );
+                if ($existing !== null) {
+                    $groupId = (int)$existing['id'];
+                    $groupName = (string)$existing['name'];
+                } else {
+                    $groupId = CveDatabase::insert(
+                        "INSERT INTO software_groups (name, parent_id, position) VALUES (?, NULL, 0)",
+                        [$newName]
+                    );
+                    $groupName = $newName;
+                    log_activity('cve.group_created', ['id' => $groupId, 'name' => $newName, 'from' => 'report_items']);
+                }
+            } elseif ($groupId > 0) {
+                $group = CveDatabase::fetchOne("SELECT id, name FROM software_groups WHERE id = ?", [$groupId]);
+                if ($group === null) {
+                    json_response(['success' => false, 'error' => 'El grupo seleccionado no existe.'], 400);
+                }
+                $groupName = (string)$group['name'];
+            }
+
+            $updated = 0;
+            foreach ($itemIds as $itemId) {
+                $updated += CveDatabase::update(
+                    "UPDATE cve_ai_report_items SET group_id = ?, updated_at = datetime('now')
+                     WHERE id = ? AND report_id = ?",
+                    [$groupId > 0 ? $groupId : null, $itemId, $reportId]
+                );
+            }
+
+            app_log('info', 'cve_ai', 'CVEs enviados a grupo', [
+                'report_id' => $reportId,
+                'items'     => $itemIds,
+                'group'     => $groupName,
+            ]);
+
+            json_response([
+                'success'    => true,
+                'group_id'   => $groupId,
+                'group_name' => $groupName,
+                'updated'    => $updated,
+            ]);
+        } catch (Throwable $e) {
+            app_log('error', 'cve_ai', 'Error enviando CVEs a grupo', ['error' => $e->getMessage()]);
+            json_response(['success' => false, 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Sugerencias de tags y grupos para los CVEs seleccionados.
+     */
+    public function aiTagSuggestions(array $params = []): void
+    {
+        if (!Auth::check()) {
+            json_response(['success' => false, 'error' => 'Sesión caducada. Recarga la página.'], 401);
+        }
+
+        try {
+            $reportId = (int)($_GET['report_id'] ?? 0);
+            $report = $reportId > 0
+                ? CveDatabase::fetchOne("SELECT id, tags, defender_json FROM cve_ai_reports WHERE id = ?", [$reportId])
+                : null;
+            if ($report === null) {
+                json_response(['success' => false, 'error' => 'Informe no encontrado.'], 404);
+            }
+            if (!empty($report['defender_json']) && !Auth::isAdmin()) {
+                json_response(['success' => false, 'error' => 'Informe no encontrado.'], 404);
+            }
+
+            $itemIds = $this->normalizeItemIds($_GET['item_ids'] ?? []);
+            $where = 'report_id = ?';
+            $sqlParams = [$reportId];
+            if ($itemIds !== []) {
+                $ph = implode(',', array_fill(0, count($itemIds), '?'));
+                $where .= " AND id IN ($ph)";
+                $sqlParams = array_merge($sqlParams, $itemIds);
+            }
+
+            $rows = CveDatabase::fetchAll(
+                "SELECT cve_id, tags FROM cve_ai_report_items WHERE $where ORDER BY position, id",
+                $sqlParams
+            );
+
+            $cveIds = [];
+            $tags = CveReportAi::decodeTags((string)($report['tags'] ?? ''));
+            foreach ($rows as $row) {
+                $cveIds[] = (string)$row['cve_id'];
+                $tags = array_merge($tags, CveReportAi::decodeTags((string)($row['tags'] ?? '')));
+            }
+            $cveIds = array_values(array_unique(array_filter($cveIds)));
+
+            // Vocabulario de tags ya usado en este informe (aunque no esté seleccionado).
+            foreach (CveDatabase::fetchAll(
+                "SELECT tags FROM cve_ai_report_items WHERE report_id = ? AND tags IS NOT NULL",
+                [$reportId]
+            ) as $row) {
+                $tags = array_merge($tags, CveReportAi::decodeTags((string)$row['tags']));
+            }
+
+            $groups = [];
+            if ($cveIds !== []) {
+                $ph = implode(',', array_fill(0, count($cveIds), '?'));
+                $groupRows = CveDatabase::fetchAll(
+                    "SELECT DISTINCT g.name
+                     FROM cve_watchlist_match m
+                     JOIN software_watchlist w ON w.id = m.watchlist_id
+                     JOIN software_groups g ON g.id = w.group_id
+                     WHERE m.cve_id IN ($ph)
+                     ORDER BY g.name
+                     LIMIT 50",
+                    $cveIds
+                );
+                foreach ($groupRows as $row) {
+                    $name = trim((string)($row['name'] ?? ''));
+                    if ($name !== '') {
+                        $groups[] = $name;
+                    }
+                }
+            }
+
+            json_response([
+                'success' => true,
+                'tags'    => CveReportAi::normalizeTags($tags, 50),
+                'groups'  => array_values(array_unique($groups)),
+            ]);
+        } catch (Throwable $e) {
+            app_log('error', 'cve_ai', 'Error obteniendo sugerencias de tags', ['error' => $e->getMessage()]);
+            json_response(['success' => false, 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Reintenta el análisis de un único CVE.
+     */
+    public function retryAiReportItem(array $params = []): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        try {
+            $reportId = (int)($params['id'] ?? 0);
+            $itemId = (int)($params['itemId'] ?? 0);
+            $report = $reportId > 0
+                ? CveDatabase::fetchOne("SELECT id, status, mode FROM cve_ai_reports WHERE id = ?", [$reportId])
+                : null;
+            if ($report === null) {
+                json_response(['success' => false, 'error' => 'Informe no encontrado.'], 404);
+            }
+            if (in_array((string)$report['status'], ['pending', 'running'], true)) {
+                json_response(['success' => false, 'error' => 'El informe está en curso.'], 409);
+            }
+            if ((string)($report['mode'] ?? 'extended') === 'summary') {
+                json_response(['success' => false, 'error' => 'Este informe usa análisis global; reintenta el informe completo.'], 400);
+            }
+
+            $item = CveDatabase::fetchOne(
+                "SELECT id FROM cve_ai_report_items WHERE id = ? AND report_id = ?",
+                [$itemId, $reportId]
+            );
+            if ($item === null) {
+                json_response(['success' => false, 'error' => 'CVE no encontrado en el informe.'], 404);
+            }
+
+            $token = bin2hex(random_bytes(24));
+            CveDatabase::update(
+                "UPDATE cve_ai_reports
+                 SET status = 'pending', token = ?, ai_error = NULL, started_at = NULL, finished_at = NULL
+                 WHERE id = ?",
+                [$token, $reportId]
+            );
+            CveDatabase::update(
+                "UPDATE cve_ai_report_items
+                 SET status = 'pending', ai_error = NULL, sections_json = NULL, ai_text = NULL
+                 WHERE id = ? AND report_id = ?",
+                [$itemId, $reportId]
+            );
+
+            $result = CveReportAi::runById($reportId);
+            $result['url'] = base_url('modules/cve/report-ai/' . $reportId);
+            json_response($result);
+        } catch (Throwable $e) {
+            app_log('error', 'cve_ai', 'Error reintentando un CVE', ['error' => $e->getMessage()]);
+            json_response(['success' => false, 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Normaliza IDs de cve_ai_report_items recibidos como array o texto.
+     *
+     * @return int[]
+     */
+    private function normalizeItemIds(mixed $raw): array
+    {
+        $parts = is_array($raw) ? $raw : preg_split('/[\s,;]+/', (string)$raw);
+        $ids = [];
+        foreach ($parts ?: [] as $part) {
+            if (!is_scalar($part)) {
+                continue;
+            }
+            $id = (int)$part;
+            if ($id > 0) {
+                $ids[$id] = true;
+            }
+            if (count($ids) >= 200) {
+                break;
+            }
+        }
+        return array_keys($ids);
     }
 
     /**
@@ -1529,6 +1903,8 @@ class Module_Cve extends BaseModule
             }
 
             $noAi = !empty($input['no_ai']);
+            $tags = CveReportAi::normalizeTags($input['tags'] ?? []);
+            $mode = ((string)($input['mode'] ?? 'extended')) === 'summary' ? 'summary' : 'extended';
             $profileId = (int)($input['profile_id'] ?? 0);
             if ($profileId <= 0) {
                 $profileId = (int)(llm_task_profile('cve_report') ?? 0);
@@ -1552,7 +1928,7 @@ class Module_Cve extends BaseModule
                 json_response(['success' => false, 'error' => 'No se pudo serializar la exposición de Defender.'], 500);
             }
 
-            $result = $this->queueAiReport($ids, $profileId, $noAi, $defenderJson);
+            $result = $this->queueAiReport($ids, $profileId, $noAi, $defenderJson, $tags, $mode);
             app_log('info', 'cve_ai', 'Informe creado desde Defender', [
                 'id'       => (int)$result['report_id'],
                 'cves'     => $ids,
@@ -1786,7 +2162,11 @@ class Module_Cve extends BaseModule
 
         $defender = $this->buildDefenderContext($available, $tenantId, $tenantName);
         $defenderJson = $this->encodeJson($defender);
-        $queued = $this->queueAiReport($available, 0, $noAi, $defenderJson);
+        $scheduledTags = ['Defender'];
+        if ($tenantName !== '') {
+            $scheduledTags[] = $tenantName;
+        }
+        $queued = $this->queueAiReport($available, 0, $noAi, $defenderJson, $scheduledTags, 'extended');
         $id = (int)$queued['report_id'];
 
         if ($groupId > 0) {
@@ -2046,6 +2426,61 @@ class Module_Cve extends BaseModule
             $items = [];
         }
 
+        $report['tags_array'] = CveReportAi::decodeTags((string)($report['tags'] ?? ''));
+        $itemTags = [];
+        $itemGroups = [];
+        $itemMap = [];
+        $itemRows = CveDatabase::fetchAll(
+            "SELECT i.*, g.name AS group_name
+             FROM cve_ai_report_items i
+             LEFT JOIN software_groups g ON g.id = i.group_id
+             WHERE i.report_id = ?
+             ORDER BY i.position, i.id",
+            [$id]
+        );
+        foreach ($itemRows as $itemRow) {
+            $cveId = (string)$itemRow['cve_id'];
+            $tags = CveReportAi::decodeTags((string)($itemRow['tags'] ?? ''));
+            $sections = safe_json_decode((string)($itemRow['sections_json'] ?? ''), []);
+            if (!is_array($sections)) {
+                $sections = [];
+            }
+            if ($sections === []) {
+                $sections = CveReportAi::parseAiSections((string)($itemRow['ai_text'] ?? ''));
+            }
+            $groupName = (string)($itemRow['group_name'] ?? '');
+            $itemMap[$cveId] = [
+                'item_id'     => (int)$itemRow['id'],
+                'tags'        => $tags,
+                'group_id'    => (int)($itemRow['group_id'] ?? 0),
+                'group_name'  => $groupName,
+                'ai_status'   => (string)($itemRow['status'] ?? ''),
+                'ai_text'     => (string)($itemRow['ai_text'] ?? ''),
+                'ai_sections' => $sections,
+                'ai_model'    => (string)($itemRow['ai_model'] ?? ''),
+                'ai_error'    => (string)($itemRow['ai_error'] ?? ''),
+            ];
+            foreach ($tags as $tag) {
+                $itemTags[$tag] = true;
+            }
+            if ($groupName !== '') {
+                $itemGroups[$groupName] = true;
+            }
+        }
+        foreach ($items as &$item) {
+            $cveId = (string)($item['cve_id'] ?? '');
+            if (isset($itemMap[$cveId])) {
+                $item = array_merge($item, $itemMap[$cveId]);
+            } else {
+                $item['tags'] = $report['tags_array'];
+                $item['ai_sections'] = [];
+                $item['ai_status'] = '';
+            }
+        }
+        unset($item);
+        $report['item_tags'] = array_keys($itemTags);
+        $report['item_groups'] = array_keys($itemGroups);
+
         $aiText = trim((string)($report['ai_text'] ?? ''));
         if ($aiText === '' && empty($report['no_ai'])) {
             // Compatibilidad: informes antiguos guardados en formato ASCII.
@@ -2070,11 +2505,12 @@ class Module_Cve extends BaseModule
         }
 
         return [
-            'report'   => $report,
-            'items'    => $items,
-            'aiText'   => $aiText,
-            'sections' => CveReportAi::parseAiSections($aiText),
-            'defender' => $defender,
+            'report'      => $report,
+            'items'       => $items,
+            'aiText'      => $aiText,
+            'sections'    => CveReportAi::parseAiSections($aiText),
+            'defender'    => $defender,
+            'perItemMode' => $itemRows !== [],
         ];
     }
 
@@ -2082,17 +2518,26 @@ class Module_Cve extends BaseModule
      * Crea el informe en estado «pending». La ejecución la lanza el navegador
      * contra reports/ai-run/{id} (sin loopback ni worker).
      */
-    private function queueAiReport(array $cveIds, int $profileId, bool $noAi = false, ?string $defenderJson = null): array
-    {
+    private function queueAiReport(
+        array $cveIds,
+        int $profileId,
+        bool $noAi = false,
+        ?string $defenderJson = null,
+        array $tags = [],
+        string $mode = 'extended'
+    ): array {
         $token = bin2hex(random_bytes(24));
         $title = 'Informe CVE IA' . ($defenderJson !== null ? ' · Defender' : '') . ' · '
             . (count($cveIds) === 1 ? $cveIds[0] : count($cveIds) . ' CVEs')
             . ' · ' . date('d/m/Y H:i');
+        $tagsJson = CveReportAi::tagsJson($tags);
+        $mode = $mode === 'summary' ? 'summary' : 'extended';
 
         $id = CveDatabase::insert(
             "INSERT INTO cve_ai_reports
-             (cve_ids, title, status, token, ai_profile_id, generated_by, no_ai, defender_json)
-             VALUES (?, ?, 'pending', ?, ?, ?, ?, ?)",
+             (cve_ids, title, status, token, ai_profile_id, generated_by, no_ai, defender_json,
+              mode, tags, total_items)
+             VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?)",
             [
                 $this->encodeJson($cveIds),
                 $title,
@@ -2101,6 +2546,9 @@ class Module_Cve extends BaseModule
                 Auth::id(),
                 $noAi ? 1 : 0,
                 $defenderJson,
+                $mode,
+                $tagsJson,
+                count($cveIds),
             ]
         );
 
@@ -2120,7 +2568,12 @@ class Module_Cve extends BaseModule
         return CveDatabase::fetchAll(
             "SELECT r.id, r.cve_ids, r.title, r.status, r.ai_model, r.ai_error, r.no_ai,
                     r.revision, r.updated_at, r.group_id, g.name AS group_name,
+                    r.mode, r.tags, r.processed_items, r.total_items,
                     CASE WHEN r.defender_json IS NOT NULL AND r.defender_json <> '' THEN 1 ELSE 0 END AS has_defender,
+                    (SELECT GROUP_CONCAT(DISTINCT g2.name)
+                     FROM cve_ai_report_items i2
+                     JOIN software_groups g2 ON g2.id = i2.group_id
+                     WHERE i2.report_id = r.id) AS item_groups,
                     r.created_at, r.finished_at
              FROM cve_ai_reports r
              LEFT JOIN software_groups g ON g.id = r.group_id

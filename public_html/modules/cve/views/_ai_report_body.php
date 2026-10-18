@@ -12,11 +12,21 @@ $aiText = (string)($aiText ?? '');
 $sections = is_array($sections ?? null) ? $sections : [];
 $defender = is_array($defender ?? null) ? $defender : null;
 $isAdmin = !empty($isAdmin);
+$perItemMode = !empty($perItemMode);
+$interactive = !empty($interactive);
+$reportTags = is_array($report['tags_array'] ?? null) ? $report['tags_array'] : [];
+$itemGroups = is_array($report['item_groups'] ?? null) ? $report['item_groups'] : [];
 
 $bodyStatus = (string)($report['status'] ?? 'pending');
 $bodyError = trim((string)($report['ai_error'] ?? ''));
 $bodyProcessing = in_array($bodyStatus, ['pending', 'running'], true);
 $bodyNoAi = !empty($report['no_ai']);
+$totalItems = (int)($report['total_items'] ?? count($items));
+$processedItems = (int)($report['processed_items'] ?? 0);
+$progressPct = $totalItems > 0 ? max(0, min(100, (int)round($processedItems * 100 / $totalItems))) : 0;
+$progressText = $totalItems > 0
+    ? 'Analizando CVE ' . max(1, min($processedItems + 1, $totalItems)) . ' de ' . $totalItems . '…'
+    : 'La IA está redactando el análisis. Esta página se actualizará sola cuando termine.';
 
 $bodyStatusLabels = [
     'pending'  => 'En cola',
@@ -116,9 +126,14 @@ $exposureLabel = static function (string $value): string {
 
     <?php if ($bodyProcessing): ?>
         <div class="mb-5 px-4 py-3 rounded-lg text-sm bg-blue-50 text-blue-700 flex items-start justify-between gap-3 flex-wrap no-print" id="ai-processing-banner">
-            <div class="flex items-center gap-3 min-w-0">
-                <svg class="w-4 h-4 animate-spin shrink-0" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg>
-                <span id="ai-processing-text">La IA está redactando la evaluación de riesgo. Esta página se actualizará sola cuando termine.</span>
+            <div class="flex items-start gap-3 min-w-0 flex-1">
+                <svg class="w-4 h-4 animate-spin shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg>
+                <div class="min-w-0 flex-1">
+                    <span id="ai-processing-text"><?= e($progressText) ?></span>
+                    <div class="mt-2 h-1.5 w-full max-w-xs rounded-full bg-blue-100 overflow-hidden">
+                        <div id="ai-processing-bar" class="h-full bg-blue-600 transition-all" style="width: <?= $progressPct ?>%"></div>
+                    </div>
+                </div>
             </div>
             <?php if ($isAdmin): ?>
                 <div class="flex items-center gap-2 shrink-0">
@@ -188,6 +203,21 @@ $exposureLabel = static function (string $value): string {
                         </a>
                     <?php endforeach; ?>
                 </div>
+            <?php endif; ?>
+
+            <?php if ($reportTags !== []): ?>
+                <div class="flex items-center gap-1.5 flex-wrap mt-2">
+                    <span class="text-[10px] font-semibold uppercase tracking-wide text-gray-400">Tags</span>
+                    <?php foreach ($reportTags as $tag): ?>
+                        <span class="report-badge inline-flex px-2 py-0.5 rounded-full border border-brand-200 bg-brand-50 text-[10px] font-medium text-brand-700">
+                            #<?= e($tag) ?>
+                        </span>
+                    <?php endforeach; ?>
+                </div>
+            <?php endif; ?>
+
+            <?php if ($itemGroups !== []): ?>
+                <p class="text-[11px] text-gray-500 mt-2">Grupos: <?= e(implode(' · ', $itemGroups)) ?></p>
             <?php endif; ?>
 
             <div class="flex items-center gap-2 flex-wrap mt-4 text-xs text-gray-500">
@@ -272,8 +302,38 @@ $exposureLabel = static function (string $value): string {
                 $exposure = ($defender !== null && isset($defender['cves'][$cveId]) && is_array($defender['cves'][$cveId]))
                     ? $defender['cves'][$cveId]
                     : null;
+                $itemId = (int)($item['item_id'] ?? 0);
+                $itemTags = is_array($item['tags'] ?? null) ? $item['tags'] : [];
+                $itemGroup = (string)($item['group_name'] ?? '');
+                $itemAiStatus = (string)($item['ai_status'] ?? '');
+                $itemSections = is_array($item['ai_sections'] ?? null) ? $item['ai_sections'] : [];
+                $itemAiError = trim((string)($item['ai_error'] ?? ''));
+                $itemAiModel = (string)($item['ai_model'] ?? '');
                 ?>
                 <section class="report-cve border-l-4 <?= $severity === 'Critical' ? 'border-red-500' : ($severity === 'High' ? 'border-orange-500' : ($severity === 'Medium' ? 'border-amber-500' : ($severity === 'Low' ? 'border-green-500' : 'border-gray-300'))) ?> pl-5" id="cve-<?= e($cveId) ?>">
+                    <?php if ($interactive && $isAdmin && $itemId > 0): ?>
+                        <label class="no-print inline-flex items-center gap-1.5 mb-2 text-[10px] font-medium text-gray-400 cursor-pointer">
+                            <input type="checkbox" class="ai-cve-check rounded border-gray-300 text-brand-500 focus:ring-brand-500"
+                                   data-item-id="<?= $itemId ?>"
+                                   data-cve-id="<?= e($cveId) ?>"
+                                   data-tags="<?= e(json_encode($itemTags, JSON_UNESCAPED_UNICODE)) ?>">
+                            Seleccionar para etiquetar o enviar a grupo
+                        </label>
+                    <?php endif; ?>
+
+                    <?php if ($itemTags !== [] || $itemGroup !== ''): ?>
+                        <div class="flex items-center gap-1.5 flex-wrap mb-2">
+                            <?php foreach ($itemTags as $tag): ?>
+                                <span class="report-badge inline-flex px-2 py-0.5 rounded-full border border-brand-200 bg-brand-50 text-[10px] font-medium text-brand-700">
+                                    #<?= e($tag) ?>
+                                </span>
+                            <?php endforeach; ?>
+                            <?php if ($itemGroup !== ''): ?>
+                                <span class="text-[10px] text-gray-500">Grupo: <strong><?= e($itemGroup) ?></strong></span>
+                            <?php endif; ?>
+                        </div>
+                    <?php endif; ?>
+
                     <div class="flex items-start justify-between gap-3 flex-wrap">
                         <div class="min-w-0">
                             <p class="text-[10px] font-semibold uppercase tracking-wide text-gray-400">Vulnerabilidad</p>
@@ -494,6 +554,51 @@ $exposureLabel = static function (string $value): string {
                             <?php endif; ?>
                         </div>
                     </div>
+
+                    <?php if ($itemAiStatus === 'error'): ?>
+                        <div class="mt-5 px-4 py-3 rounded-lg bg-red-50 border border-red-100 text-xs text-red-700">
+                            <strong>Análisis IA no disponible:</strong>
+                            <?= e($itemAiError !== '' ? $itemAiError : 'Error desconocido.') ?>
+                            <?php if ($interactive && $isAdmin && $itemId > 0): ?>
+                                <button type="button" data-retry-item="<?= $itemId ?>" class="retry-ai-item no-print ml-2 underline">
+                                    Reintentar
+                                </button>
+                            <?php endif; ?>
+                        </div>
+                    <?php elseif ($itemSections !== []): ?>
+                        <div class="report-ai report-ai-cve mt-5 pt-4 border-t border-gray-100">
+                            <div class="flex items-center gap-2 flex-wrap">
+                                <h3 class="text-sm font-semibold">Análisis con IA</h3>
+                                <?php if ($itemAiModel !== ''): ?>
+                                    <span class="text-[10px] text-gray-400"><?= e($itemAiModel) ?></span>
+                                <?php endif; ?>
+                            </div>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3">
+                                <?php foreach ($itemSections as $sectionIndex => $itemSection): ?>
+                                    <div class="report-ai-block rounded-lg border border-gray-200 p-3">
+                                        <h4 class="text-xs font-semibold flex items-center gap-2">
+                                            <span class="inline-flex items-center justify-center w-4 h-4 rounded-full bg-gray-900 text-white text-[9px] font-bold">
+                                                <?= (int)$sectionIndex + 1 ?>
+                                            </span>
+                                            <?= e((string)($itemSection['title'] ?? 'Análisis')) ?>
+                                        </h4>
+                                        <?php if (!empty($itemSection['bullets'])): ?>
+                                            <ul class="mt-2 space-y-1 text-xs leading-relaxed text-gray-600 list-disc pl-4">
+                                                <?php foreach ($itemSection['bullets'] as $bullet): ?>
+                                                    <li><?= e((string)$bullet) ?></li>
+                                                <?php endforeach; ?>
+                                            </ul>
+                                        <?php endif; ?>
+                                        <?php foreach (($itemSection['paragraphs'] ?? []) as $paragraph): ?>
+                                            <p class="mt-2 text-xs leading-relaxed text-gray-600"><?= e((string)$paragraph) ?></p>
+                                        <?php endforeach; ?>
+                                    </div>
+                                <?php endforeach; ?>
+                            </div>
+                        </div>
+                    <?php elseif (in_array($itemAiStatus, ['pending', 'running'], true)): ?>
+                        <p class="no-print mt-4 text-xs text-blue-600">Análisis de IA pendiente para este CVE…</p>
+                    <?php endif; ?>
                 </section>
 
                 <?php if ($index < count($items) - 1): ?>
@@ -731,7 +836,9 @@ $exposureLabel = static function (string $value): string {
                 page-break-inside: avoid !important;
             }
             .report-ai-block h3 { font-size: 10pt !important; }
+            .report-ai-block h4 { font-size: 9.5pt !important; }
             .report-ai-block li { font-size: 9pt !important; }
+            .report-ai-block p { font-size: 9pt !important; }
             .report-ai-block span.bg-gray-900 {
                 background: #fff !important;
                 color: #111 !important;

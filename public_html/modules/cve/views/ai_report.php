@@ -50,7 +50,7 @@ require __DIR__ . '/_tabs.php';
         </div>
     </div>
 
-    <?php require __DIR__ . '/_ai_report_body.php'; ?>
+    <?php $interactive = false; require __DIR__ . '/_ai_report_body.php'; ?>
 
     <?php if ($isProcessing || $status === 'error' || $status === 'canceled'): ?>
     <script>

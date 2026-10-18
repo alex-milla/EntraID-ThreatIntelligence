@@ -844,6 +844,7 @@ $aiStatusText = [
                         ? (string)($aiRowIds[0] ?? '')
                         : count($aiRowIds) . ' CVEs';
                     $aiSearch = strtolower(implode(' ', array_map('strval', $aiRowIds)) . ' ' . (string)$aiRow['title']);
+                    $aiRowTags = CveReportAi::decodeTags((string)($aiRow['tags'] ?? ''));
                     ?>
                     <div class="ai-report-item group border-b border-gray-100 dark:border-gray-800 px-3 py-2.5 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/40 <?= $selectedAiId === $aiRowId ? 'bg-brand-50 dark:bg-brand-950/40' : '' ?>"
                          data-id="<?= $aiRowId ?>"
@@ -861,6 +862,11 @@ $aiStatusText = [
                             <span class="ai-status-text text-[10px] font-medium <?= $aiStatusText[$aiRowStatus] ?? $aiStatusText['pending'] ?>">
                                 <?= e($aiStatusLabels[$aiRowStatus] ?? $aiRowStatus) ?>
                             </span>
+                            <?php if (in_array($aiRowStatus, ['pending', 'running'], true) && (int)($aiRow['total_items'] ?? 0) > 0): ?>
+                                <span class="text-[10px] text-gray-400">
+                                    <?= (int)($aiRow['processed_items'] ?? 0) ?>/<?= (int)$aiRow['total_items'] ?>
+                                </span>
+                            <?php endif; ?>
                             <span class="text-[10px] text-gray-400 truncate">
                                 <?= e((string)($aiRow['ai_model'] ?? '')) ?>
                             </span>
@@ -869,6 +875,9 @@ $aiStatusText = [
                             <?php endif; ?>
                             <?php if (!empty($aiRow['group_name'])): ?>
                                 <span class="text-[10px] text-gray-400 truncate">· <?= e((string)$aiRow['group_name']) ?></span>
+                            <?php endif; ?>
+                            <?php if (!empty($aiRow['item_groups'])): ?>
+                                <span class="text-[10px] text-gray-400 truncate">· <?= e((string)$aiRow['item_groups']) ?></span>
                             <?php endif; ?>
                             <?php if (!empty($aiRow['has_defender'])): ?>
                                 <span class="px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 text-[10px] font-semibold shrink-0">Defender</span>
@@ -894,6 +903,13 @@ $aiStatusText = [
                                 <?php endif; ?>
                             </span>
                         </div>
+                        <?php if ($aiRowTags !== []): ?>
+                            <div class="flex items-center gap-1.5 flex-wrap mt-1 pl-4">
+                                <?php foreach ($aiRowTags as $tag): ?>
+                                    <span class="text-[9px] font-medium text-brand-600 dark:text-brand-400">#<?= e($tag) ?></span>
+                                <?php endforeach; ?>
+                            </div>
+                        <?php endif; ?>
                     </div>
                 <?php endforeach; ?>
             <?php endif; ?>
@@ -904,7 +920,22 @@ $aiStatusText = [
     <section class="flex-1 min-w-0 flex flex-col">
         <div class="no-print px-4 py-2 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between gap-2">
             <p id="ai-detail-title" class="text-xs text-gray-500 truncate"></p>
-            <div class="flex items-center gap-2 shrink-0">
+            <div class="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+                <?php if ($isAdmin): ?>
+                    <span id="ai-selection-count" class="hidden text-[11px] font-medium text-gray-600 dark:text-gray-300"></span>
+                    <button type="button" id="ai-select-all-btn" onclick="cveAiSelectAll()"
+                            class="hidden px-2 py-1 text-[11px] text-gray-500 hover:text-brand-600 transition-colors">
+                        Todos
+                    </button>
+                    <button type="button" id="ai-tags-btn" onclick="cveAiTagsOpen()"
+                            class="hidden px-3 py-1.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">
+                        Etiquetar
+                    </button>
+                    <button type="button" id="ai-items-group-btn" onclick="cveAiItemsGroupOpen()"
+                            class="hidden px-3 py-1.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">
+                        Enviar seleccionados
+                    </button>
+                <?php endif; ?>
                 <?php if ($isAdmin): ?>
                     <button type="button" id="ai-refresh-btn" onclick="cveAiRefresh()"
                             class="hidden px-3 py-1.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">
@@ -912,7 +943,7 @@ $aiStatusText = [
                     </button>
                     <button type="button" id="ai-group-btn" onclick="cveAiAssignOpen()"
                             class="hidden px-3 py-1.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">
-                        Enviar a grupo
+                        Enviar informe a grupo
                     </button>
                 <?php endif; ?>
                 <button type="button" id="ai-print-btn" onclick="printCveAiReport()"
@@ -1005,6 +1036,19 @@ $aiStatusText = [
                         </label>
                     </div>
 
+                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-3 mt-3">
+                        <label class="block lg:col-span-2">
+                            <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Tags / origen</span>
+                            <input id="ai-report-tags" type="text" maxlength="500"
+                                   placeholder="web, endpoint, cliente-acme (separados por comas)"
+                                   class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                        </label>
+                        <label class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300 mt-5">
+                            <input id="ai-report-extended" type="checkbox" checked class="rounded border-gray-300 text-brand-500 focus:ring-brand-500">
+                            Análisis extendido por CVE
+                        </label>
+                    </div>
+
                     <div class="mt-4 flex items-center gap-3 flex-wrap">
                         <button type="button" onclick="cveAiGenerate(this)" id="ai-report-button"
                                 class="inline-flex items-center gap-2 px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
@@ -1014,7 +1058,8 @@ $aiStatusText = [
                         <span id="ai-report-message" class="text-xs text-gray-500"></span>
                     </div>
                     <p class="text-[11px] text-gray-400 mt-2">
-                        Máximo <?= (int)CveReportAi::MAX_CVES ?> CVEs por informe.
+                        Máximo <?= (int)CveReportAi::MAX_CVES ?> CVEs por informe. El análisis extendido hace una llamada a la IA por CVE
+                        y puede tardar varios minutos; verás el progreso en el informe.
                     </p>
                 </div>
             </div>
@@ -1091,6 +1136,19 @@ $aiStatusText = [
                     </div>
 
                     <div class="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <label class="block sm:col-span-2">
+                            <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Tags / origen</span>
+                            <input id="ai-def-tags" type="text" maxlength="500"
+                                   placeholder="web, endpoint, cliente-acme (separados por comas)"
+                                   class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                        </label>
+                        <label class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300 mt-5">
+                            <input id="ai-def-extended" type="checkbox" checked class="rounded border-gray-300 text-brand-500 focus:ring-brand-500">
+                            Análisis extendido por CVE
+                        </label>
+                    </div>
+
+                    <div class="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3">
                         <?php if (!empty($llmProfiles)): ?>
                             <label class="block sm:col-span-1">
                                 <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Perfil de IA</span>
@@ -1156,6 +1214,97 @@ $aiStatusText = [
                     Enviar
                 </button>
             </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: etiquetar CVEs seleccionados -->
+<div id="ai-tags-modal" class="hidden fixed inset-0 z-50 no-print">
+    <div class="absolute inset-0 bg-black/40" onclick="cveAiTagsClose()"></div>
+    <div class="relative mx-auto mt-24 w-[calc(100%-2rem)] max-w-lg bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 shadow-xl p-5">
+        <div class="flex items-start justify-between gap-3">
+            <div>
+                <h3 class="text-sm font-semibold">Etiquetar CVEs seleccionados</h3>
+                <p class="text-xs text-gray-500 mt-1" id="ai-tags-count"></p>
+            </div>
+            <button type="button" onclick="cveAiTagsClose()" class="text-xs text-gray-400 hover:text-gray-600">Cerrar</button>
+        </div>
+
+        <label class="block mt-4">
+            <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Tags / origen</span>
+            <input id="ai-tags-input" type="text" maxlength="500"
+                   placeholder="web, endpoint, cliente-acme (separados por comas)"
+                   class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+        </label>
+        <label class="flex items-center gap-2 mt-2 text-[11px] text-gray-600 dark:text-gray-300">
+            <input id="ai-tags-append" type="checkbox" class="rounded border-gray-300 text-brand-500 focus:ring-brand-500">
+            Añadir sin borrar los tags actuales
+        </label>
+
+        <div id="ai-tags-suggestions" class="hidden mt-4 space-y-2">
+            <div id="ai-tags-suggestions-tags-wrap">
+                <p class="text-[10px] font-semibold uppercase tracking-wide text-gray-400">Tags usados</p>
+                <div id="ai-tags-suggestions-tags" class="flex flex-wrap gap-1.5 mt-1"></div>
+            </div>
+            <div id="ai-tags-suggestions-groups-wrap">
+                <p class="text-[10px] font-semibold uppercase tracking-wide text-gray-400">Grupos de software detectados</p>
+                <div id="ai-tags-suggestions-groups" class="flex flex-wrap gap-1.5 mt-1"></div>
+            </div>
+        </div>
+
+        <div class="mt-4 flex items-center justify-end gap-2">
+            <button type="button" onclick="cveAiTagsClose()"
+                    class="px-3 py-1.5 border border-gray-300 dark:border-gray-600 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark">
+                Cancelar
+            </button>
+            <button type="button" onclick="cveAiTagsSubmit(this)"
+                    class="px-3 py-1.5 bg-brand-500 hover:bg-brand-600 text-white text-xs font-semibold rounded-lg">
+                Aplicar tags
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: enviar CVEs seleccionados a grupo -->
+<div id="ai-items-group-modal" class="hidden fixed inset-0 z-50 no-print">
+    <div class="absolute inset-0 bg-black/40" onclick="cveAiItemsGroupClose()"></div>
+    <div class="relative mx-auto mt-24 w-[calc(100%-2rem)] max-w-md bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 shadow-xl p-5">
+        <div class="flex items-start justify-between gap-3">
+            <div>
+                <h3 class="text-sm font-semibold">Enviar CVEs a un grupo</h3>
+                <p class="text-xs text-gray-500 mt-1" id="ai-items-group-count"></p>
+            </div>
+            <button type="button" onclick="cveAiItemsGroupClose()" class="text-xs text-gray-400 hover:text-gray-600">Cerrar</button>
+        </div>
+
+        <label class="block mt-4">
+            <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Grupo existente</span>
+            <select id="ai-items-group-select"
+                    class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                <option value="0">— Sin grupo —</option>
+                <?php foreach (($groups ?? []) as $group): ?>
+                    <option value="<?= (int)$group['id'] ?>">
+                        <?= str_repeat('— ', (int)($group['depth'] ?? 0)) . e((string)$group['name']) ?>
+                    </option>
+                <?php endforeach; ?>
+            </select>
+        </label>
+
+        <label class="block mt-3">
+            <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">o crear un grupo nuevo</span>
+            <input id="ai-items-group-new" type="text" maxlength="120" placeholder="Nombre del grupo"
+                   class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+        </label>
+
+        <div class="mt-4 flex items-center justify-end gap-2">
+            <button type="button" onclick="cveAiItemsGroupClose()"
+                    class="px-3 py-1.5 border border-gray-300 dark:border-gray-600 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark">
+                Cancelar
+            </button>
+            <button type="button" onclick="cveAiItemsGroupSubmit(this)"
+                    class="px-3 py-1.5 bg-brand-500 hover:bg-brand-600 text-white text-xs font-semibold rounded-lg">
+                Enviar
+            </button>
         </div>
     </div>
 </div>
@@ -1365,6 +1514,10 @@ $aiStatusText = [
     var STATUS_URL = <?= json_encode(base_url('modules/cve/reports/ai-status')) ?>;
     var REFRESH_URL = <?= json_encode(base_url('modules/cve/reports/ai-refresh')) ?>;
     var ASSIGN_URL  = <?= json_encode(base_url('modules/cve/reports/ai-assign')) ?>;
+    var ITEM_TAGS_URL = <?= json_encode(base_url('modules/cve/reports/ai-item-tags')) ?>;
+    var ITEM_GROUP_URL = <?= json_encode(base_url('modules/cve/reports/ai-assign-items')) ?>;
+    var TAG_SUGGEST_URL = <?= json_encode(base_url('modules/cve/reports/ai-tag-suggestions')) ?>;
+    var RETRY_ITEM_URL = <?= json_encode(base_url('modules/cve/reports/ai-retry-item')) ?>;
     var DEFENDER_LIST_URL  = <?= json_encode(base_url('modules/cve/reports/defender-list')) ?>;
     var START_DEFENDER_URL = <?= json_encode(base_url('modules/cve/reports/ai-start-defender')) ?>;
     var IS_ADMIN   = <?= $isAdmin ? 'true' : 'false' ?>;
@@ -1377,6 +1530,10 @@ $aiStatusText = [
     var deleteBtn = document.getElementById('ai-delete-btn');
     var refreshBtn = document.getElementById('ai-refresh-btn');
     var groupBtn = document.getElementById('ai-group-btn');
+    var tagsBtn = document.getElementById('ai-tags-btn');
+    var itemsGroupBtn = document.getElementById('ai-items-group-btn');
+    var selectionCount = document.getElementById('ai-selection-count');
+    var selectAllBtn = document.getElementById('ai-select-all-btn');
     var titleEl = document.getElementById('ai-detail-title');
 
     var state = { id: 0, status: '', poll: null, running: false };
@@ -1448,7 +1605,21 @@ $aiStatusText = [
         }
         state.poll = setInterval(function () {
             getJson(STATUS_URL + '/' + state.id).then(function (res) {
-                if (res.success && (res.status === 'done' || res.status === 'error' || res.status === 'canceled')) {
+                if (!res || !res.success) {
+                    return;
+                }
+                if (res.status === 'running') {
+                    var total = parseInt(res.total || 0, 10);
+                    var processed = parseInt(res.processed || 0, 10);
+                    if (total > 0) {
+                        setBanner('Analizando CVE ' + Math.max(1, Math.min(processed + 1, total)) + ' de ' + total + '…');
+                    }
+                    var bar = document.getElementById('ai-processing-bar');
+                    if (bar) {
+                        bar.style.width = (parseInt(res.progress || 0, 10)) + '%';
+                    }
+                }
+                if (res.status === 'done' || res.status === 'error' || res.status === 'canceled') {
                     stopPolling();
                     load(state.id, false);
                 }
@@ -1477,7 +1648,53 @@ $aiStatusText = [
         if (titleEl) {
             titleEl.textContent = body ? ('Informe #' + id) : '';
         }
+        updateSelectionUI();
     }
+
+    function selectedItemIds() {
+        if (!detail) {
+            return [];
+        }
+        return Array.prototype.slice.call(detail.querySelectorAll('.ai-cve-check:checked')).map(function (el) {
+            return parseInt(el.dataset.itemId, 10) || 0;
+        }).filter(function (id) {
+            return id > 0;
+        });
+    }
+
+    function updateSelectionUI() {
+        var checks = detail ? detail.querySelectorAll('.ai-cve-check') : [];
+        var ids = selectedItemIds();
+        var count = ids.length;
+
+        if (selectionCount) {
+            selectionCount.textContent = count + (count === 1 ? ' seleccionado' : ' seleccionados');
+            selectionCount.classList.toggle('hidden', !IS_ADMIN || count === 0);
+        }
+        if (tagsBtn) {
+            tagsBtn.classList.toggle('hidden', !IS_ADMIN || count === 0);
+        }
+        if (itemsGroupBtn) {
+            itemsGroupBtn.classList.toggle('hidden', !IS_ADMIN || count === 0);
+        }
+        if (selectAllBtn) {
+            selectAllBtn.classList.toggle('hidden', !IS_ADMIN || checks.length === 0);
+            selectAllBtn.textContent = (checks.length > 0 && count === checks.length) ? 'Ninguno' : 'Todos';
+        }
+    }
+
+    window.cveAiSelectAll = function () {
+        if (!detail) {
+            return;
+        }
+        var checks = Array.prototype.slice.call(detail.querySelectorAll('.ai-cve-check'));
+        if (checks.length === 0) {
+            return;
+        }
+        var allSelected = checks.every(function (el) { return el.checked; });
+        checks.forEach(function (el) { el.checked = !allSelected; });
+        updateSelectionUI();
+    };
 
     function markSelected(id) {
         if (!list) {
@@ -1553,7 +1770,7 @@ $aiStatusText = [
         }
         state.running = true;
         startPolling();
-        setBanner('Ejecutando el informe… si la conexión se corta, seguiremos consultando el estado.');
+        setBanner('Preparando el análisis… si la conexión se corta, seguiremos consultando el estado.');
 
         postJson(RUN_URL + '/' + state.id, {}).then(function (res) {
             if (res && (res.status === 'done' || res.status === 'error' || res.status === 'canceled' || res.url)) {
@@ -1751,6 +1968,8 @@ $aiStatusText = [
         var input = document.getElementById('ai-report-cves');
         var profile = document.getElementById('ai-report-profile');
         var local = document.getElementById('ai-report-local');
+        var tagsInput = document.getElementById('ai-report-tags');
+        var extended = document.getElementById('ai-report-extended');
         var message = document.getElementById('ai-report-message');
         if (!input || !message) {
             return;
@@ -1774,7 +1993,9 @@ $aiStatusText = [
         postJson(START_URL, {
             cve_ids: cves,
             profile_id: profile ? profile.value : 0,
-            no_ai: noAi ? 1 : 0
+            no_ai: noAi ? 1 : 0,
+            tags: tagsInput ? tagsInput.value : '',
+            mode: (extended && extended.checked) ? 'extended' : 'summary'
         }).then(function (res) {
             if (!res.success) {
                 message.textContent = res.error || 'No se pudo crear el informe.';
@@ -1903,6 +2124,256 @@ $aiStatusText = [
             });
         });
     };
+
+    function selectionTags() {
+        if (!detail) {
+            return [];
+        }
+        var checks = Array.prototype.slice.call(detail.querySelectorAll('.ai-cve-check:checked'));
+        var common = null;
+        checks.forEach(function (el) {
+            var tags = [];
+            try {
+                tags = JSON.parse(el.dataset.tags || '[]');
+            } catch (e) {
+                tags = [];
+            }
+            if (!Array.isArray(tags)) {
+                tags = [];
+            }
+            if (common === null) {
+                common = tags.slice();
+            } else {
+                common = common.filter(function (tag) {
+                    return tags.indexOf(tag) !== -1;
+                });
+            }
+        });
+        return common || [];
+    }
+
+    window.cveAiTagsOpen = function () {
+        var ids = selectedItemIds();
+        if (!ids.length) {
+            appAlert('Selecciona al menos un CVE.', { title: 'Sin selección' });
+            return;
+        }
+        var modal = document.getElementById('ai-tags-modal');
+        var count = document.getElementById('ai-tags-count');
+        var input = document.getElementById('ai-tags-input');
+        var append = document.getElementById('ai-tags-append');
+        var suggestions = document.getElementById('ai-tags-suggestions');
+        if (!modal) {
+            return;
+        }
+        if (count) {
+            count.textContent = ids.length + (ids.length === 1 ? ' CVE seleccionado' : ' CVEs seleccionados');
+        }
+        if (input) {
+            input.value = selectionTags().join(', ');
+        }
+        if (append) {
+            append.checked = false;
+        }
+        if (suggestions) {
+            suggestions.classList.add('hidden');
+        }
+        modal.classList.remove('hidden');
+        if (input) {
+            input.focus();
+        }
+
+        getJson(TAG_SUGGEST_URL + '?report_id=' + encodeURIComponent(state.id) + '&item_ids=' + encodeURIComponent(ids.join(',')))
+            .then(function (res) {
+                if (res && res.success) {
+                    renderTagSuggestions(res.tags || [], res.groups || []);
+                }
+            }).catch(function () { /* sugerencias opcionales */ });
+    };
+
+    window.cveAiTagsClose = function () {
+        var modal = document.getElementById('ai-tags-modal');
+        if (modal) {
+            modal.classList.add('hidden');
+        }
+    };
+
+    function renderTagSuggestions(tags, groups) {
+        var wrap = document.getElementById('ai-tags-suggestions');
+        var tagsWrap = document.getElementById('ai-tags-suggestions-tags');
+        var groupsWrap = document.getElementById('ai-tags-suggestions-groups');
+        if (!wrap || !tagsWrap || !groupsWrap) {
+            return;
+        }
+        tagsWrap.innerHTML = '';
+        groupsWrap.innerHTML = '';
+        var addChip = function (target, value) {
+            var button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'px-2 py-0.5 rounded-full border border-gray-300 dark:border-gray-600 text-[10px] text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800';
+            button.textContent = value;
+            button.addEventListener('click', function () {
+                var input = document.getElementById('ai-tags-input');
+                if (!input) {
+                    return;
+                }
+                var current = (input.value || '').split(',').map(function (t) { return t.trim(); }).filter(Boolean);
+                if (current.indexOf(value) === -1) {
+                    current.push(value);
+                    input.value = current.join(', ');
+                }
+                input.focus();
+            });
+            target.appendChild(button);
+        };
+        tags.forEach(function (tag) { addChip(tagsWrap, tag); });
+        groups.forEach(function (group) { addChip(groupsWrap, group); });
+        document.getElementById('ai-tags-suggestions-tags-wrap').classList.toggle('hidden', tags.length === 0);
+        document.getElementById('ai-tags-suggestions-groups-wrap').classList.toggle('hidden', groups.length === 0);
+        wrap.classList.remove('hidden');
+    }
+
+    window.cveAiTagsSubmit = function (button) {
+        var ids = selectedItemIds();
+        var input = document.getElementById('ai-tags-input');
+        var append = document.getElementById('ai-tags-append');
+        if (!ids.length) {
+            appAlert('Selecciona al menos un CVE.', { title: 'Sin selección' });
+            return;
+        }
+        if (button) {
+            button.disabled = true;
+        }
+        postJson(ITEM_TAGS_URL, {
+            report_id: state.id,
+            item_ids: ids,
+            tags: input ? input.value : '',
+            append: (append && append.checked) ? 1 : 0
+        }).then(function (res) {
+            if (!res || !res.success) {
+                appAlert((res && res.error) ? res.error : 'No se pudieron aplicar los tags.', { title: 'No se pudo etiquetar' });
+                if (button) {
+                    button.disabled = false;
+                }
+                return;
+            }
+            window.cveAiTagsClose();
+            load(state.id, false);
+        }).catch(function (err) {
+            appAlert('No se pudieron aplicar los tags: ' + errorText(err), { title: 'No se pudo etiquetar' });
+            if (button) {
+                button.disabled = false;
+            }
+        });
+    };
+
+    window.cveAiItemsGroupOpen = function () {
+        var ids = selectedItemIds();
+        if (!ids.length) {
+            appAlert('Selecciona al menos un CVE.', { title: 'Sin selección' });
+            return;
+        }
+        var modal = document.getElementById('ai-items-group-modal');
+        var count = document.getElementById('ai-items-group-count');
+        var select = document.getElementById('ai-items-group-select');
+        var input = document.getElementById('ai-items-group-new');
+        if (!modal) {
+            return;
+        }
+        if (count) {
+            count.textContent = ids.length + (ids.length === 1 ? ' CVE seleccionado' : ' CVEs seleccionados');
+        }
+        if (select) {
+            select.value = '0';
+        }
+        if (input) {
+            input.value = '';
+        }
+        modal.classList.remove('hidden');
+    };
+
+    window.cveAiItemsGroupClose = function () {
+        var modal = document.getElementById('ai-items-group-modal');
+        if (modal) {
+            modal.classList.add('hidden');
+        }
+    };
+
+    window.cveAiItemsGroupSubmit = function (button) {
+        var ids = selectedItemIds();
+        var select = document.getElementById('ai-items-group-select');
+        var input = document.getElementById('ai-items-group-new');
+        if (!ids.length) {
+            appAlert('Selecciona al menos un CVE.', { title: 'Sin selección' });
+            return;
+        }
+        if (button) {
+            button.disabled = true;
+        }
+        postJson(ITEM_GROUP_URL, {
+            report_id: state.id,
+            item_ids: ids,
+            group_id: select ? select.value : 0,
+            new_group: input ? input.value.trim() : ''
+        }).then(function (res) {
+            if (!res || !res.success) {
+                appAlert((res && res.error) ? res.error : 'No se pudo asignar el grupo.', { title: 'No se pudo asignar' });
+                if (button) {
+                    button.disabled = false;
+                }
+                return;
+            }
+            window.cveAiItemsGroupClose();
+            load(state.id, false);
+        }).catch(function (err) {
+            appAlert('No se pudo asignar el grupo: ' + errorText(err), { title: 'No se pudo asignar' });
+            if (button) {
+                button.disabled = false;
+            }
+        });
+    };
+
+    function retryAiItem(itemId, button) {
+        if (!itemId || !state.id) {
+            return;
+        }
+        if (button) {
+            button.disabled = true;
+            button.textContent = 'Reintentando…';
+        }
+        postJson(RETRY_ITEM_URL + '/' + state.id + '/' + itemId, {}).then(function (res) {
+            if (res && res.success) {
+                load(state.id, false);
+                return;
+            }
+            appAlert((res && res.error) ? res.error : 'No se pudo reintentar el análisis.', { title: 'No se pudo reintentar' });
+            if (button) {
+                button.disabled = false;
+                button.textContent = 'Reintentar';
+            }
+        }).catch(function (err) {
+            appAlert('No se pudo reintentar: ' + errorText(err), { title: 'No se pudo reintentar' });
+            if (button) {
+                button.disabled = false;
+                button.textContent = 'Reintentar';
+            }
+        });
+    }
+
+    if (detail) {
+        detail.addEventListener('change', function (event) {
+            if (event.target && event.target.classList && event.target.classList.contains('ai-cve-check')) {
+                updateSelectionUI();
+            }
+        });
+        detail.addEventListener('click', function (event) {
+            var retry = event.target ? event.target.closest('.retry-ai-item') : null;
+            if (retry) {
+                event.preventDefault();
+                retryAiItem(parseInt(retry.dataset.retryItem, 10) || 0, retry);
+            }
+        });
+    }
 
     function escapeHtml(value) {
         return String(value === null || value === undefined ? '' : value)
@@ -2083,6 +2554,8 @@ $aiStatusText = [
         var profile = document.getElementById('ai-def-profile');
         var local = document.getElementById('ai-def-local');
         var tenant = document.getElementById('ai-def-tenant');
+        var tagsInput = document.getElementById('ai-def-tags');
+        var extended = document.getElementById('ai-def-extended');
         if (message) {
             message.textContent = 'Creando informe…';
             message.className = 'text-xs text-gray-500 mt-2';
@@ -2095,7 +2568,9 @@ $aiStatusText = [
             cve_ids: selected,
             profile_id: profile ? profile.value : 0,
             no_ai: (local && local.checked) ? 1 : 0,
-            tenant_id: tenant ? tenant.value : 0
+            tenant_id: tenant ? tenant.value : 0,
+            tags: tagsInput ? tagsInput.value : '',
+            mode: (extended && extended.checked) ? 'extended' : 'summary'
         }).then(function (res) {
             if (!res.success) {
                 if (message) {
