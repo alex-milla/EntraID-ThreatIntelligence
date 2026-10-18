@@ -763,346 +763,790 @@ foreach ($flashData as $type => $msg):
     <?php endif; ?>
 <?php elseif ($tab === 'reports'): ?>
 
-    <?php if ($isAdmin): ?>
-    <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-5 mb-6">
-        <div class="flex items-start justify-between gap-4 flex-wrap">
-            <div>
-                <h2 class="text-sm font-semibold">Informe de CVE con IA</h2>
-                <p class="text-xs text-gray-500 mt-1">
-                    Introduce uno o varios CVEs (separados por comas) y la IA redactará el análisis de riesgo.
-                    Informe estructurado con viñetas, listo para imprimir o guardar en PDF.
-                </p>
+<?php
+$aiStatusLabels = [
+    'pending'  => 'En cola',
+    'running'  => 'Generando',
+    'done'     => 'Listo',
+    'error'    => 'Error IA',
+    'canceled' => 'Cancelado',
+];
+$aiStatusDots = [
+    'pending'  => 'bg-gray-400',
+    'running'  => 'bg-blue-500',
+    'done'     => 'bg-green-500',
+    'error'    => 'bg-red-500',
+    'canceled' => 'bg-amber-500',
+];
+$aiStatusText = [
+    'pending'  => 'text-gray-500',
+    'running'  => 'text-blue-600 dark:text-blue-400',
+    'done'     => 'text-green-600 dark:text-green-400',
+    'error'    => 'text-red-600 dark:text-red-400',
+    'canceled' => 'text-amber-600 dark:text-amber-400',
+];
+?>
+
+<div class="mb-4 flex items-center justify-between gap-3 flex-wrap">
+    <div>
+        <h2 class="text-lg font-bold">Informes</h2>
+        <p class="text-xs text-gray-400">Selecciona un informe para verlo aquí mismo, o crea uno nuevo con IA.</p>
+    </div>
+    <button type="button" onclick="toggleCveAiFullscreen()"
+            class="no-print inline-flex items-center gap-2 px-3 py-2 border border-gray-200 dark:border-gray-700 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4 8V4h4M20 8V4h-4M4 16v4h4M20 16v4h-4"/></svg>
+        Pantalla completa
+    </button>
+</div>
+
+<div id="ai-workspace"
+     class="ai-workspace bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden flex flex-col lg:flex-row"
+     style="height: calc(100vh - 215px); min-height: 540px;">
+
+    <!-- Panel izquierdo: lista de informes -->
+    <aside class="no-print w-full lg:w-[340px] shrink-0 border-b lg:border-b-0 lg:border-r border-gray-200 dark:border-gray-700 flex flex-col max-h-[42vh] lg:max-h-none">
+        <div class="p-3 border-b border-gray-200 dark:border-gray-700">
+            <?php if ($isAdmin): ?>
+                <button type="button" onclick="cveAiNew()"
+                        class="w-full px-3 py-2 bg-brand-500 hover:bg-brand-600 text-white text-xs font-semibold rounded-lg transition-colors">
+                    + Nuevo informe con IA
+                </button>
+            <?php endif; ?>
+            <input id="ai-list-search" type="search" oninput="cveAiFilterList(this.value)"
+                   placeholder="Buscar por CVE o título…"
+                   class="mt-2 w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+        </div>
+
+        <div id="ai-report-list" class="flex-1 overflow-y-auto">
+            <?php if (empty($aiReports)): ?>
+                <div class="p-5 text-center text-xs text-gray-500">
+                    Todavía no hay informes con IA.
+                </div>
+            <?php else: ?>
+                <?php foreach ($aiReports as $aiRow): ?>
+                    <?php
+                    $aiRowId = (int)$aiRow['id'];
+                    $aiRowStatus = (string)($aiRow['status'] ?? 'pending');
+                    $aiRowIds = safe_json_decode((string)($aiRow['cve_ids'] ?? ''), []);
+                    if (!is_array($aiRowIds)) {
+                        $aiRowIds = [];
+                    }
+                    $aiRowLabel = count($aiRowIds) === 1
+                        ? (string)($aiRowIds[0] ?? '')
+                        : count($aiRowIds) . ' CVEs';
+                    $aiSearch = strtolower(implode(' ', array_map('strval', $aiRowIds)) . ' ' . (string)$aiRow['title']);
+                    ?>
+                    <div class="ai-report-item group border-b border-gray-100 dark:border-gray-800 px-3 py-2.5 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/40 <?= $selectedAiId === $aiRowId ? 'bg-brand-50 dark:bg-brand-950/40' : '' ?>"
+                         data-id="<?= $aiRowId ?>"
+                         data-status="<?= e($aiRowStatus) ?>"
+                         data-search="<?= e($aiSearch) ?>"
+                         role="button" tabindex="0"
+                         onclick="cveAiSelect(<?= $aiRowId ?>)"
+                         onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); cveAiSelect(<?= $aiRowId ?>); }">
+                        <div class="flex items-center gap-2">
+                            <span class="ai-status-dot w-2 h-2 rounded-full shrink-0 <?= $aiStatusDots[$aiRowStatus] ?? $aiStatusDots['pending'] ?>"></span>
+                            <span class="text-xs font-mono font-medium truncate"><?= e($aiRowLabel) ?></span>
+                            <span class="ml-auto text-[10px] text-gray-400 shrink-0"><?= e(format_db_date((string)($aiRow['created_at'] ?? ''), 'd/m H:i')) ?></span>
+                        </div>
+                        <div class="flex items-center gap-2 mt-1 pl-4">
+                            <span class="ai-status-text text-[10px] font-medium <?= $aiStatusText[$aiRowStatus] ?? $aiStatusText['pending'] ?>">
+                                <?= e($aiStatusLabels[$aiRowStatus] ?? $aiRowStatus) ?>
+                            </span>
+                            <span class="text-[10px] text-gray-400 truncate">
+                                <?= e((string)($aiRow['ai_model'] ?? '')) ?>
+                            </span>
+                            <span class="ml-auto flex items-center gap-1 shrink-0">
+                                <?php if ($isAdmin && in_array($aiRowStatus, ['pending', 'running'], true)): ?>
+                                    <button type="button" title="Cancelar" onclick="event.stopPropagation(); cveAiCancel(<?= $aiRowId ?>)"
+                                            class="p-1 rounded text-gray-400 hover:text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-900/20">
+                                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                                    </button>
+                                <?php endif; ?>
+                                <?php if ($isAdmin && in_array($aiRowStatus, ['error', 'canceled'], true)): ?>
+                                    <button type="button" title="Reintentar" onclick="event.stopPropagation(); cveAiRetry(<?= $aiRowId ?>)"
+                                            class="p-1 rounded text-gray-400 hover:text-brand-600 hover:bg-brand-50 dark:hover:bg-brand-950">
+                                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4 4v5h5M20 20v-5h-5M5.3 9A7 7 0 0118 6.3M18.7 15A7 7 0 016 17.7"/></svg>
+                                    </button>
+                                <?php endif; ?>
+                                <?php if ($isAdmin): ?>
+                                    <button type="button" title="Eliminar" onclick="event.stopPropagation(); cveAiDelete(<?= $aiRowId ?>)"
+                                            class="p-1 rounded text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20">
+                                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                                    </button>
+                                <?php endif; ?>
+                            </span>
+                        </div>
+                    </div>
+                <?php endforeach; ?>
+            <?php endif; ?>
+        </div>
+    </aside>
+
+    <!-- Panel derecho: informe seleccionado -->
+    <section class="flex-1 min-w-0 flex flex-col">
+        <div class="no-print px-4 py-2 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between gap-2">
+            <p id="ai-detail-title" class="text-xs text-gray-500 truncate"></p>
+            <div class="flex items-center gap-2 shrink-0">
+                <button type="button" id="ai-print-btn" onclick="window.print()"
+                        class="hidden px-3 py-1.5 bg-gray-900 hover:bg-black text-white text-xs font-medium rounded-lg transition-colors">
+                    Imprimir / PDF
+                </button>
+                <?php if ($isAdmin): ?>
+                    <button type="button" id="ai-delete-btn" onclick="cveAiDeleteSelected()"
+                            class="hidden px-3 py-1.5 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 text-xs font-medium rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">
+                        Eliminar
+                    </button>
+                <?php endif; ?>
             </div>
         </div>
 
-        <?php if (!$llmConfigured): ?>
-            <div class="mt-4 px-4 py-3 rounded-lg text-xs bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-300">
-                La IA no está configurada todavía.
-                <a href="<?= base_url('admin/apis') ?>" class="font-semibold underline">Configúrala en Admin → APIs</a>
-                para poder generar informes.
+        <div id="ai-detail-scroll" class="flex-1 overflow-y-auto p-4 lg:p-6 bg-gray-50 dark:bg-gray-950/40">
+            <div id="ai-detail">
+                <?php if ($selectedAiData !== null): ?>
+                    <?php
+                    $report = $selectedAiData['report'];
+                    $items = $selectedAiData['items'];
+                    $aiText = $selectedAiData['aiText'];
+                    $sections = $selectedAiData['sections'];
+                    require __DIR__ . '/_ai_report_body.php';
+                    ?>
+                <?php else: ?>
+                    <div id="ai-empty" class="h-full flex items-center justify-center">
+                        <div class="text-center max-w-sm">
+                            <svg class="w-10 h-10 mx-auto text-gray-300 dark:text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+                            <p class="text-sm font-medium mt-3">Ningún informe seleccionado</p>
+                            <p class="text-xs text-gray-500 mt-1">Elige un informe de la lista o crea uno nuevo con IA.</p>
+                            <?php if ($isAdmin): ?>
+                                <button type="button" onclick="cveAiNew()"
+                                        class="mt-4 px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white text-xs font-semibold rounded-lg transition-colors">
+                                    + Nuevo informe con IA
+                                </button>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+                <?php endif; ?>
             </div>
-        <?php endif; ?>
 
-        <div class="grid grid-cols-1 lg:grid-cols-3 gap-3 mt-4">
-            <label class="block lg:col-span-2">
-                <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">CVEs</span>
-                <input id="ai-report-cves" type="text" maxlength="500"
-                       placeholder="CVE-2024-38063, CVE-2024-21762, CVE-2023-48795"
-                       class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs font-mono focus:ring-2 focus:ring-brand-500 outline-none">
-            </label>
-            <?php if (!empty($llmProfiles)): ?>
+            <!-- Formulario de nuevo informe (oculto) -->
+            <div id="ai-new-form" class="hidden">
+                <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-5 max-w-3xl">
+                    <div class="flex items-start justify-between gap-3 flex-wrap">
+                        <div>
+                            <h3 class="text-sm font-semibold">Nuevo informe con IA</h3>
+                            <p class="text-xs text-gray-500 mt-1">
+                                Introduce uno o varios CVEs (separados por comas). Los datos salen del catálogo local;
+                                la IA redacta el análisis.
+                            </p>
+                        </div>
+                        <button type="button" onclick="cveAiCancelNew()" class="text-xs text-gray-400 hover:text-gray-600">Cerrar</button>
+                    </div>
+
+                    <?php if (!$llmConfigured): ?>
+                        <div class="mt-4 px-4 py-3 rounded-lg text-xs bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-300">
+                            La IA no está configurada todavía.
+                            <a href="<?= base_url('admin/apis') ?>" class="font-semibold underline">Configúrala en Admin → APIs</a>
+                            o marca «Solo datos locales».
+                        </div>
+                    <?php endif; ?>
+
+                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-3 mt-4">
+                        <label class="block lg:col-span-2">
+                            <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">CVEs</span>
+                            <input id="ai-report-cves" type="text" maxlength="500"
+                                   placeholder="CVE-2024-38063, CVE-2024-21762, CVE-2023-48795"
+                                   class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs font-mono focus:ring-2 focus:ring-brand-500 outline-none">
+                        </label>
+                        <?php if (!empty($llmProfiles)): ?>
+                            <label class="block">
+                                <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Perfil de IA</span>
+                                <select id="ai-report-profile"
+                                        class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                                    <option value="0">Automático (predeterminado)</option>
+                                    <?php foreach ($llmProfiles as $profile): ?>
+                                        <option value="<?= (int)$profile['id'] ?>">
+                                            <?= e((string)$profile['name']) ?> · <?= e((string)$profile['provider']) ?><?= !empty($profile['model']) ? ' · ' . e((string)$profile['model']) : '' ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </label>
+                        <?php endif; ?>
+                        <label class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300 mt-5">
+                            <input id="ai-report-local" type="checkbox" class="rounded border-gray-300 text-brand-500 focus:ring-brand-500">
+                            Solo datos locales (sin IA)
+                        </label>
+                    </div>
+
+                    <div class="mt-4 flex items-center gap-3 flex-wrap">
+                        <button type="button" onclick="cveAiGenerate(this)" id="ai-report-button"
+                                class="inline-flex items-center gap-2 px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                                <?= !$llmConfigured ? 'disabled' : '' ?>>
+                            Generar informe con IA
+                        </button>
+                        <span id="ai-report-message" class="text-xs text-gray-500"></span>
+                    </div>
+                    <p class="text-[11px] text-gray-400 mt-2">
+                        Máximo <?= (int)CveReportAi::MAX_CVES ?> CVEs por informe.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </section>
+</div>
+
+<!-- Informes preventivos (plegados) -->
+<details class="no-print mt-6 bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
+    <summary class="px-5 py-4 cursor-pointer text-sm font-semibold flex items-center gap-2">
+        <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 5l7 7-7 7"/></svg>
+        Informes preventivos (inventario de software)
+    </summary>
+    <div class="p-5 border-t border-gray-200 dark:border-gray-700">
+        <?php if ($isAdmin): ?>
+        <div class="mb-5">
+            <div class="flex items-start justify-between gap-4 flex-wrap">
+                <div>
+                    <h2 class="text-sm font-semibold">Generar informe preventivo</h2>
+                    <p class="text-xs text-gray-500 mt-1">
+                        Informe de los CVEs que afectan al software identificado, con prioridad KEV &gt; EPSS &gt; CVSS.
+                    </p>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-4">
                 <label class="block">
-                    <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Perfil de IA</span>
-                    <select id="ai-report-profile"
+                    <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Alcance</span>
+                    <select id="report-scope" onchange="syncCveReportScope()"
                             class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
-                        <option value="0">Automático (predeterminado)</option>
-                        <?php foreach ($llmProfiles as $profile): ?>
-                            <option value="<?= (int)$profile['id'] ?>">
-                                <?= e((string)$profile['name']) ?> · <?= e((string)$profile['provider']) ?><?= !empty($profile['model']) ? ' · ' . e((string)$profile['model']) : '' ?>
+                        <option value="all">Todo el inventario</option>
+                        <option value="group">Un grupo</option>
+                        <option value="software">Un software</option>
+                    </select>
+                </label>
+                <label class="block">
+                    <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Grupo</span>
+                    <select id="report-group" disabled
+                            class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none disabled:opacity-50">
+                        <option value="0">—</option>
+                        <?php foreach ($groups as $g): ?>
+                            <option value="<?= (int)$g['id'] ?>"><?= str_repeat('— ', (int)$g['depth']) . e($g['name']) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </label>
+                <label class="block">
+                    <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Software</span>
+                    <select id="report-software" disabled
+                            class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none disabled:opacity-50">
+                        <option value="0">—</option>
+                        <?php foreach (($softwareOptions ?? []) as $so): ?>
+                            <option value="<?= (int)$so['id'] ?>">
+                                <?= e((string)$so['name']) ?><?= !empty($so['version']) ? ' · ' . e((string)$so['version']) : '' ?>
                             </option>
                         <?php endforeach; ?>
                     </select>
                 </label>
+                <label class="block">
+                    <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Periodo</span>
+                    <select id="report-period" onchange="syncCveReportPeriod()"
+                            class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                        <option value="7d">Últimos 7 días</option>
+                        <option value="30d" selected>Últimos 30 días</option>
+                        <option value="90d">Últimos 90 días</option>
+                        <option value="all">Todo el histórico</option>
+                    </select>
+                </label>
+                <label class="block">
+                    <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Severidad</span>
+                    <select id="report-severity"
+                            class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                        <option value="">Todas</option>
+                        <option value="Critical">Crítica</option>
+                        <option value="High">Alta</option>
+                        <option value="Medium">Media</option>
+                        <option value="Low">Baja</option>
+                    </select>
+                </label>
+                <label class="block">
+                    <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">EPSS mínimo</span>
+                    <input id="report-epss" type="number" min="0" max="1" step="0.01" placeholder="0.10"
+                           class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                </label>
+                <label class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300 mt-5">
+                    <input id="report-new" type="checkbox" checked class="rounded border-gray-300 text-brand-500 focus:ring-brand-500">
+                    Solo nuevas o recién detectadas
+                </label>
+                <label class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300 mt-5">
+                    <input id="report-kev" type="checkbox" class="rounded border-gray-300 text-brand-500 focus:ring-brand-500">
+                    Solo KEV
+                </label>
+            </div>
+
+            <div class="mt-4 flex items-center gap-3 flex-wrap">
+                <button type="button" onclick="generateCveReport(this)"
+                        class="inline-flex items-center gap-2 px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors">
+                    Generar informe
+                </button>
+                <span id="report-message" class="text-xs text-gray-500"></span>
+            </div>
+            <p class="text-[11px] text-gray-400 mt-2">
+                Se guardan hasta <?= number_format((int)(defined('CVE_REPORT_MAX_ROWS') ? CVE_REPORT_MAX_ROWS : 5000)) ?> afectaciones por informe.
+                Puedes exportar el resultado a CSV o imprimirlo en PDF desde la vista del informe.
+            </p>
+        </div>
+        <?php endif; ?>
+
+        <div class="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
+            <div class="px-4 py-3 border-b border-gray-200 dark:border-gray-700">
+                <h4 class="text-xs font-semibold uppercase tracking-wide text-gray-500">Informes generados</h4>
+            </div>
+            <?php if (empty($reports)): ?>
+                <div class="p-8 text-center text-sm text-gray-500">Todavía no hay informes preventivos.</div>
+            <?php else: ?>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead>
+                            <tr class="border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-xs text-gray-500 uppercase">
+                                <th class="text-left px-4 py-2">Informe</th>
+                                <th class="text-left px-4 py-2">Periodo</th>
+                                <th class="text-left px-4 py-2">Resumen</th>
+                                <th class="text-left px-4 py-2">Generado</th>
+                                <th class="text-right px-4 py-2"></th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
+                            <?php foreach ($reports as $reportRow): ?>
+                                <?php
+                                $rowSummary = safe_json_decode($reportRow['summary_json'] ?? '{}', []);
+                                if (!is_array($rowSummary)) {
+                                    $rowSummary = [];
+                                }
+                                $rowPeriod = !empty($reportRow['period_start'])
+                                    ? format_date((string)$reportRow['period_start'], 'd/m/Y') . ' — ' . format_date((string)($reportRow['period_end'] ?? ''), 'd/m/Y')
+                                    : 'Histórico';
+                                ?>
+                                <tr class="hover:bg-gray-50 dark:hover:bg-gray-800/40">
+                                    <td class="px-4 py-3">
+                                        <a href="<?= base_url('modules/cve/report/' . (int)$reportRow['id']) ?>"
+                                           class="font-medium text-brand-600 dark:text-brand-400 hover:underline">
+                                            <?= e((string)$reportRow['title']) ?>
+                                        </a>
+                                    </td>
+                                    <td class="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">
+                                        <?= e($rowPeriod !== '' ? $rowPeriod : '—') ?>
+                                    </td>
+                                    <td class="px-4 py-3 text-xs text-gray-500">
+                                        <?= number_format((int)($rowSummary['unique_cves'] ?? 0)) ?> CVEs ·
+                                        <?= number_format((int)($rowSummary['software_count'] ?? 0)) ?> productos ·
+                                        <?= number_format((int)($rowSummary['kev'] ?? 0)) ?> KEV
+                                    </td>
+                                    <td class="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">
+                                        <?= e(format_date((string)($reportRow['generated_at'] ?? ''), 'd/m/Y H:i')) ?>
+                                    </td>
+                                    <td class="px-4 py-3 text-right whitespace-nowrap">
+                                        <a href="<?= base_url('modules/cve/report/' . (int)$reportRow['id']) ?>"
+                                           class="text-xs text-brand-600 dark:text-brand-400 hover:underline">Ver</a>
+                                        <a href="<?= base_url('modules/cve/report/' . (int)$reportRow['id'] . '/csv') ?>"
+                                           class="text-xs text-gray-600 dark:text-gray-300 hover:underline ml-3">CSV</a>
+                                    </td>
+                                </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
             <?php endif; ?>
-            <label class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300 mt-5">
-                <input id="ai-report-local" type="checkbox" class="rounded border-gray-300 text-brand-500 focus:ring-brand-500">
-                Solo datos locales (sin IA)
-            </label>
         </div>
-
-        <div class="mt-4 flex items-center gap-3 flex-wrap">
-            <button type="button" onclick="generateCveAiReport(this)" id="ai-report-button"
-                    class="inline-flex items-center gap-2 px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-                    <?= !$llmConfigured ? 'disabled' : '' ?>>
-                Generar informe con IA
-            </button>
-            <span id="ai-report-message" class="text-xs text-gray-500"></span>
-        </div>
-        <p class="text-[11px] text-gray-400 mt-2">
-            Máximo <?= (int)CveReportAi::MAX_CVES ?> CVEs por informe. Los datos (CVSS, EPSS, KEV, referencias y
-            prioridad) salen del catálogo local; la evaluación de riesgo la redacta el perfil de IA elegido.
-        </p>
     </div>
-    <?php endif; ?>
+</details>
 
-    <?php if ($isAdmin): ?>
-    <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-5 mb-6">
-        <div class="flex items-start justify-between gap-4 flex-wrap">
-            <div>
-                <h2 class="text-sm font-semibold">Generar informe preventivo</h2>
-                <p class="text-xs text-gray-500 mt-1">
-                    Informe de los CVEs que afectan al software identificado, con prioridad KEV &gt; EPSS &gt; CVSS.
-                </p>
-            </div>
-        </div>
+<style>
+    #ai-workspace:fullscreen {
+        height: 100vh !important;
+        min-height: 0 !important;
+        border-radius: 0;
+        border: 0;
+    }
+    @media print {
+        .ai-workspace {
+            height: auto !important;
+            min-height: 0 !important;
+            display: block !important;
+            border: 0 !important;
+        }
+        .ai-workspace > aside { display: none !important; }
+        .ai-workspace > section { display: block !important; }
+        #ai-detail-scroll {
+            overflow: visible !important;
+            padding: 0 !important;
+            background: #fff !important;
+        }
+        #ai-detail > * { max-width: none !important; }
+    }
+</style>
 
-        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-4">
-            <label class="block">
-                <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Alcance</span>
-                <select id="report-scope" onchange="syncCveReportScope()"
-                        class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
-                    <option value="all">Todo el inventario</option>
-                    <option value="group">Un grupo</option>
-                    <option value="software">Un software</option>
-                </select>
-            </label>
-            <label class="block">
-                <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Grupo</span>
-                <select id="report-group" disabled
-                        class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none disabled:opacity-50">
-                    <option value="0">—</option>
-                    <?php foreach ($groups as $g): ?>
-                        <option value="<?= (int)$g['id'] ?>"><?= str_repeat('— ', (int)$g['depth']) . e($g['name']) ?></option>
-                    <?php endforeach; ?>
-                </select>
-            </label>
-            <label class="block">
-                <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Software</span>
-                <select id="report-software" disabled
-                        class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none disabled:opacity-50">
-                    <option value="0">—</option>
-                    <?php foreach (($softwareOptions ?? []) as $so): ?>
-                        <option value="<?= (int)$so['id'] ?>">
-                            <?= e((string)$so['name']) ?><?= !empty($so['version']) ? ' · ' . e((string)$so['version']) : '' ?>
-                        </option>
-                    <?php endforeach; ?>
-                </select>
-            </label>
-            <label class="block">
-                <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Periodo</span>
-                <select id="report-period" onchange="syncCveReportPeriod()"
-                        class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
-                    <option value="7d">Últimos 7 días</option>
-                    <option value="30d" selected>Últimos 30 días</option>
-                    <option value="90d">Últimos 90 días</option>
-                    <option value="all">Todo el histórico</option>
-                </select>
-            </label>
-            <label class="block">
-                <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Severidad</span>
-                <select id="report-severity"
-                        class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
-                    <option value="">Todas</option>
-                    <option value="Critical">Crítica</option>
-                    <option value="High">Alta</option>
-                    <option value="Medium">Media</option>
-                    <option value="Low">Baja</option>
-                </select>
-            </label>
-            <label class="block">
-                <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">EPSS mínimo</span>
-                <input id="report-epss" type="number" min="0" max="1" step="0.01" placeholder="0.10"
-                       class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
-            </label>
-            <label class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300 mt-5">
-                <input id="report-new" type="checkbox" checked class="rounded border-gray-300 text-brand-500 focus:ring-brand-500">
-                Solo nuevas o recién detectadas
-            </label>
-            <label class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300 mt-5">
-                <input id="report-kev" type="checkbox" class="rounded border-gray-300 text-brand-500 focus:ring-brand-500">
-                Solo KEV
-            </label>
-        </div>
+<script>
+(function () {
+    'use strict';
 
-        <div class="mt-4 flex items-center gap-3 flex-wrap">
-            <button type="button" onclick="generateCveReport(this)"
-                    class="inline-flex items-center gap-2 px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors">
-                Generar informe
-            </button>
-            <span id="report-message" class="text-xs text-gray-500"></span>
-        </div>
-        <p class="text-[11px] text-gray-400 mt-2">
-            Se guardan hasta <?= number_format((int)(defined('CVE_REPORT_MAX_ROWS') ? CVE_REPORT_MAX_ROWS : 5000)) ?> afectaciones por informe.
-            Puedes exportar el resultado a CSV o imprimirlo en PDF desde la vista del informe.
-        </p>
-    </div>
-    <?php endif; ?>
+    var PAGE_URL   = <?= json_encode(base_url('modules/cve?tab=reports')) ?>;
+    var PARTIAL    = <?= json_encode(base_url('modules/cve/report-ai')) ?>;
+    var START_URL  = <?= json_encode(base_url('modules/cve/reports/ai-start')) ?>;
+    var RUN_URL    = <?= json_encode(base_url('modules/cve/reports/ai-run')) ?>;
+    var RETRY_URL  = <?= json_encode(base_url('modules/cve/reports/ai-retry')) ?>;
+    var CANCEL_URL = <?= json_encode(base_url('modules/cve/reports/ai-cancel')) ?>;
+    var DELETE_URL = <?= json_encode(base_url('modules/cve/reports/ai-delete')) ?>;
+    var STATUS_URL = <?= json_encode(base_url('modules/cve/reports/ai-status')) ?>;
+    var IS_ADMIN   = <?= $isAdmin ? 'true' : 'false' ?>;
 
-    <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
-        <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700">
-            <h2 class="text-sm font-semibold">Informes generados</h2>
-        </div>
-        <?php if (empty($reports)): ?>
-            <div class="p-8 text-center text-sm text-gray-500">
-                Todavía no hay informes.
-                <?php if ($isAdmin): ?>Genera el primero con el formulario de arriba.<?php endif; ?>
-            </div>
-        <?php else: ?>
-            <div class="overflow-x-auto">
-                <table class="w-full text-sm">
-                    <thead>
-                        <tr class="border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-xs text-gray-500 uppercase">
-                            <th class="text-left px-4 py-2">Informe</th>
-                            <th class="text-left px-4 py-2">Periodo</th>
-                            <th class="text-left px-4 py-2">Resumen</th>
-                            <th class="text-left px-4 py-2">Generado</th>
-                            <th class="text-right px-4 py-2"></th>
-                        </tr>
-                    </thead>
-                    <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
-                        <?php foreach ($reports as $reportRow): ?>
-                            <?php
-                            $rowSummary = safe_json_decode($reportRow['summary_json'] ?? '{}', []);
-                            if (!is_array($rowSummary)) {
-                                $rowSummary = [];
-                            }
-                            $rowPeriod = !empty($reportRow['period_start'])
-                                ? format_date((string)$reportRow['period_start'], 'd/m/Y') . ' — ' . format_date((string)($reportRow['period_end'] ?? ''), 'd/m/Y')
-                                : 'Histórico';
-                            ?>
-                            <tr class="hover:bg-gray-50 dark:hover:bg-gray-800/40">
-                                <td class="px-4 py-3">
-                                    <a href="<?= base_url('modules/cve/report/' . (int)$reportRow['id']) ?>"
-                                       class="font-medium text-brand-600 dark:text-brand-400 hover:underline">
-                                        <?= e((string)$reportRow['title']) ?>
-                                    </a>
-                                </td>
-                                <td class="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">
-                                    <?= e($rowPeriod !== '' ? $rowPeriod : '—') ?>
-                                </td>
-                                <td class="px-4 py-3 text-xs text-gray-500">
-                                    <?= number_format((int)($rowSummary['unique_cves'] ?? 0)) ?> CVEs ·
-                                    <?= number_format((int)($rowSummary['software_count'] ?? 0)) ?> productos ·
-                                    <?= number_format((int)($rowSummary['kev'] ?? 0)) ?> KEV
-                                </td>
-                                <td class="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">
-                                    <?= e(format_date((string)($reportRow['generated_at'] ?? ''), 'd/m/Y H:i')) ?>
-                                </td>
-                                <td class="px-4 py-3 text-right whitespace-nowrap">
-                                    <a href="<?= base_url('modules/cve/report/' . (int)$reportRow['id']) ?>"
-                                       class="text-xs text-brand-600 dark:text-brand-400 hover:underline">Ver</a>
-                                    <a href="<?= base_url('modules/cve/report/' . (int)$reportRow['id'] . '/csv') ?>"
-                                       class="text-xs text-gray-600 dark:text-gray-300 hover:underline ml-3">CSV</a>
-                                </td>
-                            </tr>
-                        <?php endforeach; ?>
-                    </tbody>
-                </table>
-            </div>
-        <?php endif; ?>
-    </div>
+    var detail = document.getElementById('ai-detail');
+    var detailScroll = document.getElementById('ai-detail-scroll');
+    var list = document.getElementById('ai-report-list');
+    var newForm = document.getElementById('ai-new-form');
+    var printBtn = document.getElementById('ai-print-btn');
+    var deleteBtn = document.getElementById('ai-delete-btn');
+    var titleEl = document.getElementById('ai-detail-title');
 
-    <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden mt-6">
-        <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700">
-            <h2 class="text-sm font-semibold">Informes con IA</h2>
-        </div>
-        <?php if (empty($aiReports)): ?>
-            <div class="p-8 text-center text-sm text-gray-500">
-                Todavía no hay informes con IA.
-                <?php if ($isAdmin && $llmConfigured): ?>Genera el primero con el formulario de arriba.<?php endif; ?>
-            </div>
-        <?php else: ?>
-            <div class="overflow-x-auto">
-                <table class="w-full text-sm">
-                    <thead>
-                        <tr class="border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-xs text-gray-500 uppercase">
-                            <th class="text-left px-4 py-2">Informe</th>
-                            <th class="text-left px-4 py-2">CVEs</th>
-                            <th class="text-left px-4 py-2">Estado</th>
-                            <th class="text-left px-4 py-2">Generado</th>
-                            <th class="text-right px-4 py-2"></th>
-                        </tr>
-                    </thead>
-                    <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
-                        <?php foreach ($aiReports as $aiRow): ?>
-                            <?php
-                            $aiIds = safe_json_decode((string)($aiRow['cve_ids'] ?? ''), []);
-                            if (!is_array($aiIds)) {
-                                $aiIds = [];
-                            }
-                            $aiStatus = (string)($aiRow['status'] ?? 'pending');
-                            $aiUrl = base_url('modules/cve/report-ai/' . (int)$aiRow['id']);
-                            $aiCvesLabel = count($aiIds) === 1
-                                ? (string)($aiIds[0] ?? '')
-                                : count($aiIds) . ' CVEs';
-                            ?>
-                            <tr class="hover:bg-gray-50 dark:hover:bg-gray-800/40">
-                                <td class="px-4 py-3">
-                                    <a href="<?= $aiUrl ?>" class="font-medium text-brand-600 dark:text-brand-400 hover:underline">
-                                        <?= e((string)$aiRow['title']) ?>
-                                    </a>
-                                    <?php if (!empty($aiRow['no_ai'])): ?>
-                                        <span class="ml-1 text-[10px] text-gray-400">(sin IA)</span>
-                                    <?php endif; ?>
-                                    <?php if (!empty($aiRow['ai_model'])): ?>
-                                        <p class="text-[10px] text-gray-400 mt-0.5"><?= e((string)$aiRow['ai_model']) ?></p>
-                                    <?php endif; ?>
-                                </td>
-                                <td class="px-4 py-3 text-xs font-mono text-gray-500">
-                                    <?= e($aiCvesLabel) ?>
-                                </td>
-                                <td class="px-4 py-3 whitespace-nowrap">
-                                    <span class="inline-flex px-2 py-0.5 text-[10px] rounded-full <?= $aiStatusClasses[$aiStatus] ?? $aiStatusClasses['pending'] ?>">
-                                        <?= e($aiStatusLabels[$aiStatus] ?? $aiStatus) ?>
-                                    </span>
-                                </td>
-                                <td class="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">
-                                    <?= e(format_db_date((string)($aiRow['created_at'] ?? ''), 'd/m/Y H:i')) ?>
-                                </td>
-                                <td class="px-4 py-3 text-right whitespace-nowrap">
-                                    <a href="<?= $aiUrl ?>" class="text-xs text-brand-600 dark:text-brand-400 hover:underline">Ver</a>
-                                </td>
-                            </tr>
-                        <?php endforeach; ?>
-                    </tbody>
-                </table>
-            </div>
-        <?php endif; ?>
-    </div>
+    var state = { id: 0, status: '', poll: null, running: false };
 
-    <?php if ($isAdmin): ?>
-    <script>
-    function syncCveReportScope() {
-        var scope = document.getElementById('report-scope').value;
-        document.getElementById('report-group').disabled = scope !== 'group';
-        document.getElementById('report-software').disabled = scope !== 'software';
+    function csrfToken() {
+        var el = document.querySelector('input[name="csrf_token"]');
+        return el ? el.value : '';
     }
 
-    function syncCveReportPeriod() {
-        var all = document.getElementById('report-period').value === 'all';
-        document.getElementById('report-new').disabled = all;
-    }
-
-    function generateCveReport(button) {
-        var message = document.getElementById('report-message');
-        var payload = {
-            scope: document.getElementById('report-scope').value,
-            group_id: document.getElementById('report-group').value,
-            software_id: document.getElementById('report-software').value,
-            period: document.getElementById('report-period').value,
-            severity: document.getElementById('report-severity').value,
-            epss_min: document.getElementById('report-epss').value,
-            new_only: document.getElementById('report-new').checked,
-            only_kev: document.getElementById('report-kev').checked
-        };
-        message.textContent = 'Generando informe…';
-        message.className = 'text-xs text-gray-500';
-        if (button) button.disabled = true;
-        api('POST', <?= json_encode(base_url('modules/cve/reports/generate')) ?>, payload).then(function (res) {
-            if (!res.success) {
-                message.textContent = res.error || 'No se pudo generar el informe.';
-                message.className = 'text-xs text-red-500';
-                if (button) button.disabled = false;
-                return;
+    function parseResponse(res) {
+        return res.text().then(function (text) {
+            var payload;
+            try {
+                payload = text ? JSON.parse(text) : {};
+            } catch (e) {
+                var snippet = (text || '').replace(/\s+/g, ' ').trim().slice(0, 160);
+                var err = new Error('HTTP ' + res.status + (snippet ? ' · ' + snippet : ''));
+                err.httpStatus = res.status;
+                throw err;
             }
-            window.location.href = res.url;
-        }).catch(function () {
-            message.textContent = 'Error de conexión al generar el informe.';
-            message.className = 'text-xs text-red-500';
-            if (button) button.disabled = false;
+            if (res.status === 401) {
+                window.location.href = (window.APP_URL || '') + '/admin/login';
+            }
+            return payload;
         });
     }
 
-    function cveAiError(err) {
+    function postJson(url, data) {
+        return fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest',
+                'X-CSRF-Token': csrfToken()
+            },
+            credentials: 'same-origin',
+            body: JSON.stringify(data || {})
+        }).then(parseResponse);
+    }
+
+    function getJson(url) {
+        return fetch(url, {
+            headers: {'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest'},
+            credentials: 'same-origin'
+        }).then(parseResponse);
+    }
+
+    function errorText(err) {
         return (err && err.message) ? err.message : 'error de red';
     }
 
-    function generateCveAiReport(button) {
-        var message = document.getElementById('ai-report-message');
+    function setBanner(text) {
+        var el = document.getElementById('ai-processing-text');
+        if (el) {
+            el.textContent = text;
+        }
+    }
+
+    function stopPolling() {
+        if (state.poll) {
+            clearInterval(state.poll);
+            state.poll = null;
+        }
+    }
+
+    function startPolling() {
+        if (!state.id || state.poll) {
+            return;
+        }
+        state.poll = setInterval(function () {
+            getJson(STATUS_URL + '/' + state.id).then(function (res) {
+                if (res.success && (res.status === 'done' || res.status === 'error' || res.status === 'canceled')) {
+                    stopPolling();
+                    load(state.id, false);
+                }
+            }).catch(function () { /* se reintenta */ });
+        }, 3000);
+    }
+
+    function updateToolbar() {
+        var body = detail ? detail.querySelector('.ai-report-body') : null;
+        var id = body ? parseInt(body.dataset.reportId, 10) || 0 : 0;
+        var status = body ? (body.dataset.status || '') : '';
+        var processing = status === 'pending' || status === 'running';
+
+        if (printBtn) {
+            printBtn.classList.toggle('hidden', !body || processing);
+        }
+        if (deleteBtn) {
+            deleteBtn.classList.toggle('hidden', !IS_ADMIN || !id);
+        }
+        if (titleEl) {
+            titleEl.textContent = body ? ('Informe #' + id) : '';
+        }
+    }
+
+    function markSelected(id) {
+        if (!list) {
+            return;
+        }
+        list.querySelectorAll('.ai-report-item').forEach(function (el) {
+            var isSelected = parseInt(el.dataset.id, 10) === id;
+            el.classList.toggle('bg-brand-50', isSelected);
+            el.classList.toggle('dark:bg-brand-950/40', isSelected);
+        });
+    }
+
+    function activate() {
+        var body = detail ? detail.querySelector('.ai-report-body') : null;
+        if (!body) {
+            state.id = 0;
+            state.status = '';
+            updateToolbar();
+            return;
+        }
+
+        state.id = parseInt(body.dataset.reportId, 10) || 0;
+        state.status = body.dataset.status || '';
+        markSelected(state.id);
+        updateToolbar();
+
+        if (state.status === 'pending') {
+            runReport();
+        } else if (state.status === 'running') {
+            startPolling();
+        }
+    }
+
+    function load(id, pushUrl) {
+        if (!detail) {
+            return;
+        }
+        stopPolling();
+        if (newForm) {
+            newForm.classList.add('hidden');
+        }
+        detail.innerHTML = '<div class="p-8 text-center text-sm text-gray-500">Cargando informe…</div>';
+
+        fetch(PARTIAL + '/' + id + '?partial=1', {
+            headers: {'X-Requested-With': 'XMLHttpRequest'},
+            credentials: 'same-origin'
+        }).then(function (res) {
+            if (!res.ok) {
+                throw new Error('HTTP ' + res.status);
+            }
+            return res.text();
+        }).then(function (html) {
+            detail.innerHTML = html;
+            if (pushUrl !== false && window.history && window.history.replaceState) {
+                window.history.replaceState({}, '', PAGE_URL + '&report=' + id);
+            }
+            if (detailScroll) {
+                detailScroll.scrollTop = 0;
+            }
+            activate();
+        }).catch(function (err) {
+            detail.innerHTML = '<div class="p-6 text-sm text-red-600">No se pudo cargar el informe: ' + errorText(err) + '</div>';
+        });
+    }
+
+    function runReport() {
+        if (!state.id || state.running) {
+            return;
+        }
+        state.running = true;
+        startPolling();
+        setBanner('Ejecutando el informe… si la conexión se corta, seguiremos consultando el estado.');
+
+        postJson(RUN_URL + '/' + state.id, {}).then(function (res) {
+            if (res && (res.status === 'done' || res.status === 'error' || res.status === 'canceled' || res.url)) {
+                stopPolling();
+                load(state.id, false);
+            } else if (res && res.error) {
+                setBanner(res.error);
+            }
+        }).catch(function (err) {
+            setBanner('No se pudo ejecutar: ' + errorText(err) + '. Seguimos comprobando el estado…');
+            startPolling();
+        }).then(function () {
+            state.running = false;
+        });
+    }
+
+    function withStateId(fn) {
+        if (!state.id) {
+            return;
+        }
+        fn(state.id);
+    }
+
+    window.cveAiSelect = function (id) {
+        if (state.id === id && detail && detail.querySelector('.ai-report-body')) {
+            return;
+        }
+        load(id);
+    };
+
+    window.runCveAiReport = runReport;
+    window.cancelCveAiReport = function () {
+        withStateId(function (id) {
+            if (!window.confirm('¿Cancelar la generación de este informe?')) {
+                return;
+            }
+            postJson(CANCEL_URL + '/' + id, {}).then(function (res) {
+                if (!res.success) {
+                    alert(res.error || 'No se pudo cancelar el informe.');
+                    return;
+                }
+                window.location.href = PAGE_URL + '&report=' + id;
+            }).catch(function (err) {
+                alert('No se pudo cancelar: ' + errorText(err));
+            });
+        });
+    };
+    window.retryCveAiReport = function () {
+        withStateId(function (id) {
+            postJson(RETRY_URL + '/' + id, {}).then(function (res) {
+                if (!res.success) {
+                    alert(res.error || 'No se pudo reintentar el informe.');
+                    return;
+                }
+                window.location.href = PAGE_URL + '&report=' + id;
+            }).catch(function (err) {
+                alert('No se pudo reintentar: ' + errorText(err));
+            });
+        });
+    };
+
+    window.cveAiCancel = function (id) {
+        if (!window.confirm('¿Cancelar la generación de este informe?')) {
+            return;
+        }
+        postJson(CANCEL_URL + '/' + id, {}).then(function (res) {
+            if (!res.success) {
+                alert(res.error || 'No se pudo cancelar el informe.');
+                return;
+            }
+            window.location.href = PAGE_URL + '&report=' + id;
+        }).catch(function (err) {
+            alert('No se pudo cancelar: ' + errorText(err));
+        });
+    };
+
+    window.cveAiRetry = function (id) {
+        postJson(RETRY_URL + '/' + id, {}).then(function (res) {
+            if (!res.success) {
+                alert(res.error || 'No se pudo reintentar el informe.');
+                return;
+            }
+            window.location.href = PAGE_URL + '&report=' + id;
+        }).catch(function (err) {
+            alert('No se pudo reintentar: ' + errorText(err));
+        });
+    };
+
+    function removeItem(id) {
+        if (!list) {
+            return null;
+        }
+        var el = list.querySelector('.ai-report-item[data-id="' + id + '"]');
+        if (!el) {
+            return null;
+        }
+        var nodes = Array.prototype.slice.call(list.querySelectorAll('.ai-report-item'));
+        var idx = nodes.indexOf(el);
+        var next = nodes[idx + 1] || nodes[idx - 1] || null;
+        el.remove();
+        return next ? parseInt(next.dataset.id, 10) : null;
+    }
+
+    window.cveAiDelete = function (id) {
+        if (!window.confirm('¿Eliminar el informe #' + id + '? Esta acción no se puede deshacer.')) {
+            return;
+        }
+        postJson(DELETE_URL + '/' + id, {}).then(function (res) {
+            if (!res.success) {
+                alert(res.error || 'No se pudo eliminar el informe.');
+                return;
+            }
+            var next = removeItem(id);
+            if (state.id === id) {
+                if (next) {
+                    load(next);
+                } else {
+                    state.id = 0;
+                    state.status = '';
+                    detail.innerHTML = '<div class="h-full flex items-center justify-center"><div class="text-center"><p class="text-sm font-medium">Ningún informe seleccionado</p><p class="text-xs text-gray-500 mt-1">Elige un informe de la lista o crea uno nuevo con IA.</p></div></div>';
+                    updateToolbar();
+                    if (window.history && window.history.replaceState) {
+                        window.history.replaceState({}, '', PAGE_URL);
+                    }
+                }
+            }
+        }).catch(function (err) {
+            alert('No se pudo eliminar: ' + errorText(err));
+        });
+    };
+
+    window.cveAiDeleteSelected = function () {
+        withStateId(function (id) {
+            window.cveAiDelete(id);
+        });
+    };
+
+    window.cveAiNew = function () {
+        stopPolling();
+        if (detail) {
+            detail.innerHTML = '';
+        }
+        if (newForm) {
+            newForm.classList.remove('hidden');
+        }
+        if (printBtn) {
+            printBtn.classList.add('hidden');
+        }
+        if (deleteBtn) {
+            deleteBtn.classList.add('hidden');
+        }
+        if (titleEl) {
+            titleEl.textContent = 'Nuevo informe';
+        }
+        var input = document.getElementById('ai-report-cves');
+        if (input) {
+            input.focus();
+        }
+    };
+
+    window.cveAiCancelNew = function () {
+        if (newForm) {
+            newForm.classList.add('hidden');
+        }
+        if (state.id) {
+            load(state.id, false);
+        } else {
+            window.location.href = PAGE_URL;
+        }
+    };
+
+    window.cveAiGenerate = function (button) {
         var input = document.getElementById('ai-report-cves');
         var profile = document.getElementById('ai-report-profile');
         var local = document.getElementById('ai-report-local');
-        if (!input || !message) return;
+        var message = document.getElementById('ai-report-message');
+        if (!input || !message) {
+            return;
+        }
 
         var cves = (input.value || '').trim();
         if (cves === '') {
@@ -1113,13 +1557,13 @@ foreach ($flashData as $type => $msg):
         }
 
         var noAi = !!(local && local.checked);
-        message.textContent = noAi
-            ? 'Generando informe solo con datos locales…'
-            : 'Generando informe con IA… puede tardar hasta un minuto.';
+        message.textContent = 'Creando informe…';
         message.className = 'text-xs text-gray-500';
-        if (button) button.disabled = true;
+        if (button) {
+            button.disabled = true;
+        }
 
-        api('POST', <?= json_encode(base_url('modules/cve/reports/ai-start')) ?>, {
+        postJson(START_URL, {
             cve_ids: cves,
             profile_id: profile ? profile.value : 0,
             no_ai: noAi ? 1 : 0
@@ -1127,88 +1571,109 @@ foreach ($flashData as $type => $msg):
             if (!res.success) {
                 message.textContent = res.error || 'No se pudo crear el informe.';
                 message.className = 'text-xs text-red-500';
-                if (button) button.disabled = false;
+                if (button) {
+                    button.disabled = false;
+                }
                 return;
             }
-            runCveAiReport(res.report_id, message, button);
+            window.location.href = PAGE_URL + '&report=' + res.report_id;
         }).catch(function (err) {
-            message.textContent = 'No se pudo crear el informe: ' + cveAiError(err);
+            message.textContent = 'No se pudo crear: ' + errorText(err);
+            message.className = 'text-xs text-red-500';
+            if (button) {
+                button.disabled = false;
+            }
+        });
+    };
+
+    window.cveAiFilterList = function (query) {
+        var q = (query || '').toLowerCase().trim();
+        if (!list) {
+            return;
+        }
+        list.querySelectorAll('.ai-report-item').forEach(function (el) {
+            var hay = (el.dataset.search || '').toLowerCase();
+            el.classList.toggle('hidden', q !== '' && hay.indexOf(q) === -1);
+        });
+    };
+
+    window.toggleCveAiFullscreen = function () {
+        var el = document.getElementById('ai-workspace');
+        if (!el) {
+            return;
+        }
+        if (document.fullscreenElement) {
+            document.exitFullscreen();
+        } else if (el.requestFullscreen) {
+            el.requestFullscreen().catch(function () {});
+        }
+    };
+
+    function ready(fn) {
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', fn);
+        } else {
+            fn();
+        }
+    }
+
+    ready(function () {
+        activate();
+
+        if (state.status === 'pending' || state.status === 'running') {
+            setTimeout(function () {
+                if (document.getElementById('ai-processing-banner')) {
+                    setBanner('Está tardando más de lo normal. Pulsa «Ejecutar ahora» o revisa Admin → Logs (canal cve_ai).');
+                }
+            }, 45000);
+        }
+    });
+})();
+
+function syncCveReportScope() {
+    var scope = document.getElementById('report-scope').value;
+    document.getElementById('report-group').disabled = scope !== 'group';
+    document.getElementById('report-software').disabled = scope !== 'software';
+}
+
+function syncCveReportPeriod() {
+    var all = document.getElementById('report-period').value === 'all';
+    document.getElementById('report-new').disabled = all;
+}
+
+function generateCveReport(button) {
+    var message = document.getElementById('report-message');
+    var payload = {
+        scope: document.getElementById('report-scope').value,
+        group_id: document.getElementById('report-group').value,
+        software_id: document.getElementById('report-software').value,
+        period: document.getElementById('report-period').value,
+        severity: document.getElementById('report-severity').value,
+        epss_min: document.getElementById('report-epss').value,
+        new_only: document.getElementById('report-new').checked,
+        only_kev: document.getElementById('report-kev').checked
+    };
+    message.textContent = 'Generando informe…';
+    message.className = 'text-xs text-gray-500';
+    if (button) button.disabled = true;
+    api('POST', <?= json_encode(base_url('modules/cve/reports/generate')) ?>, payload).then(function (res) {
+        if (!res.success) {
+            message.textContent = res.error || 'No se pudo generar el informe.';
             message.className = 'text-xs text-red-500';
             if (button) button.disabled = false;
-        });
-    }
+            return;
+        }
+        window.location.href = res.url;
+    }).catch(function () {
+        message.textContent = 'Error de conexión al generar el informe.';
+        message.className = 'text-xs text-red-500';
+        if (button) button.disabled = false;
+    });
+}
 
-    function runCveAiReport(id, message, button) {
-        // Polling de seguridad en paralelo: si el proxy corta la petición
-        // larga, seguimos consultando el estado hasta que termine.
-        startCveAiStatusPolling(id, message, button);
-
-        api('POST', <?= json_encode(base_url('modules/cve/reports/ai-run')) ?> + '/' + id, {}).then(function (res) {
-            if (res && res.success === false && res.error && !res.url) {
-                if (message) {
-                    message.textContent = res.error;
-                    message.className = 'text-xs text-red-500';
-                }
-                if (button) button.disabled = false;
-                return;
-            }
-            if (res && res.url) {
-                window.location.href = res.url;
-            }
-        }).catch(function (err) {
-            if (message) {
-                message.textContent = 'La petición se interrumpió; seguimos comprobando el estado… (' + cveAiError(err) + ')';
-                message.className = 'text-xs text-amber-600';
-            }
-        });
-    }
-
-    function startCveAiStatusPolling(id, message, button) {
-        var base = <?= json_encode(base_url('modules/cve/reports/ai-status')) ?>;
-        var tries = 0;
-        var failures = 0;
-        var timer = setInterval(function () {
-            tries++;
-            if (tries > 180) {
-                clearInterval(timer);
-                if (message) {
-                    message.textContent = 'La generación está tardando más de lo esperado. Abre el informe para ver su estado.';
-                    message.className = 'text-xs text-amber-600';
-                }
-                if (button) button.disabled = false;
-                return;
-            }
-            api('GET', base + '/' + id).then(function (res) {
-                failures = 0;
-                if (!res.success) {
-                    if (message) {
-                        message.textContent = res.error || 'No se pudo consultar el estado.';
-                        message.className = 'text-xs text-red-500';
-                    }
-                    return;
-                }
-                if (res.status === 'done' || res.status === 'error') {
-                    clearInterval(timer);
-                    window.location.href = res.url;
-                } else if (message) {
-                    message.textContent = 'Generando… (' + res.status + ')';
-                    message.className = 'text-xs text-gray-500';
-                }
-            }).catch(function (err) {
-                failures++;
-                if (message && failures >= 2) {
-                    message.textContent = 'Reintentando consulta de estado… (' + cveAiError(err) + ')';
-                    message.className = 'text-xs text-amber-600';
-                }
-            });
-        }, 5000);
-    }
-
-    syncCveReportScope();
-    syncCveReportPeriod();
-    </script>
-    <?php endif; ?>
-
+syncCveReportScope();
+syncCveReportPeriod();
+</script>
 <?php else: ?>
 
     <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-6">

@@ -1003,11 +1003,11 @@ final class CveReportAi
             $status = ($localOnly || $aiText !== null) ? 'done' : 'error';
             $durationMs = (int)round((microtime(true) - $started) * 1000);
 
-            CveDatabase::query(
+            $saved = CveDatabase::update(
                 "UPDATE cve_ai_reports
                  SET ai_text = ?, content_text = NULL, status = ?, ai_error = ?, ai_model = ?,
                      ai_duration_ms = ?, finished_at = datetime('now'), token = NULL
-                 WHERE id = ?",
+                 WHERE id = ? AND status = 'running'",
                 [
                     $aiText,
                     $status,
@@ -1017,6 +1017,17 @@ final class CveReportAi
                     $id,
                 ]
             );
+
+            if ($saved === 0) {
+                // El informe se canceló o se eliminó mientras la IA trabajaba.
+                app_log('info', 'cve_ai', 'Resultado descartado (informe cancelado o eliminado)', ['id' => $id]);
+                return [
+                    'success' => false,
+                    'id'      => $id,
+                    'status'  => 'canceled',
+                    'error'   => 'El informe se canceló durante la generación.',
+                ];
+            }
 
             app_log('info', 'cve_ai', 'Informe IA finalizado', [
                 'id'     => $id,
@@ -1032,14 +1043,19 @@ final class CveReportAi
                 'error'   => $aiError !== '' ? $aiError : null,
             ];
         } catch (Throwable $e) {
-            CveDatabase::query(
+            $failed = CveDatabase::update(
                 "UPDATE cve_ai_reports
                  SET status = 'error', ai_error = ?, finished_at = datetime('now'), token = NULL
-                 WHERE id = ?",
+                 WHERE id = ? AND status = 'running'",
                 [substr($e->getMessage(), 0, 2000), $id]
             );
             app_log('error', 'cve_ai', 'Error generando el informe', ['id' => $id, 'error' => $e->getMessage()]);
-            return ['success' => false, 'id' => $id, 'status' => 'error', 'error' => $e->getMessage()];
+            return [
+                'success' => false,
+                'id'      => $id,
+                'status'  => $failed === 0 ? 'canceled' : 'error',
+                'error'   => $failed === 0 ? 'El informe se canceló durante la generación.' : $e->getMessage(),
+            ];
         }
     }
 

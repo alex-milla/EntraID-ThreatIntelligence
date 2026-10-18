@@ -41,6 +41,8 @@ class Module_Cve extends BaseModule
             ['method' => 'POST', 'pattern' => 'reports/generate', 'handler' => [$this, 'generateReport']],
             ['method' => 'POST', 'pattern' => 'reports/ai-start', 'handler' => [$this, 'startAiReport']],
             ['method' => 'POST', 'pattern' => 'reports/ai-run/{id}', 'handler' => [$this, 'runAiReport']],
+            ['method' => 'POST', 'pattern' => 'reports/ai-cancel/{id}', 'handler' => [$this, 'cancelAiReport']],
+            ['method' => 'POST', 'pattern' => 'reports/ai-delete/{id}', 'handler' => [$this, 'deleteAiReport']],
             ['method' => 'POST', 'pattern' => 'reports/ai-generate', 'handler' => [$this, 'startAiReport']],
             ['method' => 'POST', 'pattern' => 'reports/ai-retry/{id}', 'handler' => [$this, 'retryAiReport']],
             ['method' => 'GET',  'pattern' => 'reports/ai-status/{id}', 'handler' => [$this, 'aiReportStatus']],
@@ -77,6 +79,8 @@ class Module_Cve extends BaseModule
         $software = [];
         $reports = [];
         $aiReports = [];
+        $selectedAiId = 0;
+        $selectedAiData = null;
         $llmProfiles = [];
         $llmConfigured = false;
         $stats = $this->emptyStats();
@@ -99,9 +103,16 @@ class Module_Cve extends BaseModule
             } elseif ($tab === 'reports') {
                 $softwareOptions = $this->listSoftware(0, '');
                 $reports = $this->listReports(30);
-                $aiReports = $this->listAiReports(30);
+                $aiReports = $this->listAiReports(100);
                 $llmProfiles = llm_profile_list();
                 $llmConfigured = class_exists('Module_Llm') && (new Module_Llm())->isConfigured();
+                $selectedAiId = max(0, (int)($_GET['report'] ?? 0));
+                if ($selectedAiId > 0) {
+                    $selectedAiData = $this->aiReportPayload($selectedAiId);
+                    if ($selectedAiData === null) {
+                        $selectedAiId = 0;
+                    }
+                }
             } else {
                 $catalogFilters = [
                     'q'           => trim((string)($_GET['q'] ?? '')),
@@ -148,6 +159,8 @@ class Module_Cve extends BaseModule
             'software'      => $software,
             'reports'       => $reports,
             'aiReports'     => $aiReports,
+            'selectedAiId'  => $selectedAiId,
+            'selectedAiData'=> $selectedAiData,
             'llmProfiles'   => $llmProfiles,
             'llmConfigured' => $llmConfigured,
             'stats'         => $stats,
@@ -1106,28 +1119,139 @@ class Module_Cve extends BaseModule
         Auth::require();
 
         $id = (int)($params['id'] ?? 0);
-        $report = $id > 0 ? CveDatabase::fetchOne("SELECT * FROM cve_ai_reports WHERE id = ?", [$id]) : null;
-        if ($report === null) {
-            http_response_code(404);
+        $data = $this->aiReportPayload($id);
+
+        if (!empty($_GET['partial'])) {
+            // Documento aislado para inyectarlo en el panel derecho del workspace.
+            header('Content-Type: text/html; charset=utf-8');
+            header('Cache-Control: no-store, no-cache, must-revalidate');
+            if ($data === null) {
+                http_response_code(404);
+                echo '<div class="p-6 text-sm text-red-600">Informe no encontrado.</div>';
+                return;
+            }
+            extract($data);
+            require __DIR__ . '/views/_ai_report_body.php';
+            return;
         }
 
-        $items = $report !== null ? safe_json_decode((string)($report['data_json'] ?? ''), []) : [];
+        if ($data === null) {
+            http_response_code(404);
+            $data = ['report' => null, 'items' => [], 'aiText' => '', 'sections' => []];
+        }
+
+        echo $this->page('ai_report', $data);
+    }
+
+    public function cancelAiReport(array $params = []): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        try {
+            $id = (int)($params['id'] ?? 0);
+            $row = $id > 0 ? CveDatabase::fetchOne("SELECT id, status FROM cve_ai_reports WHERE id = ?", [$id]) : null;
+            if ($row === null) {
+                json_response(['success' => false, 'error' => 'Informe no encontrado.'], 404);
+            }
+
+            $updated = CveDatabase::update(
+                "UPDATE cve_ai_reports
+                 SET status = 'canceled', token = NULL, finished_at = datetime('now'),
+                     ai_error = 'Cancelado por el usuario.'
+                 WHERE id = ? AND status IN ('pending','running')",
+                [$id]
+            );
+
+            if ($updated === 0) {
+                json_response([
+                    'success' => false,
+                    'id'      => $id,
+                    'status'  => (string)$row['status'],
+                    'error'   => 'El informe ya había terminado (' . (string)$row['status'] . ').',
+                ], 409);
+            }
+
+            app_log('info', 'cve_ai', 'Informe cancelado', ['id' => $id]);
+            json_response(['success' => true, 'id' => $id, 'status' => 'canceled']);
+        } catch (Throwable $e) {
+            app_log('error', 'cve_ai', 'Error cancelando el informe', [
+                'id'    => $params['id'] ?? null,
+                'error' => $e->getMessage(),
+            ]);
+            json_response(['success' => false, 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    public function deleteAiReport(array $params = []): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        try {
+            $id = (int)($params['id'] ?? 0);
+            $row = $id > 0
+                ? CveDatabase::fetchOne("SELECT id, status, cve_ids FROM cve_ai_reports WHERE id = ?", [$id])
+                : null;
+            if ($row === null) {
+                json_response(['success' => false, 'error' => 'Informe no encontrado.'], 404);
+            }
+
+            // Si sigue en curso, invalidar el resultado antes de borrar.
+            CveDatabase::query(
+                "UPDATE cve_ai_reports SET status = 'canceled', token = NULL
+                 WHERE id = ? AND status IN ('pending','running')",
+                [$id]
+            );
+            CveDatabase::query("DELETE FROM cve_ai_reports WHERE id = ?", [$id]);
+
+            app_log('info', 'cve_ai', 'Informe eliminado', [
+                'id'     => $id,
+                'status' => (string)$row['status'],
+                'cves'   => (string)($row['cve_ids'] ?? ''),
+            ]);
+
+            json_response(['success' => true, 'id' => $id]);
+        } catch (Throwable $e) {
+            app_log('error', 'cve_ai', 'Error eliminando el informe', [
+                'id'    => $params['id'] ?? null,
+                'error' => $e->getMessage(),
+            ]);
+            json_response(['success' => false, 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Datos completos de un informe para la página y para el panel derecho.
+     */
+    private function aiReportPayload(int $id): ?array
+    {
+        if ($id <= 0) {
+            return null;
+        }
+
+        $report = CveDatabase::fetchOne("SELECT * FROM cve_ai_reports WHERE id = ?", [$id]);
+        if ($report === null) {
+            return null;
+        }
+
+        $items = safe_json_decode((string)($report['data_json'] ?? ''), []);
         if (!is_array($items)) {
             $items = [];
         }
 
-        $aiText = $report !== null ? trim((string)($report['ai_text'] ?? '')) : '';
-        if ($aiText === '' && $report !== null && empty($report['no_ai'])) {
+        $aiText = trim((string)($report['ai_text'] ?? ''));
+        if ($aiText === '' && empty($report['no_ai'])) {
             // Compatibilidad: informes antiguos guardados en formato ASCII.
             $aiText = CveReportAi::extractAiTextFromContent((string)($report['content_text'] ?? ''));
         }
 
-        echo $this->page('ai_report', [
+        return [
             'report'   => $report,
             'items'    => $items,
             'aiText'   => $aiText,
             'sections' => CveReportAi::parseAiSections($aiText),
-        ]);
+        ];
     }
 
     /**
