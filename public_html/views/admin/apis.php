@@ -542,16 +542,22 @@ function startCveSyncFromAdmin(mode) {
         : (mode === 'kev'
             ? 'Se actualizarán solo CISA KEV y EPSS. ¿Continuar?'
             : 'Se actualizará el catálogo NVD en segundo plano. ¿Continuar?');
-    if (!window.confirm(msg)) return;
-    api('POST', '<?= base_url('modules/cve/sync') ?>', { mode: mode })
-        .then(function(res) {
-            if (!res || !res.success) {
-                toast((res && res.error) ? res.error : 'No se pudo iniciar la sincronización', 'error');
-                return;
-            }
-            toast(res.message || 'Sincronización iniciada', res.worker_started ? 'success' : 'info');
-        })
-        .catch(function() { toast('Error de conexión', 'error'); });
+    appConfirm(msg, {
+        title: mode === 'full' ? 'Reconstruir catálogo' : (mode === 'kev' ? 'Actualizar KEV y EPSS' : 'Actualizar catálogo'),
+        danger: mode === 'full',
+        confirmText: mode === 'full' ? 'Reconstruir' : 'Actualizar'
+    }).then(function(ok) {
+        if (!ok) return;
+        api('POST', '<?= base_url('modules/cve/sync') ?>', { mode: mode })
+            .then(function(res) {
+                if (!res || !res.success) {
+                    toast((res && res.error) ? res.error : 'No se pudo iniciar la sincronización', 'error');
+                    return;
+                }
+                toast(res.message || 'Sincronización iniciada', res.worker_started ? 'success' : 'info');
+            })
+            .catch(function() { toast('Error de conexión', 'error'); });
+    });
 }
 function testCveSources() {
     var box = document.getElementById('cve-test-result');

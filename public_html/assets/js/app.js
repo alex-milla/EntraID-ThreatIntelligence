@@ -174,34 +174,70 @@
     // Diálogos propios (sustituyen confirm()/alert() nativos)
     // ============================================================
 
-    function _escapeHtml(s) {
-        var d = document.createElement('div');
-        d.textContent = (s == null) ? '' : s;
-        return d.innerHTML;
+    var _dialogSeq = 0;
+
+    if (!document.getElementById('ui-dialog-style')) {
+        var _dialogStyle = document.createElement('style');
+        _dialogStyle.id = 'ui-dialog-style';
+        _dialogStyle.textContent = '@keyframes uiDialogIn{from{opacity:0;transform:translateY(6px) scale(.98)}to{opacity:1;transform:none}}';
+        document.head.appendChild(_dialogStyle);
     }
 
-    function _buildDialog(title) {
+    function _dialogIcon(kind) {
+        if (kind === 'danger') {
+            return '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>';
+        }
+        if (kind === 'info') {
+            return '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>';
+        }
+        return '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>';
+    }
+
+    function _buildDialog(title, kind) {
         var overlay = document.createElement('div');
-        overlay.className = 'fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50';
+        overlay.className = 'fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm';
+
         var card = document.createElement('div');
-        card.className = 'w-full max-w-md bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 shadow-xl p-5';
+        card.className = 'w-full max-w-md bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 shadow-2xl';
+        card.style.animation = 'uiDialogIn .16s ease-out';
         card.setAttribute('role', 'dialog');
         card.setAttribute('aria-modal', 'true');
 
-        var h = document.createElement('h3');
-        h.className = 'text-base font-semibold mb-2';
-        h.textContent = title || '';
-        var p = document.createElement('p');
-        p.className = 'text-sm text-gray-600 dark:text-gray-300 whitespace-pre-wrap';
-        p.textContent = '';
-        var actions = document.createElement('div');
-        actions.className = 'mt-5 flex justify-end gap-2';
+        var titleId = 'ui-dialog-title-' + (++_dialogSeq);
+        card.setAttribute('aria-labelledby', titleId);
 
-        card.appendChild(h);
+        var header = document.createElement('div');
+        header.className = 'flex items-start gap-3 px-5 pt-5';
+
+        var iconWrap = document.createElement('div');
+        iconWrap.className = 'w-9 h-9 rounded-full flex items-center justify-center shrink-0 ' + (
+            kind === 'danger'
+                ? 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400'
+                : (kind === 'info'
+                    ? 'bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400'
+                    : 'bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400')
+        );
+        iconWrap.innerHTML = _dialogIcon(kind);
+
+        var h = document.createElement('h3');
+        h.id = titleId;
+        h.className = 'text-base font-semibold leading-6 pt-1';
+        h.textContent = title || '';
+
+        header.appendChild(iconWrap);
+        header.appendChild(h);
+
+        var p = document.createElement('p');
+        p.className = 'text-sm text-gray-600 dark:text-gray-300 whitespace-pre-wrap px-5 mt-3';
+
+        var footer = document.createElement('div');
+        footer.className = 'mt-5 px-5 py-4 bg-gray-50 dark:bg-gray-800/40 border-t border-gray-100 dark:border-gray-700 flex justify-end gap-2 rounded-b-xl';
+
+        card.appendChild(header);
         card.appendChild(p);
-        card.appendChild(actions);
+        card.appendChild(footer);
         overlay.appendChild(card);
-        return { overlay: overlay, message: p, actions: actions };
+        return { overlay: overlay, message: p, actions: footer };
     }
 
     function _showDialog(dialog) {
@@ -216,15 +252,19 @@
     window.appAlert = function (message, opts) {
         opts = opts || {};
         return new Promise(function (resolve) {
-            var d = _buildDialog(opts.title || 'Aviso');
+            var d = _buildDialog(opts.title || 'Aviso', 'info');
             d.message.textContent = message || '';
+
             var ok = document.createElement('button');
             ok.type = 'button';
             ok.className = 'px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors';
             ok.textContent = opts.confirmText || 'Aceptar';
-            var onKey = function (e) { if (e.key === 'Escape' || e.key === 'Enter') close(); };
+
+            function onKey(e) { if (e.key === 'Escape' || e.key === 'Enter') close(); }
             function close() { _hideDialog(d); document.removeEventListener('keydown', onKey); resolve(true); }
+
             ok.onclick = close;
+            d.overlay.addEventListener('click', function (e) { if (e.target === d.overlay) close(); });
             d.actions.appendChild(ok);
             _showDialog(d);
             document.addEventListener('keydown', onKey);
@@ -234,8 +274,9 @@
 
     window.appConfirm = function (message, opts) {
         opts = opts || {};
+        var kind = opts.danger ? 'danger' : 'warning';
         return new Promise(function (resolve) {
-            var d = _buildDialog(opts.title || 'Confirmar');
+            var d = _buildDialog(opts.title || 'Confirmar', kind);
             d.message.textContent = message || '';
 
             var cancel = document.createElement('button');
@@ -248,7 +289,13 @@
             ok.className = 'px-4 py-2 ' + (opts.danger ? 'bg-red-600 hover:bg-red-700' : 'bg-brand-500 hover:bg-brand-600') + ' text-white text-sm font-medium rounded-lg transition-colors';
             ok.textContent = opts.confirmText || 'Aceptar';
 
-            function onKey(e) { if (e.key === 'Escape') close(false); }
+            function onKey(e) {
+                if (e.key === 'Escape') {
+                    close(false);
+                } else if (e.key === 'Enter' && !opts.danger) {
+                    close(true);
+                }
+            }
             function close(val) { _hideDialog(d); document.removeEventListener('keydown', onKey); resolve(val); }
 
             cancel.onclick = function () { close(false); };
@@ -259,7 +306,8 @@
             d.actions.appendChild(cancel);
             d.actions.appendChild(ok);
             _showDialog(d);
-            ok.focus();
+            // En acciones destructivas el foco va a Cancelar para evitar Enter accidental.
+            (opts.danger ? cancel : ok).focus();
         });
     };
 

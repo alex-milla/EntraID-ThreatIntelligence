@@ -172,27 +172,33 @@ require __DIR__ . '/_tabs.php';
         function retry() {
             postJson(RETRY_URL, {}).then(function (res) {
                 if (!res.success) {
-                    alert(res.error || 'No se pudo reintentar el informe.');
+                    appAlert(res.error || 'No se pudo reintentar el informe.', { title: 'No se pudo reintentar' });
                     return;
                 }
                 window.location.reload();
             }).catch(function (err) {
-                alert('No se pudo reintentar: ' + errorText(err));
+                appAlert('No se pudo reintentar: ' + errorText(err), { title: 'No se pudo reintentar' });
             });
         }
 
         function cancel() {
-            if (!window.confirm('¿Cancelar la generación de este informe?')) {
-                return;
-            }
-            postJson(CANCEL_URL, {}).then(function (res) {
-                if (!res.success) {
-                    alert(res.error || 'No se pudo cancelar el informe.');
+            appConfirm('¿Cancelar la generación de este informe?', {
+                title: 'Cancelar informe',
+                danger: true,
+                confirmText: 'Cancelar informe'
+            }).then(function (ok) {
+                if (!ok) {
                     return;
                 }
-                window.location.reload();
-            }).catch(function (err) {
-                alert('No se pudo cancelar: ' + errorText(err));
+                postJson(CANCEL_URL, {}).then(function (res) {
+                    if (!res.success) {
+                        appAlert(res.error || 'No se pudo cancelar el informe.', { title: 'No se pudo cancelar' });
+                        return;
+                    }
+                    window.location.reload();
+                }).catch(function (err) {
+                    appAlert('No se pudo cancelar: ' + errorText(err), { title: 'No se pudo cancelar' });
+                });
             });
         }
 

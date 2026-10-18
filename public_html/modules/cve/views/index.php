@@ -474,12 +474,30 @@ foreach ($flashData as $type => $msg):
 
         window.startCveSync = function(mode) {
             mode = mode || 'auto';
-            if (mode === 'full' && !window.confirm('Se reconstruirá el catálogo completo. Puede tardar bastante. ¿Continuar?')) {
+            var message = '';
+            if (mode === 'full') {
+                message = 'Se reconstruirá el catálogo completo. Puede tardar bastante. ¿Continuar?';
+            } else if (mode === 'kev') {
+                message = 'Se actualizarán solo CISA KEV y EPSS. ¿Continuar?';
+            }
+
+            if (message !== '') {
+                appConfirm(message, {
+                    title: mode === 'full' ? 'Reconstruir catálogo' : 'Actualizar KEV y EPSS',
+                    danger: mode === 'full',
+                    confirmText: mode === 'full' ? 'Reconstruir' : 'Actualizar'
+                }).then(function(ok) {
+                    if (ok) {
+                        startCveSyncNow(mode);
+                    }
+                });
                 return;
             }
-            if (mode === 'kev' && !window.confirm('Se actualizarán solo CISA KEV y EPSS. ¿Continuar?')) {
-                return;
-            }
+
+            startCveSyncNow(mode);
+        };
+
+        function startCveSyncNow(mode) {
             api('POST', SYNC_URL, { mode: mode, stream: true }).then(function(res) {
                 if (!res || !res.success) {
                     // Si ya había un job activo, lo retomamos en vez de fallar.
@@ -504,7 +522,7 @@ foreach ($flashData as $type => $msg):
                 streamRetries = 0;
                 streamLoop();
             }).catch(function() { toast('Error de conexión', 'error'); });
-        };
+        }
 
         window.resumeCveSync = function() {
             stopped = false;
@@ -1566,17 +1584,23 @@ $aiStatusText = [
     window.runCveAiReport = runReport;
     window.cancelCveAiReport = function () {
         withStateId(function (id) {
-            if (!window.confirm('¿Cancelar la generación de este informe?')) {
-                return;
-            }
-            postJson(CANCEL_URL + '/' + id, {}).then(function (res) {
-                if (!res.success) {
-                    alert(res.error || 'No se pudo cancelar el informe.');
+            appConfirm('¿Cancelar la generación de este informe?', {
+                title: 'Cancelar informe',
+                danger: true,
+                confirmText: 'Cancelar informe'
+            }).then(function (ok) {
+                if (!ok) {
                     return;
                 }
-                window.location.href = PAGE_URL + '&report=' + id;
-            }).catch(function (err) {
-                alert('No se pudo cancelar: ' + errorText(err));
+                postJson(CANCEL_URL + '/' + id, {}).then(function (res) {
+                    if (!res.success) {
+                        appAlert(res.error || 'No se pudo cancelar el informe.', { title: 'No se pudo cancelar' });
+                        return;
+                    }
+                    window.location.href = PAGE_URL + '&report=' + id;
+                }).catch(function (err) {
+                    appAlert('No se pudo cancelar: ' + errorText(err), { title: 'No se pudo cancelar' });
+                });
             });
         });
     };
@@ -1584,40 +1608,46 @@ $aiStatusText = [
         withStateId(function (id) {
             postJson(RETRY_URL + '/' + id, {}).then(function (res) {
                 if (!res.success) {
-                    alert(res.error || 'No se pudo reintentar el informe.');
+                    appAlert(res.error || 'No se pudo reintentar el informe.', { title: 'No se pudo reintentar' });
                     return;
                 }
                 window.location.href = PAGE_URL + '&report=' + id;
             }).catch(function (err) {
-                alert('No se pudo reintentar: ' + errorText(err));
+                appAlert('No se pudo reintentar: ' + errorText(err), { title: 'No se pudo reintentar' });
             });
         });
     };
 
     window.cveAiCancel = function (id) {
-        if (!window.confirm('¿Cancelar la generación de este informe?')) {
-            return;
-        }
-        postJson(CANCEL_URL + '/' + id, {}).then(function (res) {
-            if (!res.success) {
-                alert(res.error || 'No se pudo cancelar el informe.');
+        appConfirm('¿Cancelar la generación de este informe?', {
+            title: 'Cancelar informe',
+            danger: true,
+            confirmText: 'Cancelar informe'
+        }).then(function (ok) {
+            if (!ok) {
                 return;
             }
-            window.location.href = PAGE_URL + '&report=' + id;
-        }).catch(function (err) {
-            alert('No se pudo cancelar: ' + errorText(err));
+            postJson(CANCEL_URL + '/' + id, {}).then(function (res) {
+                if (!res.success) {
+                    appAlert(res.error || 'No se pudo cancelar el informe.', { title: 'No se pudo cancelar' });
+                    return;
+                }
+                window.location.href = PAGE_URL + '&report=' + id;
+            }).catch(function (err) {
+                appAlert('No se pudo cancelar: ' + errorText(err), { title: 'No se pudo cancelar' });
+            });
         });
     };
 
     window.cveAiRetry = function (id) {
         postJson(RETRY_URL + '/' + id, {}).then(function (res) {
             if (!res.success) {
-                alert(res.error || 'No se pudo reintentar el informe.');
+                appAlert(res.error || 'No se pudo reintentar el informe.', { title: 'No se pudo reintentar' });
                 return;
             }
             window.location.href = PAGE_URL + '&report=' + id;
         }).catch(function (err) {
-            alert('No se pudo reintentar: ' + errorText(err));
+            appAlert('No se pudo reintentar: ' + errorText(err), { title: 'No se pudo reintentar' });
         });
     };
 
@@ -1637,30 +1667,36 @@ $aiStatusText = [
     }
 
     window.cveAiDelete = function (id) {
-        if (!window.confirm('¿Eliminar el informe #' + id + '? Esta acción no se puede deshacer.')) {
-            return;
-        }
-        postJson(DELETE_URL + '/' + id, {}).then(function (res) {
-            if (!res.success) {
-                alert(res.error || 'No se pudo eliminar el informe.');
+        appConfirm('¿Eliminar el informe #' + id + '? Esta acción no se puede deshacer.', {
+            title: 'Eliminar informe',
+            danger: true,
+            confirmText: 'Eliminar'
+        }).then(function (ok) {
+            if (!ok) {
                 return;
             }
-            var next = removeItem(id);
-            if (state.id === id) {
-                if (next) {
-                    load(next);
-                } else {
-                    state.id = 0;
-                    state.status = '';
-                    detail.innerHTML = '<div class="h-full flex items-center justify-center"><div class="text-center"><p class="text-sm font-medium">Ningún informe seleccionado</p><p class="text-xs text-gray-500 mt-1">Elige un informe de la lista o crea uno nuevo con IA.</p></div></div>';
-                    updateToolbar();
-                    if (window.history && window.history.replaceState) {
-                        window.history.replaceState({}, '', PAGE_URL);
+            postJson(DELETE_URL + '/' + id, {}).then(function (res) {
+                if (!res.success) {
+                    appAlert(res.error || 'No se pudo eliminar el informe.', { title: 'No se pudo eliminar' });
+                    return;
+                }
+                var next = removeItem(id);
+                if (state.id === id) {
+                    if (next) {
+                        load(next);
+                    } else {
+                        state.id = 0;
+                        state.status = '';
+                        detail.innerHTML = '<div class="h-full flex items-center justify-center"><div class="text-center"><p class="text-sm font-medium">Ningún informe seleccionado</p><p class="text-xs text-gray-500 mt-1">Elige un informe de la lista o crea uno nuevo con IA.</p></div></div>';
+                        updateToolbar();
+                        if (window.history && window.history.replaceState) {
+                            window.history.replaceState({}, '', PAGE_URL);
+                        }
                     }
                 }
-            }
-        }).catch(function (err) {
-            alert('No se pudo eliminar: ' + errorText(err));
+            }).catch(function (err) {
+                appAlert('No se pudo eliminar: ' + errorText(err), { title: 'No se pudo eliminar' });
+            });
         });
     };
 
@@ -1780,21 +1816,26 @@ $aiStatusText = [
 
     window.cveAiRefresh = function () {
         withStateId(function (id) {
-            if (!window.confirm('¿Actualizar el informe con los datos actuales del catálogo? Si hay cambios se regenerará el análisis.')) {
-                return;
-            }
-            postJson(REFRESH_URL + '/' + id, {}).then(function (res) {
-                if (!res.success) {
-                    alert(res.error || 'No se pudo actualizar el informe.');
+            appConfirm('¿Actualizar el informe con los datos actuales del catálogo? Si hay cambios se regenerará el análisis.', {
+                title: 'Actualizar informe',
+                confirmText: 'Actualizar'
+            }).then(function (ok) {
+                if (!ok) {
                     return;
                 }
-                if (!res.changed && res.status !== 'pending') {
-                    alert(res.message || 'Sin cambios desde la última versión.');
-                    return;
-                }
-                window.location.href = PAGE_URL + '&report=' + id;
-            }).catch(function (err) {
-                alert('No se pudo actualizar: ' + errorText(err));
+                postJson(REFRESH_URL + '/' + id, {}).then(function (res) {
+                    if (!res.success) {
+                        appAlert(res.error || 'No se pudo actualizar el informe.', { title: 'No se pudo actualizar' });
+                        return;
+                    }
+                    if (!res.changed && res.status !== 'pending') {
+                        appAlert(res.message || 'Sin cambios desde la última versión.', { title: 'Sin cambios' });
+                        return;
+                    }
+                    window.location.href = PAGE_URL + '&report=' + id;
+                }).catch(function (err) {
+                    appAlert('No se pudo actualizar: ' + errorText(err), { title: 'No se pudo actualizar' });
+                });
             });
         });
     };
@@ -1836,7 +1877,7 @@ $aiStatusText = [
             }
             postJson(ASSIGN_URL + '/' + id, payload).then(function (res) {
                 if (!res.success) {
-                    alert(res.error || 'No se pudo asignar el grupo.');
+                    appAlert(res.error || 'No se pudo asignar el grupo.', { title: 'No se pudo asignar' });
                     if (button) {
                         button.disabled = false;
                     }
@@ -1844,7 +1885,7 @@ $aiStatusText = [
                 }
                 window.location.href = PAGE_URL + '&report=' + id;
             }).catch(function (err) {
-                alert('No se pudo asignar: ' + errorText(err));
+                appAlert('No se pudo asignar: ' + errorText(err), { title: 'No se pudo asignar' });
                 if (button) {
                     button.disabled = false;
                 }
