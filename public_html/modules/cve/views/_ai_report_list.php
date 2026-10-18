@@ -47,10 +47,14 @@ $isAdmin = !empty($isAdmin);
             : count($aiRowIds) . ' CVEs';
         $aiSearch = strtolower(implode(' ', array_map('strval', $aiRowIds)) . ' ' . (string)$aiRow['title']);
         $aiRowTags = CveReportAi::decodeTags((string)($aiRow['tags'] ?? ''));
+        $aiErrorText = trim((string)($aiRow['ai_error'] ?? ''));
         ?>
         <div class="ai-report-item group border-b border-gray-100 dark:border-gray-800 px-3 py-2.5 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/40 <?= $selectedAiId === $aiRowId ? 'bg-brand-50 dark:bg-brand-950/40' : '' ?>"
              data-id="<?= $aiRowId ?>"
              data-status="<?= e($aiRowStatus) ?>"
+             data-profile-id="<?= (int)($aiRow['ai_profile_id'] ?? 0) ?>"
+             data-ai-model="<?= e((string)($aiRow['ai_model'] ?? '')) ?>"
+             data-ai-error="<?= e($aiErrorText) ?>"
              data-search="<?= e($aiSearch) ?>"
              role="button" tabindex="0"
              onclick="cveAiSelect(<?= $aiRowId ?>)"
@@ -66,7 +70,8 @@ $isAdmin = !empty($isAdmin);
                 <span class="ml-auto text-[10px] text-gray-400 shrink-0"><?= e(format_db_date((string)($aiRow['created_at'] ?? ''), 'd/m H:i')) ?></span>
             </div>
             <div class="flex items-center gap-2 mt-1 pl-4">
-                <span class="ai-status-text text-[10px] font-medium <?= $aiStatusText[$aiRowStatus] ?? $aiStatusText['pending'] ?>">
+                <span class="ai-status-text text-[10px] font-medium <?= $aiStatusText[$aiRowStatus] ?? $aiStatusText['pending'] ?>"
+                      <?= $aiErrorText !== '' ? 'title="' . e(truncate($aiErrorText, 400)) . '"' : '' ?>>
                     <?= e($aiStatusLabels[$aiRowStatus] ?? $aiRowStatus) ?>
                 </span>
                 <?php if (in_array($aiRowStatus, ['pending', 'running'], true) && (int)($aiRow['total_items'] ?? 0) > 0): ?>

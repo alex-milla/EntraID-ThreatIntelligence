@@ -1500,6 +1500,55 @@ $pendingAiCount = count($pendingAiReports);
     </div>
 </div>
 
+<!-- Modal: reintentar informe con otro perfil de IA -->
+<div id="ai-retry-modal" class="hidden fixed inset-0 z-50 no-print">
+    <div class="absolute inset-0 bg-black/40" onclick="cveAiRetryClose()"></div>
+    <div class="relative mx-auto mt-24 w-[calc(100%-2rem)] max-w-md bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 shadow-xl p-5">
+        <div class="flex items-start justify-between gap-3">
+            <div>
+                <h3 class="text-sm font-semibold">Reintentar informe <span id="ai-retry-id"></span></h3>
+                <p class="text-xs text-gray-500 mt-1">Elige el perfil de IA con el que quieres volver a generarlo.</p>
+            </div>
+            <button type="button" onclick="cveAiRetryClose()" class="text-xs text-gray-400 hover:text-gray-600">Cerrar</button>
+        </div>
+
+        <p id="ai-retry-model" class="mt-3 text-xs text-gray-400"></p>
+        <div id="ai-retry-error" class="hidden mt-3 px-3 py-2 rounded-lg bg-red-50 dark:bg-red-900/20 text-[11px] text-red-700 dark:text-red-300 max-h-24 overflow-y-auto"></div>
+
+        <label class="block mt-4">
+            <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Perfil de IA</span>
+            <select id="ai-retry-profile"
+                    class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                <option value="0">Automático (predeterminado)</option>
+                <?php foreach (($llmProfiles ?? []) as $profile): ?>
+                    <option value="<?= (int)$profile['id'] ?>">
+                        <?= e((string)$profile['name']) ?> · <?= e((string)$profile['provider']) ?><?= !empty($profile['model']) ? ' · ' . e((string)$profile['model']) : '' ?>
+                    </option>
+                <?php endforeach; ?>
+            </select>
+        </label>
+
+        <label class="mt-4 flex items-start gap-2 text-xs text-gray-600 dark:text-gray-300 cursor-pointer">
+            <input id="ai-retry-all" type="checkbox" class="mt-0.5 rounded border-gray-300 text-brand-500 focus:ring-brand-500">
+            <span>
+                Regenerar también los CVEs completados
+                <span class="block text-[10px] text-gray-400">Si lo dejas desmarcado, solo se reintentan los que fallaron.</span>
+            </span>
+        </label>
+
+        <div class="mt-5 flex items-center justify-end gap-2">
+            <button type="button" onclick="cveAiRetryClose()"
+                    class="px-3 py-1.5 border border-gray-300 dark:border-gray-600 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark">
+                Cancelar
+            </button>
+            <button type="button" onclick="cveAiRetrySubmit(this)"
+                    class="px-3 py-1.5 bg-brand-500 hover:bg-brand-600 text-white text-xs font-semibold rounded-lg">
+                Reintentar
+            </button>
+        </div>
+    </div>
+</div>
+
 <!-- Informes preventivos (plegados) -->
 <details class="no-print mt-6 bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
     <summary class="px-5 py-4 cursor-pointer text-sm font-semibold flex items-center gap-2">
@@ -1749,6 +1798,7 @@ $pendingAiCount = count($pendingAiReports);
     var state = { id: 0, status: '', poll: null, running: false };
     var batchRunning = false;
     var batchQueueIds = {};
+    var retryReportId = 0;
     var batchBanner = document.getElementById('ai-batch-banner');
     var pendingButton = document.getElementById('ai-reports-run-pending');
 
@@ -2077,15 +2127,7 @@ $pendingAiCount = count($pendingAiReports);
     };
     window.retryCveAiReport = function () {
         withStateId(function (id) {
-            postJson(RETRY_URL + '/' + id, {}).then(function (res) {
-                if (!res.success) {
-                    appAlert(res.error || 'No se pudo reintentar el informe.', { title: 'No se pudo reintentar' });
-                    return;
-                }
-                window.location.href = PAGE_URL + '&report=' + id;
-            }).catch(function (err) {
-                appAlert('No se pudo reintentar: ' + errorText(err), { title: 'No se pudo reintentar' });
-            });
+            window.cveAiRetry(id);
         });
     };
 
@@ -2111,14 +2153,79 @@ $pendingAiCount = count($pendingAiReports);
     };
 
     window.cveAiRetry = function (id) {
-        postJson(RETRY_URL + '/' + id, {}).then(function (res) {
+        if (!id) {
+            return;
+        }
+        retryReportId = id;
+        var row = list ? list.querySelector('.ai-report-item[data-id="' + id + '"]') : null;
+        var body = detail ? detail.querySelector('.ai-report-body') : null;
+        var profileId = row ? (parseInt(row.dataset.profileId, 10) || 0) : 0;
+        var model = row ? (row.dataset.aiModel || '') : '';
+        var error = row ? (row.dataset.aiError || '') : '';
+        if (!row && body) {
+            profileId = parseInt(body.dataset.profileId, 10) || 0;
+            model = body.dataset.aiModel || '';
+            error = body.dataset.aiError || '';
+        }
+
+        var idEl = document.getElementById('ai-retry-id');
+        var modelEl = document.getElementById('ai-retry-model');
+        var errorEl = document.getElementById('ai-retry-error');
+        var profileEl = document.getElementById('ai-retry-profile');
+        var allEl = document.getElementById('ai-retry-all');
+        var modal = document.getElementById('ai-retry-modal');
+        if (!modal) {
+            return;
+        }
+        if (idEl) { idEl.textContent = '#' + id; }
+        if (modelEl) {
+            modelEl.textContent = model !== ''
+                ? 'Modelo anterior: ' + model
+                : 'Modelo anterior: sin datos';
+        }
+        if (errorEl) {
+            errorEl.textContent = error !== '' ? error : '';
+            errorEl.classList.toggle('hidden', error === '');
+        }
+        if (profileEl) { profileEl.value = String(profileId); }
+        if (allEl) { allEl.checked = false; }
+        modal.classList.remove('hidden');
+    };
+
+    window.cveAiRetryClose = function () {
+        var modal = document.getElementById('ai-retry-modal');
+        if (modal) {
+            modal.classList.add('hidden');
+        }
+    };
+
+    window.cveAiRetrySubmit = function (button) {
+        if (!retryReportId) {
+            return;
+        }
+        var profileEl = document.getElementById('ai-retry-profile');
+        var allEl = document.getElementById('ai-retry-all');
+        if (button) {
+            button.disabled = true;
+        }
+        postJson(RETRY_URL + '/' + retryReportId, {
+            profile_id: profileEl ? profileEl.value : 0,
+            regenerate_all: (allEl && allEl.checked) ? 1 : 0
+        }).then(function (res) {
             if (!res.success) {
                 appAlert(res.error || 'No se pudo reintentar el informe.', { title: 'No se pudo reintentar' });
+                if (button) {
+                    button.disabled = false;
+                }
                 return;
             }
-            window.location.href = PAGE_URL + '&report=' + id;
+            window.cveAiRetryClose();
+            window.location.href = PAGE_URL + '&report=' + retryReportId;
         }).catch(function (err) {
             appAlert('No se pudo reintentar: ' + errorText(err), { title: 'No se pudo reintentar' });
+            if (button) {
+                button.disabled = false;
+            }
         });
     };
 

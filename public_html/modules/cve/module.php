@@ -1295,28 +1295,77 @@ class Module_Cve extends BaseModule
                 json_response(['success' => false, 'error' => 'El informe no tiene CVEs válidos.'], 400);
             }
 
+            $raw = file_get_contents('php://input');
+            $input = json_decode((string)$raw, true);
+            if (!is_array($input)) {
+                $input = $_POST;
+            }
+
+            $profileId = max(0, (int)($input['profile_id'] ?? 0));
+            $regenerateAll = !empty($input['regenerate_all']);
+            $profileName = 'Automático';
+            if ($profileId > 0) {
+                $profile = llm_profile_get($profileId);
+                if ($profile === null) {
+                    json_response(['success' => false, 'error' => 'El perfil de IA seleccionado no existe.'], 400);
+                }
+                $profileName = (string)($profile['name'] ?? ('Perfil #' . $profileId));
+            }
+
+            $oldProfileId = (int)($row['ai_profile_id'] ?? 0);
             $token = bin2hex(random_bytes(24));
             CveDatabase::update(
                 "UPDATE cve_ai_reports
-                 SET status = 'pending', token = ?, ai_error = NULL, finished_at = NULL, started_at = NULL,
+                 SET status = 'pending', token = ?, ai_profile_id = ?, ai_error = NULL, ai_model = NULL,
+                     ai_text = NULL, content_text = NULL, finished_at = NULL, started_at = NULL,
                      processed_items = 0
                  WHERE id = ?",
-                [$token, $id]
+                [$token, $profileId > 0 ? $profileId : null, $id]
             );
-            // Reintentar solo los análisis que no terminaron; los «done» se conservan.
-            CveDatabase::query(
-                "UPDATE cve_ai_report_items
-                 SET status = 'pending', ai_error = NULL
-                 WHERE report_id = ? AND status IN ('error','running','pending')",
-                [$id]
-            );
-            app_log('info', 'cve_ai', 'Informe reencolado', ['id' => $id]);
+
+            if ($regenerateAll) {
+                // Regenerar todos los CVEs del informe.
+                CveDatabase::query(
+                    "UPDATE cve_ai_report_items
+                     SET status = 'pending', ai_error = NULL, ai_text = NULL, sections_json = NULL,
+                         ai_model = NULL, started_at = NULL, finished_at = NULL
+                     WHERE report_id = ?",
+                    [$id]
+                );
+            } else {
+                // Reintentar solo los análisis que no terminaron; los «done» se conservan.
+                CveDatabase::query(
+                    "UPDATE cve_ai_report_items
+                     SET status = 'pending', ai_error = NULL, ai_text = NULL, sections_json = NULL,
+                         ai_model = NULL, started_at = NULL, finished_at = NULL
+                     WHERE report_id = ? AND status IN ('error','running','pending')",
+                    [$id]
+                );
+            }
+
+            app_log('info', 'cve_ai', 'Informe reencolado', [
+                'id'             => $id,
+                'old_profile_id' => $oldProfileId,
+                'profile_id'     => $profileId,
+                'profile'        => $profileName,
+                'regenerate_all' => $regenerateAll,
+            ]);
+            log_activity('cve.ai_report_retried', [
+                'report_id'      => $id,
+                'old_profile_id' => $oldProfileId,
+                'profile_id'     => $profileId,
+                'profile'        => $profileName,
+                'regenerate_all' => $regenerateAll,
+            ]);
 
             json_response([
-                'success'   => true,
-                'report_id' => $id,
-                'status'    => 'pending',
-                'url'       => base_url('modules/cve/report-ai/' . $id),
+                'success'        => true,
+                'report_id'      => $id,
+                'status'         => 'pending',
+                'profile_id'     => $profileId,
+                'profile_name'   => $profileName,
+                'regenerate_all' => $regenerateAll,
+                'url'            => base_url('modules/cve/report-ai/' . $id),
             ]);
         } catch (Throwable $e) {
             json_response(['success' => false, 'error' => $e->getMessage()], 400);
@@ -3162,7 +3211,7 @@ class Module_Cve extends BaseModule
     {
         $limit = max(1, min(200, $limit));
         return CveDatabase::fetchAll(
-            "SELECT r.id, r.cve_ids, r.title, r.status, r.ai_model, r.ai_error, r.no_ai,
+            "SELECT r.id, r.cve_ids, r.title, r.status, r.ai_profile_id, r.ai_model, r.ai_error, r.no_ai,
                     r.revision, r.updated_at, r.group_id, g.name AS group_name, g.kind AS group_kind,
                     r.mode, r.tags, r.processed_items, r.total_items,
                     CASE WHEN r.defender_json IS NOT NULL AND r.defender_json <> '' THEN 1 ELSE 0 END AS has_defender,
