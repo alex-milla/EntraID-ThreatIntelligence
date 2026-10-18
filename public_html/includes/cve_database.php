@@ -99,6 +99,8 @@ class CveDatabase
             name TEXT NOT NULL,
             parent_id INTEGER REFERENCES software_groups(id) ON DELETE SET NULL,
             position INTEGER NOT NULL DEFAULT 0,
+            kind TEXT NOT NULL DEFAULT 'application',
+            company_id INTEGER REFERENCES software_groups(id) ON DELETE SET NULL,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         )");
@@ -117,7 +119,7 @@ class CveDatabase
             is_active INTEGER NOT NULL DEFAULT 1,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-            UNIQUE(name, version, environment)
+            UNIQUE(name, version, environment, group_id)
         )");
 
         $db->exec("CREATE TABLE IF NOT EXISTS software_cpe (
@@ -276,6 +278,66 @@ class CveDatabase
             self::rebuildSoftwareWatchlist($db);
         }
 
+        // v0.2.8.5: jerarquía Empresas > Empresa > Grupos de aplicaciones.
+        $groupCols = [];
+        foreach ($db->query("PRAGMA table_info(software_groups)") as $col) {
+            $groupCols[$col['name']] = true;
+        }
+        if (!isset($groupCols['kind'])) {
+            $db->exec("ALTER TABLE software_groups ADD COLUMN kind TEXT NOT NULL DEFAULT 'application'");
+        }
+        if (!isset($groupCols['company_id'])) {
+            $db->exec("ALTER TABLE software_groups ADD COLUMN company_id INTEGER");
+        }
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_software_group_kind ON software_groups(kind)");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_software_group_company ON software_groups(company_id)");
+
+        // Categoría raíz fija «Empresas». Si ya existe un grupo con ese nombre
+        // en la raíz, se reutiliza como categoría para no duplicarlo.
+        $root = $db->query("SELECT id FROM software_groups WHERE kind = 'root' ORDER BY id LIMIT 1")->fetch();
+        if (!$root) {
+            $existingRoot = $db->query(
+                "SELECT id FROM software_groups
+                 WHERE parent_id IS NULL AND lower(name) = 'empresas'
+                 ORDER BY id LIMIT 1"
+            )->fetch();
+            if ($existingRoot) {
+                $db->prepare(
+                    "UPDATE software_groups
+                     SET kind = 'root', company_id = NULL, position = -1, updated_at = datetime('now')
+                     WHERE id = ?"
+                )->execute([(int)$existingRoot['id']]);
+            } else {
+                $db->exec(
+                    "INSERT INTO software_groups (name, parent_id, position, kind, company_id)
+                     VALUES ('Empresas', NULL, -1, 'root', NULL)"
+                );
+            }
+        }
+
+        // Permitir la misma aplicación/versión en grupos/empresas distintas.
+        $hasGroupUnique = false;
+        foreach ($db->query("PRAGMA index_list(software_watchlist)") as $idx) {
+            if ((int)($idx['unique'] ?? 0) !== 1) {
+                continue;
+            }
+            $indexCols = [];
+            $indexName = (string)($idx['name'] ?? '');
+            if ($indexName === '') {
+                continue;
+            }
+            foreach ($db->query("PRAGMA index_info(" . $db->quote($indexName) . ")") as $ci) {
+                $indexCols[] = (string)($ci['name'] ?? '');
+            }
+            if ($indexCols === ['name', 'version', 'environment', 'group_id']) {
+                $hasGroupUnique = true;
+                break;
+            }
+        }
+        if (!$hasGroupUnique) {
+            self::rebuildSoftwareWatchlist($db);
+        }
+
         // v0.2.7.3: destino del backfill de un producto.
         $syncCols = [];
         foreach ($db->query("PRAGMA table_info(cve_sync_state)") as $col) {
@@ -377,7 +439,7 @@ class CveDatabase
                 is_active INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-                UNIQUE(name, version, environment)
+                UNIQUE(name, version, environment, group_id)
             )");
             $db->exec(
                 "INSERT INTO software_watchlist_new

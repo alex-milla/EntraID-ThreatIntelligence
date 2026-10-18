@@ -81,6 +81,13 @@ foreach ($flashData as $type => $msg):
 </div>
 
 <?php require __DIR__ . '/_tabs.php'; ?>
+<?php
+// Grupos asignables (se excluye la categoría raíz «Empresas»).
+$assignableGroups = array_values(array_filter(
+    is_array($groups ?? null) ? $groups : [],
+    static fn(array $g): bool => (string)($g['kind'] ?? 'application') !== 'root'
+));
+?>
 
 <?php if (!empty($dbError)): ?>
     <div class="bg-white dark:bg-surface-dark rounded-xl border border-red-200 dark:border-red-800 p-6">
@@ -227,10 +234,12 @@ foreach ($flashData as $type => $msg):
                        class="w-40 px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
                 <select name="group"
                         class="px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
-                    <option value="0">Todos los grupos</option>
+                    <option value="0">Todas las empresas/grupos</option>
                     <?php foreach ($groups as $g): ?>
+                        <?php $filterKind = (string)($g['kind'] ?? 'application'); ?>
                         <option value="<?= (int)$g['id'] ?>" <?= (int)($catalogFilters['group'] ?? 0) === (int)$g['id'] ? 'selected' : '' ?>>
                             <?= str_repeat('— ', (int)$g['depth']) . e($g['name']) ?>
+                            <?= $filterKind === 'root' ? ' (categoría)' : ($filterKind === 'company' ? ' (empresa)' : '') ?>
                         </option>
                     <?php endforeach; ?>
                 </select>
@@ -386,7 +395,11 @@ foreach ($flashData as $type => $msg):
                                     <?php endif; ?>
                                 </td>
                                 <td class="px-4 py-3 text-xs text-gray-500 max-w-[180px]">
+                                    <?php $matchedCompanies = (string)($cve['matched_companies'] ?? ''); ?>
                                     <?= e(truncate((string)($cve['matched_software'] ?? ''), 60)) ?: '—' ?>
+                                    <?php if ($matchedCompanies !== ''): ?>
+                                        <p class="text-[10px] text-gray-400 mt-0.5">Empresas: <?= e(truncate($matchedCompanies, 60)) ?></p>
+                                    <?php endif; ?>
                                 </td>
                                 <td class="px-4 py-3 text-xs text-gray-500 whitespace-nowrap"><?= e(format_date($cve['published_at'] ?? null, 'd/m/Y')) ?></td>
                                 <td class="px-4 py-3 text-xs text-gray-500">
@@ -1318,9 +1331,10 @@ $aiStatusText = [
                 <select id="ai-group-select"
                         class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
                     <option value="0">— Sin grupo —</option>
-                    <?php foreach (($groups ?? []) as $group): ?>
+                    <?php foreach ($assignableGroups as $group): ?>
                         <option value="<?= (int)$group['id'] ?>">
                             <?= str_repeat('— ', (int)($group['depth'] ?? 0)) . e((string)$group['name']) ?>
+                            <?= (string)($group['kind'] ?? '') === 'company' ? ' (empresa)' : '' ?>
                         </option>
                     <?php endforeach; ?>
                 </select>
@@ -1410,9 +1424,10 @@ $aiStatusText = [
             <select id="ai-items-group-select"
                     class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
                 <option value="0">— Sin grupo —</option>
-                <?php foreach (($groups ?? []) as $group): ?>
+                <?php foreach ($assignableGroups as $group): ?>
                     <option value="<?= (int)$group['id'] ?>">
                         <?= str_repeat('— ', (int)($group['depth'] ?? 0)) . e((string)$group['name']) ?>
+                        <?= (string)($group['kind'] ?? '') === 'company' ? ' (empresa)' : '' ?>
                     </option>
                 <?php endforeach; ?>
             </select>
@@ -2984,7 +2999,7 @@ syncCveReportPeriod();
 
     <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-6">
         <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-4">
-            <p class="text-xs text-gray-500">Grupos</p>
+            <p class="text-xs text-gray-500">Empresas/grupos</p>
             <p class="text-2xl font-bold mt-1"><?= number_format((int)($stats['groups'] ?? 0)) ?></p>
         </div>
         <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-4">
@@ -3009,39 +3024,83 @@ syncCveReportPeriod();
         </div>
     </div>
 
+    <?php
+    $rootGroupId = 0;
+    $firstCompanyId = 0;
+    $selectedCompanyId = 0;
+    foreach ($groups as $groupRow) {
+        $groupKind = (string)($groupRow['kind'] ?? 'application');
+        if ($rootGroupId === 0 && $groupKind === 'root') {
+            $rootGroupId = (int)$groupRow['id'];
+        }
+        if ($firstCompanyId === 0 && $groupKind === 'company') {
+            $firstCompanyId = (int)$groupRow['id'];
+        }
+        if ((int)$groupRow['id'] === $selectedGroup) {
+            if ($groupKind === 'company') {
+                $selectedCompanyId = (int)$groupRow['id'];
+            } elseif (!empty($groupRow['company_id'])) {
+                $selectedCompanyId = (int)$groupRow['company_id'];
+            }
+        }
+    }
+    $newGroupParentId = $selectedCompanyId > 0 ? $selectedCompanyId : $firstCompanyId;
+    ?>
+
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <!-- Grupos -->
         <div class="space-y-4">
             <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
-                <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between gap-2">
-                    <h2 class="text-sm font-semibold">Grupos de aplicaciones</h2>
+                <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between gap-2 flex-wrap">
+                    <h2 class="text-sm font-semibold">Empresas y grupos de aplicaciones</h2>
                     <?php if ($isAdmin): ?>
-                        <a href="<?= base_url('modules/cve?tab=software&new_group=1') ?>"
-                           class="text-xs text-brand-600 dark:text-brand-400 hover:underline">Nuevo</a>
+                        <div class="flex items-center gap-2">
+                            <?php if ($rootGroupId > 0): ?>
+                                <a href="<?= base_url('modules/cve?tab=software&new_group=1&parent=' . $rootGroupId) ?>"
+                                   class="text-xs text-brand-600 dark:text-brand-400 hover:underline">Nueva empresa</a>
+                            <?php endif; ?>
+                            <?php if ($newGroupParentId > 0): ?>
+                                <a href="<?= base_url('modules/cve?tab=software&new_group=1&parent=' . $newGroupParentId) ?>"
+                                   class="text-xs text-gray-500 dark:text-gray-400 hover:underline">Nuevo grupo</a>
+                            <?php endif; ?>
+                        </div>
                     <?php endif; ?>
                 </div>
+                <p class="px-5 pt-3 text-[11px] text-gray-400">
+                    Empresas → Empresa → Grupos de aplicaciones → Software. Los CVEs se asocian según el software inventariado.
+                </p>
                 <?php if (empty($groups)): ?>
                     <p class="px-5 py-6 text-sm text-gray-500">Todavía no hay grupos. Crea uno para organizar tu software.</p>
                 <?php else: ?>
                     <div class="py-2">
                         <?php foreach ($groups as $g): ?>
+                            <?php
+                            $gKind = (string)($g['kind'] ?? 'application');
+                            $gIsRoot = $gKind === 'root';
+                            $gIsCompany = $gKind === 'company';
+                            ?>
                             <div class="group flex items-center gap-2 pr-3 py-1.5 hover:bg-gray-50 dark:hover:bg-gray-800/50"
                                  style="padding-left: <?= 12 + ((int)$g['depth'] * 18) ?>px">
-                                <svg class="w-3.5 h-3.5 text-gray-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
+                                <svg class="w-3.5 h-3.5 <?= $gIsRoot ? 'text-brand-500' : ($gIsCompany ? 'text-blue-400' : 'text-gray-400') ?> shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
                                 <a href="<?= base_url('modules/cve?tab=software&group=' . (int)$g['id']) ?>"
                                    class="text-sm truncate <?= $selectedGroup === (int)$g['id'] ? 'font-semibold text-brand-600 dark:text-brand-300' : 'text-gray-700 dark:text-gray-300' ?>">
                                     <?= e($g['name']) ?>
                                 </a>
+                                <?php if ($gIsRoot): ?>
+                                    <span class="px-1.5 py-0.5 rounded bg-brand-50 dark:bg-brand-950 text-brand-600 dark:text-brand-300 text-[9px] font-semibold">Categoría</span>
+                                <?php elseif ($gIsCompany): ?>
+                                    <span class="px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300 text-[9px] font-semibold">Empresa</span>
+                                <?php endif; ?>
                                 <span class="text-[10px] text-gray-400"><?= (int)($g['software_count'] ?? 0) ?></span>
-                                <?php if ($isAdmin): ?>
+                                <?php if ($isAdmin && !$gIsRoot): ?>
                                     <span class="ml-auto flex items-center gap-1">
                                         <a href="<?= base_url('modules/cve?tab=software&edit_group=' . (int)$g['id']) ?>" class="p-1 text-gray-400 hover:text-brand-500" title="Editar grupo">
                                             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
                                         </a>
-                                        <form method="POST" action="<?= base_url('modules/cve/groups/delete') ?>" class="inline" data-confirm="¿Eliminar el grupo «<?= e($g['name']) ?>»? El software quedará sin grupo." data-confirm-danger>
+                                        <form method="POST" action="<?= base_url('modules/cve/groups/delete') ?>" class="inline" data-confirm="¿Eliminar <?= $gIsCompany ? 'la empresa' : 'el grupo' ?> «<?= e($g['name']) ?>»? El software quedará sin grupo." data-confirm-danger>
                                             <?= Csrf::field() ?>
                                             <input type="hidden" name="id" value="<?= (int)$g['id'] ?>">
-                                            <button type="submit" class="p-1 text-gray-400 hover:text-red-500" title="Eliminar grupo">
+                                            <button type="submit" class="p-1 text-gray-400 hover:text-red-500" title="Eliminar">
                                                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
                                             </button>
                                         </form>
@@ -3059,23 +3118,28 @@ syncCveReportPeriod();
                     <?= Csrf::field() ?>
                     <input type="hidden" name="id" value="<?= $grId ?>">
                     <div class="flex items-center justify-between">
-                        <h2 class="text-sm font-semibold"><?= $grId ? 'Editar grupo' : 'Nuevo grupo' ?></h2>
+                        <h2 class="text-sm font-semibold"><?= $grId ? 'Editar empresa/grupo' : 'Nueva empresa o grupo' ?></h2>
                         <a href="<?= base_url('modules/cve?tab=software') ?>" class="text-xs text-gray-400 hover:underline">Cancelar</a>
                     </div>
+                    <p class="text-[11px] text-gray-400">
+                        Para crear una empresa, elige «Empresas» como padre. Para un grupo de aplicaciones, elige una empresa.
+                    </p>
                     <div>
                         <label class="block text-xs text-gray-500 mb-1">Nombre</label>
                         <input type="text" name="name" required maxlength="120" value="<?= e($gr['name'] ?? '') ?>"
                                class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
                     </div>
                     <div>
-                        <label class="block text-xs text-gray-500 mb-1">Grupo padre</label>
+                        <label class="block text-xs text-gray-500 mb-1">Dentro de</label>
                         <select name="parent_id"
                                 class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
-                            <option value="0">— Raíz —</option>
+                            <option value="0">— Raíz (grupo suelto) —</option>
                             <?php foreach ($groups as $g): ?>
                                 <?php if ((int)$g['id'] === $grId) continue; ?>
+                                <?php $optKind = (string)($g['kind'] ?? 'application'); ?>
                                 <option value="<?= (int)$g['id'] ?>" <?= (int)($gr['parent_id'] ?? 0) === (int)$g['id'] ? 'selected' : '' ?>>
                                     <?= str_repeat('— ', (int)$g['depth']) . e($g['name']) ?>
+                                    <?= $optKind === 'root' ? ' (categoría)' : ($optKind === 'company' ? ' (empresa)' : '') ?>
                                 </option>
                             <?php endforeach; ?>
                         </select>
@@ -3161,7 +3225,20 @@ syncCveReportPeriod();
                                                 <?php if (!empty($s['asset_count'])): ?> · <?= number_format((int)$s['asset_count']) ?> activos<?php endif; ?>
                                             </p>
                                         </td>
-                                        <td class="px-4 py-3 text-xs text-gray-500"><?= e($s['group_name'] ?? '—') ?></td>
+                                        <td class="px-4 py-3 text-xs text-gray-500">
+                                            <?php
+                                            $softwareCompany = (string)($s['company_name'] ?? '');
+                                            $softwareGroup = (string)($s['group_name'] ?? '');
+                                            if ($softwareGroup !== '') {
+                                                $softwareGroupLabel = ($softwareCompany !== '' && $softwareCompany !== $softwareGroup)
+                                                    ? $softwareCompany . ' · ' . $softwareGroup
+                                                    : $softwareGroup;
+                                            } else {
+                                                $softwareGroupLabel = $softwareCompany !== '' ? $softwareCompany : '—';
+                                            }
+                                            ?>
+                                            <?= e($softwareGroupLabel) ?>
+                                        </td>
                                         <td class="px-4 py-3 text-xs font-mono text-gray-500"><?= e(!empty($s['version']) ? $s['version'] : '—') ?></td>
                                         <td class="px-4 py-3">
                                             <span class="inline-flex px-2 py-0.5 text-xs rounded-full <?= $critClass ?>"><?= e($criticalityLabels[$crit] ?? $crit) ?></span>
@@ -3234,9 +3311,10 @@ syncCveReportPeriod();
                             <select name="group_id"
                                     class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
                                 <option value="0">— Sin grupo —</option>
-                                <?php foreach ($groups as $g): ?>
+                                <?php foreach ($assignableGroups as $g): ?>
                                     <option value="<?= (int)$g['id'] ?>" <?= (int)($sw['group_id'] ?? 0) === (int)$g['id'] ? 'selected' : '' ?>>
                                         <?= str_repeat('— ', (int)$g['depth']) . e($g['name']) ?>
+                                        <?= (string)($g['kind'] ?? '') === 'company' ? ' (empresa)' : '' ?>
                                     </option>
                                 <?php endforeach; ?>
                             </select>

@@ -174,6 +174,10 @@ class Module_Cve extends BaseModule
                 }
                 if (array_key_exists('new_group', $_GET)) {
                     $editGroup = [];
+                    $parentParam = (int)($_GET['parent'] ?? 0);
+                    if ($parentParam > 0) {
+                        $editGroup['parent_id'] = $parentParam;
+                    }
                 } elseif (!empty($_GET['edit_group'])) {
                     $editGroup = $this->getGroup((int)$_GET['edit_group']);
                 }
@@ -225,6 +229,12 @@ class Module_Cve extends BaseModule
         $parentId = (int)($_POST['parent_id'] ?? 0);
         $position = (int)($_POST['position'] ?? 0);
 
+        $existingGroup = $id > 0 ? $this->getGroup($id) : null;
+        if ($existingGroup !== null && (string)($existingGroup['kind'] ?? '') === 'root') {
+            flash('error', 'La categoría «Empresas» no se puede editar.');
+            redirect(base_url('modules/cve?tab=software'));
+        }
+
         if ($name === '') {
             flash('error', 'El nombre del grupo es obligatorio.');
             redirect(base_url('modules/cve?tab=software'));
@@ -263,6 +273,7 @@ class Module_Cve extends BaseModule
                 );
                 flash('success', 'Grupo creado.');
             }
+            $this->recalcGroupCompanies();
             log_activity('cve.group_saved', ['id' => $id, 'name' => $name, 'parent_id' => $parentId]);
         } catch (Throwable $e) {
             flash('error', 'No se pudo guardar el grupo: ' . $e->getMessage());
@@ -278,8 +289,14 @@ class Module_Cve extends BaseModule
 
         $id = (int)($_POST['id'] ?? 0);
         if ($id > 0) {
+            $group = $this->getGroup($id);
+            if ($group !== null && (string)($group['kind'] ?? '') === 'root') {
+                flash('error', 'La categoría «Empresas» no se puede eliminar.');
+                redirect(base_url('modules/cve?tab=software'));
+            }
             try {
                 CveDatabase::query("DELETE FROM software_groups WHERE id = ?", [$id]);
+                $this->recalcGroupCompanies();
                 log_activity('cve.group_deleted', ['id' => $id]);
                 flash('success', 'Grupo eliminado. Sus subgrupos y software quedan sin grupo.');
             } catch (Throwable $e) {
@@ -340,9 +357,16 @@ class Module_Cve extends BaseModule
         if ($version === '') {
             $version = '';
         }
-        if ($groupId > 0 && $this->getGroup($groupId) === null) {
-            flash('error', 'El grupo seleccionado no existe.');
-            redirect(base_url('modules/cve?tab=software'));
+        if ($groupId > 0) {
+            $selectedGroup = $this->getGroup($groupId);
+            if ($selectedGroup === null) {
+                flash('error', 'El grupo seleccionado no existe.');
+                redirect(base_url('modules/cve?tab=software'));
+            }
+            if ((string)($selectedGroup['kind'] ?? '') === 'root') {
+                flash('error', 'Selecciona una empresa o un grupo de aplicaciones, no la categoría «Empresas».');
+                redirect(base_url('modules/cve?tab=software'));
+            }
         }
 
         $oldSoftware = $id > 0 ? $this->getSoftware($id) : null;
@@ -1566,9 +1590,12 @@ class Module_Cve extends BaseModule
                     log_activity('cve.group_created', ['id' => $groupId, 'name' => $newName, 'from' => 'report']);
                 }
             } elseif ($groupId > 0) {
-                $group = CveDatabase::fetchOne("SELECT id, name FROM software_groups WHERE id = ?", [$groupId]);
+                $group = CveDatabase::fetchOne("SELECT id, name, kind FROM software_groups WHERE id = ?", [$groupId]);
                 if ($group === null) {
                     json_response(['success' => false, 'error' => 'El grupo seleccionado no existe.'], 400);
+                }
+                if ((string)($group['kind'] ?? '') === 'root') {
+                    json_response(['success' => false, 'error' => 'Selecciona una empresa o un grupo, no la categoría «Empresas».'], 400);
                 }
                 $groupName = (string)$group['name'];
             }
@@ -1733,9 +1760,12 @@ class Module_Cve extends BaseModule
                     log_activity('cve.group_created', ['id' => $groupId, 'name' => $newName, 'from' => 'report_items']);
                 }
             } elseif ($groupId > 0) {
-                $group = CveDatabase::fetchOne("SELECT id, name FROM software_groups WHERE id = ?", [$groupId]);
+                $group = CveDatabase::fetchOne("SELECT id, name, kind FROM software_groups WHERE id = ?", [$groupId]);
                 if ($group === null) {
                     json_response(['success' => false, 'error' => 'El grupo seleccionado no existe.'], 400);
+                }
+                if ((string)($group['kind'] ?? '') === 'root') {
+                    json_response(['success' => false, 'error' => 'Selecciona una empresa o un grupo, no la categoría «Empresas».'], 400);
                 }
                 $groupName = (string)$group['name'];
             }
@@ -3062,6 +3092,81 @@ class Module_Cve extends BaseModule
     }
 
     /**
+     * Recalcula el tipo y la empresa de cada grupo según la jerarquía:
+     * Empresas (raíz) > Empresa > Grupo de aplicaciones.
+     */
+    private function recalcGroupCompanies(): void
+    {
+        $rows = CveDatabase::fetchAll(
+            "SELECT id, parent_id, kind, company_id FROM software_groups"
+        );
+        if ($rows === []) {
+            return;
+        }
+
+        $byId = [];
+        $rootId = 0;
+        foreach ($rows as $row) {
+            $id = (int)$row['id'];
+            $byId[$id] = $row;
+            if ($rootId === 0 && (string)($row['kind'] ?? '') === 'root') {
+                $rootId = $id;
+            }
+        }
+
+        $memo = [];
+        $resolve = function (int $id, array $seen = []) use (&$resolve, &$byId, $rootId, &$memo): array {
+            if (isset($memo[$id])) {
+                return $memo[$id];
+            }
+            if (!isset($byId[$id]) || isset($seen[$id])) {
+                return ['kind' => 'application', 'company_id' => null];
+            }
+            $seen[$id] = true;
+
+            if ($id === $rootId) {
+                return $memo[$id] = ['kind' => 'root', 'company_id' => null];
+            }
+
+            $parent = (int)($byId[$id]['parent_id'] ?? 0);
+            if ($rootId > 0 && $parent === $rootId) {
+                return $memo[$id] = ['kind' => 'company', 'company_id' => $id];
+            }
+
+            if ($parent > 0 && isset($byId[$parent])) {
+                $parentResolved = $resolve($parent, $seen);
+                if (($parentResolved['kind'] ?? '') === 'company') {
+                    return $memo[$id] = ['kind' => 'application', 'company_id' => $parent];
+                }
+                if (($parentResolved['kind'] ?? '') === 'application') {
+                    return $memo[$id] = [
+                        'kind'       => 'application',
+                        'company_id' => $parentResolved['company_id'] ?? null,
+                    ];
+                }
+            }
+
+            return $memo[$id] = ['kind' => 'application', 'company_id' => null];
+        };
+
+        foreach ($rows as $row) {
+            $id = (int)$row['id'];
+            $resolved = $resolve($id);
+            $kind = (string)($resolved['kind'] ?? 'application');
+            $companyId = $resolved['company_id'] ?? null;
+            if ((string)($row['kind'] ?? '') !== $kind
+                || (int)($row['company_id'] ?? 0) !== (int)($companyId ?? 0)) {
+                CveDatabase::update(
+                    "UPDATE software_groups
+                     SET kind = ?, company_id = ?, updated_at = datetime('now')
+                     WHERE id = ?",
+                    [$kind, $companyId, $id]
+                );
+            }
+        }
+    }
+
+    /**
      * Árbol plano de grupos con profundidad, para renderizar y para selects.
      */
     private function groupTree(): array
@@ -3151,7 +3256,7 @@ class Module_Cve extends BaseModule
         $whereSql = $where ? ('WHERE ' . implode(' AND ', $where)) : '';
 
         return CveDatabase::fetchAll(
-            "SELECT w.*, g.name AS group_name, c.cpe_name,
+            "SELECT w.*, g.name AS group_name, cg.name AS company_name, c.cpe_name,
                     (SELECT COUNT(*) FROM software_cpe c2 WHERE c2.watchlist_id = w.id) AS cpe_count,
                     (SELECT COUNT(*) FROM cve_watchlist_match m2 WHERE m2.watchlist_id = w.id) AS match_count,
                     (SELECT COUNT(*) FROM cve_watchlist_match m3
@@ -3162,6 +3267,7 @@ class Module_Cve extends BaseModule
                      WHERE m4.watchlist_id = w.id AND e4.epss >= 0.1) AS epss_high_count
              FROM software_watchlist w
              LEFT JOIN software_groups g ON g.id = w.group_id
+             LEFT JOIN software_groups cg ON cg.id = g.company_id
              LEFT JOIN software_cpe c ON c.watchlist_id = w.id AND c.is_primary = 1
              $whereSql
              ORDER BY kev_count DESC, epss_high_count DESC, match_count DESC, g.name ASC, w.name ASC, w.version ASC",
@@ -3272,7 +3378,13 @@ class Module_Cve extends BaseModule
                     (SELECT GROUP_CONCAT(DISTINCT sw2.name)
                      FROM cve_watchlist_match mw2
                      JOIN software_watchlist sw2 ON sw2.id = mw2.watchlist_id
-                     WHERE mw2.cve_id = c.cve_id) AS matched_software
+                     WHERE mw2.cve_id = c.cve_id) AS matched_software,
+                    (SELECT GROUP_CONCAT(DISTINCT cg3.name)
+                     FROM cve_watchlist_match mw3
+                     JOIN software_watchlist sw3 ON sw3.id = mw3.watchlist_id
+                     LEFT JOIN software_groups ag3 ON ag3.id = sw3.group_id
+                     LEFT JOIN software_groups cg3 ON cg3.id = ag3.company_id
+                     WHERE mw3.cve_id = c.cve_id AND cg3.name IS NOT NULL) AS matched_companies
              FROM cve_catalog c
              $joins
              $whereSql
