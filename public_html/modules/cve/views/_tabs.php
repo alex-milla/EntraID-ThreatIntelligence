@@ -6,7 +6,7 @@
 
 $cveTabs = [
     'catalog'  => 'Catálogo',
-    'software' => 'Mi software',
+    'software' => 'Mis CVE',
     'reports'  => 'Informes',
 ];
 $currentTab = (isset($tab) && isset($cveTabs[$tab])) ? $tab : 'catalog';
