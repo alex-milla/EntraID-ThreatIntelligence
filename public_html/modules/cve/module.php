@@ -47,6 +47,8 @@ class Module_Cve extends BaseModule
             ['method' => 'POST', 'pattern' => 'reports/ai-retry/{id}', 'handler' => [$this, 'retryAiReport']],
             ['method' => 'POST', 'pattern' => 'reports/ai-refresh/{id}', 'handler' => [$this, 'refreshAiReport']],
             ['method' => 'POST', 'pattern' => 'reports/ai-assign/{id}', 'handler' => [$this, 'assignAiReport']],
+            ['method' => 'GET',  'pattern' => 'reports/defender-list', 'handler' => [$this, 'defenderList']],
+            ['method' => 'POST', 'pattern' => 'reports/ai-start-defender', 'handler' => [$this, 'startAiReportDefender']],
             ['method' => 'GET',  'pattern' => 'reports/ai-status/{id}', 'handler' => [$this, 'aiReportStatus']],
             ['method' => 'GET',  'pattern' => 'report/{id}/csv',  'handler' => [$this, 'reportCsv']],
             ['method' => 'GET',  'pattern' => 'report-ai/{id}',   'handler' => [$this, 'aiReportView']],
@@ -1276,6 +1278,31 @@ class Module_Cve extends BaseModule
 
             $changed = ((string)($row['data_json'] ?? '')) !== $newJson;
 
+            // Exposición de Defender: se recalcula y también cuenta como cambio.
+            $defenderSave = $row['defender_json'] ?? null;
+            if (!empty($row['defender_json'])) {
+                $oldDefender = safe_json_decode((string)$row['defender_json'], []);
+                if (!is_array($oldDefender)) {
+                    $oldDefender = [];
+                }
+                $newDefender = $this->buildDefenderContext(
+                    $ids,
+                    (int)($oldDefender['tenant_id'] ?? 0),
+                    (string)($oldDefender['tenant_name'] ?? '')
+                );
+                $newDefenderJson = json_encode(
+                    $newDefender,
+                    JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE
+                );
+                if ($newDefenderJson !== false) {
+                    $oldCves = is_array($oldDefender['cves'] ?? null) ? $oldDefender['cves'] : [];
+                    if ($this->encodeJson($newDefender['cves']) !== $this->encodeJson($oldCves)) {
+                        $changed = true;
+                        $defenderSave = $newDefenderJson;
+                    }
+                }
+            }
+
             // Sin cambios y ya está listo: no se gasta ninguna llamada a la IA.
             if (!$changed && $status === 'done') {
                 json_response([
@@ -1293,11 +1320,11 @@ class Module_Cve extends BaseModule
             if ($changed) {
                 CveDatabase::update(
                     "UPDATE cve_ai_reports
-                     SET data_json = ?, status = 'pending', token = ?, ai_error = NULL,
+                     SET data_json = ?, defender_json = ?, status = 'pending', token = ?, ai_error = NULL,
                          started_at = NULL, finished_at = NULL, updated_at = NULL,
                          revision = revision + 1
                      WHERE id = ?",
-                    [$newJson, $token, $id]
+                    [$newJson, $defenderSave, $token, $id]
                 );
             } else {
                 // Mismos datos (error/cancelado): reintento sin subir revisión.
@@ -1416,6 +1443,371 @@ class Module_Cve extends BaseModule
     }
 
     /**
+     * Crea un informe a partir de la exposición real de Defender for Endpoint.
+     */
+    public function startAiReportDefender(array $params = []): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        try {
+            $raw = file_get_contents('php://input');
+            $input = json_decode((string)$raw, true);
+            if (!is_array($input)) {
+                $input = $_POST;
+            }
+
+            $ids = CveReportAi::normalizeCveIds($input['cve_ids'] ?? '');
+            if ($ids === []) {
+                json_response(['success' => false, 'error' => 'Selecciona al menos un CVE.'], 400);
+            }
+
+            $missing = [];
+            foreach ($ids as $cveId) {
+                if (CveDatabase::fetchOne("SELECT cve_id FROM cve_catalog WHERE cve_id = ?", [$cveId]) === null) {
+                    $missing[] = $cveId;
+                }
+            }
+            if ($missing !== []) {
+                json_response([
+                    'success' => false,
+                    'error'   => 'Sincroniza el catálogo NVD para estos CVEs: ' . implode(', ', $missing),
+                ], 400);
+            }
+
+            $tenantId = max(0, (int)($input['tenant_id'] ?? 0));
+            $tenantName = '';
+            if ($tenantId > 0) {
+                $tenant = Database::fetchOne("SELECT name FROM tenants WHERE id = ?", [$tenantId]);
+                if ($tenant === null) {
+                    json_response(['success' => false, 'error' => 'El tenant seleccionado no existe.'], 400);
+                }
+                $tenantName = (string)$tenant['name'];
+            }
+
+            $noAi = !empty($input['no_ai']);
+            $profileId = (int)($input['profile_id'] ?? 0);
+            if ($profileId <= 0) {
+                $profileId = (int)(llm_task_profile('cve_report') ?? 0);
+            }
+            if (!$noAi) {
+                $llm = class_exists('Module_Llm') ? new Module_Llm() : null;
+                if ($llm === null || !$llm->isConfigured($profileId > 0 ? $profileId : null)) {
+                    json_response([
+                        'success' => false,
+                        'error'   => 'La IA no está configurada. Añade un perfil en Admin → APIs o marca «Solo datos locales».',
+                    ], 400);
+                }
+            }
+
+            $defender = $this->buildDefenderContext($ids, $tenantId, $tenantName);
+            $defenderJson = json_encode(
+                $defender,
+                JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE
+            );
+            if ($defenderJson === false) {
+                json_response(['success' => false, 'error' => 'No se pudo serializar la exposición de Defender.'], 500);
+            }
+
+            $result = $this->queueAiReport($ids, $profileId, $noAi, $defenderJson);
+            app_log('info', 'cve_ai', 'Informe creado desde Defender', [
+                'id'       => (int)$result['report_id'],
+                'cves'     => $ids,
+                'tenant'   => $tenantName,
+                'no_ai'    => $noAi,
+            ]);
+            log_activity('cve.ai_report_created', [
+                'report_id' => (int)$result['report_id'],
+                'cves'      => $ids,
+                'source'    => 'defender',
+            ]);
+
+            json_response($result);
+        } catch (Throwable $e) {
+            app_log('error', 'cve_ai', 'Error creando el informe desde Defender', ['error' => $e->getMessage()]);
+            json_response(['success' => false, 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Lista agregada de CVEs expuestos según Defender, con filtros.
+     */
+    public function defenderList(array $params = []): void
+    {
+        Auth::requireAdmin();
+
+        try {
+            $tenantId = max(0, (int)($_GET['tenant_id'] ?? 0));
+            $severity = strtoupper(trim((string)($_GET['severity'] ?? '')));
+            $exploited = !empty($_GET['exploited']);
+            $kevOnly = !empty($_GET['kev']);
+            $epssRaw = trim((string)($_GET['epss_min'] ?? ''));
+            $epssMin = $epssRaw !== '' && is_numeric($epssRaw) ? max(0.0, min(1.0, (float)$epssRaw)) : null;
+            $minMachines = max(0, (int)($_GET['min_machines'] ?? 0));
+            $q = trim((string)($_GET['q'] ?? ''));
+
+            $rows = $this->aggregateDefenderVulns($tenantId, $q, 800);
+            $ids = array_values(array_unique(array_map(static fn($r) => (string)$r['cve_id'], $rows)));
+
+            $inCatalog = [];
+            $inKev = [];
+            if ($ids !== []) {
+                $ph = implode(',', array_fill(0, count($ids), '?'));
+                foreach (CveDatabase::fetchAll("SELECT cve_id FROM cve_catalog WHERE cve_id IN ($ph)", $ids) as $r) {
+                    $inCatalog[(string)$r['cve_id']] = true;
+                }
+                foreach (CveDatabase::fetchAll("SELECT cve_id FROM cve_kev WHERE cve_id IN ($ph)", $ids) as $r) {
+                    $inKev[(string)$r['cve_id']] = true;
+                }
+            }
+
+            $out = [];
+            foreach ($rows as $row) {
+                $cveId = (string)$row['cve_id'];
+                $isKev = isset($inKev[$cveId]);
+                $isCatalog = isset($inCatalog[$cveId]);
+
+                if ($severity !== '' && strtoupper((string)$row['severity']) !== $severity) {
+                    continue;
+                }
+                if ($exploited && empty($row['public_exploit'])) {
+                    continue;
+                }
+                if ($kevOnly && !$isKev) {
+                    continue;
+                }
+                if ($epssMin !== null && (float)$row['epss'] < $epssMin) {
+                    continue;
+                }
+                if ($minMachines > 0 && (int)$row['machine_count'] < $minMachines) {
+                    continue;
+                }
+
+                $out[] = [
+                    'cve_id'           => $cveId,
+                    'severity'         => (string)$row['severity'],
+                    'cvss'             => $row['cvss'] !== null ? (float)$row['cvss'] : null,
+                    'epss'             => $row['epss'] !== null ? (float)$row['epss'] : null,
+                    'public_exploit'   => !empty($row['public_exploit']),
+                    'exploit_verified' => !empty($row['exploit_verified']),
+                    'exposed_machines' => (int)($row['exposed_machines'] ?? 0),
+                    'machine_count'    => (int)($row['machine_count'] ?? 0),
+                    'products'         => is_array($row['products']) ? $row['products'] : [],
+                    'vendors'          => is_array($row['vendors']) ? $row['vendors'] : [],
+                    'tenants'          => is_array($row['tenants']) ? $row['tenants'] : [],
+                    'in_catalog'       => $isCatalog,
+                    'in_kev'           => $isKev,
+                ];
+            }
+
+            usort($out, static function (array $a, array $b): int {
+                foreach (['exploit_verified', 'public_exploit', 'in_kev', 'cvss', 'epss', 'machine_count'] as $key) {
+                    $av = $a[$key] ?? 0;
+                    $bv = $b[$key] ?? 0;
+                    if ($av == $bv) {
+                        continue;
+                    }
+                    return $bv <=> $av;
+                }
+                return strcmp($a['cve_id'], $b['cve_id']);
+            });
+
+            $out = array_slice($out, 0, 200);
+            $missingCatalog = count(array_filter($out, static fn($r) => empty($r['in_catalog'])));
+
+            $tenants = Database::fetchAll("SELECT id, name FROM tenants ORDER BY name");
+
+            json_response([
+                'success'         => true,
+                'cves'            => $out,
+                'total'           => count($out),
+                'missing_catalog' => $missingCatalog,
+                'tenants'         => $tenants,
+            ]);
+        } catch (Throwable $e) {
+            app_log('error', 'cve_ai', 'Error listando vulnerabilidades de Defender', ['error' => $e->getMessage()]);
+            json_response(['success' => false, 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Agrega las vulnerabilidades de Defender por CVE (BBDD principal).
+     */
+    private function aggregateDefenderVulns(int $tenantId, string $q, int $limit = 500): array
+    {
+        $where = [];
+        $params = [];
+        if ($tenantId > 0) {
+            $where[] = 'v.tenant_id = ?';
+            $params[] = $tenantId;
+        }
+        if ($q !== '') {
+            $where[] = 'v.cve_id LIKE ?';
+            $params[] = '%' . strtoupper($q) . '%';
+        }
+        $whereSql = $where !== [] ? 'WHERE ' . implode(' AND ', $where) : '';
+        $limit = max(1, min(1000, $limit));
+
+        $rows = Database::fetchAll(
+            "SELECT v.cve_id,
+                    MAX(CASE UPPER(COALESCE(v.severity, ''))
+                        WHEN 'CRITICAL' THEN 4 WHEN 'HIGH' THEN 3 WHEN 'MEDIUM' THEN 2 WHEN 'LOW' THEN 1 ELSE 0 END) AS sev_rank,
+                    MAX(v.cvss_v3) AS cvss,
+                    MAX(v.epss) AS epss,
+                    MAX(v.public_exploit) AS public_exploit,
+                    MAX(v.exploit_verified) AS exploit_verified,
+                    MAX(v.exposed_machines) AS exposed_machines,
+                    COUNT(DISTINCT v.machine_id) AS machine_count,
+                    GROUP_CONCAT(DISTINCT v.product_name) AS products,
+                    GROUP_CONCAT(DISTINCT v.product_vendor) AS vendors,
+                    GROUP_CONCAT(DISTINCT t.name) AS tenants
+             FROM vulnerabilities v
+             LEFT JOIN machines m ON m.id = v.machine_id
+             LEFT JOIN tenants t ON t.id = v.tenant_id
+             $whereSql
+             GROUP BY v.cve_id
+             ORDER BY public_exploit DESC, exploit_verified DESC, cvss DESC, epss DESC, machine_count DESC
+             LIMIT $limit",
+            $params
+        );
+
+        $labels = [4 => 'Critical', 3 => 'High', 2 => 'Medium', 1 => 'Low', 0 => ''];
+        foreach ($rows as &$row) {
+            $row['severity'] = $labels[(int)$row['sev_rank']] ?? '';
+            $row['products'] = $this->splitCommaList((string)($row['products'] ?? ''));
+            $row['vendors'] = $this->splitCommaList((string)($row['vendors'] ?? ''));
+            $row['tenants'] = $this->splitCommaList((string)($row['tenants'] ?? ''));
+            unset($row['sev_rank']);
+        }
+        unset($row);
+
+        return $rows;
+    }
+
+    /**
+     * Construye la foto de exposición (equipos, productos y tenants) por CVE.
+     */
+    private function buildDefenderContext(array $cveIds, int $tenantId = 0, string $tenantName = ''): array
+    {
+        $cveIds = array_values(array_filter(array_map('strval', $cveIds)));
+        $context = [
+            'generated_at' => date('c'),
+            'tenant_id'    => $tenantId,
+            'tenant_name'  => $tenantName,
+            'cves'         => [],
+        ];
+        if ($cveIds === []) {
+            return $context;
+        }
+
+        foreach ($cveIds as $cveId) {
+            $context['cves'][$cveId] = [
+                'machine_total'    => 0,
+                'exposed_machines' => 0,
+                'public_exploit'   => false,
+                'exploit_verified' => false,
+                'products'         => [],
+                'machines'         => [],
+                'tenants'          => [],
+            ];
+        }
+
+        $ph = implode(',', array_fill(0, count($cveIds), '?'));
+        $params = $cveIds;
+        $tenantSql = '';
+        if ($tenantId > 0) {
+            $tenantSql = ' AND v.tenant_id = ?';
+            $params[] = $tenantId;
+        }
+
+        $rows = Database::fetchAll(
+            "SELECT v.cve_id, v.product_vendor, v.product_name, v.product_version, v.fixing_kb_id,
+                    v.public_exploit, v.exploit_verified, v.exposed_machines,
+                    m.machine_id, m.computer_dns_name, m.os_platform, m.os_version,
+                    m.exposure_level, m.risk_score, m.last_seen, m.last_ip_address,
+                    t.name AS tenant_name
+             FROM vulnerabilities v
+             LEFT JOIN machines m ON m.id = v.machine_id
+             LEFT JOIN tenants t ON t.id = v.tenant_id
+             WHERE v.cve_id IN ($ph)$tenantSql
+             ORDER BY v.cve_id, m.exposure_level DESC, m.risk_score DESC
+             LIMIT 5000",
+            $params
+        );
+
+        $seenMachines = [];
+        $seenProducts = [];
+
+        foreach ($rows as $row) {
+            $cveId = (string)$row['cve_id'];
+            if (!isset($context['cves'][$cveId])) {
+                continue;
+            }
+
+            $context['cves'][$cveId]['public_exploit'] = $context['cves'][$cveId]['public_exploit'] || !empty($row['public_exploit']);
+            $context['cves'][$cveId]['exploit_verified'] = $context['cves'][$cveId]['exploit_verified'] || !empty($row['exploit_verified']);
+            $context['cves'][$cveId]['exposed_machines'] = max(
+                (int)$context['cves'][$cveId]['exposed_machines'],
+                (int)($row['exposed_machines'] ?? 0)
+            );
+
+            if (!empty($row['tenant_name'])) {
+                $tenantLabel = (string)$row['tenant_name'];
+                if (!in_array($tenantLabel, $context['cves'][$cveId]['tenants'], true)) {
+                    $context['cves'][$cveId]['tenants'][] = $tenantLabel;
+                }
+            }
+
+            $machineKey = $cveId . '|' . (string)($row['machine_id'] ?? '');
+            if (!isset($seenMachines[$machineKey])) {
+                $seenMachines[$machineKey] = true;
+                $context['cves'][$cveId]['machine_total']++;
+                if (count($context['cves'][$cveId]['machines']) < 50) {
+                    $context['cves'][$cveId]['machines'][] = [
+                        'name'      => (string)($row['computer_dns_name'] ?? ''),
+                        'os'        => trim((string)($row['os_platform'] ?? '') . ' ' . (string)($row['os_version'] ?? '')),
+                        'exposure'  => (string)($row['exposure_level'] ?? ''),
+                        'risk'      => (string)($row['risk_score'] ?? ''),
+                        'last_seen' => (string)($row['last_seen'] ?? ''),
+                        'ip'        => (string)($row['last_ip_address'] ?? ''),
+                        'tenant'    => (string)($row['tenant_name'] ?? ''),
+                    ];
+                }
+            }
+
+            $productLabel = trim((string)($row['product_vendor'] ?? '') . ' ' . (string)($row['product_name'] ?? ''));
+            if (!empty($row['product_version'])) {
+                $productLabel .= ' ' . (string)$row['product_version'];
+            }
+            if (!empty($row['fixing_kb_id'])) {
+                $productLabel .= ' (KB ' . (string)$row['fixing_kb_id'] . ')';
+            }
+            if ($productLabel === '') {
+                continue;
+            }
+
+            $productKey = $cveId . '|' . $productLabel;
+            if (!isset($seenProducts[$productKey])) {
+                $seenProducts[$productKey] = true;
+                if (count($context['cves'][$cveId]['products']) < 20) {
+                    $context['cves'][$cveId]['products'][] = $productLabel;
+                }
+            }
+        }
+
+        return $context;
+    }
+
+    /**
+     * @return string[]
+     */
+    private function splitCommaList(string $value): array
+    {
+        $parts = array_map('trim', explode(',', $value));
+        return array_values(array_filter($parts, static fn($item) => $item !== ''));
+    }
+
+    /**
      * Datos completos de un informe para la página y para el panel derecho.
      */
     private function aiReportPayload(int $id): ?array
@@ -1449,11 +1841,20 @@ class Module_Cve extends BaseModule
             $report['group_name'] = (string)($group['name'] ?? '');
         }
 
+        $defender = null;
+        if (!empty($report['defender_json'])) {
+            $decodedDefender = safe_json_decode((string)$report['defender_json'], null);
+            if (is_array($decodedDefender)) {
+                $defender = $decodedDefender;
+            }
+        }
+
         return [
             'report'   => $report,
             'items'    => $items,
             'aiText'   => $aiText,
             'sections' => CveReportAi::parseAiSections($aiText),
+            'defender' => $defender,
         ];
     }
 
@@ -1461,16 +1862,17 @@ class Module_Cve extends BaseModule
      * Crea el informe en estado «pending». La ejecución la lanza el navegador
      * contra reports/ai-run/{id} (sin loopback ni worker).
      */
-    private function queueAiReport(array $cveIds, int $profileId, bool $noAi = false): array
+    private function queueAiReport(array $cveIds, int $profileId, bool $noAi = false, ?string $defenderJson = null): array
     {
         $token = bin2hex(random_bytes(24));
-        $title = 'Informe CVE IA · '
+        $title = 'Informe CVE IA' . ($defenderJson !== null ? ' · Defender' : '') . ' · '
             . (count($cveIds) === 1 ? $cveIds[0] : count($cveIds) . ' CVEs')
             . ' · ' . date('d/m/Y H:i');
 
         $id = CveDatabase::insert(
-            "INSERT INTO cve_ai_reports (cve_ids, title, status, token, ai_profile_id, generated_by, no_ai)
-             VALUES (?, ?, 'pending', ?, ?, ?, ?)",
+            "INSERT INTO cve_ai_reports
+             (cve_ids, title, status, token, ai_profile_id, generated_by, no_ai, defender_json)
+             VALUES (?, ?, 'pending', ?, ?, ?, ?, ?)",
             [
                 $this->encodeJson($cveIds),
                 $title,
@@ -1478,6 +1880,7 @@ class Module_Cve extends BaseModule
                 $profileId > 0 ? $profileId : null,
                 Auth::id(),
                 $noAi ? 1 : 0,
+                $defenderJson,
             ]
         );
 
@@ -1486,6 +1889,7 @@ class Module_Cve extends BaseModule
             'report_id' => $id,
             'status'    => 'pending',
             'no_ai'     => $noAi,
+            'defender'  => $defenderJson !== null,
             'url'       => base_url('modules/cve/report-ai/' . $id),
         ];
     }
@@ -1496,6 +1900,7 @@ class Module_Cve extends BaseModule
         return CveDatabase::fetchAll(
             "SELECT r.id, r.cve_ids, r.title, r.status, r.ai_model, r.ai_error, r.no_ai,
                     r.revision, r.updated_at, r.group_id, g.name AS group_name,
+                    CASE WHEN r.defender_json IS NOT NULL AND r.defender_json <> '' THEN 1 ELSE 0 END AS has_defender,
                     r.created_at, r.finished_at
              FROM cve_ai_reports r
              LEFT JOIN software_groups g ON g.id = r.group_id

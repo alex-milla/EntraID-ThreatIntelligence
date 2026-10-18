@@ -729,8 +729,9 @@ final class CveReportAi
      * Compila los datos en texto plano y construye el prompt de 4 secciones.
      *
      * @param array<int,array<string,mixed>> $items
+     * @param array<string,mixed>|null       $defender Snapshot de exposición de Defender.
      */
-    public static function userPrompt(array $items): string
+    public static function userPrompt(array $items, ?array $defender = null): string
     {
         $data = [];
         foreach ($items as $item) {
@@ -772,6 +773,26 @@ final class CveReportAi
             $data[] = '';
         }
 
+        $exposureLines = [];
+        if (is_array($defender) && !empty($defender['cves']) && is_array($defender['cves'])) {
+            foreach ($defender['cves'] as $cveId => $ctx) {
+                if (!is_array($ctx)) {
+                    continue;
+                }
+                $line = 'CVE ' . $cveId . ': ' . (int)($ctx['machine_total'] ?? 0) . ' equipos afectados';
+                if (!empty($ctx['public_exploit'])) {
+                    $line .= '; exploit público';
+                }
+                if (!empty($ctx['exploit_verified'])) {
+                    $line .= ' verificado';
+                }
+                if (!empty($ctx['products']) && is_array($ctx['products'])) {
+                    $line .= '; productos: ' . implode(', ', array_slice($ctx['products'], 0, 4));
+                }
+                $exposureLines[] = $line;
+            }
+        }
+
         return "Eres un analista de seguridad sénior. Usando SOLO la información proporcionada, "
             . "redacta un análisis BREVE para un responsable técnico. Devuelve EXACTAMENTE estas "
             . "cuatro secciones, cada una empezando por su encabezado numerado:\n\n"
@@ -792,9 +813,13 @@ final class CveReportAi
             . "- Si hay varios CVEs, prioriza los de mayor riesgo y no repitas lo mismo.\n\n"
             . "Contenido esperado:\n"
             . "1. Naturaleza, componente afectado, precondiciones, impacto CIA y señal KEV/EPSS/exploits.\n"
-            . "2. Un escenario realista: entrada, autenticación, privilegios y consecuencia.\n"
+            . "2. Escenario realista: entrada, autenticación, privilegios y consecuencia.\n"
             . "3. Acciones concretas: parche, mitigación temporal y detección.\n"
             . "4. Riesgo de negocio, probabilidad y urgencia (2-3 viñetas).\n\n"
+            . ($exposureLines !== []
+                ? "EXPOSICIÓN EN TU ENTORNO (Defender):\n" . implode("\n", $exposureLines) . "\n"
+                    . "- Usa la exposición real para priorizar; no inventes equipos ni datos.\n\n"
+                : '')
             . "DATOS DE LOS CVEs:\n" . implode("\n", $data);
     }
 
@@ -1096,10 +1121,17 @@ final class CveReportAi
                     if (!class_exists('Module_Llm')) {
                         throw new RuntimeException('El módulo de IA no está activo. Actívalo en Admin → Módulos.');
                     }
+                    $defender = null;
+                    if (!empty($row['defender_json'])) {
+                        $decodedDefender = safe_json_decode((string)$row['defender_json'], null);
+                        if (is_array($decodedDefender)) {
+                            $defender = $decodedDefender;
+                        }
+                    }
                     $llm = new Module_Llm();
                     $result = $llm->chat(
                         self::systemPrompt(),
-                        self::userPrompt($items),
+                        self::userPrompt($items, $defender),
                         ['max_tokens' => 1200, 'temperature' => 0.2],
                         $profileId > 0 ? $profileId : null
                     );

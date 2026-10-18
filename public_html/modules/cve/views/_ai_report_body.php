@@ -10,6 +10,7 @@ $report = is_array($report ?? null) ? $report : null;
 $items = is_array($items ?? null) ? $items : [];
 $aiText = (string)($aiText ?? '');
 $sections = is_array($sections ?? null) ? $sections : [];
+$defender = is_array($defender ?? null) ? $defender : null;
 $isAdmin = !empty($isAdmin);
 
 $bodyStatus = (string)($report['status'] ?? 'pending');
@@ -252,6 +253,9 @@ $linkLabel = static function (string $url): string {
                 if (!preg_match('#^https?://#i', $nvdUrl)) {
                     $nvdUrl = 'https://nvd.nist.gov/vuln/detail/' . rawurlencode($cveId);
                 }
+                $exposure = ($defender !== null && isset($defender['cves'][$cveId]) && is_array($defender['cves'][$cveId]))
+                    ? $defender['cves'][$cveId]
+                    : null;
                 ?>
                 <section class="report-cve border-l-4 <?= $severity === 'Critical' ? 'border-red-500' : ($severity === 'High' ? 'border-orange-500' : ($severity === 'Medium' ? 'border-amber-500' : ($severity === 'Low' ? 'border-green-500' : 'border-gray-300'))) ?> pl-5" id="cve-<?= e($cveId) ?>">
                     <div class="flex items-start justify-between gap-3 flex-wrap">
@@ -335,6 +339,80 @@ $linkLabel = static function (string $url): string {
                                 <?php if (!empty($item['kev_due'])): ?>Vence el <?= e((string)$item['kev_due']) ?>. <?php endif; ?>
                                 <?php if (strcasecmp((string)($item['kev_ransomware'] ?? ''), 'Known') === 0): ?>Ransomware conocido.<?php endif; ?>
                             </p>
+                        </div>
+                    <?php endif; ?>
+
+                    <?php if ($exposure !== null): ?>
+                        <div class="mt-5 rounded-lg border border-blue-100 bg-blue-50/60 p-4">
+                            <div class="flex items-center justify-between gap-2 flex-wrap">
+                                <p class="text-[10px] font-semibold uppercase tracking-wide text-blue-600">Exposición en tu entorno · Defender</p>
+                                <span class="text-[10px] text-gray-400">Foto: <?= e(format_db_date((string)($defender['generated_at'] ?? ''), 'd/m/Y H:i')) ?></span>
+                            </div>
+                            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-3 text-xs">
+                                <div>
+                                    <p class="text-gray-500">Equipos afectados</p>
+                                    <p class="text-lg font-bold"><?= (int)($exposure['machine_total'] ?? 0) ?></p>
+                                </div>
+                                <div>
+                                    <p class="text-gray-500">Expuestos (Defender)</p>
+                                    <p class="text-lg font-bold"><?= (int)($exposure['exposed_machines'] ?? 0) ?></p>
+                                </div>
+                                <div>
+                                    <p class="text-gray-500">Exploit público</p>
+                                    <p class="text-sm font-semibold <?= !empty($exposure['public_exploit']) ? 'text-red-600' : 'text-gray-600' ?>">
+                                        <?= !empty($exposure['public_exploit']) ? 'Sí' : 'No' ?>
+                                    </p>
+                                </div>
+                                <div>
+                                    <p class="text-gray-500">Exploit verificado</p>
+                                    <p class="text-sm font-semibold <?= !empty($exposure['exploit_verified']) ? 'text-red-600' : 'text-gray-600' ?>">
+                                        <?= !empty($exposure['exploit_verified']) ? 'Sí' : 'No' ?>
+                                    </p>
+                                </div>
+                            </div>
+                            <?php if (!empty($exposure['products'])): ?>
+                                <p class="text-xs mt-3">
+                                    <span class="text-gray-500">Productos:</span>
+                                    <?= e(implode(' · ', array_slice((array)$exposure['products'], 0, 6))) ?>
+                                </p>
+                            <?php endif; ?>
+                            <?php if (!empty($exposure['tenants'])): ?>
+                                <p class="text-xs mt-1">
+                                    <span class="text-gray-500">Tenants:</span>
+                                    <?= e(implode(' · ', (array)$exposure['tenants'])) ?>
+                                </p>
+                            <?php endif; ?>
+                            <?php if (!empty($exposure['machines'])): ?>
+                                <div class="mt-3 overflow-x-auto">
+                                    <table class="w-full text-xs">
+                                        <thead>
+                                            <tr class="text-[10px] uppercase text-gray-400 border-b border-blue-100">
+                                                <th class="text-left py-1.5 pr-3">Equipo</th>
+                                                <th class="text-left py-1.5 pr-3">SO</th>
+                                                <th class="text-left py-1.5 pr-3">Exposición</th>
+                                                <th class="text-left py-1.5 pr-3">Riesgo</th>
+                                                <th class="text-left py-1.5 pr-3">Visto</th>
+                                                <th class="text-left py-1.5">Tenant</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody class="divide-y divide-blue-50">
+                                            <?php foreach ($exposure['machines'] as $machine): ?>
+                                                <tr>
+                                                    <td class="py-1.5 pr-3 font-medium text-gray-700"><?= e((string)($machine['name'] ?? '—')) ?></td>
+                                                    <td class="py-1.5 pr-3 text-gray-600"><?= e((string)($machine['os'] ?? '—')) ?></td>
+                                                    <td class="py-1.5 pr-3 text-gray-600"><?= e((string)($machine['exposure'] ?? '—')) ?></td>
+                                                    <td class="py-1.5 pr-3 text-gray-600"><?= e((string)($machine['risk'] ?? '—')) ?></td>
+                                                    <td class="py-1.5 pr-3 text-gray-500 whitespace-nowrap"><?= e(format_db_date((string)($machine['last_seen'] ?? ''), 'd/m/Y H:i')) ?></td>
+                                                    <td class="py-1.5 text-gray-600"><?= e((string)($machine['tenant'] ?? '—')) ?></td>
+                                                </tr>
+                                            <?php endforeach; ?>
+                                        </tbody>
+                                    </table>
+                                    <?php if ((int)($exposure['machine_total'] ?? 0) > count($exposure['machines'])): ?>
+                                        <p class="text-[11px] text-gray-400 mt-1">… y <?= (int)$exposure['machine_total'] - count($exposure['machines']) ?> equipos más.</p>
+                                    <?php endif; ?>
+                                </div>
+                            <?php endif; ?>
                         </div>
                     <?php endif; ?>
 

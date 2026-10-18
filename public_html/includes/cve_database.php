@@ -208,6 +208,7 @@ class CveDatabase
             ai_model TEXT,
             ai_error TEXT,
             ai_duration_ms INTEGER,
+            defender_json TEXT,
             token TEXT,
             generated_by INTEGER,
             no_ai INTEGER NOT NULL DEFAULT 0,
@@ -286,6 +287,9 @@ class CveDatabase
         }
         if (!isset($aiCols['updated_at'])) {
             $db->exec("ALTER TABLE cve_ai_reports ADD COLUMN updated_at TEXT");
+        }
+        if (!isset($aiCols['defender_json'])) {
+            $db->exec("ALTER TABLE cve_ai_reports ADD COLUMN defender_json TEXT");
         }
 
         // v0.2.7.15: descripción traducida y hash del texto original.

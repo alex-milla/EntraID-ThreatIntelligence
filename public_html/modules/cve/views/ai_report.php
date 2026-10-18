@@ -10,6 +10,7 @@ $report = is_array($report ?? null) ? $report : null;
 $items = is_array($items ?? null) ? $items : [];
 $aiText = (string)($aiText ?? '');
 $sections = is_array($sections ?? null) ? $sections : [];
+$defender = is_array($defender ?? null) ? $defender : null;
 $isAdmin = $isAdmin ?? Auth::isAdmin();
 
 $status = (string)($report['status'] ?? 'pending');

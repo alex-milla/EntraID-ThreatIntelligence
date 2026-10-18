@@ -798,6 +798,10 @@ $aiStatusText = [
                         class="w-full px-3 py-2 bg-brand-500 hover:bg-brand-600 text-white text-xs font-semibold rounded-lg transition-colors">
                     + Nuevo informe con IA
                 </button>
+                <button type="button" onclick="cveAiDefenderOpen()"
+                        class="mt-2 w-full px-3 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 text-xs font-semibold rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">
+                    Desde Defender
+                </button>
             <?php endif; ?>
             <input id="ai-list-search" type="search" oninput="cveAiFilterList(this.value)"
                    placeholder="Buscar por CVE o título…"
@@ -847,6 +851,9 @@ $aiStatusText = [
                             <?php endif; ?>
                             <?php if (!empty($aiRow['group_name'])): ?>
                                 <span class="text-[10px] text-gray-400 truncate">· <?= e((string)$aiRow['group_name']) ?></span>
+                            <?php endif; ?>
+                            <?php if (!empty($aiRow['has_defender'])): ?>
+                                <span class="px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 text-[10px] font-semibold shrink-0">Defender</span>
                             <?php endif; ?>
                             <span class="ml-auto flex items-center gap-1 shrink-0">
                                 <?php if ($isAdmin && in_array($aiRowStatus, ['pending', 'running'], true)): ?>
@@ -911,6 +918,7 @@ $aiStatusText = [
                     $items = $selectedAiData['items'];
                     $aiText = $selectedAiData['aiText'];
                     $sections = $selectedAiData['sections'];
+                    $defender = $selectedAiData['defender'] ?? null;
                     require __DIR__ . '/_ai_report_body.php';
                     ?>
                 <?php else: ?>
@@ -990,6 +998,105 @@ $aiStatusText = [
                     <p class="text-[11px] text-gray-400 mt-2">
                         Máximo <?= (int)CveReportAi::MAX_CVES ?> CVEs por informe.
                     </p>
+                </div>
+            </div>
+
+            <!-- Nuevo informe desde Defender (oculto) -->
+            <div id="ai-defender-form" class="hidden">
+                <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-5">
+                    <div class="flex items-start justify-between gap-3 flex-wrap">
+                        <div>
+                            <h3 class="text-sm font-semibold">Nuevo informe desde Defender</h3>
+                            <p class="text-xs text-gray-500 mt-1">
+                                Elige CVEs expuestos en tus equipos según Defender for Endpoint. El informe añadirá
+                                la exposición real (equipos, productos y KB) a los datos del catálogo.
+                            </p>
+                        </div>
+                        <button type="button" onclick="cveAiDefenderClose()" class="text-xs text-gray-400 hover:text-gray-600">Cerrar</button>
+                    </div>
+
+                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-4">
+                        <label class="block">
+                            <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Tenant</span>
+                            <select id="ai-def-tenant" class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                                <option value="0">Todos</option>
+                            </select>
+                        </label>
+                        <label class="block">
+                            <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Severidad</span>
+                            <select id="ai-def-severity" class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                                <option value="">Todas</option>
+                                <option value="CRITICAL">Crítica</option>
+                                <option value="HIGH">Alta</option>
+                                <option value="MEDIUM">Media</option>
+                                <option value="LOW">Baja</option>
+                            </select>
+                        </label>
+                        <label class="block">
+                            <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">EPSS mínimo</span>
+                            <input id="ai-def-epss" type="number" min="0" max="1" step="0.01" placeholder="0.10"
+                                   class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                        </label>
+                        <label class="block">
+                            <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Equipos mínimos</span>
+                            <input id="ai-def-machines" type="number" min="0" step="1" placeholder="1"
+                                   class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                        </label>
+                        <label class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300 mt-5">
+                            <input id="ai-def-exploited" type="checkbox" class="rounded border-gray-300 text-brand-500 focus:ring-brand-500">
+                            Con exploit público
+                        </label>
+                        <label class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300 mt-5">
+                            <input id="ai-def-kev" type="checkbox" class="rounded border-gray-300 text-brand-500 focus:ring-brand-500">
+                            En CISA KEV
+                        </label>
+                        <label class="block lg:col-span-2">
+                            <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Buscar CVE</span>
+                            <div class="flex gap-2">
+                                <input id="ai-def-q" type="text" placeholder="CVE-2024-…"
+                                       class="flex-1 px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs font-mono focus:ring-2 focus:ring-brand-500 outline-none">
+                                <button type="button" onclick="cveAiDefenderFetch()"
+                                        class="px-3 py-1.5 bg-gray-900 hover:bg-black text-white text-xs font-medium rounded-lg">
+                                    Aplicar
+                                </button>
+                            </div>
+                        </label>
+                    </div>
+
+                    <div class="mt-4 flex items-center justify-between gap-2 flex-wrap">
+                        <p id="ai-def-summary" class="text-xs text-gray-500">Cargando…</p>
+                        <p id="ai-def-selected" class="text-xs font-medium text-gray-600 dark:text-gray-300">0 seleccionados</p>
+                    </div>
+
+                    <div id="ai-def-list" class="mt-2 max-h-72 overflow-y-auto border border-gray-200 dark:border-gray-700 rounded-lg divide-y divide-gray-100 dark:divide-gray-800">
+                        <p class="p-4 text-xs text-gray-500">Cargando vulnerabilidades de Defender…</p>
+                    </div>
+
+                    <div class="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <?php if (!empty($llmProfiles)): ?>
+                            <label class="block sm:col-span-1">
+                                <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Perfil de IA</span>
+                                <select id="ai-def-profile"
+                                        class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                                    <option value="0">Automático</option>
+                                    <?php foreach ($llmProfiles as $profile): ?>
+                                        <option value="<?= (int)$profile['id'] ?>"><?= e((string)$profile['name']) ?> · <?= e((string)$profile['provider']) ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </label>
+                        <?php endif; ?>
+                        <label class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300 mt-5">
+                            <input id="ai-def-local" type="checkbox" class="rounded border-gray-300 text-brand-500 focus:ring-brand-500">
+                            Solo datos locales (sin IA)
+                        </label>
+                        <div class="flex items-end">
+                            <button type="button" onclick="cveAiDefenderCreate(this)"
+                                    class="w-full px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors">
+                                Crear informe
+                            </button>
+                        </div>
+                    </div>
+                    <p id="ai-def-message" class="text-xs text-gray-500 mt-2"></p>
                 </div>
             </div>
         </div>
@@ -1237,6 +1344,8 @@ $aiStatusText = [
     var STATUS_URL = <?= json_encode(base_url('modules/cve/reports/ai-status')) ?>;
     var REFRESH_URL = <?= json_encode(base_url('modules/cve/reports/ai-refresh')) ?>;
     var ASSIGN_URL  = <?= json_encode(base_url('modules/cve/reports/ai-assign')) ?>;
+    var DEFENDER_LIST_URL  = <?= json_encode(base_url('modules/cve/reports/defender-list')) ?>;
+    var START_DEFENDER_URL = <?= json_encode(base_url('modules/cve/reports/ai-start-defender')) ?>;
     var IS_ADMIN   = <?= $isAdmin ? 'true' : 'false' ?>;
 
     var detail = document.getElementById('ai-detail');
@@ -1388,6 +1497,10 @@ $aiStatusText = [
         stopPolling();
         if (newForm) {
             newForm.classList.add('hidden');
+        }
+        var defenderForm = document.getElementById('ai-defender-form');
+        if (defenderForm) {
+            defenderForm.classList.add('hidden');
         }
         detail.innerHTML = '<div class="p-8 text-center text-sm text-gray-500">Cargando informe…</div>';
 
@@ -1562,6 +1675,10 @@ $aiStatusText = [
         if (detail) {
             detail.innerHTML = '';
         }
+        var defenderForm = document.getElementById('ai-defender-form');
+        if (defenderForm) {
+            defenderForm.classList.add('hidden');
+        }
         if (newForm) {
             newForm.classList.remove('hidden');
         }
@@ -1732,6 +1849,222 @@ $aiStatusText = [
                     button.disabled = false;
                 }
             });
+        });
+    };
+
+    function escapeHtml(value) {
+        return String(value === null || value === undefined ? '' : value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
+    }
+
+    window.cveAiDefenderOpen = function () {
+        stopPolling();
+        if (detail) {
+            detail.innerHTML = '';
+        }
+        if (newForm) {
+            newForm.classList.add('hidden');
+        }
+        var panel = document.getElementById('ai-defender-form');
+        if (!panel) {
+            return;
+        }
+        panel.classList.remove('hidden');
+        if (printBtn) printBtn.classList.add('hidden');
+        if (deleteBtn) deleteBtn.classList.add('hidden');
+        if (refreshBtn) refreshBtn.classList.add('hidden');
+        if (groupBtn) groupBtn.classList.add('hidden');
+        if (titleEl) titleEl.textContent = 'Desde Defender';
+        window.cveAiDefenderFetch();
+    };
+
+    window.cveAiDefenderClose = function () {
+        var panel = document.getElementById('ai-defender-form');
+        if (panel) {
+            panel.classList.add('hidden');
+        }
+        if (state.id) {
+            load(state.id, false);
+        } else {
+            window.location.href = PAGE_URL;
+        }
+    };
+
+    window.cveAiDefenderFetch = function () {
+        var listEl = document.getElementById('ai-def-list');
+        if (listEl) {
+            listEl.innerHTML = '<p class="p-4 text-xs text-gray-500">Cargando vulnerabilidades de Defender…</p>';
+        }
+
+        var params = new URLSearchParams();
+        var tenant = document.getElementById('ai-def-tenant');
+        var severity = document.getElementById('ai-def-severity');
+        var epss = document.getElementById('ai-def-epss');
+        var machines = document.getElementById('ai-def-machines');
+        var exploited = document.getElementById('ai-def-exploited');
+        var kev = document.getElementById('ai-def-kev');
+        var q = document.getElementById('ai-def-q');
+        if (tenant) params.set('tenant_id', tenant.value);
+        if (severity) params.set('severity', severity.value);
+        if (epss && epss.value !== '') params.set('epss_min', epss.value);
+        if (machines && machines.value !== '') params.set('min_machines', machines.value);
+        if (exploited && exploited.checked) params.set('exploited', '1');
+        if (kev && kev.checked) params.set('kev', '1');
+        if (q && q.value.trim() !== '') params.set('q', q.value.trim());
+
+        getJson(DEFENDER_LIST_URL + '?' + params.toString()).then(function (res) {
+            if (!res.success) {
+                if (listEl) {
+                    listEl.innerHTML = '<p class="p-4 text-xs text-red-600">' + escapeHtml(res.error || 'No se pudo consultar Defender.') + '</p>';
+                }
+                return;
+            }
+            renderDefenderList(res);
+        }).catch(function (err) {
+            if (listEl) {
+                listEl.innerHTML = '<p class="p-4 text-xs text-red-600">Error: ' + escapeHtml(errorText(err)) + '</p>';
+            }
+        });
+    };
+
+    function renderDefenderList(data) {
+        var listEl = document.getElementById('ai-def-list');
+        var summary = document.getElementById('ai-def-summary');
+        if (!listEl) {
+            return;
+        }
+
+        var tenant = document.getElementById('ai-def-tenant');
+        if (tenant && tenant.options.length <= 1 && Array.isArray(data.tenants)) {
+            data.tenants.forEach(function (t) {
+                var opt = document.createElement('option');
+                opt.value = t.id;
+                opt.textContent = t.name;
+                tenant.appendChild(opt);
+            });
+        }
+
+        var cves = Array.isArray(data.cves) ? data.cves : [];
+        if (summary) {
+            summary.textContent = cves.length + ' CVEs con exposición' +
+                (data.missing_catalog ? ' · ' + data.missing_catalog + ' sin datos NVD' : '');
+        }
+
+        if (!cves.length) {
+            listEl.innerHTML = '<p class="p-4 text-xs text-gray-500">No hay vulnerabilidades con esos filtros. Comprueba que el módulo Vulnerabilidades de Defender esté sincronizado.</p>';
+            window.cveAiDefenderUpdateCount();
+            return;
+        }
+
+        var html = '';
+        cves.forEach(function (c) {
+            var disabled = !c.in_catalog;
+            var badges = '';
+            if (c.in_kev) {
+                badges += '<span class="px-1.5 py-0.5 rounded bg-red-100 text-red-700 text-[10px] font-semibold">KEV</span> ';
+            }
+            if (c.public_exploit) {
+                badges += '<span class="px-1.5 py-0.5 rounded bg-orange-100 text-orange-700 text-[10px] font-semibold">Exploit</span> ';
+            }
+            if (c.exploit_verified) {
+                badges += '<span class="px-1.5 py-0.5 rounded bg-red-100 text-red-700 text-[10px] font-semibold">Verificado</span> ';
+            }
+            if (disabled) {
+                badges += '<span class="px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 text-[10px] font-semibold">Sin NVD</span>';
+            }
+
+            var meta = [];
+            if (c.cvss !== null && c.cvss !== undefined) {
+                meta.push('CVSS ' + Number(c.cvss).toFixed(1));
+            }
+            if (c.epss !== null && c.epss !== undefined) {
+                meta.push('EPSS ' + (Number(c.epss) * 100).toFixed(1) + '%');
+            }
+            meta.push(c.machine_count + ' equipos');
+            if (Array.isArray(c.products) && c.products.length) {
+                meta.push(c.products.slice(0, 2).join(', '));
+            }
+
+            html += '<label class="flex items-start gap-3 p-3 ' +
+                (disabled ? 'opacity-60 bg-gray-50 dark:bg-gray-900' : 'hover:bg-gray-50 dark:hover:bg-gray-800/40') + '">' +
+                '<input type="checkbox" class="ai-def-cve mt-0.5 rounded border-gray-300 text-brand-500 focus:ring-brand-500" value="' +
+                escapeHtml(c.cve_id) + '" ' + (disabled ? 'disabled' : '') + ' onchange="cveAiDefenderUpdateCount()">' +
+                '<span class="min-w-0">' +
+                '<span class="flex items-center gap-2 flex-wrap">' +
+                '<span class="font-mono text-xs font-semibold">' + escapeHtml(c.cve_id) + '</span>' +
+                '<span class="text-[10px] uppercase font-semibold text-gray-500">' + escapeHtml(c.severity) + '</span>' +
+                badges +
+                '</span>' +
+                '<span class="block text-[11px] text-gray-500 mt-0.5">' + escapeHtml(meta.join(' · ')) + '</span>' +
+                (disabled ? '<span class="block text-[11px] text-amber-600 mt-0.5">Sincroniza el catálogo NVD para poder incluir este CVE.</span>' : '') +
+                '</span></label>';
+        });
+
+        listEl.innerHTML = html;
+        window.cveAiDefenderUpdateCount();
+    }
+
+    window.cveAiDefenderUpdateCount = function () {
+        var selected = document.querySelectorAll('.ai-def-cve:checked').length;
+        var el = document.getElementById('ai-def-selected');
+        if (el) {
+            el.textContent = selected + ' seleccionados';
+        }
+    };
+
+    window.cveAiDefenderCreate = function (button) {
+        var selected = Array.prototype.slice.call(document.querySelectorAll('.ai-def-cve:checked')).map(function (el) {
+            return el.value;
+        });
+        var message = document.getElementById('ai-def-message');
+        if (!selected.length) {
+            if (message) {
+                message.textContent = 'Selecciona al menos un CVE.';
+                message.className = 'text-xs text-red-500 mt-2';
+            }
+            return;
+        }
+
+        var profile = document.getElementById('ai-def-profile');
+        var local = document.getElementById('ai-def-local');
+        var tenant = document.getElementById('ai-def-tenant');
+        if (message) {
+            message.textContent = 'Creando informe…';
+            message.className = 'text-xs text-gray-500 mt-2';
+        }
+        if (button) {
+            button.disabled = true;
+        }
+
+        postJson(START_DEFENDER_URL, {
+            cve_ids: selected,
+            profile_id: profile ? profile.value : 0,
+            no_ai: (local && local.checked) ? 1 : 0,
+            tenant_id: tenant ? tenant.value : 0
+        }).then(function (res) {
+            if (!res.success) {
+                if (message) {
+                    message.textContent = res.error || 'No se pudo crear el informe.';
+                    message.className = 'text-xs text-red-500 mt-2';
+                }
+                if (button) {
+                    button.disabled = false;
+                }
+                return;
+            }
+            window.location.href = PAGE_URL + '&report=' + res.report_id;
+        }).catch(function (err) {
+            if (message) {
+                message.textContent = 'Error: ' + errorText(err);
+                message.className = 'text-xs text-red-500 mt-2';
+            }
+            if (button) {
+                button.disabled = false;
+            }
         });
     };
 
