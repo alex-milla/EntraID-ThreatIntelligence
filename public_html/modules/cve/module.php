@@ -39,7 +39,12 @@ class Module_Cve extends BaseModule
             ['method' => 'GET',  'pattern' => 'active',          'handler' => [$this, 'syncActive']],
             ['method' => 'GET',  'pattern' => 'cpe-search',      'handler' => [$this, 'cpeSearch']],
             ['method' => 'POST', 'pattern' => 'reports/generate', 'handler' => [$this, 'generateReport']],
+            ['method' => 'POST', 'pattern' => 'reports/ai-generate', 'handler' => [$this, 'generateAiReport']],
+            ['method' => 'POST', 'pattern' => 'reports/ai-retry/{id}', 'handler' => [$this, 'retryAiReport']],
+            ['method' => 'GET',  'pattern' => 'reports/ai-status/{id}', 'handler' => [$this, 'aiReportStatus']],
             ['method' => 'GET',  'pattern' => 'report/{id}/csv',  'handler' => [$this, 'reportCsv']],
+            ['method' => 'GET',  'pattern' => 'report-ai/{id}/txt', 'handler' => [$this, 'aiReportTxt']],
+            ['method' => 'GET',  'pattern' => 'report-ai/{id}',   'handler' => [$this, 'aiReportView']],
             ['method' => 'GET',  'pattern' => 'report/{id}',      'handler' => [$this, 'reportView']],
             ['method' => 'POST', 'pattern' => 'sync',            'handler' => [$this, 'triggerSync']],
             ['method' => 'POST', 'pattern' => 'stream',          'handler' => [$this, 'streamSync']],
@@ -70,6 +75,9 @@ class Module_Cve extends BaseModule
         $groups = [];
         $software = [];
         $reports = [];
+        $aiReports = [];
+        $llmProfiles = [];
+        $llmConfigured = false;
         $stats = $this->emptyStats();
         $editSoftware = null;
         $editGroup = null;
@@ -90,6 +98,9 @@ class Module_Cve extends BaseModule
             } elseif ($tab === 'reports') {
                 $softwareOptions = $this->listSoftware(0, '');
                 $reports = $this->listReports(30);
+                $aiReports = $this->listAiReports(30);
+                $llmProfiles = llm_profile_list();
+                $llmConfigured = class_exists('Module_Llm') && (new Module_Llm())->isConfigured();
             } else {
                 $catalogFilters = [
                     'q'           => trim((string)($_GET['q'] ?? '')),
@@ -135,6 +146,9 @@ class Module_Cve extends BaseModule
             'groups'        => $groups,
             'software'      => $software,
             'reports'       => $reports,
+            'aiReports'     => $aiReports,
+            'llmProfiles'   => $llmProfiles,
+            'llmConfigured' => $llmConfigured,
             'stats'         => $stats,
             'selectedGroup' => $selectedGroup,
             'q'             => $q,
@@ -864,6 +878,252 @@ class Module_Cve extends BaseModule
     public function createScheduledReport(array $input): array
     {
         return $this->createReport($input, null);
+    }
+
+    // ============================================================
+    // Informes de CVE con IA (formato SploitScan)
+    // ============================================================
+
+    public function generateAiReport(array $params = []): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        try {
+            $raw = file_get_contents('php://input');
+            $input = json_decode((string)$raw, true);
+            if (!is_array($input)) {
+                $input = $_POST;
+            }
+
+            $ids = CveReportAi::normalizeCveIds($input['cve_ids'] ?? '');
+            if ($ids === []) {
+                json_response([
+                    'success' => false,
+                    'error'   => 'Introduce al menos un CVE válido con formato CVE-AAAA-NNNN.',
+                ], 400);
+            }
+
+            $found = [];
+            $missing = [];
+            foreach ($ids as $cveId) {
+                $row = CveDatabase::fetchOne("SELECT cve_id FROM cve_catalog WHERE cve_id = ?", [$cveId]);
+                if ($row === null) {
+                    $missing[] = $cveId;
+                } else {
+                    $found[] = $cveId;
+                }
+            }
+            if ($missing !== []) {
+                json_response([
+                    'success' => false,
+                    'error'   => 'No están en el catálogo local: ' . implode(', ', $missing)
+                        . '. Sincroniza el catálogo NVD o revisa los identificadores.',
+                ], 400);
+            }
+
+            $llm = class_exists('Module_Llm') ? new Module_Llm() : null;
+            $profileId = (int)($input['profile_id'] ?? 0);
+            if ($profileId <= 0) {
+                $profileId = (int)(llm_task_profile('cve_report') ?? 0);
+            }
+            if ($llm === null || !$llm->isConfigured($profileId > 0 ? $profileId : null)) {
+                json_response([
+                    'success' => false,
+                    'error'   => 'La IA no está configurada. Añade un perfil en Admin → APIs.',
+                ], 400);
+            }
+
+            $result = $this->queueAiReport($found, $profileId);
+            log_activity('cve.ai_report_created', [
+                'report_id' => (int)$result['report_id'],
+                'cves'      => $found,
+            ]);
+            json_response($result);
+        } catch (Throwable $e) {
+            json_response(['success' => false, 'error' => $e->getMessage()], 400);
+        }
+    }
+
+    public function retryAiReport(array $params = []): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        try {
+            $id = (int)($params['id'] ?? 0);
+            $row = $id > 0 ? CveDatabase::fetchOne("SELECT * FROM cve_ai_reports WHERE id = ?", [$id]) : null;
+            if ($row === null) {
+                json_response(['success' => false, 'error' => 'Informe no encontrado.'], 404);
+            }
+
+            $ids = safe_json_decode((string)($row['cve_ids'] ?? ''), []);
+            if (!is_array($ids) || $ids === []) {
+                json_response(['success' => false, 'error' => 'El informe no tiene CVEs válidos.'], 400);
+            }
+
+            $llm = class_exists('Module_Llm') ? new Module_Llm() : null;
+            $profileId = (int)($row['ai_profile_id'] ?? 0);
+            if ($llm === null || !$llm->isConfigured($profileId > 0 ? $profileId : null)) {
+                json_response([
+                    'success' => false,
+                    'error'   => 'La IA no está configurada. Añade un perfil en Admin → APIs.',
+                ], 400);
+            }
+
+            $token = bin2hex(random_bytes(24));
+            CveDatabase::update(
+                "UPDATE cve_ai_reports
+                 SET status = 'pending', token = ?, ai_error = NULL, finished_at = NULL
+                 WHERE id = ?",
+                [$token, $id]
+            );
+
+            $base = CveReportAi::baseUrl();
+            $launched = $base !== '' && background_request($base . '/cve-worker.php?ai_token=' . rawurlencode($token));
+            if (!$launched) {
+                @set_time_limit(0);
+                CveReportAi::runPending($token);
+            }
+
+            json_response([
+                'success'   => true,
+                'report_id' => $id,
+                'status'    => 'pending',
+                'launched'  => $launched,
+                'url'       => base_url('modules/cve/report-ai/' . $id),
+            ]);
+        } catch (Throwable $e) {
+            json_response(['success' => false, 'error' => $e->getMessage()], 400);
+        }
+    }
+
+    public function aiReportStatus(array $params = []): void
+    {
+        Auth::require();
+
+        $id = (int)($params['id'] ?? 0);
+        $row = $id > 0
+            ? CveDatabase::fetchOne("SELECT id, status, ai_error, created_at FROM cve_ai_reports WHERE id = ?", [$id])
+            : null;
+        if ($row === null) {
+            json_response(['success' => false, 'error' => 'Informe no encontrado.'], 404);
+        }
+
+        // Auto-salud: si el worker murió, no dejar el informe «generando» para siempre.
+        if (in_array((string)$row['status'], ['pending', 'running'], true)) {
+            $created = strtotime((string)($row['created_at'] ?? '') . ' UTC');
+            if ($created !== false && (time() - $created) > 900) {
+                $message = 'La generación no terminó a tiempo (15 minutos). Puedes reintentarlo.';
+                CveDatabase::query(
+                    "UPDATE cve_ai_reports
+                     SET status = 'error', ai_error = ?, token = NULL, finished_at = datetime('now')
+                     WHERE id = ? AND status IN ('pending','running')",
+                    [$message, $id]
+                );
+                $row['status'] = 'error';
+                $row['ai_error'] = $message;
+            }
+        }
+
+        json_response([
+            'success'   => true,
+            'report_id' => $id,
+            'status'    => (string)$row['status'],
+            'error'     => (string)($row['ai_error'] ?? ''),
+            'url'       => base_url('modules/cve/report-ai/' . $id),
+        ]);
+    }
+
+    public function aiReportView(array $params = []): void
+    {
+        Auth::require();
+
+        $id = (int)($params['id'] ?? 0);
+        $report = $id > 0 ? CveDatabase::fetchOne("SELECT * FROM cve_ai_reports WHERE id = ?", [$id]) : null;
+        if ($report === null) {
+            http_response_code(404);
+        }
+
+        echo $this->page('ai_report', [
+            'report'   => $report,
+            'profiles' => llm_profile_list(),
+        ]);
+    }
+
+    public function aiReportTxt(array $params = []): void
+    {
+        Auth::require();
+
+        $id = (int)($params['id'] ?? 0);
+        $report = $id > 0
+            ? CveDatabase::fetchOne("SELECT id, title, content_text FROM cve_ai_reports WHERE id = ?", [$id])
+            : null;
+        if ($report === null || trim((string)($report['content_text'] ?? '')) === '') {
+            http_response_code(404);
+            echo 'Informe no disponible.';
+            return;
+        }
+
+        $filename = 'informe-cve-ia-' . $id . '-' . date('Ymd-His') . '.txt';
+        header('Content-Type: text/plain; charset=utf-8');
+        header('Content-Disposition: attachment; filename="' . $filename . '"');
+        header('Cache-Control: no-store, no-cache, must-revalidate');
+
+        echo "\xEF\xBB\xBF" . (string)$report['content_text'];
+        exit;
+    }
+
+    /**
+     * Encola un informe IA y lanza el worker (o lo procesa en línea si el
+     * hosting no permite loopback).
+     */
+    private function queueAiReport(array $cveIds, int $profileId): array
+    {
+        $token = bin2hex(random_bytes(24));
+        $title = 'Informe CVE IA · '
+            . (count($cveIds) === 1 ? $cveIds[0] : count($cveIds) . ' CVEs')
+            . ' · ' . date('d/m/Y H:i');
+
+        $id = CveDatabase::insert(
+            "INSERT INTO cve_ai_reports (cve_ids, title, status, token, ai_profile_id, generated_by)
+             VALUES (?, ?, 'pending', ?, ?, ?)",
+            [
+                $this->encodeJson($cveIds),
+                $title,
+                $token,
+                $profileId > 0 ? $profileId : null,
+                Auth::id(),
+            ]
+        );
+
+        $base = CveReportAi::baseUrl();
+        $launched = $base !== '' && background_request($base . '/cve-worker.php?ai_token=' . rawurlencode($token));
+
+        if (!$launched) {
+            @set_time_limit(0);
+            CveReportAi::runPending($token);
+        }
+
+        return [
+            'success'   => true,
+            'report_id' => $id,
+            'status'    => 'pending',
+            'launched'  => $launched,
+            'url'       => base_url('modules/cve/report-ai/' . $id),
+        ];
+    }
+
+    private function listAiReports(int $limit = 30): array
+    {
+        $limit = max(1, min(200, $limit));
+        return CveDatabase::fetchAll(
+            "SELECT id, cve_ids, title, status, ai_model, ai_error, created_at, finished_at
+             FROM cve_ai_reports
+             ORDER BY created_at DESC, id DESC
+             LIMIT ?",
+            [$limit]
+        );
     }
 
     private function createReport(array $input, ?int $generatedBy = null): array

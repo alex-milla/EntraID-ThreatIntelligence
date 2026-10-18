@@ -193,8 +193,28 @@ class CveDatabase
             generated_at TEXT NOT NULL DEFAULT (datetime('now'))
         )");
 
+        // v0.2.7.10: informes de CVE generados con IA (formato SploitScan).
+        $db->exec("CREATE TABLE IF NOT EXISTS cve_ai_reports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cve_ids TEXT NOT NULL,
+            title TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            data_json TEXT,
+            content_text TEXT,
+            ai_profile_id INTEGER,
+            ai_model TEXT,
+            ai_error TEXT,
+            ai_duration_ms INTEGER,
+            token TEXT,
+            generated_by INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            finished_at TEXT
+        )");
+
         $db->exec("CREATE INDEX IF NOT EXISTS idx_cve_catalog_severity ON cve_catalog(severity)");
         $db->exec("CREATE INDEX IF NOT EXISTS idx_cve_reports_generated ON cve_reports(generated_at DESC)");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_cve_ai_reports_created ON cve_ai_reports(created_at DESC)");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_cve_ai_reports_token ON cve_ai_reports(token)");
         $db->exec("CREATE INDEX IF NOT EXISTS idx_cve_catalog_published ON cve_catalog(published_at DESC)");
         $db->exec("CREATE INDEX IF NOT EXISTS idx_cve_catalog_cvss ON cve_catalog(cvss_v3_score DESC)");
         $db->exec("CREATE INDEX IF NOT EXISTS idx_cve_product_vendor ON cve_product(vendor, product)");
