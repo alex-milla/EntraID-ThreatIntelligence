@@ -82,11 +82,21 @@ foreach ($flashData as $type => $msg):
 
 <?php require __DIR__ . '/_tabs.php'; ?>
 <?php
-// Grupos asignables (se excluye la categoría raíz «Empresas»).
-$assignableGroups = array_values(array_filter(
-    is_array($groups ?? null) ? $groups : [],
-    static fn(array $g): bool => (string)($g['kind'] ?? 'application') !== 'root'
+// Empresas y grupos de aplicaciones son dos listas independientes.
+$allGroups = is_array($groups ?? null) ? $groups : [];
+$companyGroups = array_values(array_filter(
+    $allGroups,
+    static fn(array $g): bool => (string)($g['kind'] ?? '') === 'company'
 ));
+$applicationGroups = array_values(array_filter(
+    $allGroups,
+    static fn(array $g): bool => (string)($g['kind'] ?? 'application') !== 'company'
+        && (string)($g['kind'] ?? 'application') !== 'root'
+));
+$companyNamesById = [];
+foreach ($companyGroups as $companyRow) {
+    $companyNamesById[(int)$companyRow['id']] = (string)$companyRow['name'];
+}
 ?>
 
 <?php if (!empty($dbError)): ?>
@@ -234,14 +244,25 @@ $assignableGroups = array_values(array_filter(
                        class="w-40 px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
                 <select name="group"
                         class="px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
-                    <option value="0">Todas las empresas/grupos</option>
-                    <?php foreach ($groups as $g): ?>
-                        <?php $filterKind = (string)($g['kind'] ?? 'application'); ?>
-                        <option value="<?= (int)$g['id'] ?>" <?= (int)($catalogFilters['group'] ?? 0) === (int)$g['id'] ? 'selected' : '' ?>>
-                            <?= str_repeat('— ', (int)$g['depth']) . e($g['name']) ?>
-                            <?= $filterKind === 'root' ? ' (categoría)' : ($filterKind === 'company' ? ' (empresa)' : '') ?>
-                        </option>
-                    <?php endforeach; ?>
+                    <option value="0">Todas las empresas y grupos</option>
+                    <?php if ($companyGroups !== []): ?>
+                        <optgroup label="Empresas">
+                            <?php foreach ($companyGroups as $g): ?>
+                                <option value="<?= (int)$g['id'] ?>" <?= (int)($catalogFilters['group'] ?? 0) === (int)$g['id'] ? 'selected' : '' ?>>
+                                    <?= e($g['name']) ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </optgroup>
+                    <?php endif; ?>
+                    <?php if ($applicationGroups !== []): ?>
+                        <optgroup label="Grupos de aplicaciones">
+                            <?php foreach ($applicationGroups as $g): ?>
+                                <option value="<?= (int)$g['id'] ?>" <?= (int)($catalogFilters['group'] ?? 0) === (int)$g['id'] ? 'selected' : '' ?>>
+                                    <?= str_repeat('— ', (int)$g['depth']) . e($g['name']) ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </optgroup>
+                    <?php endif; ?>
                 </select>
                 <select name="software_id"
                         class="px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none max-w-[220px]">
@@ -395,10 +416,16 @@ $assignableGroups = array_values(array_filter(
                                     <?php endif; ?>
                                 </td>
                                 <td class="px-4 py-3 text-xs text-gray-500 max-w-[180px]">
-                                    <?php $matchedCompanies = (string)($cve['matched_companies'] ?? ''); ?>
+                                    <?php
+                                    $matchedCompanies = (string)($cve['matched_companies'] ?? '');
+                                    $matchedGroups = (string)($cve['matched_groups'] ?? '');
+                                    ?>
                                     <?= e(truncate((string)($cve['matched_software'] ?? ''), 60)) ?: '—' ?>
                                     <?php if ($matchedCompanies !== ''): ?>
                                         <p class="text-[10px] text-gray-400 mt-0.5">Empresas: <?= e(truncate($matchedCompanies, 60)) ?></p>
+                                    <?php endif; ?>
+                                    <?php if ($matchedGroups !== ''): ?>
+                                        <p class="text-[10px] text-gray-400 mt-0.5">Grupos: <?= e(truncate($matchedGroups, 60)) ?></p>
                                     <?php endif; ?>
                                 </td>
                                 <td class="px-4 py-3 text-xs text-gray-500 whitespace-nowrap"><?= e(format_date($cve['published_at'] ?? null, 'd/m/Y')) ?></td>
@@ -946,7 +973,7 @@ $aiStatusText = [
                    placeholder="Buscar por CVE o título…"
                    class="mt-2 w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
             <?php if ($isAdmin): ?>
-                <div class="mt-2 flex items-center gap-2 text-[11px]">
+                <div class="mt-2 flex items-center gap-2 text-[11px] flex-wrap">
                     <label class="inline-flex items-center gap-1.5 text-gray-500 dark:text-gray-400 cursor-pointer">
                         <input id="ai-reports-select-all" type="checkbox"
                                class="rounded border-gray-300 text-brand-500 focus:ring-brand-500"
@@ -954,8 +981,12 @@ $aiStatusText = [
                         Todos
                     </label>
                     <span id="ai-reports-selected-count" class="text-gray-500 dark:text-gray-400"></span>
+                    <button type="button" id="ai-reports-bulk-group" onclick="cveAiBulkGroupOpen()"
+                            class="hidden ml-auto px-2 py-1 rounded border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 font-medium hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">
+                        Enviar a grupo
+                    </button>
                     <button type="button" id="ai-reports-bulk-delete" onclick="cveAiBulkDelete()"
-                            class="hidden ml-auto px-2 py-1 rounded border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 font-medium hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">
+                            class="hidden px-2 py-1 rounded border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 font-medium hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">
                         Eliminar
                     </button>
                 </div>
@@ -1015,7 +1046,10 @@ $aiStatusText = [
                                 <span class="text-[10px] font-semibold text-gray-500 shrink-0">v<?= (int)$aiRow['revision'] ?></span>
                             <?php endif; ?>
                             <?php if (!empty($aiRow['group_name'])): ?>
-                                <span class="text-[10px] text-gray-400 truncate">· <?= e((string)$aiRow['group_name']) ?></span>
+                                <span class="text-[10px] text-gray-400 truncate">
+                                    · <?= (string)($aiRow['group_kind'] ?? '') === 'company' ? 'Empresa' : 'Grupo' ?>:
+                                    <?= e((string)$aiRow['group_name']) ?>
+                                </span>
                             <?php endif; ?>
                             <?php if (!empty($aiRow['item_groups'])): ?>
                                 <span class="text-[10px] text-gray-400 truncate">· <?= e((string)$aiRow['item_groups']) ?></span>
@@ -1323,27 +1357,42 @@ $aiStatusText = [
     <div id="ai-group-modal" class="hidden fixed inset-0 z-50 no-print">
         <div class="absolute inset-0 bg-black/40" onclick="cveAiAssignClose()"></div>
         <div class="relative mx-auto mt-24 w-[calc(100%-2rem)] max-w-md bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 shadow-xl p-5">
-            <h3 class="text-sm font-semibold">Enviar informe a un grupo</h3>
-            <p class="text-xs text-gray-500 mt-1">Asigna el informe a un grupo de aplicaciones. Si el grupo no existe, se crea.</p>
+            <h3 class="text-sm font-semibold">Enviar informe a una empresa o grupo</h3>
+            <p class="text-xs text-gray-500 mt-1">Asigna el informe a una empresa o a un grupo de aplicaciones. Si no existe, se crea.</p>
     
             <label class="block mt-4">
-                <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Grupo existente</span>
+                <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Destino existente</span>
                 <select id="ai-group-select"
                         class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
                     <option value="0">— Sin grupo —</option>
-                    <?php foreach ($assignableGroups as $group): ?>
-                        <option value="<?= (int)$group['id'] ?>">
-                            <?= str_repeat('— ', (int)($group['depth'] ?? 0)) . e((string)$group['name']) ?>
-                            <?= (string)($group['kind'] ?? '') === 'company' ? ' (empresa)' : '' ?>
-                        </option>
-                    <?php endforeach; ?>
+                    <?php if ($companyGroups !== []): ?>
+                        <optgroup label="Empresas">
+                            <?php foreach ($companyGroups as $group): ?>
+                                <option value="<?= (int)$group['id'] ?>"><?= e((string)$group['name']) ?></option>
+                            <?php endforeach; ?>
+                        </optgroup>
+                    <?php endif; ?>
+                    <?php if ($applicationGroups !== []): ?>
+                        <optgroup label="Grupos de aplicaciones">
+                            <?php foreach ($applicationGroups as $group): ?>
+                                <option value="<?= (int)$group['id'] ?>"><?= str_repeat('— ', (int)($group['depth'] ?? 0)) . e((string)$group['name']) ?></option>
+                            <?php endforeach; ?>
+                        </optgroup>
+                    <?php endif; ?>
                 </select>
             </label>
     
             <label class="block mt-3">
-                <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">o crear un grupo nuevo</span>
-                <input id="ai-group-new" type="text" maxlength="120" placeholder="Nombre del grupo"
-                       class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">o crear uno nuevo</span>
+                <div class="grid grid-cols-2 gap-2">
+                    <input id="ai-group-new" type="text" maxlength="120" placeholder="Nombre"
+                           class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                    <select id="ai-group-new-kind"
+                            class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                        <option value="application">Grupo de aplicaciones</option>
+                        <option value="company">Empresa</option>
+                    </select>
+                </div>
             </label>
     
             <div class="mt-4 flex items-center justify-end gap-2">
@@ -1413,30 +1462,45 @@ $aiStatusText = [
     <div class="relative mx-auto mt-24 w-[calc(100%-2rem)] max-w-md bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 shadow-xl p-5">
         <div class="flex items-start justify-between gap-3">
             <div>
-                <h3 class="text-sm font-semibold">Enviar CVEs a un grupo</h3>
+                <h3 class="text-sm font-semibold">Enviar CVEs a una empresa o grupo</h3>
                 <p class="text-xs text-gray-500 mt-1" id="ai-items-group-count"></p>
             </div>
             <button type="button" onclick="cveAiItemsGroupClose()" class="text-xs text-gray-400 hover:text-gray-600">Cerrar</button>
         </div>
 
         <label class="block mt-4">
-            <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Grupo existente</span>
+            <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Destino existente</span>
             <select id="ai-items-group-select"
                     class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
                 <option value="0">— Sin grupo —</option>
-                <?php foreach ($assignableGroups as $group): ?>
-                    <option value="<?= (int)$group['id'] ?>">
-                        <?= str_repeat('— ', (int)($group['depth'] ?? 0)) . e((string)$group['name']) ?>
-                        <?= (string)($group['kind'] ?? '') === 'company' ? ' (empresa)' : '' ?>
-                    </option>
-                <?php endforeach; ?>
+                <?php if ($companyGroups !== []): ?>
+                    <optgroup label="Empresas">
+                        <?php foreach ($companyGroups as $group): ?>
+                            <option value="<?= (int)$group['id'] ?>"><?= e((string)$group['name']) ?></option>
+                        <?php endforeach; ?>
+                    </optgroup>
+                <?php endif; ?>
+                <?php if ($applicationGroups !== []): ?>
+                    <optgroup label="Grupos de aplicaciones">
+                        <?php foreach ($applicationGroups as $group): ?>
+                            <option value="<?= (int)$group['id'] ?>"><?= str_repeat('— ', (int)($group['depth'] ?? 0)) . e((string)$group['name']) ?></option>
+                        <?php endforeach; ?>
+                    </optgroup>
+                <?php endif; ?>
             </select>
         </label>
 
         <label class="block mt-3">
-            <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">o crear un grupo nuevo</span>
-            <input id="ai-items-group-new" type="text" maxlength="120" placeholder="Nombre del grupo"
-                   class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+            <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">o crear uno nuevo</span>
+            <div class="grid grid-cols-2 gap-2">
+                <input id="ai-items-group-new" type="text" maxlength="120" placeholder="Nombre"
+                       class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                <select id="ai-items-group-new-kind"
+                        class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                    <option value="application">Grupo de aplicaciones</option>
+                    <option value="company">Empresa</option>
+                </select>
+            </div>
         </label>
 
         <div class="mt-4 flex items-center justify-end gap-2">
@@ -1445,6 +1509,71 @@ $aiStatusText = [
                 Cancelar
             </button>
             <button type="button" onclick="cveAiItemsGroupSubmit(this)"
+                    class="px-3 py-1.5 bg-brand-500 hover:bg-brand-600 text-white text-xs font-semibold rounded-lg">
+                Enviar
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: enviar informes seleccionados a empresa/grupo -->
+<div id="ai-reports-group-modal" class="hidden fixed inset-0 z-50 no-print">
+    <div class="absolute inset-0 bg-black/40" onclick="cveAiBulkGroupClose()"></div>
+    <div class="relative mx-auto mt-24 w-[calc(100%-2rem)] max-w-md bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 shadow-xl p-5">
+        <div class="flex items-start justify-between gap-3">
+            <div>
+                <h3 class="text-sm font-semibold">Enviar informes a una empresa o grupo</h3>
+                <p class="text-xs text-gray-500 mt-1" id="ai-reports-group-count"></p>
+            </div>
+            <button type="button" onclick="cveAiBulkGroupClose()" class="text-xs text-gray-400 hover:text-gray-600">Cerrar</button>
+        </div>
+
+        <p class="mt-3 px-3 py-2 rounded-lg bg-amber-50 dark:bg-amber-900/20 text-[11px] text-amber-700 dark:text-amber-300">
+            Se asignarán todos los CVEs de los informes seleccionados, incluidos los que ya tuvieran otro grupo.
+            Los informes en curso se omitirán.
+        </p>
+
+        <label class="block mt-3">
+            <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Destino existente</span>
+            <select id="ai-reports-group-select"
+                    class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                <option value="0">— Sin grupo —</option>
+                <?php if ($companyGroups !== []): ?>
+                    <optgroup label="Empresas">
+                        <?php foreach ($companyGroups as $group): ?>
+                            <option value="<?= (int)$group['id'] ?>"><?= e((string)$group['name']) ?></option>
+                        <?php endforeach; ?>
+                    </optgroup>
+                <?php endif; ?>
+                <?php if ($applicationGroups !== []): ?>
+                    <optgroup label="Grupos de aplicaciones">
+                        <?php foreach ($applicationGroups as $group): ?>
+                            <option value="<?= (int)$group['id'] ?>"><?= str_repeat('— ', (int)($group['depth'] ?? 0)) . e((string)$group['name']) ?></option>
+                        <?php endforeach; ?>
+                    </optgroup>
+                <?php endif; ?>
+            </select>
+        </label>
+
+        <label class="block mt-3">
+            <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">o crear uno nuevo</span>
+            <div class="grid grid-cols-2 gap-2">
+                <input id="ai-reports-group-new" type="text" maxlength="120" placeholder="Nombre"
+                       class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                <select id="ai-reports-group-new-kind"
+                        class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                    <option value="application">Grupo de aplicaciones</option>
+                    <option value="company">Empresa</option>
+                </select>
+            </div>
+        </label>
+
+        <div class="mt-4 flex items-center justify-end gap-2">
+            <button type="button" onclick="cveAiBulkGroupClose()"
+                    class="px-3 py-1.5 border border-gray-300 dark:border-gray-600 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark">
+                Cancelar
+            </button>
+            <button type="button" onclick="cveAiBulkGroupSubmit(this)"
                     class="px-3 py-1.5 bg-brand-500 hover:bg-brand-600 text-white text-xs font-semibold rounded-lg">
                 Enviar
             </button>
@@ -1485,9 +1614,20 @@ $aiStatusText = [
                     <select id="report-group" disabled
                             class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none disabled:opacity-50">
                         <option value="0">—</option>
-                        <?php foreach ($groups as $g): ?>
-                            <option value="<?= (int)$g['id'] ?>"><?= str_repeat('— ', (int)$g['depth']) . e($g['name']) ?></option>
-                        <?php endforeach; ?>
+                        <?php if ($companyGroups !== []): ?>
+                            <optgroup label="Empresas">
+                                <?php foreach ($companyGroups as $g): ?>
+                                    <option value="<?= (int)$g['id'] ?>"><?= e($g['name']) ?></option>
+                                <?php endforeach; ?>
+                            </optgroup>
+                        <?php endif; ?>
+                        <?php if ($applicationGroups !== []): ?>
+                            <optgroup label="Grupos de aplicaciones">
+                                <?php foreach ($applicationGroups as $g): ?>
+                                    <option value="<?= (int)$g['id'] ?>"><?= str_repeat('— ', (int)$g['depth']) . e($g['name']) ?></option>
+                                <?php endforeach; ?>
+                            </optgroup>
+                        <?php endif; ?>
                     </select>
                 </label>
                 <label class="block">
@@ -1655,6 +1795,7 @@ $aiStatusText = [
     var CANCEL_URL = <?= json_encode(base_url('modules/cve/reports/ai-cancel')) ?>;
     var DELETE_URL = <?= json_encode(base_url('modules/cve/reports/ai-delete')) ?>;
     var BULK_DELETE_URL = <?= json_encode(base_url('modules/cve/reports/ai-delete-bulk')) ?>;
+    var BULK_GROUP_URL = <?= json_encode(base_url('modules/cve/reports/ai-assign-bulk')) ?>;
     var STATUS_URL = <?= json_encode(base_url('modules/cve/reports/ai-status')) ?>;
     var REFRESH_URL = <?= json_encode(base_url('modules/cve/reports/ai-refresh')) ?>;
     var ASSIGN_URL  = <?= json_encode(base_url('modules/cve/reports/ai-assign')) ?>;
@@ -1671,6 +1812,7 @@ $aiStatusText = [
     var list = document.getElementById('ai-report-list');
     var reportsSelectAll = document.getElementById('ai-reports-select-all');
     var reportsSelectedCount = document.getElementById('ai-reports-selected-count');
+    var reportsBulkGroup = document.getElementById('ai-reports-bulk-group');
     var reportsBulkDelete = document.getElementById('ai-reports-bulk-delete');
     var newForm = document.getElementById('ai-new-form');
     var printBtn = document.getElementById('ai-print-btn');
@@ -2217,6 +2359,12 @@ $aiStatusText = [
                 ? ids.length + (ids.length === 1 ? ' seleccionado' : ' seleccionados')
                 : '';
         }
+        if (reportsBulkGroup) {
+            reportsBulkGroup.classList.toggle('hidden', ids.length === 0);
+            reportsBulkGroup.textContent = ids.length > 0
+                ? 'Enviar a grupo (' + ids.length + ')'
+                : 'Enviar a grupo';
+        }
         if (reportsBulkDelete) {
             reportsBulkDelete.classList.toggle('hidden', ids.length === 0);
             reportsBulkDelete.textContent = ids.length > 0 ? 'Eliminar (' + ids.length + ')' : 'Eliminar';
@@ -2258,6 +2406,78 @@ $aiStatusText = [
                     reportsBulkDelete.disabled = false;
                 }
             });
+        });
+    };
+
+    window.cveAiBulkGroupOpen = function () {
+        var ids = reportSelectedIds();
+        if (ids.length === 0) {
+            appAlert('Selecciona al menos un informe.', { title: 'Sin selección' });
+            return;
+        }
+        var modal = document.getElementById('ai-reports-group-modal');
+        var count = document.getElementById('ai-reports-group-count');
+        var select = document.getElementById('ai-reports-group-select');
+        var input = document.getElementById('ai-reports-group-new');
+        var kind = document.getElementById('ai-reports-group-new-kind');
+        if (!modal) {
+            return;
+        }
+        if (count) {
+            count.textContent = ids.length + (ids.length === 1 ? ' informe seleccionado' : ' informes seleccionados');
+        }
+        if (select) { select.value = '0'; }
+        if (input) { input.value = ''; }
+        if (kind) { kind.value = 'application'; }
+        modal.classList.remove('hidden');
+    };
+
+    window.cveAiBulkGroupClose = function () {
+        var modal = document.getElementById('ai-reports-group-modal');
+        if (modal) {
+            modal.classList.add('hidden');
+        }
+    };
+
+    window.cveAiBulkGroupSubmit = function (button) {
+        var ids = reportSelectedIds();
+        if (ids.length === 0) {
+            appAlert('Selecciona al menos un informe.', { title: 'Sin selección' });
+            return;
+        }
+        var select = document.getElementById('ai-reports-group-select');
+        var input = document.getElementById('ai-reports-group-new');
+        var kind = document.getElementById('ai-reports-group-new-kind');
+        if (button) {
+            button.disabled = true;
+        }
+        postJson(BULK_GROUP_URL, {
+            ids: ids,
+            group_id: select ? select.value : 0,
+            new_group: input ? input.value.trim() : '',
+            new_group_kind: kind ? kind.value : 'application'
+        }).then(function (res) {
+            if (!res || !res.success) {
+                appAlert((res && res.error) ? res.error : 'No se pudieron asignar los informes.', { title: 'No se pudo asignar' });
+                if (button) {
+                    button.disabled = false;
+                }
+                return;
+            }
+            window.cveAiBulkGroupClose();
+            var message = 'Informes actualizados: ' + (res.reports || 0)
+                + ' · CVEs asignados: ' + (res.items || 0) + '.';
+            if (res.skipped && res.skipped.length) {
+                message += ' Se omitieron ' + res.skipped.length + ' informe(s) en curso.';
+            }
+            appAlert(message, { title: 'Grupo asignado' }).then(function () {
+                window.location.reload();
+            });
+        }).catch(function (err) {
+            appAlert('No se pudieron asignar: ' + errorText(err), { title: 'No se pudo asignar' });
+            if (button) {
+                button.disabled = false;
+            }
         });
     };
 
@@ -2363,9 +2583,11 @@ $aiStatusText = [
             }
             var select = document.getElementById('ai-group-select');
             var input = document.getElementById('ai-group-new');
+            var kind = document.getElementById('ai-group-new-kind');
             var payload = {
                 group_id: select ? select.value : 0,
-                new_group: input ? input.value.trim() : ''
+                new_group: input ? input.value.trim() : '',
+                new_group_kind: kind ? kind.value : 'application'
             };
             if (button) {
                 button.disabled = true;
@@ -2587,6 +2809,7 @@ $aiStatusText = [
         var ids = selectedItemIds();
         var select = document.getElementById('ai-items-group-select');
         var input = document.getElementById('ai-items-group-new');
+        var kind = document.getElementById('ai-items-group-new-kind');
         if (!ids.length) {
             appAlert('Selecciona al menos un CVE.', { title: 'Sin selección' });
             return;
@@ -2598,7 +2821,8 @@ $aiStatusText = [
             report_id: state.id,
             item_ids: ids,
             group_id: select ? select.value : 0,
-            new_group: input ? input.value.trim() : ''
+            new_group: input ? input.value.trim() : '',
+            new_group_kind: kind ? kind.value : 'application'
         }).then(function (res) {
             if (!res || !res.success) {
                 appAlert((res && res.error) ? res.error : 'No se pudo asignar el grupo.', { title: 'No se pudo asignar' });
@@ -2997,10 +3221,14 @@ syncCveReportPeriod();
 <?php endif; ?>
 <?php else: ?>
 
-    <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-6">
+    <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-3 mb-6">
         <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-4">
-            <p class="text-xs text-gray-500">Empresas/grupos</p>
-            <p class="text-2xl font-bold mt-1"><?= number_format((int)($stats['groups'] ?? 0)) ?></p>
+            <p class="text-xs text-gray-500">Empresas</p>
+            <p class="text-2xl font-bold mt-1"><?= number_format((int)($stats['companies'] ?? 0)) ?></p>
+        </div>
+        <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-4">
+            <p class="text-xs text-gray-500">Grupos de aplicaciones</p>
+            <p class="text-2xl font-bold mt-1"><?= number_format((int)($stats['application_groups'] ?? 0)) ?></p>
         </div>
         <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-4">
             <p class="text-xs text-gray-500">Software</p>
@@ -3025,26 +3253,15 @@ syncCveReportPeriod();
     </div>
 
     <?php
-    $rootGroupId = 0;
-    $firstCompanyId = 0;
-    $selectedCompanyId = 0;
+    $selectedGroupIsApplication = false;
     foreach ($groups as $groupRow) {
-        $groupKind = (string)($groupRow['kind'] ?? 'application');
-        if ($rootGroupId === 0 && $groupKind === 'root') {
-            $rootGroupId = (int)$groupRow['id'];
-        }
-        if ($firstCompanyId === 0 && $groupKind === 'company') {
-            $firstCompanyId = (int)$groupRow['id'];
-        }
-        if ((int)$groupRow['id'] === $selectedGroup) {
-            if ($groupKind === 'company') {
-                $selectedCompanyId = (int)$groupRow['id'];
-            } elseif (!empty($groupRow['company_id'])) {
-                $selectedCompanyId = (int)$groupRow['company_id'];
-            }
+        if ((int)$groupRow['id'] === $selectedGroup
+            && (string)($groupRow['kind'] ?? 'application') === 'application') {
+            $selectedGroupIsApplication = true;
+            break;
         }
     }
-    $newGroupParentId = $selectedCompanyId > 0 ? $selectedCompanyId : $firstCompanyId;
+    $newGroupParentId = $selectedGroupIsApplication ? $selectedGroup : 0;
     ?>
 
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -3052,52 +3269,85 @@ syncCveReportPeriod();
         <div class="space-y-4">
             <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
                 <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between gap-2 flex-wrap">
-                    <h2 class="text-sm font-semibold">Empresas y grupos de aplicaciones</h2>
+                    <h2 class="text-sm font-semibold">Empresas</h2>
                     <?php if ($isAdmin): ?>
-                        <div class="flex items-center gap-2">
-                            <?php if ($rootGroupId > 0): ?>
-                                <a href="<?= base_url('modules/cve?tab=software&new_group=1&parent=' . $rootGroupId) ?>"
-                                   class="text-xs text-brand-600 dark:text-brand-400 hover:underline">Nueva empresa</a>
-                            <?php endif; ?>
-                            <?php if ($newGroupParentId > 0): ?>
-                                <a href="<?= base_url('modules/cve?tab=software&new_group=1&parent=' . $newGroupParentId) ?>"
-                                   class="text-xs text-gray-500 dark:text-gray-400 hover:underline">Nuevo grupo</a>
-                            <?php endif; ?>
-                        </div>
+                        <a href="<?= base_url('modules/cve?tab=software&new_group=1&kind=company') ?>"
+                           class="text-xs text-brand-600 dark:text-brand-400 hover:underline">Nueva empresa</a>
                     <?php endif; ?>
                 </div>
                 <p class="px-5 pt-3 text-[11px] text-gray-400">
-                    Empresas → Empresa → Grupos de aplicaciones → Software. Los CVEs se asocian según el software inventariado.
+                    Organizaciones a las que puedes asignar software, CVEs e informes. No dependen de ningún grupo.
                 </p>
-                <?php if (empty($groups)): ?>
-                    <p class="px-5 py-6 text-sm text-gray-500">Todavía no hay grupos. Crea uno para organizar tu software.</p>
+                <?php if ($companyGroups === []): ?>
+                    <p class="px-5 py-6 text-sm text-gray-500">Todavía no hay empresas.</p>
                 <?php else: ?>
                     <div class="py-2">
-                        <?php foreach ($groups as $g): ?>
-                            <?php
-                            $gKind = (string)($g['kind'] ?? 'application');
-                            $gIsRoot = $gKind === 'root';
-                            $gIsCompany = $gKind === 'company';
-                            ?>
+                        <?php foreach ($companyGroups as $g): ?>
                             <div class="group flex items-center gap-2 pr-3 py-1.5 hover:bg-gray-50 dark:hover:bg-gray-800/50"
-                                 style="padding-left: <?= 12 + ((int)$g['depth'] * 18) ?>px">
-                                <svg class="w-3.5 h-3.5 <?= $gIsRoot ? 'text-brand-500' : ($gIsCompany ? 'text-blue-400' : 'text-gray-400') ?> shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
+                                 style="padding-left: 12px">
+                                <svg class="w-3.5 h-3.5 text-blue-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0H5m14 0h2m-2 0h-4m-4 0H3m6 0v-4a2 2 0 012-2h2a2 2 0 012 2v4M9 7h.01M15 7h.01M9 11h.01M15 11h.01"/></svg>
                                 <a href="<?= base_url('modules/cve?tab=software&group=' . (int)$g['id']) ?>"
                                    class="text-sm truncate <?= $selectedGroup === (int)$g['id'] ? 'font-semibold text-brand-600 dark:text-brand-300' : 'text-gray-700 dark:text-gray-300' ?>">
                                     <?= e($g['name']) ?>
                                 </a>
-                                <?php if ($gIsRoot): ?>
-                                    <span class="px-1.5 py-0.5 rounded bg-brand-50 dark:bg-brand-950 text-brand-600 dark:text-brand-300 text-[9px] font-semibold">Categoría</span>
-                                <?php elseif ($gIsCompany): ?>
-                                    <span class="px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300 text-[9px] font-semibold">Empresa</span>
+                                <span class="text-[10px] text-gray-400"><?= (int)($g['software_count'] ?? 0) ?></span>
+                                <?php if ($isAdmin): ?>
+                                    <span class="ml-auto flex items-center gap-1">
+                                        <a href="<?= base_url('modules/cve?tab=software&edit_group=' . (int)$g['id']) ?>" class="p-1 text-gray-400 hover:text-brand-500" title="Editar empresa">
+                                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                                        </a>
+                                        <form method="POST" action="<?= base_url('modules/cve/groups/delete') ?>" class="inline" data-confirm="¿Eliminar la empresa «<?= e($g['name']) ?>»? Sus grupos se conservarán sin empresa." data-confirm-danger>
+                                            <?= Csrf::field() ?>
+                                            <input type="hidden" name="id" value="<?= (int)$g['id'] ?>">
+                                            <button type="submit" class="p-1 text-gray-400 hover:text-red-500" title="Eliminar">
+                                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                                            </button>
+                                        </form>
+                                    </span>
+                                <?php endif; ?>
+                            </div>
+                        <?php endforeach; ?>
+                    </div>
+                <?php endif; ?>
+            </div>
+
+            <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
+                <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between gap-2 flex-wrap">
+                    <h2 class="text-sm font-semibold">Grupos de aplicaciones</h2>
+                    <?php if ($isAdmin): ?>
+                        <a href="<?= base_url('modules/cve?tab=software&new_group=1&kind=application' . ($newGroupParentId > 0 ? '&parent=' . $newGroupParentId : '')) ?>"
+                           class="text-xs text-brand-600 dark:text-brand-400 hover:underline">Nuevo grupo</a>
+                    <?php endif; ?>
+                </div>
+                <p class="px-5 pt-3 text-[11px] text-gray-400">
+                    Agrupaciones de software independientes. Pueden vincularse opcionalmente a una empresa.
+                </p>
+                <?php if ($applicationGroups === []): ?>
+                    <p class="px-5 py-6 text-sm text-gray-500">Todavía no hay grupos de aplicaciones.</p>
+                <?php else: ?>
+                    <div class="py-2">
+                        <?php foreach ($applicationGroups as $g): ?>
+                            <?php
+                            $gCompanyId = (int)($g['company_id'] ?? 0);
+                            $gCompanyName = $companyNamesById[$gCompanyId] ?? '';
+                            ?>
+                            <div class="group flex items-center gap-2 pr-3 py-1.5 hover:bg-gray-50 dark:hover:bg-gray-800/50"
+                                 style="padding-left: <?= 12 + ((int)$g['depth'] * 18) ?>px">
+                                <svg class="w-3.5 h-3.5 text-gray-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
+                                <a href="<?= base_url('modules/cve?tab=software&group=' . (int)$g['id']) ?>"
+                                   class="text-sm truncate <?= $selectedGroup === (int)$g['id'] ? 'font-semibold text-brand-600 dark:text-brand-300' : 'text-gray-700 dark:text-gray-300' ?>">
+                                    <?= e($g['name']) ?>
+                                </a>
+                                <?php if ($gCompanyName !== ''): ?>
+                                    <span class="px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 text-[9px] font-medium truncate max-w-[120px]" title="Empresa vinculada"><?= e($gCompanyName) ?></span>
                                 <?php endif; ?>
                                 <span class="text-[10px] text-gray-400"><?= (int)($g['software_count'] ?? 0) ?></span>
-                                <?php if ($isAdmin && !$gIsRoot): ?>
+                                <?php if ($isAdmin): ?>
                                     <span class="ml-auto flex items-center gap-1">
                                         <a href="<?= base_url('modules/cve?tab=software&edit_group=' . (int)$g['id']) ?>" class="p-1 text-gray-400 hover:text-brand-500" title="Editar grupo">
                                             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
                                         </a>
-                                        <form method="POST" action="<?= base_url('modules/cve/groups/delete') ?>" class="inline" data-confirm="¿Eliminar <?= $gIsCompany ? 'la empresa' : 'el grupo' ?> «<?= e($g['name']) ?>»? El software quedará sin grupo." data-confirm-danger>
+                                        <form method="POST" action="<?= base_url('modules/cve/groups/delete') ?>" class="inline" data-confirm="¿Eliminar el grupo «<?= e($g['name']) ?>»? El software quedará sin grupo." data-confirm-danger>
                                             <?= Csrf::field() ?>
                                             <input type="hidden" name="id" value="<?= (int)$g['id'] ?>">
                                             <button type="submit" class="p-1 text-gray-400 hover:text-red-500" title="Eliminar">
@@ -3113,33 +3363,72 @@ syncCveReportPeriod();
             </div>
 
             <?php if ($showGroupForm): ?>
+                <?php
+                $grKind = (string)($gr['kind'] ?? 'application');
+                if (!in_array($grKind, ['company', 'application'], true)) {
+                    $grKind = 'application';
+                }
+                $grCompanyId = (int)($gr['company_id'] ?? 0);
+                $grIsCompany = $grKind === 'company';
+                ?>
                 <form method="POST" action="<?= base_url('modules/cve/groups/save') ?>"
                       class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-5 space-y-3">
                     <?= Csrf::field() ?>
                     <input type="hidden" name="id" value="<?= $grId ?>">
                     <div class="flex items-center justify-between">
-                        <h2 class="text-sm font-semibold"><?= $grId ? 'Editar empresa/grupo' : 'Nueva empresa o grupo' ?></h2>
+                        <h2 class="text-sm font-semibold">
+                            <?= $grId
+                                ? ($grIsCompany ? 'Editar empresa' : 'Editar grupo de aplicaciones')
+                                : ($grIsCompany ? 'Nueva empresa' : 'Nuevo grupo de aplicaciones') ?>
+                        </h2>
                         <a href="<?= base_url('modules/cve?tab=software') ?>" class="text-xs text-gray-400 hover:underline">Cancelar</a>
                     </div>
                     <p class="text-[11px] text-gray-400">
-                        Para crear una empresa, elige «Empresas» como padre. Para un grupo de aplicaciones, elige una empresa.
+                        <?= $grIsCompany
+                            ? 'Las empresas son independientes de los grupos de aplicaciones.'
+                            : 'Los grupos de aplicaciones no dependen de una empresa; puedes vincularlos opcionalmente.' ?>
                     </p>
+                    <div>
+                        <label class="block text-xs text-gray-500 mb-1">Tipo</label>
+                        <?php if ($grId): ?>
+                            <input type="hidden" name="kind" value="<?= e($grKind) ?>">
+                            <p class="px-3 py-2 rounded-lg bg-gray-50 dark:bg-gray-800 text-sm text-gray-600 dark:text-gray-300">
+                                <?= $grIsCompany ? 'Empresa' : 'Grupo de aplicaciones' ?>
+                            </p>
+                        <?php else: ?>
+                            <select name="kind" id="cve-group-kind" onchange="cveGroupKindChanged()"
+                                    class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+                                <option value="company" <?= $grIsCompany ? 'selected' : '' ?>>Empresa</option>
+                                <option value="application" <?= $grIsCompany ? '' : 'selected' ?>>Grupo de aplicaciones</option>
+                            </select>
+                        <?php endif; ?>
+                    </div>
                     <div>
                         <label class="block text-xs text-gray-500 mb-1">Nombre</label>
                         <input type="text" name="name" required maxlength="120" value="<?= e($gr['name'] ?? '') ?>"
                                class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
                     </div>
-                    <div>
-                        <label class="block text-xs text-gray-500 mb-1">Dentro de</label>
+                    <div id="cve-group-company-wrap" class="<?= $grIsCompany ? 'hidden' : '' ?>">
+                        <label class="block text-xs text-gray-500 mb-1">Empresa vinculada (opcional)</label>
+                        <select name="company_id"
+                                class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+                            <option value="0">— Sin empresa —</option>
+                            <?php foreach ($companyGroups as $company): ?>
+                                <option value="<?= (int)$company['id'] ?>" <?= $grCompanyId === (int)$company['id'] ? 'selected' : '' ?>>
+                                    <?= e($company['name']) ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <div id="cve-group-parent-wrap" class="<?= $grIsCompany ? 'hidden' : '' ?>">
+                        <label class="block text-xs text-gray-500 mb-1">Dentro de (grupo de aplicaciones)</label>
                         <select name="parent_id"
                                 class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
-                            <option value="0">— Raíz (grupo suelto) —</option>
-                            <?php foreach ($groups as $g): ?>
+                            <option value="0">— Sin grupo padre —</option>
+                            <?php foreach ($applicationGroups as $g): ?>
                                 <?php if ((int)$g['id'] === $grId) continue; ?>
-                                <?php $optKind = (string)($g['kind'] ?? 'application'); ?>
                                 <option value="<?= (int)$g['id'] ?>" <?= (int)($gr['parent_id'] ?? 0) === (int)$g['id'] ? 'selected' : '' ?>>
                                     <?= str_repeat('— ', (int)$g['depth']) . e($g['name']) ?>
-                                    <?= $optKind === 'root' ? ' (categoría)' : ($optKind === 'company' ? ' (empresa)' : '') ?>
                                 </option>
                             <?php endforeach; ?>
                         </select>
@@ -3150,9 +3439,27 @@ syncCveReportPeriod();
                                class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
                     </div>
                     <button type="submit" class="w-full px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors">
-                        Guardar grupo
+                        <?= $grIsCompany ? 'Guardar empresa' : 'Guardar grupo' ?>
                     </button>
                 </form>
+                <?php if (!$grId): ?>
+                <script>
+                function cveGroupKindChanged() {
+                    var kind = document.getElementById('cve-group-kind');
+                    var isCompany = kind && kind.value === 'company';
+                    var companyWrap = document.getElementById('cve-group-company-wrap');
+                    var parentWrap = document.getElementById('cve-group-parent-wrap');
+                    if (companyWrap) { companyWrap.classList.toggle('hidden', isCompany); }
+                    if (parentWrap) { parentWrap.classList.toggle('hidden', isCompany); }
+                    if (isCompany) {
+                        var company = companyWrap ? companyWrap.querySelector('select') : null;
+                        var parent = parentWrap ? parentWrap.querySelector('select') : null;
+                        if (company) { company.value = '0'; }
+                        if (parent) { parent.value = '0'; }
+                    }
+                }
+                </script>
+                <?php endif; ?>
             <?php endif; ?>
         </div>
 
@@ -3166,12 +3473,25 @@ syncCveReportPeriod();
                             <input type="hidden" name="tab" value="software">
                             <select name="group" onchange="this.form.submit()"
                                     class="px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
-                                <option value="0">Todos los grupos</option>
-                                <?php foreach ($groups as $g): ?>
-                                    <option value="<?= (int)$g['id'] ?>" <?= $selectedGroup === (int)$g['id'] ? 'selected' : '' ?>>
-                                        <?= str_repeat('— ', (int)$g['depth']) . e($g['name']) ?>
-                                    </option>
-                                <?php endforeach; ?>
+                                <option value="0">Todas las empresas y grupos</option>
+                                <?php if ($companyGroups !== []): ?>
+                                    <optgroup label="Empresas">
+                                        <?php foreach ($companyGroups as $g): ?>
+                                            <option value="<?= (int)$g['id'] ?>" <?= $selectedGroup === (int)$g['id'] ? 'selected' : '' ?>>
+                                                <?= e($g['name']) ?>
+                                            </option>
+                                        <?php endforeach; ?>
+                                    </optgroup>
+                                <?php endif; ?>
+                                <?php if ($applicationGroups !== []): ?>
+                                    <optgroup label="Grupos de aplicaciones">
+                                        <?php foreach ($applicationGroups as $g): ?>
+                                            <option value="<?= (int)$g['id'] ?>" <?= $selectedGroup === (int)$g['id'] ? 'selected' : '' ?>>
+                                                <?= str_repeat('— ', (int)$g['depth']) . e($g['name']) ?>
+                                            </option>
+                                        <?php endforeach; ?>
+                                    </optgroup>
+                                <?php endif; ?>
                             </select>
                             <input type="text" name="q" value="<?= e($q) ?>" placeholder="Buscar software..."
                                    class="w-40 px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
@@ -3311,12 +3631,24 @@ syncCveReportPeriod();
                             <select name="group_id"
                                     class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
                                 <option value="0">— Sin grupo —</option>
-                                <?php foreach ($assignableGroups as $g): ?>
-                                    <option value="<?= (int)$g['id'] ?>" <?= (int)($sw['group_id'] ?? 0) === (int)$g['id'] ? 'selected' : '' ?>>
-                                        <?= str_repeat('— ', (int)$g['depth']) . e($g['name']) ?>
-                                        <?= (string)($g['kind'] ?? '') === 'company' ? ' (empresa)' : '' ?>
-                                    </option>
-                                <?php endforeach; ?>
+                                <?php if ($companyGroups !== []): ?>
+                                    <optgroup label="Empresas">
+                                        <?php foreach ($companyGroups as $g): ?>
+                                            <option value="<?= (int)$g['id'] ?>" <?= (int)($sw['group_id'] ?? 0) === (int)$g['id'] ? 'selected' : '' ?>>
+                                                <?= e($g['name']) ?>
+                                            </option>
+                                        <?php endforeach; ?>
+                                    </optgroup>
+                                <?php endif; ?>
+                                <?php if ($applicationGroups !== []): ?>
+                                    <optgroup label="Grupos de aplicaciones">
+                                        <?php foreach ($applicationGroups as $g): ?>
+                                            <option value="<?= (int)$g['id'] ?>" <?= (int)($sw['group_id'] ?? 0) === (int)$g['id'] ? 'selected' : '' ?>>
+                                                <?= str_repeat('— ', (int)$g['depth']) . e($g['name']) ?>
+                                            </option>
+                                        <?php endforeach; ?>
+                                    </optgroup>
+                                <?php endif; ?>
                             </select>
                         </div>
                         <div>

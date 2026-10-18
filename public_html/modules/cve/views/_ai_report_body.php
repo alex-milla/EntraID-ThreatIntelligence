@@ -239,7 +239,7 @@ $exposureLabel = static function (string $value): string {
                     <span>· generado <?= e(format_db_date((string)($report['created_at'] ?? ''), 'd/m/Y H:i')) ?></span>
                 <?php endif; ?>
                 <?php if (!empty($report['group_name'])): ?>
-                    <span>· grupo: <?= e((string)$report['group_name']) ?></span>
+                    <span>· <?= (string)($report['group_kind'] ?? '') === 'company' ? 'empresa' : 'grupo' ?>: <?= e((string)$report['group_name']) ?></span>
                 <?php endif; ?>
             </div>
         </header>
@@ -305,6 +305,7 @@ $exposureLabel = static function (string $value): string {
                 $itemId = (int)($item['item_id'] ?? 0);
                 $itemTags = is_array($item['tags'] ?? null) ? $item['tags'] : [];
                 $itemGroup = (string)($item['group_name'] ?? '');
+                $itemGroupKind = (string)($item['group_kind'] ?? '');
                 $itemAiStatus = (string)($item['ai_status'] ?? '');
                 $itemSections = is_array($item['ai_sections'] ?? null) ? $item['ai_sections'] : [];
                 $itemAiError = trim((string)($item['ai_error'] ?? ''));
@@ -329,7 +330,7 @@ $exposureLabel = static function (string $value): string {
                                 </span>
                             <?php endforeach; ?>
                             <?php if ($itemGroup !== ''): ?>
-                                <span class="text-[10px] text-gray-500">Grupo: <strong><?= e($itemGroup) ?></strong></span>
+                                <span class="text-[10px] text-gray-500"><?= $itemGroupKind === 'company' ? 'Empresa' : 'Grupo' ?>: <strong><?= e($itemGroup) ?></strong></span>
                             <?php endif; ?>
                         </div>
                     <?php endif; ?>

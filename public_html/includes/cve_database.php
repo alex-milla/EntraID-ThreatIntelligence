@@ -278,7 +278,9 @@ class CveDatabase
             self::rebuildSoftwareWatchlist($db);
         }
 
-        // v0.2.8.5: jerarquía Empresas > Empresa > Grupos de aplicaciones.
+        // v0.2.8.5: tipo y empresa de los grupos.
+        // v0.2.8.6: Empresas y grupos de aplicaciones pasan a ser listas
+        // independientes. company_id queda como vínculo opcional del grupo.
         $groupCols = [];
         foreach ($db->query("PRAGMA table_info(software_groups)") as $col) {
             $groupCols[$col['name']] = true;
@@ -292,28 +294,84 @@ class CveDatabase
         $db->exec("CREATE INDEX IF NOT EXISTS idx_software_group_kind ON software_groups(kind)");
         $db->exec("CREATE INDEX IF NOT EXISTS idx_software_group_company ON software_groups(company_id)");
 
-        // Categoría raíz fija «Empresas». Si ya existe un grupo con ese nombre
-        // en la raíz, se reutiliza como categoría para no duplicarlo.
-        $root = $db->query("SELECT id FROM software_groups WHERE kind = 'root' ORDER BY id LIMIT 1")->fetch();
-        if (!$root) {
-            $existingRoot = $db->query(
-                "SELECT id FROM software_groups
-                 WHERE parent_id IS NULL AND lower(name) = 'empresas'
-                 ORDER BY id LIMIT 1"
-            )->fetch();
-            if ($existingRoot) {
+        // Elimina la antigua categoría raíz «Empresas»: ya no hay jerarquía
+        // obligatoria. Sus hijos pasan a ser elementos de primer nivel.
+        $rootRows = $db->query("SELECT id FROM software_groups WHERE kind = 'root'")->fetchAll();
+        foreach ($rootRows as $rootRow) {
+            $rootId = (int)$rootRow['id'];
+            $db->prepare("UPDATE software_watchlist SET group_id = NULL WHERE group_id = ?")->execute([$rootId]);
+            $db->prepare("UPDATE cve_ai_reports SET group_id = NULL WHERE group_id = ?")->execute([$rootId]);
+            $db->prepare("UPDATE cve_ai_report_items SET group_id = NULL WHERE group_id = ?")->execute([$rootId]);
+            $db->prepare("UPDATE software_groups SET parent_id = NULL WHERE parent_id = ?")->execute([$rootId]);
+            $db->prepare("DELETE FROM software_groups WHERE id = ?")->execute([$rootId]);
+        }
+
+        // Las empresas son una lista plana y sin vínculo a otra empresa.
+        $db->exec(
+            "UPDATE software_groups
+             SET parent_id = NULL, company_id = NULL, updated_at = datetime('now')
+             WHERE kind = 'company'
+               AND (parent_id IS NOT NULL OR company_id IS NOT NULL)"
+        );
+
+        // Los grupos de aplicaciones que colgaban de una empresa se convierten
+        // en grupos independientes y conservan la empresa como vínculo opcional.
+        $appRows = $db->query(
+            "SELECT g.id, g.parent_id, g.company_id, p.kind AS parent_kind, p.company_id AS parent_company_id
+             FROM software_groups g
+             LEFT JOIN software_groups p ON p.id = g.parent_id
+             WHERE g.kind = 'application' AND g.parent_id IS NOT NULL"
+        )->fetchAll();
+        foreach ($appRows as $appRow) {
+            if ((string)($appRow['parent_kind'] ?? '') === 'company') {
+                $companyId = (int)($appRow['company_id'] ?? 0);
+                if ($companyId <= 0) {
+                    $companyId = (int)$appRow['parent_id'];
+                }
                 $db->prepare(
                     "UPDATE software_groups
-                     SET kind = 'root', company_id = NULL, position = -1, updated_at = datetime('now')
+                     SET parent_id = NULL, company_id = ?, updated_at = datetime('now')
                      WHERE id = ?"
-                )->execute([(int)$existingRoot['id']]);
-            } else {
-                $db->exec(
-                    "INSERT INTO software_groups (name, parent_id, position, kind, company_id)
-                     VALUES ('Empresas', NULL, -1, 'root', NULL)"
-                );
+                )->execute([$companyId > 0 ? $companyId : null, (int)$appRow['id']]);
+            } elseif ((string)($appRow['parent_kind'] ?? '') === 'application'
+                && (int)($appRow['company_id'] ?? 0) <= 0
+                && (int)($appRow['parent_company_id'] ?? 0) > 0) {
+                // Hereda el vínculo opcional del grupo padre.
+                $db->prepare(
+                    "UPDATE software_groups
+                     SET company_id = ?, updated_at = datetime('now')
+                     WHERE id = ?"
+                )->execute([(int)$appRow['parent_company_id'], (int)$appRow['id']]);
             }
         }
+
+        // Los subgrupos heredan el vínculo opcional de su grupo padre
+        // (varias pasadas para cadenas de varios niveles).
+        for ($pass = 0; $pass < 20; $pass++) {
+            $inherit = $db->query(
+                "SELECT g.id, p.company_id AS parent_company_id
+                 FROM software_groups g
+                 JOIN software_groups p ON p.id = g.parent_id
+                 WHERE g.kind = 'application'
+                   AND g.company_id IS NULL
+                   AND p.company_id IS NOT NULL"
+            )->fetchAll();
+            if ($inherit === []) {
+                break;
+            }
+            $stmt = $db->prepare(
+                "UPDATE software_groups SET company_id = ?, updated_at = datetime('now') WHERE id = ?"
+            );
+            foreach ($inherit as $row) {
+                $stmt->execute([(int)$row['parent_company_id'], (int)$row['id']]);
+            }
+        }
+
+        // Cualquier tipo desconocido (datos antiguos) queda como grupo.
+        $db->exec(
+            "UPDATE software_groups SET kind = 'application'
+             WHERE kind NOT IN ('company', 'application')"
+        );
 
         // Permitir la misma aplicación/versión en grupos/empresas distintas.
         $hasGroupUnique = false;
