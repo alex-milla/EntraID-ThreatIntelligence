@@ -261,12 +261,41 @@ foreach ($flashData as $type => $msg):
                     <option value="epss" <?= $sortValue === 'epss' ? 'selected' : '' ?>>Mayor EPSS</option>
                     <option value="kev" <?= $sortValue === 'kev' ? 'selected' : '' ?>>KEV primero</option>
                 </select>
-                <button type="submit" class="px-3 py-1.5 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 text-xs font-medium rounded-lg transition-colors">Filtrar</button>
-                <?php if (!empty($catalogFilters['q']) || !empty($catalogFilters['severity']) || !empty($catalogFilters['product']) || !empty($catalogFilters['kev']) || (string)($catalogFilters['epss_min'] ?? '') !== '' || (int)($catalogFilters['group'] ?? 0) > 0 || (int)($catalogFilters['software_id'] ?? 0) > 0 || !empty($catalogFilters['mine']) || (string)($catalogFilters['sort'] ?? 'published') !== 'published'): ?>
+                <label class="block w-full mt-1">
+                    <span class="block text-[10px] font-semibold uppercase tracking-wide text-gray-400 mb-1">
+                        Pegar CVEs (separados por comas, espacios o líneas; máximo 200)
+                    </span>
+                    <textarea name="cves" rows="2" maxlength="6000" placeholder="CVE-2024-38063&#10;CVE-2024-21762, CVE-2023-48795"
+                              class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs font-mono focus:ring-2 focus:ring-brand-500 outline-none"><?= e((string)($catalogFilters['cves'] ?? '')) ?></textarea>
+                    <span class="block text-[10px] text-gray-400 mt-1">Se muestran solo los que estén en el catálogo local y tengan formato CVE-AAAA-NNNN.</span>
+                </label>
+                <button type="submit" class="px-3 py-1.5 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 text-xs font-medium rounded-lg transition-colors">Filtrar / Mostrar</button>
+                <?php if (!empty($catalogFilters['q']) || !empty($catalogFilters['severity']) || !empty($catalogFilters['product']) || !empty($catalogFilters['kev']) || (string)($catalogFilters['epss_min'] ?? '') !== '' || (int)($catalogFilters['group'] ?? 0) > 0 || (int)($catalogFilters['software_id'] ?? 0) > 0 || !empty($catalogFilters['mine']) || (string)($catalogFilters['sort'] ?? 'published') !== 'published' || !empty($catalogFilters['cves'])): ?>
                     <a href="<?= base_url('modules/cve?tab=catalog') ?>" class="text-xs text-gray-400 hover:underline">Limpiar</a>
                 <?php endif; ?>
             </form>
         </div>
+
+        <?php if (($cvesMissing ?? []) !== []): ?>
+            <div class="px-5 py-3 border-b border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 text-xs text-amber-700 dark:text-amber-300">
+                <strong>No están en el catálogo local (<?= count($cvesMissing) ?>):</strong>
+                <span class="font-mono break-all">
+                    <?= e(implode(', ', array_slice($cvesMissing, 0, 20))) ?><?= count($cvesMissing) > 20 ? ' …' : '' ?>
+                </span>
+                <span class="block mt-1 text-[11px] opacity-80">Sincroniza el catálogo NVD para poder mostrarlos y analizarlos.</span>
+            </div>
+        <?php endif; ?>
+
+        <?php if ($isAdmin && $catalog !== []): ?>
+            <div class="px-5 py-2 border-b border-gray-200 dark:border-gray-700 flex items-center gap-3 flex-wrap bg-gray-50 dark:bg-gray-800/40">
+                <span id="catalog-selection-count" class="text-xs font-medium text-gray-600 dark:text-gray-300">0 seleccionados</span>
+                <button type="button" id="catalog-send-ai" onclick="catalogSendToAi()" disabled
+                        class="px-3 py-1.5 bg-brand-500 hover:bg-brand-600 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-medium rounded-lg transition-colors">
+                    Enviar a informe con IA
+                </button>
+                <span class="text-[11px] text-gray-400">Máximo <?= (int)CveReportAi::MAX_CVES ?> CVEs por informe.</span>
+            </div>
+        <?php endif; ?>
 
         <?php if (empty($catalog)): ?>
             <div class="px-5 py-12 text-center">
@@ -282,6 +311,12 @@ foreach ($flashData as $type => $msg):
                 <table class="w-full text-sm">
                     <thead>
                         <tr class="border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-xs text-gray-500 uppercase">
+                            <?php if ($isAdmin): ?>
+                                <th class="text-left px-3 py-2 w-8">
+                                    <input id="catalog-select-all" type="checkbox" title="Seleccionar todos los CVEs de esta página"
+                                           class="rounded border-gray-300 text-brand-500 focus:ring-brand-500">
+                                </th>
+                            <?php endif; ?>
                             <th class="text-left px-4 py-2">CVE</th>
                             <th class="text-left px-4 py-2">Severidad</th>
                             <th class="text-left px-4 py-2">CVSS</th>
@@ -309,6 +344,13 @@ foreach ($flashData as $type => $msg):
                             $extraProducts = max(0, count($products) - 3);
                             ?>
                             <tr class="hover:bg-gray-50 dark:hover:bg-gray-800/50 align-top">
+                                <?php if ($isAdmin): ?>
+                                    <td class="px-3 py-3 align-top">
+                                        <input type="checkbox" class="catalog-cve-check rounded border-gray-300 text-brand-500 focus:ring-brand-500"
+                                               data-cve="<?= e((string)$cve['cve_id']) ?>" value="<?= e((string)$cve['cve_id']) ?>"
+                                               title="Seleccionar <?= e((string)$cve['cve_id']) ?>">
+                                    </td>
+                                <?php endif; ?>
                                 <td class="px-4 py-3 whitespace-nowrap">
                                     <a href="<?= base_url('modules/cve/detail/' . rawurlencode((string)$cve['cve_id'])) ?>" class="font-mono text-xs font-medium text-brand-600 dark:text-brand-400 hover:underline">
                                         <?= e((string)$cve['cve_id']) ?>
@@ -766,6 +808,72 @@ foreach ($flashData as $type => $msg):
     })();
     </script>
     <?php endif; ?>
+
+    <script>
+    (function () {
+        'use strict';
+        var checks = Array.prototype.slice.call(document.querySelectorAll('.catalog-cve-check'));
+        var selectAll = document.getElementById('catalog-select-all');
+        var countEl = document.getElementById('catalog-selection-count');
+        var sendBtn = document.getElementById('catalog-send-ai');
+        var MAX_CVES = <?= (int)CveReportAi::MAX_CVES ?>;
+        var REPORTS_URL = <?= json_encode(base_url('modules/cve?tab=reports')) ?>;
+
+        if (!checks.length) {
+            return;
+        }
+
+        function selectedIds() {
+            return checks.filter(function (checkbox) {
+                return checkbox.checked;
+            }).map(function (checkbox) {
+                return checkbox.dataset.cve || checkbox.value;
+            });
+        }
+
+        function updateSelection() {
+            var ids = selectedIds();
+            if (countEl) {
+                countEl.textContent = ids.length + (ids.length === 1 ? ' seleccionado' : ' seleccionados');
+            }
+            if (sendBtn) {
+                sendBtn.disabled = ids.length === 0;
+            }
+            if (selectAll) {
+                selectAll.checked = ids.length > 0 && ids.length === checks.length;
+                selectAll.indeterminate = ids.length > 0 && ids.length < checks.length;
+            }
+        }
+
+        checks.forEach(function (checkbox) {
+            checkbox.addEventListener('change', updateSelection);
+        });
+
+        if (selectAll) {
+            selectAll.addEventListener('change', function () {
+                checks.forEach(function (checkbox) {
+                    checkbox.checked = selectAll.checked;
+                });
+                updateSelection();
+            });
+        }
+
+        window.catalogSendToAi = function () {
+            var ids = selectedIds();
+            if (ids.length === 0) {
+                return;
+            }
+            if (ids.length > MAX_CVES) {
+                appAlert('Has seleccionado ' + ids.length + ' CVEs. El máximo por informe es ' + MAX_CVES
+                    + '. Reduce la selección o divídelos en varios informes.', { title: 'Demasiados CVEs' });
+                return;
+            }
+            window.location.href = REPORTS_URL + '&new_cves=' + encodeURIComponent(ids.join(','));
+        };
+
+        updateSelection();
+    })();
+    </script>
 <?php elseif ($tab === 'reports'): ?>
 
 <?php
@@ -824,6 +932,21 @@ $aiStatusText = [
             <input id="ai-list-search" type="search" oninput="cveAiFilterList(this.value)"
                    placeholder="Buscar por CVE o título…"
                    class="mt-2 w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+            <?php if ($isAdmin): ?>
+                <div class="mt-2 flex items-center gap-2 text-[11px]">
+                    <label class="inline-flex items-center gap-1.5 text-gray-500 dark:text-gray-400 cursor-pointer">
+                        <input id="ai-reports-select-all" type="checkbox"
+                               class="rounded border-gray-300 text-brand-500 focus:ring-brand-500"
+                               title="Seleccionar todos los informes visibles">
+                        Todos
+                    </label>
+                    <span id="ai-reports-selected-count" class="text-gray-500 dark:text-gray-400"></span>
+                    <button type="button" id="ai-reports-bulk-delete" onclick="cveAiBulkDelete()"
+                            class="hidden ml-auto px-2 py-1 rounded border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 font-medium hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">
+                        Eliminar
+                    </button>
+                </div>
+            <?php endif; ?>
         </div>
 
         <div id="ai-report-list" class="flex-1 overflow-y-auto">
@@ -854,6 +977,11 @@ $aiStatusText = [
                          onclick="cveAiSelect(<?= $aiRowId ?>)"
                          onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); cveAiSelect(<?= $aiRowId ?>); }">
                         <div class="flex items-center gap-2">
+                            <?php if ($isAdmin): ?>
+                                <input type="checkbox" class="ai-report-check rounded border-gray-300 text-brand-500 focus:ring-brand-500 shrink-0"
+                                       data-id="<?= $aiRowId ?>" title="Seleccionar informe"
+                                       onclick="event.stopPropagation()" onkeydown="event.stopPropagation()">
+                            <?php endif; ?>
                             <span class="ai-status-dot w-2 h-2 rounded-full shrink-0 <?= $aiStatusDots[$aiRowStatus] ?? $aiStatusDots['pending'] ?>"></span>
                             <span class="text-xs font-mono font-medium truncate"><?= e($aiRowLabel) ?></span>
                             <span class="ml-auto text-[10px] text-gray-400 shrink-0"><?= e(format_db_date((string)($aiRow['created_at'] ?? ''), 'd/m H:i')) ?></span>
@@ -1511,6 +1639,7 @@ $aiStatusText = [
     var RETRY_URL  = <?= json_encode(base_url('modules/cve/reports/ai-retry')) ?>;
     var CANCEL_URL = <?= json_encode(base_url('modules/cve/reports/ai-cancel')) ?>;
     var DELETE_URL = <?= json_encode(base_url('modules/cve/reports/ai-delete')) ?>;
+    var BULK_DELETE_URL = <?= json_encode(base_url('modules/cve/reports/ai-delete-bulk')) ?>;
     var STATUS_URL = <?= json_encode(base_url('modules/cve/reports/ai-status')) ?>;
     var REFRESH_URL = <?= json_encode(base_url('modules/cve/reports/ai-refresh')) ?>;
     var ASSIGN_URL  = <?= json_encode(base_url('modules/cve/reports/ai-assign')) ?>;
@@ -1525,6 +1654,9 @@ $aiStatusText = [
     var detail = document.getElementById('ai-detail');
     var detailScroll = document.getElementById('ai-detail-scroll');
     var list = document.getElementById('ai-report-list');
+    var reportsSelectAll = document.getElementById('ai-reports-select-all');
+    var reportsSelectedCount = document.getElementById('ai-reports-selected-count');
+    var reportsBulkDelete = document.getElementById('ai-reports-bulk-delete');
     var newForm = document.getElementById('ai-new-form');
     var printBtn = document.getElementById('ai-print-btn');
     var deleteBtn = document.getElementById('ai-delete-btn');
@@ -1883,6 +2015,7 @@ $aiStatusText = [
         var idx = nodes.indexOf(el);
         var next = nodes[idx + 1] || nodes[idx - 1] || null;
         el.remove();
+        updateReportSelection();
         return next ? parseInt(next.dataset.id, 10) : null;
     }
 
@@ -2015,6 +2148,84 @@ $aiStatusText = [
         });
     };
 
+    function visibleReportChecks() {
+        if (!list) {
+            return [];
+        }
+        return Array.prototype.slice.call(
+            list.querySelectorAll('.ai-report-item:not(.hidden) .ai-report-check')
+        );
+    }
+
+    function reportSelectedIds() {
+        if (!list) {
+            return [];
+        }
+        return Array.prototype.slice.call(list.querySelectorAll('.ai-report-check:checked'))
+            .map(function (checkbox) {
+                return parseInt(checkbox.dataset.id, 10) || 0;
+            })
+            .filter(function (id) {
+                return id > 0;
+            });
+    }
+
+    function updateReportSelection() {
+        var ids = reportSelectedIds();
+        var visible = visibleReportChecks();
+        var visibleSelected = visible.filter(function (checkbox) {
+            return checkbox.checked;
+        }).length;
+
+        if (reportsSelectedCount) {
+            reportsSelectedCount.textContent = ids.length > 0
+                ? ids.length + (ids.length === 1 ? ' seleccionado' : ' seleccionados')
+                : '';
+        }
+        if (reportsBulkDelete) {
+            reportsBulkDelete.classList.toggle('hidden', ids.length === 0);
+            reportsBulkDelete.textContent = ids.length > 0 ? 'Eliminar (' + ids.length + ')' : 'Eliminar';
+        }
+        if (reportsSelectAll) {
+            reportsSelectAll.checked = visible.length > 0 && visibleSelected === visible.length;
+            reportsSelectAll.indeterminate = visibleSelected > 0 && visibleSelected < visible.length;
+        }
+    }
+
+    window.cveAiBulkDelete = function () {
+        var ids = reportSelectedIds();
+        if (ids.length === 0) {
+            return;
+        }
+        appConfirm(
+            '¿Eliminar ' + ids.length + (ids.length === 1 ? ' informe' : ' informes')
+                + '? Se cancelarán los que estén en curso y se borrarán sus análisis.',
+            { title: 'Eliminar informes', danger: true, confirmText: 'Eliminar' }
+        ).then(function (ok) {
+            if (!ok) {
+                return;
+            }
+            if (reportsBulkDelete) {
+                reportsBulkDelete.disabled = true;
+            }
+            postJson(BULK_DELETE_URL, { ids: ids }).then(function (res) {
+                if (!res || !res.success) {
+                    appAlert((res && res.error) ? res.error : 'No se pudieron eliminar los informes.', { title: 'No se pudo eliminar' });
+                    if (reportsBulkDelete) {
+                        reportsBulkDelete.disabled = false;
+                    }
+                    return;
+                }
+                window.location.href = PAGE_URL;
+            }).catch(function (err) {
+                appAlert('No se pudieron eliminar: ' + errorText(err), { title: 'No se pudo eliminar' });
+                if (reportsBulkDelete) {
+                    reportsBulkDelete.disabled = false;
+                }
+            });
+        });
+    };
+
     window.cveAiFilterList = function (query) {
         var q = (query || '').toLowerCase().trim();
         if (!list) {
@@ -2022,8 +2233,16 @@ $aiStatusText = [
         }
         list.querySelectorAll('.ai-report-item').forEach(function (el) {
             var hay = (el.dataset.search || '').toLowerCase();
-            el.classList.toggle('hidden', q !== '' && hay.indexOf(q) === -1);
+            var hidden = q !== '' && hay.indexOf(q) === -1;
+            el.classList.toggle('hidden', hidden);
+            if (hidden) {
+                var checkbox = el.querySelector('.ai-report-check');
+                if (checkbox) {
+                    checkbox.checked = false;
+                }
+            }
         });
+        updateReportSelection();
     };
 
     window.toggleCveAiFullscreen = function () {
@@ -2594,6 +2813,23 @@ $aiStatusText = [
         });
     };
 
+    if (list) {
+        list.addEventListener('change', function (event) {
+            if (event.target && event.target.classList && event.target.classList.contains('ai-report-check')) {
+                updateReportSelection();
+            }
+        });
+    }
+
+    if (reportsSelectAll) {
+        reportsSelectAll.addEventListener('change', function () {
+            visibleReportChecks().forEach(function (checkbox) {
+                checkbox.checked = reportsSelectAll.checked;
+            });
+            updateReportSelection();
+        });
+    }
+
     function ready(fn) {
         if (document.readyState === 'loading') {
             document.addEventListener('DOMContentLoaded', fn);
@@ -2604,6 +2840,7 @@ $aiStatusText = [
 
     ready(function () {
         activate();
+        updateReportSelection();
 
         if (state.status === 'pending' || state.status === 'running') {
             setTimeout(function () {
@@ -2659,6 +2896,29 @@ function generateCveReport(button) {
 syncCveReportScope();
 syncCveReportPeriod();
 </script>
+<?php if (($newCves ?? '') !== ''): ?>
+<script>
+(function () {
+    'use strict';
+    function openPrefilled() {
+        if (typeof cveAiNew !== 'function') {
+            return;
+        }
+        cveAiNew();
+        var input = document.getElementById('ai-report-cves');
+        if (input) {
+            input.value = <?= json_encode($newCves) ?>;
+            input.focus();
+        }
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', openPrefilled);
+    } else {
+        openPrefilled();
+    }
+})();
+</script>
+<?php endif; ?>
 <?php else: ?>
 
     <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-6">

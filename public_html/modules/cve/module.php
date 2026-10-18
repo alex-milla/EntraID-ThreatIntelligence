@@ -43,6 +43,7 @@ class Module_Cve extends BaseModule
             ['method' => 'POST', 'pattern' => 'reports/ai-run/{id}', 'handler' => [$this, 'runAiReport']],
             ['method' => 'POST', 'pattern' => 'reports/ai-cancel/{id}', 'handler' => [$this, 'cancelAiReport']],
             ['method' => 'POST', 'pattern' => 'reports/ai-delete/{id}', 'handler' => [$this, 'deleteAiReport']],
+            ['method' => 'POST', 'pattern' => 'reports/ai-delete-bulk', 'handler' => [$this, 'deleteAiReportsBulk']],
             ['method' => 'POST', 'pattern' => 'reports/ai-generate', 'handler' => [$this, 'startAiReport']],
             ['method' => 'POST', 'pattern' => 'reports/ai-retry/{id}', 'handler' => [$this, 'retryAiReport']],
             ['method' => 'POST', 'pattern' => 'reports/ai-refresh/{id}', 'handler' => [$this, 'refreshAiReport']],
@@ -101,9 +102,11 @@ class Module_Cve extends BaseModule
         $catalogTotal = 0;
         $catalogPage = 1;
         $catalogPages = 0;
-        $catalogFilters = ['q' => '', 'severity' => '', 'product' => '', 'kev' => false, 'epss_min' => '', 'group' => 0, 'software_id' => 0, 'mine' => false, 'sort' => 'published'];
+        $catalogFilters = ['q' => '', 'severity' => '', 'product' => '', 'kev' => false, 'epss_min' => '', 'group' => 0, 'software_id' => 0, 'mine' => false, 'sort' => 'published', 'cves' => ''];
+        $cvesMissing = [];
         $softwareOptions = [];
         $syncState = null;
+        $newCves = '';
 
         try {
             $groups = $this->groupTree();
@@ -122,6 +125,10 @@ class Module_Cve extends BaseModule
                 }
                 $llmProfiles = llm_profile_list();
                 $llmConfigured = class_exists('Module_Llm') && (new Module_Llm())->isConfigured();
+                // CVEs enviados desde Catálogo para abrir el formulario ya relleno.
+                $newCves = $isAdmin
+                    ? implode(',', CveReportAi::normalizeCveIds((string)($_GET['new_cves'] ?? '')))
+                    : '';
                 $selectedAiId = max(0, (int)($_GET['report'] ?? 0));
                 if ($selectedAiId > 0) {
                     $selectedAiData = $this->aiReportPayload($selectedAiId);
@@ -140,13 +147,20 @@ class Module_Cve extends BaseModule
                     'software_id' => (int)($_GET['software_id'] ?? 0),
                     'mine'        => !empty($_GET['mine']),
                     'sort'        => trim((string)($_GET['sort'] ?? 'published')),
+                    'cves'        => trim((string)($_GET['cves'] ?? '')),
                 ];
                 $softwareOptions = $this->listSoftware(0, '');
                 $catalogPage = max(1, (int)($_GET['page'] ?? 1));
-                $catalogResult = $this->listCatalog($catalogFilters, $catalogPage);
+                // Con una lista pegada mostramos hasta 100 por página.
+                $catalogResult = $this->listCatalog(
+                    $catalogFilters,
+                    $catalogPage,
+                    $catalogFilters['cves'] !== '' ? 100 : 50
+                );
                 $catalog = $catalogResult['data'];
                 $catalogTotal = $catalogResult['total'];
                 $catalogPages = $catalogResult['totalPages'];
+                $cvesMissing = $catalogResult['missing'] ?? [];
                 $cveSync = new CveSync();
                 $syncState = $cveSync->publicState($cveSync->state());
             }
@@ -190,6 +204,8 @@ class Module_Cve extends BaseModule
             'catalogPage'   => $catalogPage,
             'catalogPages'  => $catalogPages,
             'catalogFilters'=> $catalogFilters,
+            'cvesMissing'   => $cvesMissing,
+            'newCves'       => $newCves,
             'softwareOptions'=> $softwareOptions,
             'syncState'     => $syncState,
         ]);
@@ -1286,6 +1302,69 @@ class Module_Cve extends BaseModule
                 'id'    => $params['id'] ?? null,
                 'error' => $e->getMessage(),
             ]);
+            json_response(['success' => false, 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Elimina varios informes con IA de una vez.
+     */
+    public function deleteAiReportsBulk(array $params = []): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        try {
+            $raw = file_get_contents('php://input');
+            $input = json_decode((string)$raw, true);
+            if (!is_array($input)) {
+                $input = $_POST;
+            }
+
+            $ids = $this->normalizeItemIds($input['ids'] ?? []);
+            if ($ids === []) {
+                json_response(['success' => false, 'error' => 'Selecciona al menos un informe.'], 400);
+            }
+
+            $deleted = 0;
+            $skipped = 0;
+            foreach ($ids as $id) {
+                $row = CveDatabase::fetchOne(
+                    "SELECT id, status, cve_ids FROM cve_ai_reports WHERE id = ?",
+                    [$id]
+                );
+                if ($row === null) {
+                    $skipped++;
+                    continue;
+                }
+
+                // Si sigue en curso, invalidar el resultado antes de borrar.
+                CveDatabase::query(
+                    "UPDATE cve_ai_reports SET status = 'canceled', token = NULL
+                     WHERE id = ? AND status IN ('pending','running')",
+                    [$id]
+                );
+                CveDatabase::query("DELETE FROM cve_ai_reports WHERE id = ?", [$id]);
+                $deleted++;
+            }
+
+            app_log('info', 'cve_ai', 'Informes eliminados en lote', [
+                'ids'     => $ids,
+                'deleted' => $deleted,
+                'skipped' => $skipped,
+            ]);
+            log_activity('cve.ai_reports_deleted_bulk', [
+                'ids'     => $ids,
+                'deleted' => $deleted,
+            ]);
+
+            json_response([
+                'success' => true,
+                'deleted' => $deleted,
+                'skipped' => $skipped,
+            ]);
+        } catch (Throwable $e) {
+            app_log('error', 'cve_ai', 'Error eliminando informes en lote', ['error' => $e->getMessage()]);
             json_response(['success' => false, 'error' => $e->getMessage()], 500);
         }
     }
@@ -3089,6 +3168,17 @@ class Module_Cve extends BaseModule
             array_push($params, $like, $like);
         }
 
+        // Lista de CVEs pegada en Catálogo (máximo 200 para la vista).
+        $cvesRaw = trim((string)($filters['cves'] ?? ''));
+        $cvesList = $cvesRaw !== '' ? CveReportAi::normalizeCveIds($cvesRaw, 200) : [];
+        if ($cvesList !== []) {
+            $placeholders = implode(',', array_fill(0, count($cvesList), '?'));
+            $where[] = "c.cve_id IN ($placeholders)";
+            foreach ($cvesList as $cveId) {
+                $params[] = $cveId;
+            }
+        }
+
         $severity = trim((string)($filters['severity'] ?? ''));
         if ($severity !== '') {
             $where[] = 'c.severity = ?';
@@ -3178,12 +3268,25 @@ class Module_Cve extends BaseModule
             $params
         );
 
+        $missing = [];
+        if ($cvesList !== []) {
+            $placeholders = implode(',', array_fill(0, count($cvesList), '?'));
+            $foundRows = CveDatabase::fetchAll(
+                "SELECT cve_id FROM cve_catalog WHERE cve_id IN ($placeholders)",
+                $cvesList
+            );
+            $found = array_map('strval', array_column($foundRows, 'cve_id'));
+            $missing = array_values(array_diff($cvesList, $found));
+        }
+
         return [
             'data'       => $rows,
             'total'      => $total,
             'page'       => $page,
             'perPage'    => $perPage,
             'totalPages' => (int)ceil($total / $perPage),
+            'requested'  => count($cvesList),
+            'missing'    => $missing,
         ];
     }
 

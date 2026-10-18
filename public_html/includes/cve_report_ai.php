@@ -85,10 +85,11 @@ final class CveReportAi
      * Normaliza y valida una lista de CVE introducida por el usuario.
      * Admite arrays o texto separado por comas, espacios o punto y coma.
      *
-     * @return string[] CVE-AAAA-NNNN únicos y en mayúsculas (máx. MAX_CVES).
+     * @return string[] CVE-AAAA-NNNN únicos y en mayúsculas (máx. $max).
      */
-    public static function normalizeCveIds(mixed $raw): array
+    public static function normalizeCveIds(mixed $raw, int $max = self::MAX_CVES): array
     {
+        $max = max(1, $max);
         $parts = [];
         if (is_array($raw)) {
             foreach ($raw as $item) {
@@ -108,7 +109,7 @@ final class CveReportAi
                 continue;
             }
             $ids[$id] = true;
-            if (count($ids) >= self::MAX_CVES) {
+            if (count($ids) >= $max) {
                 break;
             }
         }
