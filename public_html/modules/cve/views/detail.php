@@ -55,6 +55,13 @@ require __DIR__ . '/_tabs.php';
                     $remediationActive = false;
                 }
                 ?>
+                <?php if (Auth::isAdmin()): ?>
+                    <a href="<?= base_url('modules/cve?tab=reports&new_cves=' . rawurlencode((string)$cve['cve_id'])) ?>"
+                       title="Abre Informes con este CVE preparado. Al terminar podrás enviarlo a una empresa o grupo."
+                       class="inline-flex items-center gap-1.5 px-3 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors">
+                        Enviar a Análisis de CVE de Informes
+                    </a>
+                <?php endif; ?>
                 <?php if ($remediationActive): ?>
                     <a href="<?= base_url('modules/remediation?tab=tasks&new_cve=' . urlencode((string)$cve['cve_id'])) ?>"
                        class="inline-flex items-center gap-1.5 px-3 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors">

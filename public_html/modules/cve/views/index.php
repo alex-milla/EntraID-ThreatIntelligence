@@ -4476,13 +4476,24 @@ syncCveReportPeriod();
                 ?>
                 <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
                     <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between gap-3 flex-wrap">
-                        <div>
-                            <h2 class="text-sm font-semibold">CVEs asignados</h2>
-                            <p class="text-xs text-gray-500 mt-1">
-                                <?= $selectedGroupIsCompany ? 'Empresa' : 'Grupo de aplicaciones' ?>
-                                «<?= e($selectedGroupName) ?>» ·
-                                <?= count($assignedCves) ?> <?= count($assignedCves) === 1 ? 'CVE' : 'CVEs' ?>
-                            </p>
+                        <div class="flex items-center gap-2">
+                            <button type="button" id="assigned-cves-toggle"
+                                    onclick="cveToggleCard('assigned-cves-body', this)"
+                                    aria-expanded="false" aria-controls="assigned-cves-body"
+                                    title="Mostrar u ocultar los CVEs asignados"
+                                    class="inline-flex items-center justify-center w-7 h-7 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-500 hover:text-brand-600 hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">
+                                <svg class="w-4 h-4 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M9 5l7 7-7 7"/>
+                                </svg>
+                            </button>
+                            <div>
+                                <h2 class="text-sm font-semibold">CVEs asignados</h2>
+                                <p class="text-xs text-gray-500 mt-1">
+                                    <?= $selectedGroupIsCompany ? 'Empresa' : 'Grupo de aplicaciones' ?>
+                                    «<?= e($selectedGroupName) ?>» ·
+                                    <?= count($assignedCves) ?> <?= count($assignedCves) === 1 ? 'CVE' : 'CVEs' ?>
+                                </p>
+                            </div>
                         </div>
                         <div class="flex items-center gap-3">
                             <?php if ($isAdmin && $assignedCves !== []): ?>
@@ -4496,6 +4507,7 @@ syncCveReportPeriod();
                         </div>
                     </div>
 
+                    <div id="assigned-cves-body" class="hidden">
                     <?php if ($assignedCves === []): ?>
                         <div class="px-5 py-8 text-center">
                             <p class="text-sm text-gray-500">
@@ -4686,6 +4698,7 @@ syncCveReportPeriod();
                             </table>
                         </div>
                     <?php endif; ?>
+                    </div><!-- /#assigned-cves-body -->
                 </div>
 
                 <?php require __DIR__ . '/_group_priority_analysis.php'; ?>
@@ -4992,7 +5005,7 @@ syncCveReportPeriod();
                     Cancelar
                 </button>
                 <button type="button" id="cve-priority-submit" onclick="cvePrioritySubmit(this)"
-                        class="px-3 py-1.5 bg-brand-500 hover:bg-brand-600 text-white text-xs font-semibold rounded-lg">
+                        class="px-3 py-1.5 bg-brand-500 hover:bg-brand-600 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-semibold rounded-lg">
                     Analizar
                 </button>
             </div>
@@ -5007,6 +5020,22 @@ syncCveReportPeriod();
         var priorityGroupLabel = <?= json_encode($selectedGroupIsCompany ? 'Empresa' : 'Grupo de aplicaciones') ?>;
         var priorityGroupName = <?= json_encode($selectedGroupName, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
         var priorityCount = <?= (int)count($assignedCves) ?>;
+        var priorityBusy = false;
+
+        window.cveToggleCard = function (bodyId, button) {
+            var body = document.getElementById(bodyId);
+            if (!body) {
+                return;
+            }
+            var hidden = body.classList.toggle('hidden');
+            if (button) {
+                button.setAttribute('aria-expanded', hidden ? 'false' : 'true');
+                var icon = button.querySelector('svg');
+                if (icon) {
+                    icon.classList.toggle('rotate-90', !hidden);
+                }
+            }
+        };
 
         window.cvePriorityOpen = function (groupId) {
             if (groupId) {
@@ -5016,6 +5045,7 @@ syncCveReportPeriod();
             var scope = document.getElementById('cve-priority-scope');
             var message = document.getElementById('cve-priority-message');
             var profile = document.getElementById('cve-priority-profile');
+            var submit = document.getElementById('cve-priority-submit');
             if (!modal) {
                 return;
             }
@@ -5024,11 +5054,30 @@ syncCveReportPeriod();
                     + priorityCount + (priorityCount === 1 ? ' CVE asignado' : ' CVEs asignados');
             }
             if (message) {
-                message.textContent = '';
-                message.className = 'mt-3 text-xs text-gray-500';
+                if (priorityBusy) {
+                    message.textContent = 'Analizando prioridad con IA. Puede tardar un momento…';
+                    message.className = 'mt-3 text-xs text-blue-600 dark:text-blue-400';
+                } else {
+                    message.textContent = '';
+                    message.className = 'mt-3 text-xs text-gray-500';
+                }
             }
             if (profile) {
-                profile.value = '0';
+                profile.disabled = priorityBusy;
+                if (!priorityBusy) {
+                    profile.value = '0';
+                }
+            }
+            if (submit) {
+                submit.disabled = priorityBusy;
+                submit.textContent = priorityBusy ? 'Analizando…' : 'Analizar';
+                submit.classList.toggle('opacity-50', priorityBusy);
+                submit.classList.toggle('cursor-not-allowed', priorityBusy);
+                if (priorityBusy) {
+                    submit.setAttribute('aria-busy', 'true');
+                } else {
+                    submit.removeAttribute('aria-busy');
+                }
             }
             modal.classList.remove('hidden');
         };
@@ -5041,13 +5090,22 @@ syncCveReportPeriod();
         };
 
         window.cvePrioritySubmit = function (button) {
-            if (!priorityGroupId) {
+            if (!priorityGroupId || priorityBusy) {
                 return;
             }
+            priorityBusy = true;
+
             var profile = document.getElementById('cve-priority-profile');
             var message = document.getElementById('cve-priority-message');
-            if (button) {
-                button.disabled = true;
+            var submit = button || document.getElementById('cve-priority-submit');
+            if (submit) {
+                submit.disabled = true;
+                submit.textContent = 'Analizando…';
+                submit.classList.add('opacity-50', 'cursor-not-allowed');
+                submit.setAttribute('aria-busy', 'true');
+            }
+            if (profile) {
+                profile.disabled = true;
             }
             if (message) {
                 message.textContent = 'Analizando prioridad con IA. Puede tardar un momento…';
@@ -5073,19 +5131,44 @@ syncCveReportPeriod();
                     return body;
                 });
             }).then(function () {
+                try {
+                    sessionStorage.setItem('cvePriorityExpand', '1');
+                } catch (e) {
+                    // Sin sessionStorage: se recarga igualmente.
+                }
                 window.cvePriorityClose();
                 window.location.reload();
             }).catch(function (err) {
+                priorityBusy = false;
                 if (message) {
                     message.textContent = 'No se pudo generar el análisis: '
                         + (err && err.message ? err.message : 'error desconocido');
                     message.className = 'mt-3 text-xs text-red-500';
                 }
-                if (button) {
-                    button.disabled = false;
+                if (submit) {
+                    submit.disabled = false;
+                    submit.textContent = 'Analizar';
+                    submit.classList.remove('opacity-50', 'cursor-not-allowed');
+                    submit.removeAttribute('aria-busy');
+                }
+                if (profile) {
+                    profile.disabled = false;
                 }
             });
         };
+
+        try {
+            if (sessionStorage.getItem('cvePriorityExpand') === '1') {
+                sessionStorage.removeItem('cvePriorityExpand');
+                var priorityBody = document.getElementById('cve-priority-body');
+                var priorityToggle = document.getElementById('cve-priority-toggle');
+                if (priorityBody && priorityBody.classList.contains('hidden')) {
+                    window.cveToggleCard('cve-priority-body', priorityToggle);
+                }
+            }
+        } catch (e) {
+            // Sin sessionStorage: no se autoexpande.
+        }
     })();
     </script>
 
