@@ -297,6 +297,82 @@ class CveClient
     }
 
     /**
+     * Descarga un único CVE desde NVD (API 2.0, parámetro cveId).
+     * Pensado para CVEs que solo aparecen en Defender.
+     */
+    public function fetchCve(string $cveId): ?array
+    {
+        $cveId = strtoupper(trim($cveId));
+        if (!preg_match('/^CVE-\d{4}-\d{4,7}$/', $cveId)) {
+            throw new RuntimeException('Identificador CVE no válido.');
+        }
+        if (!self::isSafeUrl($this->nvdUrl)) {
+            throw new RuntimeException('URL de NVD no válida (se requiere HTTPS público).');
+        }
+
+        $params = [
+            'cveId'          => $cveId,
+            'resultsPerPage' => 1,
+        ];
+        $sep = str_contains($this->nvdUrl, '?') ? '&' : '?';
+        $url = $this->nvdUrl . $sep . http_build_query($params);
+
+        $headers = ['Accept: application/json'];
+        if ($this->nvdKey !== '') {
+            $headers[] = 'apiKey: ' . $this->nvdKey;
+        }
+
+        $res = $this->nvdGetWithRetries($url, $headers, 60);
+        if (($res['http'] ?? 0) === 0 && !empty($res['error'])) {
+            throw new RuntimeException('No se pudo conectar con NVD: ' . (string)$res['error']);
+        }
+        if (($res['http'] ?? 0) !== 200) {
+            $detail = trim(strip_tags(substr((string)($res['body'] ?? ''), 0, 300)));
+            throw new RuntimeException(
+                'NVD respondió HTTP ' . (int)($res['http'] ?? 0)
+                . ($detail !== '' ? ': ' . $detail : '')
+            );
+        }
+
+        $data = json_decode((string)($res['body'] ?? ''), true);
+        $items = is_array($data['vulnerabilities'] ?? null) ? $data['vulnerabilities'] : [];
+        return isset($items[0]) && is_array($items[0]) ? $items[0] : null;
+    }
+
+    /**
+     * Consulta la puntuación EPSS de un único CVE (FIRST.org, sin key).
+     */
+    public function fetchEpss(string $cveId): ?array
+    {
+        $cveId = strtoupper(trim($cveId));
+        if (!preg_match('/^CVE-\d{4}-\d{4,7}$/', $cveId)) {
+            return null;
+        }
+
+        $url = 'https://api.first.org/data/v1/epss?cve=' . rawurlencode($cveId);
+        try {
+            $res = $this->httpGet($url, ['Accept: application/json'], 30);
+        } catch (Throwable $e) {
+            return null;
+        }
+        if (($res['http'] ?? 0) !== 200) {
+            return null;
+        }
+
+        $data = json_decode((string)($res['body'] ?? ''), true);
+        $row = is_array($data['data'] ?? null) ? ($data['data'][0] ?? null) : null;
+        if (!is_array($row)) {
+            return null;
+        }
+
+        return [
+            'epss'       => (float)($row['epss'] ?? 0),
+            'percentile' => (float)($row['percentile'] ?? 0),
+            'date'       => (string)($row['date'] ?? ''),
+        ];
+    }
+
+    /**
      * Busca CPE en NVD por palabra clave y deduplica a la CPE base
      * (cpe:2.3:part:vendor:product, sin versión).
      */

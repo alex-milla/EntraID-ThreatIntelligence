@@ -1951,7 +1951,8 @@ $aiStatusText = [
         var cves = Array.isArray(data.cves) ? data.cves : [];
         if (summary) {
             summary.textContent = cves.length + ' CVEs con exposición' +
-                (data.missing_catalog ? ' · ' + data.missing_catalog + ' sin datos NVD' : '');
+                (data.missing_catalog ? ' · ' + data.missing_catalog + ' se descargarán de NVD' : '') +
+                (data.nvd_key === false ? ' · sin API key NVD (puede fallar por límite)' : '');
         }
 
         if (!cves.length) {
@@ -1962,7 +1963,6 @@ $aiStatusText = [
 
         var html = '';
         cves.forEach(function (c) {
-            var disabled = !c.in_catalog;
             var badges = '';
             if (c.in_kev) {
                 badges += '<span class="px-1.5 py-0.5 rounded bg-red-100 text-red-700 text-[10px] font-semibold">KEV</span> ';
@@ -1973,8 +1973,8 @@ $aiStatusText = [
             if (c.exploit_verified) {
                 badges += '<span class="px-1.5 py-0.5 rounded bg-red-100 text-red-700 text-[10px] font-semibold">Verificado</span> ';
             }
-            if (disabled) {
-                badges += '<span class="px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 text-[10px] font-semibold">Sin NVD</span>';
+            if (!c.in_catalog) {
+                badges += '<span class="px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 text-[10px] font-semibold">NVD bajo demanda</span>';
             }
 
             var meta = [];
@@ -1989,10 +1989,9 @@ $aiStatusText = [
                 meta.push(c.products.slice(0, 2).join(', '));
             }
 
-            html += '<label class="flex items-start gap-3 p-3 ' +
-                (disabled ? 'opacity-60 bg-gray-50 dark:bg-gray-900' : 'hover:bg-gray-50 dark:hover:bg-gray-800/40') + '">' +
+            html += '<label class="flex items-start gap-3 p-3 hover:bg-gray-50 dark:hover:bg-gray-800/40">' +
                 '<input type="checkbox" class="ai-def-cve mt-0.5 rounded border-gray-300 text-brand-500 focus:ring-brand-500" value="' +
-                escapeHtml(c.cve_id) + '" ' + (disabled ? 'disabled' : '') + ' onchange="cveAiDefenderUpdateCount()">' +
+                escapeHtml(c.cve_id) + '" onchange="cveAiDefenderUpdateCount()">' +
                 '<span class="min-w-0">' +
                 '<span class="flex items-center gap-2 flex-wrap">' +
                 '<span class="font-mono text-xs font-semibold">' + escapeHtml(c.cve_id) + '</span>' +
@@ -2000,7 +1999,7 @@ $aiStatusText = [
                 badges +
                 '</span>' +
                 '<span class="block text-[11px] text-gray-500 mt-0.5">' + escapeHtml(meta.join(' · ')) + '</span>' +
-                (disabled ? '<span class="block text-[11px] text-amber-600 mt-0.5">Sincroniza el catálogo NVD para poder incluir este CVE.</span>' : '') +
+                (!c.in_catalog ? '<span class="block text-[11px] text-blue-600 mt-0.5">Se descargará de NVD al crear el informe.</span>' : '') +
                 '</span></label>';
         });
 

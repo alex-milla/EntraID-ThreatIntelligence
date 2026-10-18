@@ -1111,13 +1111,105 @@ class CveSync
         ];
     }
 
-    private function upsertCve(PDO $db, array $cve, array $stmts): string
+    /**
+     * Descarga y guarda un CVE concreto desde NVD (bajo demanda).
+     * Pensado para CVEs que solo existen en Defender.
+     */
+    public function fetchAndStoreCve(string $cveId): array
+    {
+        $cveId = strtoupper(trim($cveId));
+        if (!preg_match('/^CVE-\d{4}-\d{4,7}$/', $cveId)) {
+            throw new RuntimeException('Identificador CVE no válido.');
+        }
+
+        $client = CveClient::fromSettings();
+        $raw = $client->fetchCve($cveId);
+        if ($raw === null) {
+            throw new RuntimeException('NVD no devolvió datos para ' . $cveId . '.');
+        }
+
+        $db = CveDatabase::getInstance();
+        $stmts = $this->prepareStatements($db);
+        $result = $this->upsertCve($db, $raw, $stmts, true);
+        if ($result === 'skipped') {
+            throw new RuntimeException('NVD no tiene datos utilizables para ' . $cveId . ' (rechazado o sin métricas).');
+        }
+
+        $hasEpss = false;
+        $epss = $client->fetchEpss($cveId);
+        if ($epss !== null) {
+            CveDatabase::query(
+                "INSERT OR REPLACE INTO cve_epss (cve_id, epss, percentile, score_date) VALUES (?, ?, ?, ?)",
+                [$cveId, $epss['epss'], $epss['percentile'], $epss['date']]
+            );
+            $hasEpss = true;
+        }
+
+        $hasKev = false;
+        try {
+            $already = CveDatabase::fetchOne("SELECT cve_id FROM cve_kev WHERE cve_id = ?", [$cveId]);
+            if ($already === null) {
+                $kev = $client->fetchKevCatalog();
+                foreach ((array)($kev['data']['vulnerabilities'] ?? []) as $entry) {
+                    if (!is_array($entry) || strcasecmp((string)($entry['cveID'] ?? ''), $cveId) !== 0) {
+                        continue;
+                    }
+                    CveDatabase::query(
+                        "INSERT OR REPLACE INTO cve_kev
+                         (cve_id, vendor_project, product, vulnerability_name, date_added,
+                          short_description, required_action, due_date, known_ransomware,
+                          notes, cwes, forensic_triage, updated_at)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, datetime('now'))",
+                        [
+                            $cveId,
+                            (string)($entry['vendorProject'] ?? ''),
+                            (string)($entry['product'] ?? ''),
+                            (string)($entry['vulnerabilityName'] ?? ''),
+                            (string)($entry['dateAdded'] ?? ''),
+                            (string)($entry['shortDescription'] ?? ''),
+                            (string)($entry['requiredAction'] ?? ''),
+                            (string)($entry['dueDate'] ?? ''),
+                            (string)($entry['knownRansomwareCampaignUse'] ?? 'Unknown'),
+                            (string)($entry['notes'] ?? ''),
+                            json_encode($entry['cwes'] ?? []),
+                        ]
+                    );
+                    $hasKev = true;
+                    break;
+                }
+            } else {
+                $hasKev = true;
+            }
+        } catch (Throwable $e) {
+            app_log('warning', 'cve', 'KEV no disponible para el CVE bajo demanda', [
+                'cve'   => $cveId,
+                'error' => $e->getMessage(),
+            ]);
+        }
+
+        app_log('info', 'cve', 'CVE descargado bajo demanda', [
+            'cve'      => $cveId,
+            'result'   => $result,
+            'has_epss' => $hasEpss,
+            'has_kev'  => $hasKev,
+        ]);
+
+        return [
+            'success'  => true,
+            'cve_id'   => $cveId,
+            'result'   => $result,
+            'has_epss' => $hasEpss,
+            'has_kev'  => $hasKev,
+        ];
+    }
+
+    private function upsertCve(PDO $db, array $cve, array $stmts, bool $force = false): string
     {
         $parsed = $this->parseCve($cve);
         if ($parsed === null) {
             return 'skipped';
         }
-        if ($this->minCvss > 0) {
+        if (!$force && $this->minCvss > 0) {
             $score = $parsed['cvss_v3_score'] ?? $parsed['cvss_v2_score'];
             if ($score !== null && (float)$score < $this->minCvss) {
                 return 'skipped';

@@ -108,6 +108,13 @@ class Module_Cve extends BaseModule
                 $softwareOptions = $this->listSoftware(0, '');
                 $reports = $this->listReports(30);
                 $aiReports = $this->listAiReports(100);
+                if (!$isAdmin) {
+                    // Los informes con exposición de Defender solo los ve un admin.
+                    $aiReports = array_values(array_filter(
+                        $aiReports,
+                        static fn(array $row): bool => empty($row['has_defender'])
+                    ));
+                }
                 $llmProfiles = llm_profile_list();
                 $llmConfigured = class_exists('Module_Llm') && (new Module_Llm())->isConfigured();
                 $selectedAiId = max(0, (int)($_GET['report'] ?? 0));
@@ -1077,11 +1084,14 @@ class Module_Cve extends BaseModule
             $id = (int)($params['id'] ?? 0);
             $row = $id > 0
                 ? CveDatabase::fetchOne(
-                    "SELECT id, status, ai_error, created_at, started_at FROM cve_ai_reports WHERE id = ?",
+                    "SELECT id, status, ai_error, created_at, started_at, defender_json FROM cve_ai_reports WHERE id = ?",
                     [$id]
                 )
                 : null;
             if ($row === null) {
+                json_response(['success' => false, 'error' => 'Informe no encontrado.'], 404);
+            }
+            if (!empty($row['defender_json']) && !Auth::isAdmin()) {
                 json_response(['success' => false, 'error' => 'Informe no encontrado.'], 404);
             }
 
@@ -1468,11 +1478,33 @@ class Module_Cve extends BaseModule
                     $missing[] = $cveId;
                 }
             }
+
             if ($missing !== []) {
-                json_response([
-                    'success' => false,
-                    'error'   => 'Sincroniza el catálogo NVD para estos CVEs: ' . implode(', ', $missing),
-                ], 400);
+                if (count($missing) > 10) {
+                    json_response([
+                        'success' => false,
+                        'error'   => 'Como máximo se pueden descargar 10 CVEs nuevos por informe. Reduce la selección o sincroniza el catálogo.',
+                    ], 400);
+                }
+
+                @set_time_limit(0);
+                $sync = new CveSync();
+                $failed = [];
+                foreach ($missing as $cveId) {
+                    try {
+                        $sync->fetchAndStoreCve($cveId);
+                        app_log('info', 'cve_ai', 'CVE descargado para el informe', ['cve' => $cveId]);
+                    } catch (Throwable $e) {
+                        $failed[] = $cveId . ' (' . $e->getMessage() . ')';
+                    }
+                }
+                if ($failed !== []) {
+                    json_response([
+                        'success' => false,
+                        'error'   => 'No se pudieron descargar de NVD: ' . implode('; ', $failed)
+                            . '. Revisa la API key y el límite de peticiones en Admin → APIs.',
+                    ], 400);
+                }
             }
 
             $tenantId = max(0, (int)($input['tenant_id'] ?? 0));
@@ -1616,6 +1648,12 @@ class Module_Cve extends BaseModule
             $missingCatalog = count(array_filter($out, static fn($r) => empty($r['in_catalog'])));
 
             $tenants = Database::fetchAll("SELECT id, name FROM tenants ORDER BY name");
+            $nvdKey = false;
+            try {
+                $nvdKey = CveClient::fromSettings()->hasApiKey();
+            } catch (Throwable $e) {
+                $nvdKey = false;
+            }
 
             json_response([
                 'success'         => true,
@@ -1623,6 +1661,7 @@ class Module_Cve extends BaseModule
                 'total'           => count($out),
                 'missing_catalog' => $missingCatalog,
                 'tenants'         => $tenants,
+                'nvd_key'         => $nvdKey,
             ]);
         } catch (Throwable $e) {
             app_log('error', 'cve_ai', 'Error listando vulnerabilidades de Defender', ['error' => $e->getMessage()]);
@@ -1818,6 +1857,11 @@ class Module_Cve extends BaseModule
 
         $report = CveDatabase::fetchOne("SELECT * FROM cve_ai_reports WHERE id = ?", [$id]);
         if ($report === null) {
+            return null;
+        }
+
+        // Los informes con exposición de Defender contienen equipos: solo admins.
+        if (!empty($report['defender_json']) && !Auth::isAdmin()) {
             return null;
         }
 
