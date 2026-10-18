@@ -1677,6 +1677,19 @@ $aiStatusText = [
 
     function parseResponse(res) {
         return res.text().then(function (text) {
+            var contentType = (res.headers.get('content-type') || '').toLowerCase();
+            var looksHtml = /^\s*</.test(text || '');
+            if (res.status >= 500 && (looksHtml || contentType.indexOf('text/html') !== -1)) {
+                var htmlErr = new Error(
+                    'El servidor no respondió correctamente (HTTP ' + res.status
+                    + '). Puede que la operación se haya completado; recarga para comprobarlo.'
+                );
+                htmlErr.httpStatus = res.status;
+                htmlErr.serverHtml = true;
+                htmlErr.body = text || '';
+                throw htmlErr;
+            }
+
             var payload;
             try {
                 payload = text ? JSON.parse(text) : {};
@@ -1741,6 +1754,8 @@ $aiStatusText = [
                     return;
                 }
                 if (res.status === 'running') {
+                    state.status = 'running';
+                    updateToolbar();
                     var total = parseInt(res.total || 0, 10);
                     var processed = parseInt(res.processed || 0, 10);
                     if (total > 0) {
@@ -1762,8 +1777,9 @@ $aiStatusText = [
     function updateToolbar() {
         var body = detail ? detail.querySelector('.ai-report-body') : null;
         var id = body ? parseInt(body.dataset.reportId, 10) || 0 : 0;
-        var status = body ? (body.dataset.status || '') : '';
+        var status = state.status || (body ? (body.dataset.status || '') : '');
         var processing = status === 'pending' || status === 'running';
+        var running = status === 'running';
 
         if (printBtn) {
             printBtn.classList.toggle('hidden', !body || processing);
@@ -1773,6 +1789,8 @@ $aiStatusText = [
         }
         if (groupBtn) {
             groupBtn.classList.toggle('hidden', !IS_ADMIN || !id);
+            groupBtn.disabled = running;
+            groupBtn.title = running ? 'Espera a que termine la generación para asignar el grupo' : '';
         }
         if (deleteBtn) {
             deleteBtn.classList.toggle('hidden', !IS_ADMIN || !id);
@@ -1900,7 +1918,9 @@ $aiStatusText = [
         if (!state.id || state.running) {
             return;
         }
+        state.status = 'running';
         state.running = true;
+        updateToolbar();
         startPolling();
         setBanner('Preparando el análisis… si la conexión se corta, seguiremos consultando el estado.');
 
@@ -2297,6 +2317,10 @@ $aiStatusText = [
         if (!modal || !body) {
             return;
         }
+        if (state.status === 'running' || body.dataset.status === 'running') {
+            appAlert('El informe está generando el análisis. Espera a que termine para asignar el grupo.', { title: 'Informe en curso' });
+            return;
+        }
         var select = document.getElementById('ai-group-select');
         var input = document.getElementById('ai-group-new');
         if (select) {
@@ -2317,6 +2341,11 @@ $aiStatusText = [
 
     window.cveAiAssignSubmit = function (button) {
         withStateId(function (id) {
+            var body = detail ? detail.querySelector('.ai-report-body') : null;
+            if (state.status === 'running' || (body && body.dataset.status === 'running')) {
+                appAlert('El informe está generando el análisis. Espera a que termine para asignar el grupo.', { title: 'Informe en curso' });
+                return;
+            }
             var select = document.getElementById('ai-group-select');
             var input = document.getElementById('ai-group-new');
             var payload = {
@@ -2336,10 +2365,21 @@ $aiStatusText = [
                 }
                 window.location.href = PAGE_URL + '&report=' + id;
             }).catch(function (err) {
-                appAlert('No se pudo asignar: ' + errorText(err), { title: 'No se pudo asignar' });
-                if (button) {
-                    button.disabled = false;
-                }
+                var status = err && err.httpStatus ? err.httpStatus : 0;
+                var uncertain = status >= 500 || status === 0 || !!(err && err.serverHtml);
+                var message = uncertain
+                    ? 'El servidor no respondió correctamente'
+                        + (status ? ' (HTTP ' + status + ')' : '')
+                        + '. Puede que el grupo se haya asignado igualmente. Recargaremos el informe para comprobarlo.'
+                    : 'No se pudo asignar: ' + errorText(err);
+                appAlert(message, { title: uncertain ? 'Asignación sin confirmar' : 'No se pudo asignar' }).then(function () {
+                    if (uncertain) {
+                        window.cveAiAssignClose();
+                        load(id, false);
+                    } else if (button) {
+                        button.disabled = false;
+                    }
+                });
             });
         });
     };
@@ -2487,6 +2527,11 @@ $aiStatusText = [
     };
 
     window.cveAiItemsGroupOpen = function () {
+        var body = detail ? detail.querySelector('.ai-report-body') : null;
+        if (state.status === 'running' || (body && body.dataset.status === 'running')) {
+            appAlert('El informe está generando el análisis. Espera a que termine para asignar el grupo.', { title: 'Informe en curso' });
+            return;
+        }
         var ids = selectedItemIds();
         if (!ids.length) {
             appAlert('Selecciona al menos un CVE.', { title: 'Sin selección' });
@@ -2519,6 +2564,11 @@ $aiStatusText = [
     };
 
     window.cveAiItemsGroupSubmit = function (button) {
+        var body = detail ? detail.querySelector('.ai-report-body') : null;
+        if (state.status === 'running' || (body && body.dataset.status === 'running')) {
+            appAlert('El informe está generando el análisis. Espera a que termine para asignar el grupo.', { title: 'Informe en curso' });
+            return;
+        }
         var ids = selectedItemIds();
         var select = document.getElementById('ai-items-group-select');
         var input = document.getElementById('ai-items-group-new');
@@ -2545,10 +2595,21 @@ $aiStatusText = [
             window.cveAiItemsGroupClose();
             load(state.id, false);
         }).catch(function (err) {
-            appAlert('No se pudo asignar el grupo: ' + errorText(err), { title: 'No se pudo asignar' });
-            if (button) {
-                button.disabled = false;
-            }
+            var status = err && err.httpStatus ? err.httpStatus : 0;
+            var uncertain = status >= 500 || status === 0 || !!(err && err.serverHtml);
+            var message = uncertain
+                ? 'El servidor no respondió correctamente'
+                    + (status ? ' (HTTP ' + status + ')' : '')
+                    + '. Puede que el grupo se haya asignado igualmente. Recargaremos el informe para comprobarlo.'
+                : 'No se pudo asignar el grupo: ' + errorText(err);
+            appAlert(message, { title: uncertain ? 'Asignación sin confirmar' : 'No se pudo asignar' }).then(function () {
+                if (uncertain) {
+                    window.cveAiItemsGroupClose();
+                    load(state.id, false);
+                } else if (button) {
+                    button.disabled = false;
+                }
+            });
         });
     };
 

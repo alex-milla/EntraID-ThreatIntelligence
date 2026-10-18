@@ -1539,6 +1539,12 @@ class Module_Cve extends BaseModule
             $newName = trim((string)($input['new_group'] ?? ''));
             $groupName = '';
 
+            app_log('info', 'cve_ai', 'Asignación de grupo solicitada', [
+                'id'        => $id,
+                'group_id'  => $groupId,
+                'new_group' => $newName,
+            ]);
+
             if ($newName !== '') {
                 if ($this->textLength($newName) > 120) {
                     json_response(['success' => false, 'error' => 'El nombre del grupo es demasiado largo (máximo 120).'], 400);
@@ -1699,6 +1705,13 @@ class Module_Cve extends BaseModule
             $groupId = (int)($input['group_id'] ?? 0);
             $newName = trim((string)($input['new_group'] ?? ''));
             $groupName = '';
+
+            app_log('info', 'cve_ai', 'Asignación de grupo a CVEs solicitada', [
+                'report_id' => $reportId,
+                'items'     => $itemIds,
+                'group_id'  => $groupId,
+                'new_group' => $newName,
+            ]);
 
             if ($newName !== '') {
                 if ($this->textLength($newName) > 120) {
