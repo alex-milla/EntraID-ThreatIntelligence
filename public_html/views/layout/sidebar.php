@@ -20,7 +20,7 @@ foreach ($navModules as $item) {
 <div id="sidebar-overlay" class="fixed inset-0 bg-black/50 z-20 lg:hidden hidden" onclick="toggleSidebar()"></div>
 
 <!-- Sidebar -->
-<aside id="sidebar" class="fixed lg:static inset-y-0 left-0 z-30 w-64 bg-surface dark:bg-surface-dark border-r border-gray-200 dark:border-gray-700 transform -translate-x-full lg:translate-x-0 transition-transform duration-200 flex flex-col">
+<aside id="sidebar" class="no-print fixed lg:static inset-y-0 left-0 z-30 w-64 bg-surface dark:bg-surface-dark border-r border-gray-200 dark:border-gray-700 transform -translate-x-full lg:translate-x-0 transition-transform duration-200 flex flex-col">
     <!-- Logo -->
     <div class="h-16 px-6 border-b border-gray-200 dark:border-gray-700 flex items-center gap-3 shrink-0">
         <div class="w-8 h-8 rounded-lg bg-brand-500 flex items-center justify-center">
@@ -152,7 +152,7 @@ foreach ($navModules as $item) {
 <!-- Contenido principal (el header cierra en footer.php) -->
 <div class="flex-1 flex flex-col min-w-0">
     <!-- Header -->
-    <header class="h-16 bg-surface dark:bg-surface-dark border-b border-gray-200 dark:border-gray-700 px-6 flex items-center justify-between shrink-0">
+    <header class="no-print h-16 bg-surface dark:bg-surface-dark border-b border-gray-200 dark:border-gray-700 px-6 flex items-center justify-between shrink-0">
         <div class="flex items-center gap-4">
             <!-- Botón hamburguesa (móvil) -->
             <button onclick="toggleSidebar()" class="lg:hidden p-2 rounded-lg hover:bg-muted-light dark:hover:bg-muted-dark transition-colors">

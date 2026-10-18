@@ -169,14 +169,14 @@ final class CveReportAi
             $isKev = $kevRow !== null;
             $kevAction = trim((string)($kevRow['required_action'] ?? ''));
             $kevActionEs = '';
-            $cachedActionEs = trim((string)($kevRow['required_action_es'] ?? ''));
+            $cachedActionEs = self::cleanTranslatedText((string)($kevRow['required_action_es'] ?? ''));
             if ($cachedActionEs !== '' && hash_equals((string)($kevRow['required_action_es_hash'] ?? ''), sha1($kevAction))) {
                 $kevActionEs = $cachedActionEs;
             }
 
             $description = trim((string)($row['description'] ?? ''));
             $descriptionEs = '';
-            $cachedEs = trim((string)($row['description_es'] ?? ''));
+            $cachedEs = self::cleanTranslatedText((string)($row['description_es'] ?? ''));
             if ($cachedEs !== '' && hash_equals((string)($row['description_es_hash'] ?? ''), sha1($description))) {
                 $descriptionEs = $cachedEs;
             } elseif (str_starts_with(strtolower((string)($row['description_lang'] ?? '')), 'es')) {
@@ -715,11 +715,11 @@ final class CveReportAi
 
             $descriptionEs = null;
             if (preg_match('/DESCRIPCION_ES:\s*(.+?)(?=\n\s*ACCION_KEV_ES:|\z)/is', $chunk, $dm)) {
-                $descriptionEs = trim(preg_replace('/\s+/u', ' ', $dm[1]) ?? '');
+                $descriptionEs = self::cleanTranslatedText($dm[1]);
             }
             $actionEs = null;
             if (preg_match('/ACCION_KEV_ES:\s*(.+?)(?=\n\s*DESCRIPCION_ES:|\z)/is', $chunk, $am)) {
-                $actionEs = trim(preg_replace('/\s+/u', ' ', $am[1]) ?? '');
+                $actionEs = self::cleanTranslatedText($am[1]);
             }
 
             $sourceDescription = '';
@@ -1034,6 +1034,18 @@ final class CveReportAi
         }
 
         return trim(implode("\n", $result));
+    }
+
+    /**
+     * Limpia restos de Markdown que algunos modelos añaden a las traducciones
+     * (asteriscos, backticks, saltos de línea) y deja un texto plano.
+     */
+    public static function cleanTranslatedText(string $text): string
+    {
+        $text = preg_replace('/\*\*(.+?)\*\*/u', '$1', $text) ?? $text;
+        $text = str_replace(['`', '*'], '', $text);
+        $text = preg_replace('/\s+/u', ' ', $text) ?? $text;
+        return trim($text);
     }
 
     /**

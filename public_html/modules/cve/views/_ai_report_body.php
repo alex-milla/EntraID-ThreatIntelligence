@@ -215,7 +215,7 @@ $exposureLabel = static function (string $value): string {
         </header>
 
         <?php if ($items !== []): ?>
-            <div class="grid grid-cols-2 sm:grid-cols-4 border-b border-gray-200 divide-x divide-gray-200">
+            <div class="report-summary grid grid-cols-2 sm:grid-cols-4 border-b border-gray-200 divide-x divide-gray-200">
                 <div class="px-5 py-4">
                     <p class="text-[10px] font-semibold uppercase tracking-wide text-gray-400">CVEs</p>
                     <p class="text-xl font-bold mt-0.5"><?= count($items) ?></p>
@@ -256,18 +256,19 @@ $exposureLabel = static function (string $value): string {
                 $priority = (string)($item['priority'] ?? '');
                 $vector = (string)($item['vector'] ?? '');
                 $published = (string)($item['published_at'] ?? '');
-                $descriptionEs = trim((string)($item['description_es'] ?? ''));
+                $descriptionEs = CveReportAi::cleanTranslatedText((string)($item['description_es'] ?? ''));
                 $description = $descriptionEs !== '' ? $descriptionEs : trim((string)($item['description'] ?? ''));
                 $descriptionLang = $descriptionEs !== '' ? 'es' : 'en';
                 $github = is_array($item['github'] ?? null) ? $item['github'] : [];
                 $references = is_array($item['references'] ?? null) ? $item['references'] : [];
                 $isKev = !empty($item['kev']);
-                $kevActionEs = trim((string)($item['kev_action_es'] ?? ''));
+                $kevActionEs = CveReportAi::cleanTranslatedText((string)($item['kev_action_es'] ?? ''));
                 $kevAction = $kevActionEs !== '' ? $kevActionEs : trim((string)($item['kev_action'] ?? ''));
                 $nvdUrl = (string)($item['nvd_url'] ?? '');
                 if (!preg_match('#^https?://#i', $nvdUrl)) {
                     $nvdUrl = 'https://nvd.nist.gov/vuln/detail/' . rawurlencode($cveId);
                 }
+                $packetStormUrl = 'https://packetstormsecurity.com/search/?q=' . rawurlencode($cveId);
                 $exposure = ($defender !== null && isset($defender['cves'][$cveId]) && is_array($defender['cves'][$cveId]))
                     ? $defender['cves'][$cveId]
                     : null;
@@ -279,18 +280,19 @@ $exposureLabel = static function (string $value): string {
                             <h2 class="text-xl font-bold mt-0.5 font-mono"><?= e($cveId) ?></h2>
                         </div>
                         <div class="flex items-center gap-2 flex-wrap">
-                            <span class="px-2.5 py-1 rounded-md border text-[11px] font-semibold <?= $severityClasses[$severity] ?? $severityClasses['None'] ?>">
+                            <span class="report-badge px-2.5 py-1 rounded-md border text-[11px] font-semibold <?= $severityClasses[$severity] ?? $severityClasses['None'] ?>">
                                 <?= e($severityLabels[$severity] ?? ($severity !== '' ? strtoupper($severity) : 'SIN DATOS')) ?>
                             </span>
                             <?php if ($priority !== ''): ?>
-                                <span class="px-2.5 py-1 rounded-md text-[11px] font-semibold <?= $priorityClasses[$priority] ?? 'bg-gray-200 text-gray-700' ?>">
+                                <span class="report-badge px-2.5 py-1 rounded-md text-[11px] font-semibold <?= $priorityClasses[$priority] ?? 'bg-gray-200 text-gray-700' ?>">
                                     Prioridad <?= e($priority) ?>
                                 </span>
                             <?php endif; ?>
                             <a href="<?= e($nvdUrl) ?>" target="_blank" rel="noopener noreferrer"
                                class="px-2.5 py-1 rounded-md border border-gray-200 text-[11px] font-medium text-gray-600 hover:bg-gray-50">
-                                NVD ↗
+                                NVD <span class="print-hide">↗</span>
                             </a>
+                            <span class="print-url"><?= e($nvdUrl) ?></span>
                         </div>
                     </div>
 
@@ -298,13 +300,13 @@ $exposureLabel = static function (string $value): string {
                         <div>
                             <dt class="text-[10px] font-semibold uppercase tracking-wide text-gray-400">CVSS</dt>
                             <dd class="text-3xl font-bold mt-0.5 leading-none"><?= $cvss !== null ? e(number_format($cvss, 1, '.', '')) : '—' ?></dd>
-                            <span class="block mt-1 h-1 rounded-full <?= $severityBar ?>" style="width: <?= $cvss !== null ? e(number_format(min(100, $cvss * 10), 0, '.', '')) : 0 ?>%"></span>
+                            <span class="report-meter block mt-1 h-1 rounded-full <?= $severityBar ?>" style="width: <?= $cvss !== null ? e(number_format(min(100, $cvss * 10), 0, '.', '')) : 0 ?>%"></span>
                         </div>
                         <div>
                             <dt class="text-[10px] font-semibold uppercase tracking-wide text-gray-400">EPSS</dt>
                             <dd class="mt-1">
                                 <span class="text-sm font-semibold"><?= $epss !== null ? e(number_format($epssPct, 2, ',', '')) . ' %' : '—' ?></span>
-                                <span class="block mt-1 h-1.5 rounded-full bg-gray-100 overflow-hidden">
+                                <span class="report-meter block mt-1 h-1.5 rounded-full bg-gray-100 overflow-hidden">
                                     <span class="block h-full rounded-full bg-amber-500" style="width: <?= e(number_format($epssPct, 1, '.', '')) ?>%"></span>
                                 </span>
                             </dd>
@@ -345,7 +347,7 @@ $exposureLabel = static function (string $value): string {
                     <?php endif; ?>
 
                     <?php if ($isKev && (!empty($item['kev_action']) || !empty($item['kev_due']) || strcasecmp((string)($item['kev_ransomware'] ?? ''), 'Known') === 0)): ?>
-                        <div class="mt-4 px-4 py-3 rounded-lg bg-red-50 border border-red-100">
+                        <div class="report-kev-action mt-4 px-4 py-3 rounded-lg bg-red-50 border border-red-100">
                             <div class="flex items-center gap-2 flex-wrap">
                                 <p class="text-[10px] font-semibold uppercase tracking-wide text-red-500">Acción requerida (CISA)</p>
                                 <?php if ($kevActionEs === '' && $kevAction !== ''): ?>
@@ -437,7 +439,7 @@ $exposureLabel = static function (string $value): string {
                     <?php endif; ?>
 
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-5">
-                        <div class="rounded-lg border border-gray-200 p-4">
+                        <div class="report-links-card rounded-lg border border-gray-200 p-4">
                             <p class="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
                                 Exploits públicos (<?= count($github) ?>)
                             </p>
@@ -449,8 +451,9 @@ $exposureLabel = static function (string $value): string {
                                         <li>
                                             <a href="<?= e((string)$url) ?>" target="_blank" rel="noopener noreferrer"
                                                class="text-sm text-brand-600 hover:underline break-all">
-                                                <?= e($linkLabel((string)$url)) ?> ↗
+                                                <?= e($linkLabel((string)$url)) ?> <span class="print-hide">↗</span>
                                             </a>
+                                            <span class="print-url"><?= e((string)$url) ?></span>
                                         </li>
                                     <?php endforeach; ?>
                                 </ul>
@@ -458,14 +461,15 @@ $exposureLabel = static function (string $value): string {
                                     <p class="text-[11px] text-gray-400 mt-1">… y <?= count($github) - 12 ?> más</p>
                                 <?php endif; ?>
                             <?php endif; ?>
-                            <a href="https://packetstormsecurity.com/search/?q=<?= e(rawurlencode($cveId)) ?>"
+                            <a href="<?= e($packetStormUrl) ?>"
                                target="_blank" rel="noopener noreferrer"
                                class="inline-block mt-3 text-[11px] font-medium text-gray-500 hover:text-gray-800">
-                                Buscar en PacketStorm ↗
+                                Buscar en PacketStorm <span class="print-hide">↗</span>
                             </a>
+                            <span class="print-url"><?= e($packetStormUrl) ?></span>
                         </div>
 
-                        <div class="rounded-lg border border-gray-200 p-4">
+                        <div class="report-links-card rounded-lg border border-gray-200 p-4">
                             <p class="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
                                 Referencias (<?= count($references) ?>)
                             </p>
@@ -478,8 +482,9 @@ $exposureLabel = static function (string $value): string {
                                             <a href="<?= e((string)$url) ?>" target="_blank" rel="noopener noreferrer"
                                                title="<?= e((string)$url) ?>"
                                                class="text-sm text-brand-600 hover:underline break-all">
-                                                <?= e($linkLabel((string)$url)) ?> ↗
+                                                <?= e($linkLabel((string)$url)) ?> <span class="print-hide">↗</span>
                                             </a>
+                                            <span class="print-url"><?= e((string)$url) ?></span>
                                         </li>
                                     <?php endforeach; ?>
                                 </ul>
@@ -545,20 +550,207 @@ $exposureLabel = static function (string $value): string {
 
     <style>
         @media print {
-            @page { size: auto; margin: 14mm; }
+            @page { size: A4 portrait; margin: 16mm 14mm 18mm; }
+
             .report-doc {
                 border: 0 !important;
                 border-radius: 0 !important;
                 box-shadow: none !important;
                 background: #fff !important;
+                font-size: 9.8pt;
+                line-height: 1.45;
             }
-            .report-doc a { color: #111 !important; text-decoration: none !important; }
-            /* Un CVE largo debe fluir entre páginas; solo evitamos cortes en bloques pequeños. */
-            .report-cve { break-inside: auto; page-break-inside: auto; }
-            .report-cve + hr + .report-cve { break-before: page; page-break-before: always; }
-            .report-ai-block, .report-exposure, tr { break-inside: avoid; page-break-inside: avoid; }
-            h1, h2, h3 { break-after: avoid; page-break-after: avoid; }
+            .report-doc,
+            .report-doc p,
+            .report-doc li,
+            .report-doc h1,
+            .report-doc h2,
+            .report-doc h3,
+            .report-doc dt,
+            .report-doc dd,
+            .report-doc td,
+            .report-doc th,
+            .report-doc a { color: #111 !important; }
+            .report-doc .text-gray-400,
+            .report-doc .text-gray-500,
+            .report-doc .text-gray-600 { color: #555 !important; }
+            .report-doc .text-red-500, .report-doc .text-red-600,
+            .report-doc .text-red-700, .report-doc .text-red-800,
+            .report-doc .text-amber-500, .report-doc .text-amber-600,
+            .report-doc .text-orange-500, .report-doc .text-orange-700,
+            .report-doc .text-blue-600 { color: #111 !important; }
+            .report-doc .bg-red-50, .report-doc .bg-red-100,
+            .report-doc .bg-blue-50, .report-doc .bg-gray-50,
+            .report-doc .bg-gray-100, .report-doc .bg-amber-100,
+            .report-doc .bg-orange-100, .report-doc .bg-green-100 { background: #fff !important; }
+            .report-doc a { text-decoration: none !important; }
+
+            .print-url {
+                display: block !important;
+                font-size: 7.5pt !important;
+                color: #555 !important;
+                word-break: break-all;
+                margin-top: 0.5mm;
+            }
+            .print-hide { display: none !important; }
+
+            /* Cabecera del documento */
+            .report-doc > header {
+                padding: 0 0 5mm !important;
+                border-bottom: 1.5pt solid #111 !important;
+                margin-bottom: 5mm;
+            }
+            .report-doc > header p:first-child {
+                font-size: 8pt !important;
+                letter-spacing: .16em !important;
+                color: #555 !important;
+            }
+            .report-doc > header h1 {
+                font-size: 20pt !important;
+                line-height: 1.15 !important;
+                margin: 1.5mm 0 2mm !important;
+            }
+            .report-doc > header a {
+                border: 0 !important;
+                background: #fff !important;
+                padding: 0 3mm 0 0 !important;
+                font-size: 9pt !important;
+            }
+
+            /* Resumen como tabla */
+            .report-summary {
+                display: table !important;
+                width: 100% !important;
+                border-collapse: collapse !important;
+                border-top: 0.5pt solid #999 !important;
+                border-bottom: 0.5pt solid #999 !important;
+                margin-bottom: 6mm;
+            }
+            .report-summary > div {
+                display: table-cell !important;
+                width: 25%;
+                padding: 3mm !important;
+                border: 0.5pt solid #bbb !important;
+                vertical-align: top;
+            }
+            .report-summary p { font-size: 8pt !important; letter-spacing: .06em; }
+            .report-summary p + p { font-size: 15pt !important; font-weight: 700 !important; }
+
+            /* CVE */
+            .report-cve {
+                border-left: 0 !important;
+                padding-left: 0 !important;
+                margin: 0 0 7mm !important;
+                break-inside: auto !important;
+                page-break-inside: auto !important;
+            }
+            .report-cve h2 { font-size: 15pt !important; }
+            .report-badge {
+                background: #fff !important;
+                border: 0.8pt solid #333 !important;
+                border-radius: 2pt !important;
+                padding: 1mm 2mm !important;
+                font-size: 8pt !important;
+                font-weight: 700 !important;
+            }
+
+            /* Métricas */
+            .report-cve dl {
+                display: table !important;
+                width: 100% !important;
+                border-collapse: collapse !important;
+                margin-top: 4mm !important;
+                padding: 0 !important;
+                border: 0 !important;
+            }
+            .report-cve dl > div {
+                display: table-cell !important;
+                width: 25%;
+                padding: 2.5mm !important;
+                border: 0.5pt solid #bbb !important;
+                vertical-align: top;
+            }
+            .report-cve dl dt { font-size: 7.5pt !important; letter-spacing: .06em; color: #555 !important; }
+            .report-cve dl dd { font-size: 13pt !important; font-weight: 700 !important; }
+            .report-meter { display: none !important; }
+
+            .report-cve p { font-size: 9.5pt !important; }
+            .report-cve > p.font-mono { font-size: 8pt !important; color: #444 !important; margin-top: 2mm !important; }
+
+            /* Acción CISA */
+            .report-kev-action {
+                background: #f7f7f7 !important;
+                border: 0.5pt solid #999 !important;
+                border-left: 2.5pt solid #111 !important;
+                border-radius: 0 !important;
+                padding: 3mm 4mm !important;
+                margin-top: 4mm !important;
+            }
+            .report-kev-action p { font-size: 9pt !important; }
+
+            /* Exposición de Defender */
+            .report-exposure {
+                background: #fff !important;
+                border: 0.5pt solid #999 !important;
+                border-radius: 0 !important;
+                padding: 3mm 4mm !important;
+                margin-top: 4mm !important;
+            }
+            .report-exposure p { font-size: 8.5pt !important; }
+            .report-exposure table { width: 100% !important; border-collapse: collapse !important; }
+            .report-exposure th,
+            .report-exposure td {
+                border: 0.5pt solid #ccc !important;
+                padding: 1.2mm 2mm !important;
+                font-size: 8pt !important;
+            }
+            .report-exposure th { background: #f2f2f2 !important; }
+
+            /* Enlaces */
+            .report-cve .grid { display: block !important; }
+            .report-links-card {
+                border: 0 !important;
+                border-top: 0.5pt solid #999 !important;
+                border-radius: 0 !important;
+                padding: 3mm 0 0 !important;
+                margin-top: 4mm !important;
+            }
+            .report-links-card ul { margin-top: 1.5mm !important; }
+            .report-links-card li { margin: 1.5mm 0 !important; }
+            .report-links-card a { font-size: 8.5pt !important; }
+
+            /* Análisis de IA */
+            .report-ai .grid { display: block !important; }
+            .report-ai-block {
+                border: 0 !important;
+                border-top: 0.5pt solid #999 !important;
+                border-radius: 0 !important;
+                padding: 3mm 0 !important;
+                margin: 0 !important;
+                break-inside: avoid !important;
+                page-break-inside: avoid !important;
+            }
+            .report-ai-block h3 { font-size: 10pt !important; }
+            .report-ai-block li { font-size: 9pt !important; }
+            .report-ai-block span.bg-gray-900 {
+                background: #fff !important;
+                color: #111 !important;
+                border: 0.5pt solid #111 !important;
+            }
+
+            /* Saltos y pie */
+            .report-cve + hr + .report-cve { break-before: page !important; page-break-before: always !important; }
+            .report-cve + hr { display: none !important; }
+            h1, h2, h3 { break-after: avoid !important; page-break-after: avoid !important; }
+            tr { break-inside: avoid !important; page-break-inside: avoid !important; }
             details > p { display: block !important; }
+            .report-doc > footer {
+                border-top: 0.5pt solid #999 !important;
+                padding: 3mm 0 0 !important;
+                font-size: 7.5pt !important;
+                color: #555 !important;
+            }
         }
+        .print-url { display: none; }
     </style>
 </div>
