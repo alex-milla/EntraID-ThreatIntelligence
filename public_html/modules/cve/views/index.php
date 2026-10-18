@@ -3507,20 +3507,61 @@ syncCveReportPeriod();
                             </p>
                         </div>
                     <?php else: ?>
-                        <div class="overflow-x-auto">
-                            <table class="w-full text-sm">
+                        <p class="px-5 pt-3 text-[11px] text-gray-400">
+                            Pulsa un CVE o un informe para verlo aquí debajo. <strong>KEV</strong> = explotación confirmada por CISA;
+                            <strong>Exploit</strong> = PoC/exploit público en la caché de fuentes.
+                        </p>
+                        <div class="overflow-x-auto mt-2">
+                            <table id="assigned-cve-table" class="w-full text-sm">
                                 <thead>
                                     <tr class="border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-xs text-gray-500 uppercase">
-                                        <th class="text-left px-4 py-2">CVE</th>
-                                        <th class="text-left px-4 py-2">Severidad</th>
-                                        <th class="text-left px-4 py-2">CVSS / EPSS</th>
-                                        <th class="text-left px-4 py-2">KEV</th>
-                                        <th class="text-left px-4 py-2">Informes</th>
-                                        <th class="text-left px-4 py-2">Asignado</th>
+                                        <th class="text-left px-4 py-2">
+                                            <button type="button" class="js-sort inline-flex items-center gap-1 hover:text-brand-600 dark:hover:text-brand-400" data-sort-key="cve" data-sort-type="number">
+                                                CVE <span class="js-sort-arrow text-[9px]"></span>
+                                            </button>
+                                        </th>
+                                        <th class="text-left px-4 py-2">
+                                            <button type="button" class="js-sort inline-flex items-center gap-1 hover:text-brand-600 dark:hover:text-brand-400" data-sort-key="severity" data-sort-type="number">
+                                                Severidad <span class="js-sort-arrow text-[9px]"></span>
+                                            </button>
+                                        </th>
+                                        <th class="text-left px-4 py-2">
+                                            <div class="flex flex-col gap-0.5">
+                                                <span>CVSS / EPSS</span>
+                                                <span class="flex items-center gap-2 text-[10px] normal-case">
+                                                    <button type="button" class="js-sort hover:text-brand-600 dark:hover:text-brand-400" data-sort-key="cvss" data-sort-type="number">CVSS <span class="js-sort-arrow text-[9px]"></span></button>
+                                                    <button type="button" class="js-sort hover:text-brand-600 dark:hover:text-brand-400" data-sort-key="epss" data-sort-type="number">EPSS <span class="js-sort-arrow text-[9px]"></span></button>
+                                                </span>
+                                            </div>
+                                        </th>
+                                        <th class="text-left px-4 py-2">
+                                            <button type="button" class="js-sort inline-flex items-center gap-1 hover:text-brand-600 dark:hover:text-brand-400" data-sort-key="kev" data-sort-type="number">
+                                                KEV <span class="js-sort-arrow text-[9px]"></span>
+                                            </button>
+                                        </th>
+                                        <th class="text-left px-4 py-2">
+                                            <button type="button" class="js-sort inline-flex items-center gap-1 hover:text-brand-600 dark:hover:text-brand-400" data-sort-key="exploit" data-sort-type="number">
+                                                Exploit <span class="js-sort-arrow text-[9px]"></span>
+                                            </button>
+                                        </th>
+                                        <th class="text-left px-4 py-2">
+                                            <button type="button" class="js-sort inline-flex items-center gap-1 hover:text-brand-600 dark:hover:text-brand-400" data-sort-key="reports" data-sort-type="number">
+                                                Informes <span class="js-sort-arrow text-[9px]"></span>
+                                            </button>
+                                        </th>
+                                        <th class="text-left px-4 py-2">
+                                            <button type="button" class="js-sort inline-flex items-center gap-1 hover:text-brand-600 dark:hover:text-brand-400" data-sort-key="assigned" data-sort-type="text">
+                                                Asignado <span class="js-sort-arrow text-[9px]"></span>
+                                            </button>
+                                        </th>
                                         <th class="text-right px-4 py-2"></th>
                                     </tr>
                                 </thead>
                                 <tbody class="divide-y divide-gray-100 dark:divide-gray-700/50">
+                                    <?php
+                                    $severityRanks = ['Critical' => 4, 'High' => 3, 'Medium' => 2, 'Low' => 1];
+                                    $exploitSourceLabels = ['github' => 'GitHub', 'nuclei' => 'Nuclei', 'exploitdb' => 'Exploit-DB', 'metasploit' => 'Metasploit'];
+                                    ?>
                                     <?php foreach ($assignedCves as $assignedCve): ?>
                                         <?php
                                         $assignedCveId = (string)($assignedCve['cve_id'] ?? '');
@@ -3530,11 +3571,40 @@ syncCveReportPeriod();
                                         $assignedEpss = $assignedCve['epss'] ?? null;
                                         $assignedReports = is_array($assignedCve['reports'] ?? null) ? $assignedCve['reports'] : [];
                                         $assignedTags = is_array($assignedCve['tags'] ?? null) ? $assignedCve['tags'] : [];
+                                        $assignedAt = (string)($assignedCve['assigned_at'] ?? '');
+                                        $assignedExploitTotal = (int)($assignedCve['exploit_total'] ?? 0);
+                                        $assignedExploitSources = is_array($assignedCve['exploit_sources'] ?? null) ? $assignedCve['exploit_sources'] : [];
+                                        $assignedExploitParts = [];
+                                        foreach ($exploitSourceLabels as $sourceKey => $sourceLabel) {
+                                            $sourceCount = (int)($assignedExploitSources[$sourceKey] ?? 0);
+                                            if ($sourceCount > 0) {
+                                                $assignedExploitParts[] = $sourceLabel . ' ' . $sourceCount;
+                                            }
+                                        }
+                                        $assignedExploitTitle = $assignedExploitParts !== []
+                                            ? implode(' · ', $assignedExploitParts) . ' (caché actual)'
+                                            : 'Sin exploits en la caché actual';
+                                        $cveSortValue = $assignedCveId;
+                                        if (preg_match('/^CVE-(\d{4})-(\d+)$/', $assignedCveId, $cveParts)) {
+                                            $cveSortValue = sprintf('%04d%010d', (int)$cveParts[1], (int)$cveParts[2]);
+                                        }
+                                        $cvePanelUrl = base_url('modules/cve/detail/' . rawurlencode($assignedCveId) . '/panel');
                                         ?>
-                                        <tr class="hover:bg-gray-50 dark:hover:bg-gray-800/50">
+                                        <tr class="js-assigned-row hover:bg-gray-50 dark:hover:bg-gray-800/50"
+                                            data-cve-id="<?= e($assignedCveId) ?>"
+                                            data-sort-cve="<?= e($cveSortValue) ?>"
+                                            data-sort-severity="<?= (int)($severityRanks[$assignedSeverity] ?? 0) ?>"
+                                            data-sort-cvss="<?= $assignedCvss !== null ? e((string)(float)$assignedCvss) : '-1' ?>"
+                                            data-sort-epss="<?= $assignedEpss !== null ? e((string)(float)$assignedEpss) : '-1' ?>"
+                                            data-sort-kev="<?= !empty($assignedCve['kev_id']) ? '1' : '0' ?>"
+                                            data-sort-exploit="<?= $assignedExploitTotal ?>"
+                                            data-sort-reports="<?= count($assignedReports) ?>"
+                                            data-sort-assigned="<?= e($assignedAt) ?>">
                                             <td class="px-4 py-3">
                                                 <a href="<?= base_url('modules/cve/detail/' . rawurlencode($assignedCveId)) ?>"
-                                                   class="font-mono text-xs font-semibold text-brand-600 dark:text-brand-400 hover:underline">
+                                                   class="js-inline-cve font-mono text-xs font-semibold text-brand-600 dark:text-brand-400 hover:underline"
+                                                   data-panel-url="<?= e($cvePanelUrl) ?>"
+                                                   title="Ver la ficha aquí debajo">
                                                     <?= e($assignedCveId) ?>
                                                 </a>
                                                 <?php if ($assignedTags !== []): ?>
@@ -3567,6 +3637,17 @@ syncCveReportPeriod();
                                                     <span class="text-gray-400">—</span>
                                                 <?php endif; ?>
                                             </td>
+                                            <td class="px-4 py-3 text-xs whitespace-nowrap">
+                                                <?php if ($assignedExploitTotal > 0): ?>
+                                                    <span class="inline-flex px-2 py-0.5 text-[10px] rounded-full bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300"
+                                                          title="<?= e($assignedExploitTitle) ?>">
+                                                        Sí (<?= $assignedExploitTotal ?>)
+                                                    </span>
+                                                <?php else: ?>
+                                                    <span class="inline-flex px-2 py-0.5 text-[10px] rounded-full bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400"
+                                                          title="<?= e($assignedExploitTitle) ?>">No</span>
+                                                <?php endif; ?>
+                                            </td>
                                             <td class="px-4 py-3 text-xs text-gray-500">
                                                 <?php if ($assignedReports === []): ?>
                                                     —
@@ -3574,7 +3655,8 @@ syncCveReportPeriod();
                                                     <div class="flex flex-col gap-0.5">
                                                         <?php foreach ($assignedReports as $assignedReport): ?>
                                                             <a href="<?= base_url('modules/cve?tab=reports&report=' . (int)$assignedReport['id']) ?>"
-                                                               class="text-brand-600 dark:text-brand-400 hover:underline truncate max-w-[220px]"
+                                                               class="js-inline-report text-brand-600 dark:text-brand-400 hover:underline truncate max-w-[220px]"
+                                                               data-panel-url="<?= e(base_url('modules/cve/report-ai/' . (int)$assignedReport['id'] . '/panel')) ?>"
                                                                title="<?= e((string)($assignedReport['title'] ?? '')) ?>">
                                                                 Informe #<?= (int)$assignedReport['id'] ?>
                                                             </a>
@@ -3583,10 +3665,7 @@ syncCveReportPeriod();
                                                 <?php endif; ?>
                                             </td>
                                             <td class="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">
-                                                <?php
-                                                $assignedAt = (string)($assignedCve['assigned_at'] ?? '');
-                                                echo $assignedAt !== '' ? e(format_db_date($assignedAt, 'd/m/Y H:i')) : '—';
-                                                ?>
+                                                <?= $assignedAt !== '' ? e(format_db_date($assignedAt, 'd/m/Y H:i')) : '—' ?>
                                             </td>
                                             <td class="px-4 py-3 text-right whitespace-nowrap">
                                                 <form method="POST" action="<?= base_url('modules/cve/reports/ai-unassign-cve') ?>"
@@ -3599,6 +3678,9 @@ syncCveReportPeriod();
                                                     <button type="submit" class="text-xs text-gray-400 hover:text-red-500">Quitar</button>
                                                 </form>
                                             </td>
+                                        </tr>
+                                        <tr class="js-assigned-expand hidden">
+                                            <td colspan="8" class="p-0"></td>
                                         </tr>
                                     <?php endforeach; ?>
                                 </tbody>
@@ -3923,6 +4005,271 @@ syncCveReportPeriod();
                 results.innerHTML = '<p class="text-xs text-red-500">Error de conexión al buscar CPE.</p>';
             });
         };
+    })();
+    </script>
+
+    <script>
+    (function () {
+        'use strict';
+
+        var table = document.getElementById('assigned-cve-table');
+        if (!table) {
+            return;
+        }
+
+        var tbody = table.querySelector('tbody');
+        var refreshUrl = <?= json_encode(base_url('modules/cve/exploits/refresh')) ?>;
+        var currentSort = { key: 'assigned', type: 'text', dir: -1 };
+        var sourceLabels = {
+            github: 'GitHub',
+            nuclei: 'Nuclei',
+            exploitdb: 'Exploit-DB',
+            metasploit: 'Metasploit'
+        };
+
+        function csrfToken() {
+            var el = document.querySelector('input[name="csrf_token"]');
+            return el ? el.value : '';
+        }
+
+        function expandRowFor(row) {
+            var next = row ? row.nextElementSibling : null;
+            return next && next.classList.contains('js-assigned-expand') ? next : null;
+        }
+
+        function closeExpansions(except) {
+            tbody.querySelectorAll('tr.js-assigned-expand').forEach(function (row) {
+                if (except && row === except) {
+                    return;
+                }
+                row.classList.add('hidden');
+                row.dataset.loadId = '';
+                var cell = row.querySelector('td');
+                if (cell) {
+                    cell.innerHTML = '';
+                }
+            });
+        }
+
+        function loadPanel(expand, url, fallbackUrl) {
+            closeExpansions(expand);
+            var cell = expand.querySelector('td');
+            var loadId = String(Date.now()) + '-' + Math.random();
+            expand.dataset.loadId = loadId;
+            expand.dataset.panelUrl = url;
+            expand.classList.remove('hidden');
+            cell.textContent = '';
+            var loading = document.createElement('div');
+            loading.className = 'p-4 text-xs text-gray-500';
+            loading.textContent = 'Cargando…';
+            cell.appendChild(loading);
+
+            fetch(url, {
+                headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                credentials: 'same-origin'
+            }).then(function (res) {
+                if (!res.ok) {
+                    throw new Error('HTTP ' + res.status);
+                }
+                return res.text();
+            }).then(function (html) {
+                if (expand.dataset.loadId !== loadId || expand.classList.contains('hidden')) {
+                    return;
+                }
+                cell.innerHTML = html;
+            }).catch(function () {
+                if (expand.dataset.loadId !== loadId) {
+                    return;
+                }
+                cell.textContent = '';
+                var error = document.createElement('div');
+                error.className = 'p-4 text-xs text-red-500';
+                error.textContent = 'No se pudo cargar el contenido. ';
+                var link = document.createElement('a');
+                link.href = fallbackUrl;
+                link.className = 'underline';
+                link.textContent = 'Abrir en una página';
+                error.appendChild(link);
+                cell.appendChild(error);
+            });
+        }
+
+        function updateExploitCell(cveId, total, sources) {
+            var row = tbody.querySelector('tr.js-assigned-row[data-cve-id="' + cveId.replace(/"/g, '') + '"]');
+            if (!row) {
+                return;
+            }
+            row.dataset.sortExploit = String(total);
+            var cell = row.children[4];
+            if (!cell) {
+                return;
+            }
+            cell.textContent = '';
+            var parts = [];
+            Object.keys(sourceLabels).forEach(function (key) {
+                var count = parseInt(sources && sources[key] ? sources[key] : 0, 10) || 0;
+                if (count > 0) {
+                    parts.push(sourceLabels[key] + ' ' + count);
+                }
+            });
+            var title = parts.length ? parts.join(' · ') + ' (caché actual)' : 'Sin exploits en la caché actual';
+            var badge = document.createElement('span');
+            badge.title = title;
+            badge.className = total > 0
+                ? 'inline-flex px-2 py-0.5 text-[10px] rounded-full bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300'
+                : 'inline-flex px-2 py-0.5 text-[10px] rounded-full bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400';
+            badge.textContent = total > 0 ? 'Sí (' + total + ')' : 'No';
+            cell.appendChild(badge);
+        }
+
+        function refreshExploits(button) {
+            var cveId = button.dataset.cveId || '';
+            var expand = button.closest('tr.js-assigned-expand');
+            if (!cveId || !expand) {
+                return;
+            }
+            var panelUrl = expand.dataset.panelUrl || '';
+            button.disabled = true;
+            button.textContent = 'Buscando…';
+
+            fetch(refreshUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'X-CSRF-Token': csrfToken()
+                },
+                credentials: 'same-origin',
+                body: JSON.stringify({ cve_id: cveId })
+            }).then(function (res) {
+                return res.json().then(function (body) {
+                    if (!res.ok || !body.success) {
+                        throw new Error(body && body.error ? body.error : 'HTTP ' + res.status);
+                    }
+                    return body;
+                });
+            }).then(function (body) {
+                updateExploitCell(cveId, body.total || 0, body.sources || {});
+                if (panelUrl) {
+                    return fetch(panelUrl, {
+                        headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                        credentials: 'same-origin'
+                    }).then(function (res) { return res.text(); }).then(function (html) {
+                        var cell = expand.querySelector('td');
+                        if (cell) {
+                            cell.innerHTML = html;
+                        }
+                    });
+                }
+            }).catch(function (err) {
+                appAlert('No se pudieron buscar los exploits: ' + (err && err.message ? err.message : 'error desconocido'), { title: 'No se pudo buscar' });
+                button.disabled = false;
+                button.textContent = 'Buscar ahora';
+            });
+        }
+
+        function sortValue(row, key) {
+            var map = {
+                cve: 'sortCve',
+                severity: 'sortSeverity',
+                cvss: 'sortCvss',
+                epss: 'sortEpss',
+                kev: 'sortKev',
+                exploit: 'sortExploit',
+                reports: 'sortReports',
+                assigned: 'sortAssigned'
+            };
+            return row.dataset[map[key]] || '';
+        }
+
+        function sortRows(key, type, dir) {
+            closeExpansions();
+            var rows = Array.prototype.slice.call(tbody.querySelectorAll('tr.js-assigned-row'));
+            rows.sort(function (a, b) {
+                var av = sortValue(a, key);
+                var bv = sortValue(b, key);
+                var result;
+                if (type === 'number') {
+                    result = (parseFloat(av) || 0) - (parseFloat(bv) || 0);
+                } else {
+                    result = String(av).localeCompare(String(bv));
+                }
+                if (result === 0) {
+                    result = (parseFloat(a.dataset.sortCve) || 0) - (parseFloat(b.dataset.sortCve) || 0);
+                }
+                return result * dir;
+            });
+            rows.forEach(function (row) {
+                var expand = expandRowFor(row);
+                tbody.appendChild(row);
+                if (expand) {
+                    tbody.appendChild(expand);
+                }
+            });
+        }
+
+        function updateArrows(activeButton) {
+            table.querySelectorAll('.js-sort-arrow').forEach(function (arrow) {
+                arrow.textContent = '';
+            });
+            table.querySelectorAll('.js-sort').forEach(function (button) {
+                button.classList.remove('text-brand-600', 'dark:text-brand-400');
+            });
+            if (activeButton) {
+                var arrow = activeButton.querySelector('.js-sort-arrow');
+                if (arrow) {
+                    arrow.textContent = currentSort.dir > 0 ? '▲' : '▼';
+                }
+                activeButton.classList.add('text-brand-600', 'dark:text-brand-400');
+            }
+        }
+
+        table.addEventListener('click', function (event) {
+            var sortButton = event.target.closest('.js-sort');
+            if (sortButton) {
+                event.preventDefault();
+                var key = sortButton.dataset.sortKey || 'assigned';
+                var type = sortButton.dataset.sortType || 'text';
+                if (currentSort.key === key) {
+                    currentSort.dir = currentSort.dir * -1;
+                } else {
+                    currentSort = { key: key, type: type, dir: key === 'cve' ? 1 : -1 };
+                }
+                sortRows(currentSort.key, currentSort.type, currentSort.dir);
+                updateArrows(sortButton);
+                return;
+            }
+
+            if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey || event.button !== 0) {
+                return;
+            }
+
+            var inlineLink = event.target.closest('.js-inline-cve, .js-inline-report');
+            if (inlineLink) {
+                event.preventDefault();
+                var row = inlineLink.closest('tr.js-assigned-row');
+                var expand = expandRowFor(row);
+                if (!expand || !inlineLink.dataset.panelUrl) {
+                    return;
+                }
+                var isOpen = !expand.classList.contains('hidden') && expand.dataset.panelUrl === inlineLink.dataset.panelUrl;
+                if (isOpen) {
+                    closeExpansions();
+                    return;
+                }
+                loadPanel(expand, inlineLink.dataset.panelUrl, inlineLink.href);
+                return;
+            }
+
+            var refreshButton = event.target.closest('.js-cve-exploits-refresh');
+            if (refreshButton) {
+                event.preventDefault();
+                refreshExploits(refreshButton);
+            }
+        });
+
+        sortRows(currentSort.key, currentSort.type, currentSort.dir);
+        updateArrows(table.querySelector('.js-sort[data-sort-key="assigned"]'));
     })();
     </script>
 <?php endif; ?>

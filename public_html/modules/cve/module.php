@@ -34,7 +34,9 @@ class Module_Cve extends BaseModule
     {
         return [
             ['method' => 'GET',  'pattern' => '',                'handler' => [$this, 'index']],
+            ['method' => 'GET',  'pattern' => 'detail/{cveId}/panel', 'handler' => [$this, 'detailPanel']],
             ['method' => 'GET',  'pattern' => 'detail/{cveId}',  'handler' => [$this, 'detail']],
+            ['method' => 'POST', 'pattern' => 'exploits/refresh', 'handler' => [$this, 'refreshExploits']],
             ['method' => 'GET',  'pattern' => 'status',          'handler' => [$this, 'syncStatus']],
             ['method' => 'GET',  'pattern' => 'active',          'handler' => [$this, 'syncActive']],
             ['method' => 'GET',  'pattern' => 'cpe-search',      'handler' => [$this, 'cpeSearch']],
@@ -59,6 +61,7 @@ class Module_Cve extends BaseModule
             ['method' => 'POST', 'pattern' => 'reports/ai-scheduled-defender', 'handler' => [$this, 'runScheduledDefenderReport']],
             ['method' => 'GET',  'pattern' => 'reports/ai-status/{id}', 'handler' => [$this, 'aiReportStatus']],
             ['method' => 'GET',  'pattern' => 'report/{id}/csv',  'handler' => [$this, 'reportCsv']],
+            ['method' => 'GET',  'pattern' => 'report-ai/{id}/panel', 'handler' => [$this, 'aiReportPanel']],
             ['method' => 'GET',  'pattern' => 'report-ai/{id}',   'handler' => [$this, 'aiReportView']],
             ['method' => 'GET',  'pattern' => 'report/{id}',      'handler' => [$this, 'reportView']],
             ['method' => 'POST', 'pattern' => 'sync',            'handler' => [$this, 'triggerSync']],
@@ -608,6 +611,118 @@ class Module_Cve extends BaseModule
             'kev'        => $kev,
             'epss'       => $epss,
         ]);
+    }
+
+    /**
+     * Panel compacto de un CVE para insertarlo bajo la fila de CVEs asignados.
+     */
+    public function detailPanel(array $params = []): void
+    {
+        Auth::require();
+
+        $cveId = strtoupper(rawurldecode((string)($params['cveId'] ?? '')));
+        $valid = (bool)preg_match('/^CVE-\d{4}-\d{4,}$/', $cveId);
+        $cve = $valid ? $this->getCatalogCve($cveId) : null;
+
+        if ($cve === null) {
+            http_response_code(404);
+            echo '<div class="p-4 text-sm text-gray-500">No hay datos para este CVE en el catálogo local.</div>';
+            return;
+        }
+
+        $products = CveDatabase::fetchAll(
+            "SELECT vendor, product FROM cve_product WHERE cve_id = ? ORDER BY vendor ASC, product ASC",
+            [$cveId]
+        );
+        $references = safe_json_decode($cve['references_json'] ?? '[]', []);
+        $cwes = safe_json_decode($cve['cwe_ids'] ?? '[]', []);
+        $references = is_array($references) ? $references : [];
+        $cwes = is_array($cwes) ? $cwes : [];
+        $kev = CveDatabase::fetchOne("SELECT * FROM cve_kev WHERE cve_id = ?", [$cveId]);
+        $epss = CveDatabase::fetchOne("SELECT * FROM cve_epss WHERE cve_id = ?", [$cveId]);
+        $exploits = CveExploit::getForCve($cveId);
+
+        $sourceDescription = (string)($cve['description'] ?? '');
+        $cachedEs = trim((string)($cve['description_es'] ?? ''));
+        if ($cachedEs !== '' && hash_equals((string)($cve['description_es_hash'] ?? ''), sha1($sourceDescription))) {
+            $cve['description_display'] = $cachedEs;
+            $cve['description_display_lang'] = 'es';
+        } else {
+            $cve['description_display'] = $sourceDescription;
+            $cve['description_display_lang'] = (string)($cve['description_lang'] ?? 'en');
+        }
+
+        $isAdmin = Auth::isAdmin();
+        require __DIR__ . '/views/_cve_inline_panel.php';
+    }
+
+    /**
+     * Busca exploits solo para un CVE concreto (botón «Buscar ahora»).
+     */
+    public function refreshExploits(array $params = []): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        try {
+            $raw = file_get_contents('php://input');
+            $input = json_decode((string)$raw, true);
+            if (!is_array($input)) {
+                $input = $_POST;
+            }
+
+            $ids = CveReportAi::normalizeCveIds($input['cve_id'] ?? '', 1);
+            $cveId = (string)($ids[0] ?? '');
+            if ($cveId === '') {
+                json_response(['success' => false, 'error' => 'CVE no válido.'], 400);
+            }
+
+            $stats = CveExploit::enrich([$cveId]);
+            $counts = CveExploit::countsByCve([$cveId]);
+            $data = $counts[$cveId] ?? ['total' => 0, 'sources' => []];
+
+            json_response([
+                'success'  => true,
+                'cve_id'   => $cveId,
+                'stats'    => $stats,
+                'total'    => (int)($data['total'] ?? 0),
+                'sources'  => $data['sources'] ?? [],
+            ]);
+        } catch (Throwable $e) {
+            app_log('error', 'cve_exploit', 'Error buscando exploits de un CVE', ['error' => $e->getMessage()]);
+            json_response(['success' => false, 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Cuerpo de un informe para el panel inline de CVEs asignados.
+     */
+    public function aiReportPanel(array $params = []): void
+    {
+        Auth::require();
+
+        $id = (int)($params['id'] ?? 0);
+        $payload = $id > 0 ? $this->aiReportPayload($id) : null;
+        if ($payload === null) {
+            http_response_code(404);
+            echo '<div class="p-4 text-sm text-gray-500">Informe no encontrado o sin acceso.</div>';
+            return;
+        }
+
+        $report = $payload['report'];
+        $items = $payload['items'];
+        $aiText = $payload['aiText'];
+        $sections = $payload['sections'];
+        $defender = $payload['defender'] ?? null;
+        $perItemMode = !empty($payload['perItemMode']);
+        $interactive = false;
+        $isAdmin = Auth::isAdmin();
+
+        echo '<div class="no-print mb-3 flex items-center justify-between gap-2">'
+            . '<span class="text-xs text-gray-500">Informe #' . (int)$id . '</span>'
+            . '<a href="' . e(base_url('modules/cve/report-ai/' . (int)$id)) . '" class="text-xs text-brand-600 dark:text-brand-400 hover:underline">Abrir informe completo</a>'
+            . '</div>';
+        require __DIR__ . '/views/_ai_report_body.php';
     }
 
     // ============================================================
@@ -3525,9 +3640,12 @@ class Module_Cve extends BaseModule
             }
         }
 
-        foreach ($out as &$cve) {
+        $exploitCounts = CveExploit::countsByCve(array_keys($out));
+        foreach ($out as $cveId => &$cve) {
             $cve['tags'] = array_keys($cve['tags']);
             $cve['reports'] = array_values($cve['reports']);
+            $cve['exploit_total'] = (int)($exploitCounts[$cveId]['total'] ?? 0);
+            $cve['exploit_sources'] = $exploitCounts[$cveId]['sources'] ?? [];
         }
         unset($cve);
 
