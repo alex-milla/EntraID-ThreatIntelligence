@@ -81,11 +81,25 @@
 
 /* Print: ocultar sidebar y header */
 @media print {
+    html, body {
+        height: auto !important;
+        overflow: visible !important;
+        background: #fff !important;
+    }
     aside, header, .no-print {
         display: none !important;
     }
     main {
         padding: 0 !important;
+        overflow: visible !important;
+        height: auto !important;
+    }
+    /* Evitar que los contenedores con scroll recorten la impresión. */
+    .overflow-hidden, .overflow-auto, .overflow-y-auto {
+        overflow: visible !important;
+    }
+    .shadow-sm, .shadow, .shadow-md, .shadow-lg, .shadow-xl, .shadow-2xl {
+        box-shadow: none !important;
     }
 }
 

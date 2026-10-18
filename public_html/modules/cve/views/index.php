@@ -63,7 +63,7 @@ foreach ($flashData as $type => $msg):
     <div class="mb-4 px-4 py-3 rounded-lg text-sm <?= $colors ?>"><?= e($msg) ?></div>
 <?php endforeach; ?>
 
-<div class="mb-6 flex items-start justify-between gap-4 flex-wrap">
+<div class="no-print mb-6 flex items-start justify-between gap-4 flex-wrap">
     <div>
         <h1 class="text-xl font-semibold">CVE</h1>
         <p class="text-sm text-gray-500 mt-1">
@@ -792,7 +792,7 @@ $aiStatusText = [
 ];
 ?>
 
-<div class="mb-4 flex items-center justify-between gap-3 flex-wrap">
+<div class="no-print mb-4 flex items-center justify-between gap-3 flex-wrap">
     <div>
         <h2 class="text-lg font-bold">Informes</h2>
         <p class="text-xs text-gray-400">Selecciona un informe para verlo aquí mismo, o crea uno nuevo con IA.</p>
@@ -915,7 +915,7 @@ $aiStatusText = [
                         Enviar a grupo
                     </button>
                 <?php endif; ?>
-                <button type="button" id="ai-print-btn" onclick="window.print()"
+                <button type="button" id="ai-print-btn" onclick="printCveAiReport()"
                         class="hidden px-3 py-1.5 bg-gray-900 hover:bg-black text-white text-xs font-medium rounded-lg transition-colors">
                     Imprimir / PDF
                 </button>
@@ -1336,14 +1336,17 @@ $aiStatusText = [
             min-height: 0 !important;
             display: block !important;
             border: 0 !important;
+            overflow: visible !important;
         }
         .ai-workspace > aside { display: none !important; }
-        .ai-workspace > section { display: block !important; }
+        .ai-workspace > section { display: block !important; overflow: visible !important; }
         #ai-detail-scroll {
             overflow: visible !important;
+            height: auto !important;
             padding: 0 !important;
             background: #fff !important;
         }
+        #ai-detail { overflow: visible !important; }
         #ai-detail > * { max-width: none !important; }
     }
 </style>
@@ -1812,6 +1815,14 @@ $aiStatusText = [
         } else if (el.requestFullscreen) {
             el.requestFullscreen().catch(function () {});
         }
+    };
+
+    // La impresión se hace en la página completa del informe, sin la UI del workspace.
+    window.printCveAiReport = function () {
+        if (!state.id) {
+            return;
+        }
+        window.open(PARTIAL + '/' + state.id + '?print=1', '_blank');
     };
 
     window.cveAiRefresh = function () {

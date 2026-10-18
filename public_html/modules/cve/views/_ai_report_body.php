@@ -363,7 +363,7 @@ $exposureLabel = static function (string $value): string {
                     <?php endif; ?>
 
                     <?php if ($exposure !== null): ?>
-                        <div class="mt-5 rounded-lg border border-blue-100 bg-blue-50/60 p-4">
+                        <div class="report-exposure mt-5 rounded-lg border border-blue-100 bg-blue-50/60 p-4">
                             <div class="flex items-center justify-between gap-2 flex-wrap">
                                 <p class="text-[10px] font-semibold uppercase tracking-wide text-blue-600">Exposición en tu entorno · Defender</p>
                                 <span class="text-[10px] text-gray-400">Foto: <?= e(format_db_date((string)($defender['generated_at'] ?? ''), 'd/m/Y H:i')) ?></span>
@@ -545,7 +545,7 @@ $exposureLabel = static function (string $value): string {
 
     <style>
         @media print {
-            @page { margin: 14mm; }
+            @page { size: auto; margin: 14mm; }
             .report-doc {
                 border: 0 !important;
                 border-radius: 0 !important;
@@ -553,9 +553,11 @@ $exposureLabel = static function (string $value): string {
                 background: #fff !important;
             }
             .report-doc a { color: #111 !important; text-decoration: none !important; }
-            .report-cve { break-inside: avoid; page-break-inside: avoid; }
+            /* Un CVE largo debe fluir entre páginas; solo evitamos cortes en bloques pequeños. */
+            .report-cve { break-inside: auto; page-break-inside: auto; }
             .report-cve + hr + .report-cve { break-before: page; page-break-before: always; }
-            .report-ai-block { break-inside: avoid; page-break-inside: avoid; }
+            .report-ai-block, .report-exposure, tr { break-inside: avoid; page-break-inside: avoid; }
+            h1, h2, h3 { break-after: avoid; page-break-after: avoid; }
             details > p { display: block !important; }
         }
     </style>

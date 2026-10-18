@@ -232,4 +232,12 @@ require __DIR__ . '/_tabs.php';
     })();
     </script>
     <?php endif; ?>
+
+    <?php if (!empty($_GET['print'])): ?>
+    <script>
+    window.addEventListener('load', function () {
+        setTimeout(function () { window.print(); }, 500);
+    });
+    </script>
+    <?php endif; ?>
 <?php endif; ?>
