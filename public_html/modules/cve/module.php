@@ -1652,6 +1652,10 @@ class Module_Cve extends BaseModule
                 json_response(['success' => false, 'error' => 'Informe no encontrado.'], 404);
             }
 
+            $oldGroupId = (int)($row['group_id'] ?? 0);
+            // Informes antiguos: asegurar las filas por CVE antes de asignar.
+            CveReportAi::ensureReportItems($id);
+
             $groupId = (int)($input['group_id'] ?? 0);
             $newName = trim((string)($input['new_group'] ?? ''));
             $newKind = (string)($input['new_group_kind'] ?? 'application');
@@ -1672,11 +1676,28 @@ class Module_Cve extends BaseModule
                 [$groupId > 0 ? $groupId : null, $id]
             );
             if ($groupId > 0) {
-                // Los CVEs sin grupo propio heredan el grupo del informe.
+                if ($oldGroupId > 0 && $oldGroupId !== $groupId) {
+                    // Mueve los CVEs que heredaban el grupo anterior; conserva
+                    // los que tenían un grupo propio distinto.
+                    CveDatabase::query(
+                        "UPDATE cve_ai_report_items SET group_id = ?, updated_at = datetime('now')
+                         WHERE report_id = ? AND (group_id IS NULL OR group_id = ?)",
+                        [$groupId, $id, $oldGroupId]
+                    );
+                } else {
+                    // Los CVEs sin grupo propio heredan el grupo del informe.
+                    CveDatabase::query(
+                        "UPDATE cve_ai_report_items SET group_id = ?, updated_at = datetime('now')
+                         WHERE report_id = ? AND group_id IS NULL",
+                        [$groupId, $id]
+                    );
+                }
+            } elseif ($oldGroupId > 0) {
+                // El informe pasa a «sin grupo»: se limpia el grupo heredado.
                 CveDatabase::query(
-                    "UPDATE cve_ai_report_items SET group_id = ?
-                     WHERE report_id = ? AND group_id IS NULL",
-                    [$groupId, $id]
+                    "UPDATE cve_ai_report_items SET group_id = NULL, updated_at = datetime('now')
+                     WHERE report_id = ? AND group_id = ?",
+                    [$id, $oldGroupId]
                 );
             }
 
@@ -1891,6 +1912,11 @@ class Module_Cve extends BaseModule
                 ], 400);
             }
 
+            // Informes antiguos: reconstruir sus CVEs antes de asignar.
+            foreach ($eligible as $reportId) {
+                CveReportAi::ensureReportItems($reportId);
+            }
+
             $groupId = (int)($input['group_id'] ?? 0);
             $newName = trim((string)($input['new_group'] ?? ''));
             $newKind = (string)($input['new_group_kind'] ?? 'application');
@@ -1924,10 +1950,22 @@ class Module_Cve extends BaseModule
                 }
             });
 
+            $cveCount = 0;
+            if ($eligible !== []) {
+                $placeholders = implode(',', array_fill(0, count($eligible), '?'));
+                $cveCount = (int)(CveDatabase::fetchOne(
+                    "SELECT COUNT(DISTINCT cve_id) AS c
+                     FROM cve_ai_report_items
+                     WHERE report_id IN ($placeholders)",
+                    $eligible
+                )['c'] ?? 0);
+            }
+
             log_activity('cve.reports_assigned_bulk', [
                 'reports' => $eligible,
                 'group'   => $groupName,
                 'items'   => $itemCount,
+                'cves'    => $cveCount,
             ]);
 
             json_response([
@@ -1936,6 +1974,7 @@ class Module_Cve extends BaseModule
                 'group_name'   => $groupName,
                 'reports'      => $reportCount,
                 'items'        => $itemCount,
+                'cves'         => $cveCount,
                 'skipped'      => $skipped,
             ]);
         } catch (InvalidArgumentException $e) {

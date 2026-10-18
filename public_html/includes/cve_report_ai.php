@@ -1300,13 +1300,88 @@ final class CveReportAi
     }
 
     /**
+     * Reconstruye las filas por CVE de un informe antiguo o incompleto.
+     * Usa data_json y, si no hay datos, la lista cve_ids. Es idempotente.
+     *
+     * @return int Número de CVEs considerados.
+     */
+    public static function ensureReportItems(int $reportId): int
+    {
+        if ($reportId <= 0) {
+            return 0;
+        }
+
+        $row = CveDatabase::fetchOne(
+            "SELECT id, cve_ids, data_json, tags, group_id, status
+             FROM cve_ai_reports WHERE id = ?",
+            [$reportId]
+        );
+        if ($row === null) {
+            return 0;
+        }
+
+        $items = [];
+        $decodedItems = safe_json_decode((string)($row['data_json'] ?? ''), []);
+        if (is_array($decodedItems)) {
+            foreach ($decodedItems as $item) {
+                if (is_array($item) && trim((string)($item['cve_id'] ?? '')) !== '') {
+                    $items[] = $item;
+                }
+            }
+        }
+
+        if ($items === []) {
+            $ids = safe_json_decode((string)($row['cve_ids'] ?? ''), []);
+            if (!is_array($ids)) {
+                $ids = preg_split('/[\s,;]+/', (string)($row['cve_ids'] ?? '')) ?: [];
+            }
+            $seen = [];
+            foreach ($ids as $id) {
+                if (!is_scalar($id)) {
+                    continue;
+                }
+                $cveId = strtoupper(trim((string)$id));
+                if ($cveId === '' || isset($seen[$cveId])) {
+                    continue;
+                }
+                $seen[$cveId] = true;
+                $items[] = ['cve_id' => $cveId];
+            }
+        }
+
+        if ($items === []) {
+            return 0;
+        }
+
+        $status = (string)($row['status'] ?? '') === 'done' ? 'done' : 'pending';
+        $tagsJson = self::tagsJson(self::decodeTags((string)($row['tags'] ?? '')));
+        self::ensureAiItems(
+            $reportId,
+            $items,
+            $tagsJson,
+            (int)($row['group_id'] ?? 0),
+            $status
+        );
+
+        return count($items);
+    }
+
+    /**
      * Crea las filas de análisis por CVE que falten y conserva tags/estado de
      * las existentes. Se ejecuta antes de generar el informe.
      *
      * @param array<int,array<string,mixed>> $items
      */
-    private static function ensureAiItems(int $reportId, array $items, ?string $reportTagsJson, int $defaultGroupId = 0): void
-    {
+    private static function ensureAiItems(
+        int $reportId,
+        array $items,
+        ?string $reportTagsJson,
+        int $defaultGroupId = 0,
+        string $defaultStatus = 'pending'
+    ): void {
+        if (!in_array($defaultStatus, ['pending', 'running', 'done', 'error', 'canceled'], true)) {
+            $defaultStatus = 'pending';
+        }
         $existing = [];
         foreach (CveDatabase::fetchAll(
             "SELECT id, cve_id, tags FROM cve_ai_report_items WHERE report_id = ?",
@@ -1324,8 +1399,8 @@ final class CveReportAi
             if (!isset($existing[$cveId])) {
                 CveDatabase::insert(
                     "INSERT INTO cve_ai_report_items (report_id, cve_id, position, tags, group_id, status)
-                     VALUES (?, ?, ?, ?, ?, 'pending')",
-                    [$reportId, $cveId, $position, $reportTagsJson, $defaultGroupId > 0 ? $defaultGroupId : null]
+                     VALUES (?, ?, ?, ?, ?, ?)",
+                    [$reportId, $cveId, $position, $reportTagsJson, $defaultGroupId > 0 ? $defaultGroupId : null, $defaultStatus]
                 );
             } else {
                 $row = $existing[$cveId];

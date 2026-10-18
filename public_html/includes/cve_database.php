@@ -452,6 +452,60 @@ class CveDatabase
             $db->exec("ALTER TABLE cve_ai_reports ADD COLUMN total_items INTEGER NOT NULL DEFAULT 0");
         }
 
+        // v0.2.8.8: informes antiguos o incompletos sin filas por CVE.
+        // Se reconstruyen desde cve_ids para que las asignaciones a empresa/grupo
+        // se guarden y se muestren también en esos informes.
+        $legacyReports = $db->query(
+            "SELECT r.id, r.cve_ids, r.tags, r.group_id, r.status
+             FROM cve_ai_reports r
+             WHERE NOT EXISTS (
+                 SELECT 1 FROM cve_ai_report_items i WHERE i.report_id = r.id
+             )
+               AND r.cve_ids IS NOT NULL
+               AND trim(r.cve_ids) <> ''"
+        )->fetchAll();
+        foreach ($legacyReports as $legacy) {
+            $ids = json_decode((string)$legacy['cve_ids'], true);
+            if (!is_array($ids)) {
+                $ids = preg_split('/[\s,;]+/', (string)$legacy['cve_ids']) ?: [];
+            }
+            $cleanIds = [];
+            foreach ($ids as $id) {
+                if (!is_scalar($id)) {
+                    continue;
+                }
+                $cveId = strtoupper(trim((string)$id));
+                if ($cveId !== '' && !isset($cleanIds[$cveId])) {
+                    $cleanIds[$cveId] = true;
+                }
+            }
+            if ($cleanIds === []) {
+                continue;
+            }
+
+            $reportId = (int)$legacy['id'];
+            $status = (string)($legacy['status'] ?? '') === 'done' ? 'done' : 'pending';
+            $insert = $db->prepare(
+                "INSERT OR IGNORE INTO cve_ai_report_items
+                 (report_id, cve_id, position, tags, group_id, status)
+                 VALUES (?, ?, ?, ?, ?, ?)"
+            );
+            $position = 0;
+            foreach (array_keys($cleanIds) as $cveId) {
+                $insert->execute([
+                    $reportId,
+                    $cveId,
+                    $position,
+                    $legacy['tags'] ?? null,
+                    $legacy['group_id'] ?? null,
+                    $status,
+                ]);
+                $position++;
+            }
+            $db->prepare("UPDATE cve_ai_reports SET total_items = ? WHERE id = ?")
+                ->execute([$position, $reportId]);
+        }
+
         // v0.2.7.15: descripción traducida y hash del texto original.
         $catCols = [];
         foreach ($db->query("PRAGMA table_info(cve_catalog)") as $col) {

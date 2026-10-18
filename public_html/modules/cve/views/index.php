@@ -2466,7 +2466,7 @@ $aiStatusText = [
             }
             window.cveAiBulkGroupClose();
             var message = 'Informes actualizados: ' + (res.reports || 0)
-                + ' · CVEs asignados: ' + (res.items || 0) + '.';
+                + ' · CVEs asignados: ' + (res.cves != null ? res.cves : (res.items || 0)) + '.';
             if (res.skipped && res.skipped.length) {
                 message += ' Se omitieron ' + res.skipped.length + ' informe(s) en curso.';
             }
