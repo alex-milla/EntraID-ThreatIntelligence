@@ -76,6 +76,7 @@ class Module_Cve extends BaseModule
             ['method' => 'POST', 'pattern' => 'groups/save',     'handler' => [$this, 'saveGroup']],
             ['method' => 'POST', 'pattern' => 'groups/delete',   'handler' => [$this, 'deleteGroup']],
             ['method' => 'POST', 'pattern' => 'software/save',   'handler' => [$this, 'saveSoftware']],
+            ['method' => 'POST', 'pattern' => 'software/import', 'handler' => [$this, 'importSoftwareList']],
             ['method' => 'POST', 'pattern' => 'software/backfill','handler' => [$this, 'backfillSoftware']],
             ['method' => 'POST', 'pattern' => 'software/delete', 'handler' => [$this, 'deleteSoftware']],
         ];
@@ -92,12 +93,14 @@ class Module_Cve extends BaseModule
         $isAdmin = Auth::isAdmin();
         $tabParam = (string)($_GET['tab'] ?? 'catalog');
         $tab = in_array($tabParam, ['software', 'reports'], true) ? $tabParam : 'catalog';
+        $showImportForm = $isAdmin && $tab === 'software' && isset($_GET['import']);
         $selectedGroup = (int)($_GET['group'] ?? 0);
         $q = trim((string)($_GET['q'] ?? ''));
 
         $groups = [];
         $software = [];
         $assignedCves = [];
+        $autoMatchedCves = [];
         $groupAnalysis = null;
         $reports = [];
         $aiReports = [];
@@ -126,6 +129,7 @@ class Module_Cve extends BaseModule
             if ($tab === 'software') {
                 $software = $this->listSoftware($selectedGroup, $q);
                 $assignedCves = $this->listAssignedCves($selectedGroup);
+                $autoMatchedCves = $this->listAutoMatchedCves($selectedGroup);
                 $llmProfiles = llm_profile_list();
                 if ($selectedGroup > 0) {
                     $groupAnalysis = $this->getGroupPriorityAnalysis($selectedGroup);
@@ -215,6 +219,8 @@ class Module_Cve extends BaseModule
             'groups'        => $groups,
             'software'      => $software,
             'assignedCves'  => $assignedCves,
+            'autoMatchedCves' => $autoMatchedCves,
+            'showImportForm' => $showImportForm,
             'groupAnalysis' => $groupAnalysis,
             'reports'       => $reports,
             'aiReports'     => $aiReports,
@@ -573,6 +579,209 @@ class Module_Cve extends BaseModule
             }
         }
         redirect(base_url('modules/cve?tab=software'));
+    }
+
+    /**
+     * Importa una lista de software pegada (una línea por producto) dentro de
+     * una empresa o grupo de aplicaciones.
+     *
+     * Formatos por línea (separador «|», «;» o tabulador):
+     *   Nombre
+     *   Nombre | Fabricante
+     *   Nombre | Fabricante | Versión
+     *   Nombre<TAB>Plataforma<TAB>Fabricante  (copiado de un inventario)
+     *
+     * Si se marca «Resolver CPE», se asigna el mejor CPE encontrado. Los
+     * productos sin resolución se crean igualmente y quedan pendientes de
+     * revisión manual; la sincronización los detectará en cuanto tengan CPE.
+     */
+    public function importSoftwareList(array $params = []): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        $groupId = (int)($_POST['group_id'] ?? 0);
+        $rawList = trim((string)($_POST['software_list'] ?? ''));
+        $autoCpe = !empty($_POST['auto_cpe']);
+
+        $group = $groupId > 0 ? $this->getGroup($groupId) : null;
+        if ($group === null || !in_array((string)($group['kind'] ?? ''), ['company', 'application'], true)) {
+            flash('error', 'Selecciona una empresa o grupo de aplicaciones válido.');
+            redirect(base_url('modules/cve?tab=software&import=1'));
+        }
+
+        $returnUrl = base_url('modules/cve?tab=software&group=' . $groupId);
+        if ($rawList === '') {
+            flash('error', 'Pega al menos un software en la lista.');
+            redirect(base_url('modules/cve?tab=software&import=1&group=' . $groupId));
+        }
+
+        $lines = preg_split('/\r\n|\r|\n/', $rawList) ?: [];
+        if (count($lines) > 80) {
+            flash('error', 'La lista admite como máximo 80 líneas por importación.');
+            redirect(base_url('modules/cve?tab=software&import=1&group=' . $groupId));
+        }
+
+        $entries = [];
+        $ignored = 0;
+        foreach ($lines as $line) {
+            $entry = $this->parseSoftwareImportLine((string)$line);
+            if ($entry === null) {
+                if (trim((string)$line) !== '') {
+                    $ignored++;
+                }
+                continue;
+            }
+            $key = $this->normalizeSoftwareToken($entry['name']) . '|' . $entry['version'];
+            if (isset($entries[$key])) {
+                $ignored++;
+                continue;
+            }
+            $entries[$key] = $entry;
+        }
+
+        if ($entries === []) {
+            flash('error', 'No se ha encontrado ningún software válido en la lista.');
+            redirect(base_url('modules/cve?tab=software&import=1&group=' . $groupId));
+        }
+
+        if ($autoCpe) {
+            @set_time_limit(0);
+            @ignore_user_abort(true);
+            if (function_exists('release_session_lock')) {
+                release_session_lock();
+            }
+        }
+
+        $created = 0;
+        $withCpe = 0;
+        $duplicates = 0;
+        $completed = 0;
+        $pending = [];
+        $errors = [];
+
+        // Presupuesto de consultas a NVD para no bloquear la petición: cada
+        // entrada sin alias consume una búsqueda como máximo. Sin API key el
+        // límite público de NVD es mucho menor.
+        $lookupBudget = null;
+        if ($autoCpe) {
+            try {
+                $lookupBudget = CveClient::fromSettings()->hasApiKey() ? 50 : 8;
+            } catch (Throwable $e) {
+                $lookupBudget = 8;
+            }
+        }
+
+        foreach ($entries as $entry) {
+            $name = (string)$entry['name'];
+            $vendor = (string)$entry['vendor'];
+            $version = (string)$entry['version'];
+
+            try {
+                $exists = CveDatabase::fetchOne(
+                    "SELECT id FROM software_watchlist
+                     WHERE group_id = ? AND name = ? AND version = ? AND environment = ''",
+                    [$groupId, $name, $version]
+                );
+                if ($exists) {
+                    $duplicates++;
+
+                    // Si ya existe pero sigue sin CPE, completarlo ahora.
+                    if ($autoCpe) {
+                        $existingId = (int)$exists['id'];
+                        $cpeCount = CveDatabase::fetchOne(
+                            "SELECT COUNT(*) AS c FROM software_cpe WHERE watchlist_id = ?",
+                            [$existingId]
+                        );
+                        if ((int)($cpeCount['c'] ?? 0) === 0) {
+                            $resolution = $this->resolveSoftwareCpe($name, $vendor, $version, $lookupBudget);
+                            $resolvedCpe = (string)($resolution['cpe'] ?? '');
+                            if ($resolvedCpe !== '') {
+                                CveDatabase::query(
+                                    "INSERT OR IGNORE INTO software_cpe (watchlist_id, cpe_name, is_primary) VALUES (?, ?, 1)",
+                                    [$existingId, $resolvedCpe]
+                                );
+                                $completed++;
+                            } else {
+                                $pending[] = $name;
+                            }
+                        }
+                    }
+                    continue;
+                }
+
+                $cpe = '';
+                if ($autoCpe) {
+                    $resolution = $this->resolveSoftwareCpe($name, $vendor, $version, $lookupBudget);
+                    $cpe = (string)($resolution['cpe'] ?? '');
+                    $version = (string)($resolution['version'] ?? $version);
+                }
+
+                $newId = CveDatabase::transaction(function (PDO $db) use ($groupId, $name, $vendor, $version, $cpe): int {
+                    $stmt = $db->prepare(
+                        "INSERT INTO software_watchlist
+                         (group_id, name, vendor, product, version, environment, criticality, asset_count, notes)
+                         VALUES (?, ?, ?, NULL, ?, '', 'medium', NULL, NULL)"
+                    );
+                    $stmt->execute([
+                        $groupId,
+                        $name,
+                        $vendor !== '' ? $vendor : null,
+                        $version,
+                    ]);
+                    $id = (int)$db->lastInsertId();
+
+                    if ($cpe !== '') {
+                        $cpeStmt = $db->prepare(
+                            "INSERT OR IGNORE INTO software_cpe (watchlist_id, cpe_name, is_primary) VALUES (?, ?, 1)"
+                        );
+                        $cpeStmt->execute([$id, $cpe]);
+                    }
+
+                    return $id;
+                });
+
+                $created++;
+                if ($cpe !== '') {
+                    $withCpe++;
+                } else {
+                    $pending[] = $name;
+                }
+            } catch (Throwable $e) {
+                $errors[] = $name;
+            }
+        }
+
+        $summary = sprintf(
+            'Importación completada: %d creados, %d con CPE, %d duplicados omitidos%s%s.',
+            $created,
+            $withCpe,
+            $duplicates,
+            $completed > 0 ? ', ' . $completed . ' CPE completados' : '',
+            $ignored > 0 ? ', ' . $ignored . ' líneas ignoradas' : ''
+        );
+        flash($created > 0 || $completed > 0 ? 'success' : 'warning', $summary);
+
+        if ($pending !== []) {
+            flash('warning', 'Sin CPE resuelto (pendiente de revisión manual): '
+                . implode(', ', array_slice($pending, 0, 15))
+                . (count($pending) > 15 ? '…' : '')
+                . ' Puedes completarlos editando cada producto o volver a importar la lista con una API key de NVD configurada.');
+        }
+        if ($errors !== []) {
+            flash('error', 'No se pudieron crear: ' . implode(', ', array_slice($errors, 0, 10))
+                . (count($errors) > 10 ? '…' : ''));
+        }
+
+        log_activity('cve.software_imported', [
+            'group_id'   => $groupId,
+            'created'    => $created,
+            'with_cpe'   => $withCpe,
+            'completed'  => $completed,
+            'duplicates' => $duplicates,
+        ]);
+
+        redirect($returnUrl);
     }
 
     // ============================================================
@@ -4554,6 +4763,321 @@ class Module_Cve extends BaseModule
         }
         $row = CveDatabase::fetchOne("SELECT * FROM software_groups WHERE id = ?", [$id]);
         return $row ?: null;
+    }
+
+    /**
+     * CVEs detectados automáticamente por coincidencia de CPE para una empresa
+     * o grupo (incluye sus subgrupos). Es independiente de los CVEs asignados
+     * manualmente desde informes.
+     */
+    private function listAutoMatchedCves(int $groupId): array
+    {
+        if ($groupId <= 0) {
+            return [];
+        }
+        $ids = $this->descendantGroupIds($groupId);
+        if ($ids === []) {
+            return [];
+        }
+
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $params = array_map(static fn(int $id): int => $id, $ids);
+
+        return CveDatabase::fetchAll(
+            "SELECT m.cve_id,
+                    MIN(m.first_seen_at) AS first_seen_at,
+                    MAX(m.last_seen_at) AS last_seen_at,
+                    GROUP_CONCAT(DISTINCT w.name) AS software_names,
+                    c.severity, c.cvss_v3_score, c.cvss_v2_score, c.published_at,
+                    k.cve_id AS kev_id, k.date_added AS kev_date,
+                    e.epss, e.percentile AS epss_percentile
+             FROM cve_watchlist_match m
+             JOIN software_watchlist w ON w.id = m.watchlist_id
+             LEFT JOIN cve_catalog c ON c.cve_id = m.cve_id
+             LEFT JOIN cve_kev k ON k.cve_id = m.cve_id
+             LEFT JOIN cve_epss e ON e.cve_id = m.cve_id
+             WHERE w.group_id IN ($placeholders)
+             GROUP BY m.cve_id
+             ORDER BY CASE c.severity
+                          WHEN 'Critical' THEN 0
+                          WHEN 'High' THEN 1
+                          WHEN 'Medium' THEN 2
+                          WHEN 'Low' THEN 3
+                          ELSE 4
+                      END ASC,
+                      COALESCE(c.cvss_v3_score, c.cvss_v2_score) DESC,
+                      m.cve_id ASC
+             LIMIT 300",
+            $params
+        );
+    }
+
+    /**
+     * Convierte una línea pegada en un producto del inventario.
+     * Devuelve null cuando la línea está vacía o no es válida.
+     */
+    private function parseSoftwareImportLine(string $line): ?array
+    {
+        $line = trim($line);
+        if ($line === '' || str_starts_with($line, '#')) {
+            return null;
+        }
+
+        // Quita numeración o viñetas al principio de la línea.
+        $line = preg_replace('/^\s*(?:[-*•]|\d+[.)])\s+/u', '', $line) ?? $line;
+
+        $parts = preg_split('/\t+|\s*\|\s*|\s*;\s*/u', $line) ?: [];
+        $parts = array_values(array_filter(
+            array_map(static fn($value): string => trim((string)$value), $parts),
+            static fn(string $value): bool => $value !== ''
+        ));
+        if ($parts === []) {
+            return null;
+        }
+
+        $name = trim((string)array_shift($parts));
+        if ($name === '' || $this->textLength($name) > 160) {
+            return null;
+        }
+
+        $platforms = ['windows', 'linux', 'android', 'ios', 'other', 'macos', 'mac os', 'unix'];
+        $vendor = '';
+        $version = '';
+
+        if ($parts !== []) {
+            $second = (string)$parts[0];
+            if (in_array(strtolower($second), $platforms, true)) {
+                // Copiado de inventario: Nombre · Plataforma · Fabricante [· Versión]
+                array_shift($parts);
+                $vendor = (string)($parts[0] ?? '');
+                if (isset($parts[1])) {
+                    $version = (string)$parts[1];
+                }
+            } else {
+                $vendor = $second;
+                if (isset($parts[1])) {
+                    $version = (string)$parts[1];
+                }
+            }
+        }
+
+        $vendor = trim($vendor);
+        if ($this->textLength($vendor) > 120) {
+            $vendor = '';
+        }
+
+        $version = trim($version);
+        if ($this->textLength($version) > 40) {
+            $version = '';
+        }
+
+        return ['name' => $name, 'vendor' => $vendor, 'version' => $version];
+    }
+
+    /**
+     * Resuelve el mejor CPE para un software.
+     * Devuelve ['cpe' => string, 'version' => string]; cpe vacío = pendiente.
+     * $lookupBudget limita las consultas a NVD por importación (null = sin límite).
+     */
+    private function resolveSoftwareCpe(string $name, string $vendor, string $version, ?int &$lookupBudget = null): array
+    {
+        $result = ['cpe' => '', 'version' => $version];
+
+        $normName = $this->normalizeSoftwareToken($name);
+        $normVendor = $this->normalizeSoftwareToken($vendor);
+
+        $aliases = $this->softwareCpeAliases();
+        $lookupKeys = [$normName];
+        if ($normVendor !== '' && str_starts_with($normName, $normVendor . '_')) {
+            $lookupKeys[] = substr($normName, strlen($normVendor) + 1);
+        }
+
+        // Separa una versión final del nombre ("Office 2016", "Windows 11").
+        $baseName = $name;
+        $nameVersion = '';
+        if (preg_match('/^(.*\S)\s+v?(\d{1,4}(?:\.\d{1,4}){0,3})$/i', $name, $m)) {
+            $candidateBase = trim($m[1]);
+            if (preg_match('/[a-z]/i', $candidateBase)) {
+                $baseName = $candidateBase;
+                $nameVersion = trim($m[2]);
+                $lookupKeys[] = $this->normalizeSoftwareToken($baseName);
+            }
+        }
+
+        foreach (array_unique($lookupKeys) as $key) {
+            if ($key === '' || !isset($aliases[$key])) {
+                continue;
+            }
+            [$cpe, $aliasVersion] = $aliases[$key];
+            $result['cpe'] = $cpe;
+            if ($result['version'] === '') {
+                $result['version'] = $aliasVersion !== '' ? $aliasVersion : $nameVersion;
+            }
+            return $result;
+        }
+
+        if ($result['version'] === '' && $nameVersion !== '') {
+            $result['version'] = $nameVersion;
+        }
+
+        $normBase = $this->normalizeSoftwareToken($baseName);
+        if ($normBase === '') {
+            return $result;
+        }
+
+        // Sin presupuesto no se consulta NVD: el producto queda pendiente.
+        if ($lookupBudget !== null) {
+            if ($lookupBudget <= 0) {
+                return $result;
+            }
+            $lookupBudget--;
+        }
+
+        try {
+            $client = CveClient::fromSettings();
+        } catch (Throwable $e) {
+            return $result;
+        }
+
+        $queries = [];
+        if ($vendor !== '') {
+            $queries[] = $vendor . ' ' . $baseName;
+        }
+        $queries[] = $baseName;
+        $cleanName = trim(preg_replace('/\b(classic|esr|chromium[- ]based)\b/i', ' ', $baseName) ?? $baseName);
+        $cleanName = trim(preg_replace('/\s+/', ' ', $cleanName) ?? $cleanName);
+        if ($cleanName !== '' && $cleanName !== $baseName) {
+            $queries[] = $cleanName;
+        }
+
+        $bestCpe = '';
+        $bestScore = 0;
+        foreach (array_unique($queries) as $query) {
+            try {
+                $candidates = $client->searchCpes($query, 20);
+            } catch (Throwable $e) {
+                continue;
+            }
+            foreach ($candidates as $candidate) {
+                $cpe = (string)($candidate['cpe'] ?? '');
+                if ($cpe === '') {
+                    continue;
+                }
+                $score = $this->scoreSoftwareCpe(
+                    $normBase,
+                    $normVendor,
+                    $this->normalizeSoftwareToken((string)($candidate['product'] ?? '')),
+                    $this->normalizeSoftwareToken((string)($candidate['vendor'] ?? ''))
+                );
+                if ($score > $bestScore) {
+                    $bestScore = $score;
+                    $bestCpe = $cpe;
+                }
+            }
+            // Producto y fabricante exactos: no hace falta seguir consultando.
+            if ($bestScore >= 11) {
+                break;
+            }
+        }
+
+        if ($bestCpe !== '' && $bestScore >= 6) {
+            $result['cpe'] = $bestCpe;
+        }
+
+        return $result;
+    }
+
+    private function scoreSoftwareCpe(string $name, string $vendor, string $product, string $candidateVendor): int
+    {
+        if ($name === '' || $product === '') {
+            return 0;
+        }
+
+        $score = 0;
+        if ($product === $name) {
+            $score += 8;
+        } elseif (str_contains($product, $name) || str_contains($name, $product)) {
+            $score += 4;
+        } else {
+            $nameTokens = array_filter(explode('_', $name), static fn(string $t): bool => strlen($t) >= 3);
+            $productTokens = array_filter(explode('_', $product), static fn(string $t): bool => strlen($t) >= 3);
+            $overlap = array_intersect($nameTokens, $productTokens);
+            if ($overlap !== []) {
+                $score += 2 * count($overlap);
+            }
+        }
+        if ($score === 0) {
+            return 0;
+        }
+
+        if ($vendor !== '') {
+            if ($candidateVendor === $vendor) {
+                $score += 4;
+            } elseif (str_contains($candidateVendor, $vendor) || str_contains($vendor, $candidateVendor)) {
+                $score += 2;
+            } else {
+                $score -= 2;
+            }
+        }
+
+        return $score;
+    }
+
+    /**
+     * CPEs curados para productos habituales: evitan consultar NVD y fijan el
+     * producto correcto cuando el nombre comercial no coincide con el de NVD.
+     * Las claves se comparan con normalizeSoftwareToken().
+     */
+    private function softwareCpeAliases(): array
+    {
+        return [
+            'teams_classic'             => ['cpe:2.3:a:microsoft:teams', ''],
+            'teams'                     => ['cpe:2.3:a:microsoft:teams', ''],
+            'microsoft_teams'           => ['cpe:2.3:a:microsoft:teams', ''],
+            'chrome'                    => ['cpe:2.3:a:google:chrome', ''],
+            'google_chrome'             => ['cpe:2.3:a:google:chrome', ''],
+            'edge_chromium_based'       => ['cpe:2.3:a:microsoft:edge_chromium', ''],
+            'edge_chromium'             => ['cpe:2.3:a:microsoft:edge_chromium', ''],
+            'edge'                      => ['cpe:2.3:a:microsoft:edge', ''],
+            'windows_11'                => ['cpe:2.3:o:microsoft:windows', '11'],
+            'windows_10'                => ['cpe:2.3:o:microsoft:windows', '10'],
+            'windows'                   => ['cpe:2.3:o:microsoft:windows', ''],
+            'android'                   => ['cpe:2.3:o:google:android', ''],
+            'libreoffice'               => ['cpe:2.3:a:libreoffice:libreoffice', ''],
+            'office_2016'               => ['cpe:2.3:a:microsoft:office', '2016'],
+            'microsoft_office_2016'     => ['cpe:2.3:a:microsoft:office', '2016'],
+            'office'                    => ['cpe:2.3:a:microsoft:office', ''],
+            'microsoft_office'          => ['cpe:2.3:a:microsoft:office', ''],
+            'defender_for_linux'        => ['cpe:2.3:a:microsoft:defender_for_endpoint', ''],
+            'iphone_os'                 => ['cpe:2.3:o:apple:iphone_os', ''],
+            'ios'                       => ['cpe:2.3:o:apple:iphone_os', ''],
+            'firefox_esr'               => ['cpe:2.3:a:mozilla:firefox_esr', ''],
+            'firefox'                   => ['cpe:2.3:a:mozilla:firefox', ''],
+            'tools'                     => ['cpe:2.3:a:vmware:tools', ''],
+            'vmware_tools'              => ['cpe:2.3:a:vmware:tools', ''],
+            'authenticator_for_android' => ['cpe:2.3:a:microsoft:authenticator', ''],
+            'authenticator'             => ['cpe:2.3:a:microsoft:authenticator', ''],
+            'activemq'                  => ['cpe:2.3:a:apache:activemq', ''],
+            'acrobat_dc'                => ['cpe:2.3:a:adobe:acrobat_dc', ''],
+            'acrobat'                   => ['cpe:2.3:a:adobe:acrobat', ''],
+            'python'                    => ['cpe:2.3:a:python:python', ''],
+            '7_zip'                     => ['cpe:2.3:a:7-zip:7-zip', ''],
+            'jre'                       => ['cpe:2.3:a:oracle:jre', ''],
+            'java'                      => ['cpe:2.3:a:oracle:jre', ''],
+            'macos'                     => ['cpe:2.3:o:apple:mac_os', ''],
+            'mac_os'                    => ['cpe:2.3:o:apple:mac_os', ''],
+            'chrome_os'                 => ['cpe:2.3:o:google:chrome_os', ''],
+        ];
+    }
+
+    private function normalizeSoftwareToken(string $value): string
+    {
+        $value = trim($value);
+        $value = function_exists('mb_strtolower') ? mb_strtolower($value) : strtolower($value);
+        $value = str_replace(['&', '+', '/'], ' ', $value);
+        $value = preg_replace('/[^a-z0-9._\s-]+/u', ' ', $value) ?? $value;
+        $value = preg_replace('/[\s-]+/', '_', $value) ?? $value;
+        return trim($value, '._');
     }
 
     private function textLength(string $value): int

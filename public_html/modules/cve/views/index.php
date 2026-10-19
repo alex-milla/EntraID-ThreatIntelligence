@@ -12,6 +12,8 @@ $showSoftwareForm = $isAdmin && $editSoftware !== null;
 $gr = is_array($editGroup) ? $editGroup : [];
 $grId = (int)($gr['id'] ?? 0);
 $showGroupForm = $isAdmin && $editGroup !== null;
+$showImportForm = $isAdmin && $tab === 'software' && !empty($showImportForm);
+$autoMatchedCves = is_array($autoMatchedCves ?? null) ? $autoMatchedCves : [];
 
 $criticalityLabels = [
     'critical' => 'Crítica',
@@ -4613,7 +4615,130 @@ syncCveReportPeriod();
                     'Low'      => 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300',
                 ];
                 $selectedGroupEntity = $selectedGroupIsCompany ? 'empresa' : 'grupo de aplicaciones';
+                $autoMatchedLastSync = (string)($stats['last_sync'] ?? '');
+                $autoMatchedIds = array_values(array_filter(array_map(
+                    static fn(array $row): string => (string)($row['cve_id'] ?? ''),
+                    $autoMatchedCves
+                )));
+                $autoReportIds = array_slice($autoMatchedIds, 0, 100);
+                $autoReportUrl = base_url('modules/cve?tab=reports&new_cves=' . rawurlencode(implode(',', $autoReportIds)));
                 ?>
+                <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
+                    <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between gap-3 flex-wrap">
+                        <div class="flex items-center gap-2">
+                            <button type="button" onclick="cveToggleCard('auto-matched-body', this)"
+                                    aria-expanded="false" aria-controls="auto-matched-body"
+                                    title="Mostrar u ocultar los CVEs detectados automáticamente"
+                                    class="inline-flex items-center justify-center w-7 h-7 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-500 hover:text-brand-600 hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">
+                                <svg class="w-4 h-4 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M9 5l7 7-7 7"/>
+                                </svg>
+                            </button>
+                            <div>
+                                <h2 class="text-sm font-semibold">CVEs detectados automáticamente</h2>
+                                <p class="text-xs text-gray-500 mt-1">
+                                    <?= $selectedGroupIsCompany ? 'Empresa' : 'Grupo de aplicaciones' ?>
+                                    «<?= e($selectedGroupName) ?>» ·
+                                    <?= count($autoMatchedCves) ?> <?= count($autoMatchedCves) === 1 ? 'CVE' : 'CVEs' ?>
+                                    por inventario de software
+                                </p>
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-3">
+                            <?php if ($isAdmin && $autoReportIds !== []): ?>
+                                <a href="<?= $autoReportUrl ?>"
+                                   class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-brand-500 hover:bg-brand-600 text-white text-xs font-semibold rounded-lg transition-colors"
+                                   title="Abre Informes con estos CVEs precargados (máximo 100)">
+                                    Preparar informe
+                                </a>
+                            <?php endif; ?>
+                            <a href="<?= base_url('modules/cve?tab=catalog&mine=1') ?>"
+                               class="text-xs text-brand-600 dark:text-brand-400 hover:underline">Ver todos mis CVEs en Catálogo</a>
+                        </div>
+                    </div>
+                    <div id="auto-matched-body" class="hidden">
+                        <?php if ($autoMatchedCves === []): ?>
+                            <div class="px-5 py-8 text-center">
+                                <p class="text-sm text-gray-500">Todavía no hay CVEs detectados para este <?= e($selectedGroupEntity) ?>.</p>
+                                <p class="text-xs text-gray-400 mt-1">
+                                    Añade software con CPE (o importa una lista) y ejecuta una sincronización.
+                                    Cada CVE nuevo se mostrará aquí automáticamente.
+                                </p>
+                            </div>
+                        <?php else: ?>
+                        <p class="px-5 pt-3 text-[11px] text-gray-400">
+                            Coincidencias de CPE detectadas durante las sincronizaciones.
+                            <strong>Nuevo</strong> = aparece desde la última sincronización completada.
+                            Se muestran hasta 300.
+                        </p>
+                        <div class="overflow-x-auto mt-2">
+                            <table class="w-full text-sm">
+                                <thead>
+                                    <tr class="border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-xs text-gray-500 uppercase">
+                                        <th class="text-left px-4 py-2">CVE</th>
+                                        <th class="text-left px-4 py-2">Severidad</th>
+                                        <th class="text-left px-4 py-2">CVSS / EPSS</th>
+                                        <th class="text-left px-4 py-2">KEV</th>
+                                        <th class="text-left px-4 py-2">Software</th>
+                                        <th class="text-left px-4 py-2">Detectado</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-gray-100 dark:divide-gray-700/50">
+                                    <?php foreach ($autoMatchedCves as $autoCve): ?>
+                                        <?php
+                                        $autoCveId = (string)($autoCve['cve_id'] ?? '');
+                                        $autoSeverity = (string)($autoCve['severity'] ?? '');
+                                        $autoSeverityClass = $assignedSeverityClasses[$autoSeverity] ?? 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300';
+                                        $autoCvss = $autoCve['cvss_v3_score'] ?? $autoCve['cvss_v2_score'] ?? null;
+                                        $autoEpss = $autoCve['epss'] ?? null;
+                                        $autoSoftware = (string)($autoCve['software_names'] ?? '');
+                                        $autoFirstSeen = (string)($autoCve['first_seen_at'] ?? '');
+                                        $autoIsNew = $autoMatchedLastSync !== '' && $autoFirstSeen > $autoMatchedLastSync;
+                                        ?>
+                                        <tr class="hover:bg-gray-50 dark:hover:bg-gray-800/50">
+                                            <td class="px-4 py-3 text-xs font-mono whitespace-nowrap">
+                                                <a href="<?= base_url('modules/cve/detail/' . rawurlencode($autoCveId)) ?>"
+                                                   class="text-brand-600 dark:text-brand-400 hover:underline"><?= e($autoCveId) ?></a>
+                                                <?php if ($autoIsNew): ?>
+                                                    <span class="ml-1 px-1.5 py-0.5 rounded bg-brand-100 dark:bg-brand-900/40 text-brand-700 dark:text-brand-300 text-[9px] font-semibold uppercase">Nuevo</span>
+                                                <?php endif; ?>
+                                            </td>
+                                            <td class="px-4 py-3">
+                                                <?php if ($autoSeverity !== ''): ?>
+                                                    <span class="inline-flex px-2 py-0.5 text-xs rounded-full <?= $autoSeverityClass ?>"><?= e($autoSeverity) ?></span>
+                                                <?php else: ?>
+                                                    <span class="text-xs text-gray-400">—</span>
+                                                <?php endif; ?>
+                                            </td>
+                                            <td class="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">
+                                                <span class="font-mono"><?= $autoCvss !== null ? e(number_format((float)$autoCvss, 1)) : '—' ?></span>
+                                                <span class="mx-1 text-gray-300">/</span>
+                                                <span class="font-mono <?= ($autoEpss !== null && (float)$autoEpss >= 0.1) ? 'text-amber-500 font-semibold' : '' ?>">
+                                                    <?= $autoEpss !== null ? e(number_format((float)$autoEpss, 3)) : '—' ?>
+                                                </span>
+                                            </td>
+                                            <td class="px-4 py-3 text-xs">
+                                                <?php if (!empty($autoCve['kev_id'])): ?>
+                                                    <span class="inline-flex px-2 py-0.5 rounded-full bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300 font-semibold">KEV</span>
+                                                <?php else: ?>
+                                                    <span class="text-gray-400">—</span>
+                                                <?php endif; ?>
+                                            </td>
+                                            <td class="px-4 py-3 text-xs text-gray-500 max-w-[220px]" title="<?= e($autoSoftware) ?>">
+                                                <?= e(truncate($autoSoftware, 60)) ?>
+                                            </td>
+                                            <td class="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">
+                                                <?= e(format_date($autoFirstSeen, 'd/m/Y H:i')) ?>
+                                            </td>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                </tbody>
+                            </table>
+                        </div>
+                        <?php endif; ?>
+                    </div>
+                </div>
+
                 <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
                     <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between gap-3 flex-wrap">
                         <div class="flex items-center gap-2">
@@ -4844,6 +4969,92 @@ syncCveReportPeriod();
                 <?php require __DIR__ . '/_group_priority_analysis.php'; ?>
             <?php endif; ?>
 
+            <?php if ($showImportForm): ?>
+                <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
+                    <form method="POST" action="<?= base_url('modules/cve/software/import') ?>" class="p-5 space-y-4">
+                        <?= Csrf::field() ?>
+                        <div class="flex items-center justify-between gap-3">
+                            <div>
+                                <h2 class="text-sm font-semibold">Importar lista de software</h2>
+                                <p class="text-[11px] text-gray-400 mt-0.5">
+                                    Define el software estándar de una empresa o grupo. La sincronización
+                                    detectará automáticamente los CVEs nuevos de cada producto.
+                                </p>
+                            </div>
+                            <a href="<?= base_url('modules/cve?tab=software' . ($selectedGroup > 0 ? '&group=' . (int)$selectedGroup : '')) ?>"
+                               class="text-xs text-gray-400 hover:underline">Cancelar</a>
+                        </div>
+
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-xs text-gray-500 mb-1">Empresa o grupo destino *</label>
+                                <select name="group_id" required
+                                        class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+                                    <option value="">Selecciona un destino…</option>
+                                    <?php if ($companyGroups !== []): ?>
+                                        <optgroup label="Empresas">
+                                            <?php foreach ($companyGroups as $g): ?>
+                                                <option value="<?= (int)$g['id'] ?>" <?= (int)$selectedGroup === (int)$g['id'] ? 'selected' : '' ?>>
+                                                    <?= e($g['name']) ?>
+                                                </option>
+                                            <?php endforeach; ?>
+                                        </optgroup>
+                                    <?php endif; ?>
+                                    <?php if ($applicationGroups !== []): ?>
+                                        <optgroup label="Grupos de aplicaciones">
+                                            <?php foreach ($applicationGroups as $g): ?>
+                                                <option value="<?= (int)$g['id'] ?>" <?= (int)$selectedGroup === (int)$g['id'] ? 'selected' : '' ?>>
+                                                    <?= str_repeat('— ', (int)$g['depth']) . e($g['name']) ?>
+                                                </option>
+                                            <?php endforeach; ?>
+                                        </optgroup>
+                                    <?php endif; ?>
+                                </select>
+                            </div>
+                            <div class="flex items-end">
+                                <label class="inline-flex items-start gap-2 cursor-pointer">
+                                    <input type="checkbox" name="auto_cpe" value="1" checked
+                                           class="mt-0.5 rounded border-gray-300 dark:border-gray-600 text-brand-500 focus:ring-brand-500">
+                                    <span class="text-xs text-gray-600 dark:text-gray-300">
+                                        Resolver CPE automáticamente
+                                        <span class="block text-[11px] text-gray-400">
+                                            El mejor resultado de NVD. Los productos sin resolver quedan pendientes de revisión.
+                                        </span>
+                                    </span>
+                                </label>
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="block text-xs text-gray-500 mb-1">Lista de software *</label>
+                            <textarea name="software_list" rows="8" required
+                                      placeholder="Teams Classic&#10;Chrome | Google&#10;Windows 11 | Microsoft&#10;Office 2016 | Microsoft&#10;7-Zip | 7-zip&#10;&#10;También puedes pegar una tabla con Nombre, Plataforma y Fabricante."
+                                      class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm font-mono focus:ring-2 focus:ring-brand-500 outline-none"></textarea>
+                            <p class="text-[11px] text-gray-400 mt-1">
+                                Un producto por línea. Separadores admitidos: <code>|</code>, <code>;</code> o tabulador.
+                                Máximo 80 líneas. Los duplicados del mismo grupo se omiten.
+                            </p>
+                        </div>
+
+                        <div class="flex items-center gap-3">
+                            <button type="submit"
+                                    class="inline-flex items-center gap-1.5 px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+                                Importar lista
+                            </button>
+                            <a href="<?= base_url('modules/cve?tab=software' . ($selectedGroup > 0 ? '&group=' . (int)$selectedGroup : '')) ?>"
+                               class="text-sm text-gray-500 hover:underline">Cancelar</a>
+                        </div>
+
+                        <p class="text-[11px] text-gray-400">
+                            Los CVEs históricos no se descargan al importar: usa «Sincronizar» en cada fila
+                            (o espera a la próxima sincronización). Los CVEs nuevos aparecerán automáticamente
+                            en «CVEs detectados automáticamente».
+                        </p>
+                    </form>
+                </div>
+            <?php endif; ?>
+
             <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
                 <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between gap-3 flex-wrap">
                     <h2 class="text-sm font-semibold">Software identificado</h2>
@@ -4877,6 +5088,11 @@ syncCveReportPeriod();
                             <button type="submit" class="px-2.5 py-1.5 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 text-xs font-medium rounded-lg transition-colors">Filtrar</button>
                         </form>
                         <?php if ($isAdmin): ?>
+                            <a href="<?= base_url('modules/cve?tab=software&import=1' . ($selectedGroup > 0 ? '&group=' . (int)$selectedGroup : '')) ?>"
+                               class="inline-flex items-center gap-1.5 px-3 py-1.5 border border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300 text-xs font-medium rounded-lg transition-colors">
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+                                Importar lista
+                            </a>
                             <a href="<?= base_url('modules/cve?tab=software&new_software=1') ?>"
                                class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-brand-500 hover:bg-brand-600 text-white text-xs font-medium rounded-lg transition-colors">
                                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
@@ -4943,9 +5159,13 @@ syncCveReportPeriod();
                                             <span class="inline-flex px-2 py-0.5 text-xs rounded-full <?= $critClass ?>"><?= e($criticalityLabels[$crit] ?? $crit) ?></span>
                                         </td>
                                         <td class="px-4 py-3 text-xs font-mono text-gray-400 max-w-[260px] truncate" title="<?= e($s['cpe_name'] ?? '') ?>">
-                                            <?= e($s['cpe_name'] ?? '—') ?>
-                                            <?php if ((int)($s['cpe_count'] ?? 0) > 1): ?>
-                                                <span class="text-gray-500"> +<?= (int)$s['cpe_count'] - 1 ?></span>
+                                            <?php if (trim((string)($s['cpe_name'] ?? '')) === ''): ?>
+                                                <span class="inline-flex px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300 text-[10px] font-medium">Pendiente de CPE</span>
+                                            <?php else: ?>
+                                                <?= e($s['cpe_name']) ?>
+                                                <?php if ((int)($s['cpe_count'] ?? 0) > 1): ?>
+                                                    <span class="text-gray-500"> +<?= (int)$s['cpe_count'] - 1 ?></span>
+                                                <?php endif; ?>
                                             <?php endif; ?>
                                         </td>
                                         <td class="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">
