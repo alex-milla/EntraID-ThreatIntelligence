@@ -18,6 +18,7 @@ class CveClient
     private int $rateWindow;
     private int $rateMax;
     private int $maxRetries;
+    private int $nvdTimeout;
     private int $lastNvdAttempts = 0;
 
     /** Marcas de tiempo (microtime) de las últimas peticiones a NVD. */
@@ -36,6 +37,7 @@ class CveClient
         $this->rateWindow = max(1, (int)($config['rate_window'] ?? CVE_NVD_RATE_WINDOW));
         $this->rateMax = max(0, (int)($config['rate_max'] ?? CVE_NVD_RATE_MAX));
         $this->maxRetries = max(1, (int)($config['max_retries'] ?? CVE_SYNC_MAX_RETRIES));
+        $this->nvdTimeout = max(10, (int)($config['nvd_timeout'] ?? CVE_NVD_TIMEOUT));
     }
 
     /**
@@ -59,6 +61,7 @@ class CveClient
             'rate_window'     => (int)CVE_NVD_RATE_WINDOW,
             'rate_max'        => (int)CVE_NVD_RATE_MAX,
             'max_retries'     => (int)CVE_SYNC_MAX_RETRIES,
+            'nvd_timeout'     => (int)CVE_NVD_TIMEOUT,
         ];
     }
 
@@ -70,6 +73,59 @@ class CveClient
     public function hasApiKey(): bool
     {
         return $this->nvdKey !== '';
+    }
+
+    /**
+     * Copia del cliente con otro timeout por petición a NVD.
+     *
+     * Lo usa CveSync::runChunk en tramos web acotados: limitar el timeout al
+     * presupuesto restante (+15 s de holgura) hace que la petición falle
+     * rápido y el tramo siguiente reanude desde el cursor, en vez de bloquear
+     * la conexión web durante minutos si NVD está lento.
+     */
+    public function withNvdTimeout(int $seconds): self
+    {
+        $clone = clone $this;
+        $clone->nvdTimeout = max(10, min(300, $seconds));
+        return $clone;
+    }
+
+    /**
+     * Sondeo rápido a NVD: una sola petición, sin reintentos ni backoff.
+     *
+     * Sirve para comprobar que la API externa responde antes de crear un job
+     * de sincronización que moriría en el primer tramo. No toca el estado.
+     *
+     * @return array{ok:bool,http:int,error:string}
+     */
+    public function probeNvd(int $timeout = 20): array
+    {
+        try {
+            if (!self::isSafeUrl($this->nvdUrl)) {
+                return ['ok' => false, 'http' => 0, 'error' => 'URL de NVD no válida (se requiere HTTPS público).'];
+            }
+
+            $sep = str_contains($this->nvdUrl, '?') ? '&' : '?';
+            $url = $this->nvdUrl . $sep . 'resultsPerPage=1&noRejected';
+            $headers = ['Accept: application/json'];
+            if ($this->nvdKey !== '') {
+                $headers[] = 'apiKey: ' . $this->nvdKey;
+            }
+
+            $res = $this->httpGet($url, $headers, max(5, $timeout), false);
+            $http = (int)($res['http'] ?? 0);
+            if ($http === 200) {
+                return ['ok' => true, 'http' => 200, 'error' => ''];
+            }
+
+            $detail = trim((string)($res['error'] ?? ''));
+            $message = $http === 0
+                ? ('NVD no responde' . ($detail !== '' ? ': ' . $detail : ''))
+                : ('NVD respondió HTTP ' . $http . ($http === 429 ? ' (rate limit)' : ''));
+            return ['ok' => false, 'http' => $http, 'error' => $message];
+        } catch (Throwable $e) {
+            return ['ok' => false, 'http' => 0, 'error' => 'No se pudo conectar con NVD: ' . $e->getMessage()];
+        }
     }
 
     /**
@@ -261,7 +317,7 @@ class CveClient
             $headers[] = 'apiKey: ' . $this->nvdKey;
         }
 
-        $res = $this->nvdGetWithRetries($url, $headers, 120);
+        $res = $this->nvdGetWithRetries($url, $headers, $this->nvdTimeout);
         if ($res['http'] !== 200) {
             $attemptsUsed = max(1, $this->lastNvdAttempts);
             if ($res['http'] === 0) {

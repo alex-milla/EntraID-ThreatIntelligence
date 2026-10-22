@@ -882,7 +882,20 @@ class CveSync
                     }
                 }
 
-                $page = $this->client()->nvdPage(
+                // En tramos web acotados limitamos el timeout por petición al
+                // presupuesto restante (+15 s de holgura). Así, si NVD está
+                // lento, la petición falla pronto y el siguiente tramo reanuda
+                // desde el cursor en lugar de bloquear la conexión web
+                // durante minutos (120 s × reintentos + backoff).
+                $stepClient = $this->client();
+                if ($deadline < PHP_FLOAT_MAX) {
+                    $stepRemaining = $deadline - microtime(true);
+                    $stepClient = $stepClient->withNvdTimeout(
+                        (int)max(30, min((float)CVE_NVD_TIMEOUT, $stepRemaining + 15.0))
+                    );
+                }
+
+                $page = $stepClient->nvdPage(
                     (int)$state['cursor'],
                     $pageSize,
                     $pubStart !== null ? (string)$pubStart : null,

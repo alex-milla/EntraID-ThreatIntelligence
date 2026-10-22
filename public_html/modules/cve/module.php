@@ -1515,6 +1515,20 @@ class Module_Cve extends BaseModule
             // continua); no lanzamos el worker HTTP para evitar dos procesos
             // compitiendo por el mismo token.
             $stream = (is_array($input) && !empty($input['stream'])) || !empty($_POST['stream']);
+
+            // Sondeo rápido a NVD antes de crear el job: si la API externa no
+            // responde (caída o saturación), avisamos de inmediato sin tocar
+            // el estado de la sincronización en vez de morir en el primer
+            // tramo con un timeout poco claro.
+            $probe = CveClient::fromSettings()->probeNvd();
+            if (empty($probe['ok'])) {
+                json_response([
+                    'success' => false,
+                    'error'   => 'NVD no responde en este momento (' . (string)$probe['error']
+                        . '). La sincronización no se ha iniciado; reintenta en unos minutos.',
+                ]);
+            }
+
             json_response((new CveSync())->start($mode, !$stream));
         } catch (Throwable $e) {
             json_response(['success' => false, 'error' => $e->getMessage()], 500);
