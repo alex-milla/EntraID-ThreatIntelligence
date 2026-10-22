@@ -186,6 +186,16 @@ class CveSync
             $windowStart = gmdate('Y-m-d\TH:i:s\Z', $startTs);
             $windowEnd = gmdate('Y-m-d\TH:i:s\Z', $endTs);
         }
+        if (!$resume && $mode === 'full') {
+            // Reconstrucción completa por ventanas de fecha (mismo esquema que
+            // "reciente" pero desde el primer CVE): cada ventana es un conjunto
+            // pequeño y estable, inmune a los desplazamientos de paginación de
+            // un catálogo que cambia durante un crawl largo.
+            $startTs = (int)strtotime('1988-01-01T00:00:00Z');
+            $endTs = min($startTs + (119 * 86400), time());
+            $windowStart = gmdate('Y-m-d\TH:i:s\Z', $startTs);
+            $windowEnd = gmdate('Y-m-d\TH:i:s\Z', $endTs);
+        }
         if (!$resume && $mode === 'incremental') {
             $lastTs = $this->dbTime($state['last_success_at'] ?? null);
             if ($lastTs <= 0) {
@@ -861,8 +871,8 @@ class CveSync
                 }
 
                 $mode = (string)($state['mode'] ?? 'full');
-                $pubStart = ($mode === 'recent') ? ($state['window_start'] ?? null) : null;
-                $pubEnd = ($mode === 'recent') ? ($state['window_end'] ?? null) : null;
+                $pubStart = in_array($mode, ['recent', 'full'], true) ? ($state['window_start'] ?? null) : null;
+                $pubEnd = in_array($mode, ['recent', 'full'], true) ? ($state['window_end'] ?? null) : null;
                 $lastModStart = ($mode === 'incremental') ? ($state['window_start'] ?? null) : null;
                 $lastModEnd = ($mode === 'incremental') ? ($state['window_end'] ?? null) : null;
 
@@ -984,7 +994,7 @@ class CveSync
                 $done = false;
 
                 if ($pageCount === 0 || ($total > 0 && $cursor >= $total) || ($total === 0 && $pageCount === 0)) {
-                    if ($mode === 'recent') {
+                    if (in_array($mode, ['recent', 'full'], true)) {
                         $next = $this->nextWindow($windowEnd !== null ? (string)$windowEnd : null);
                         if ($next !== null) {
                             $windowStart = $next['start'];
@@ -1011,6 +1021,8 @@ class CveSync
 
                 if ($mode === 'recent') {
                     $message = sprintf('NVD (ventana %s → %s): %s CVEs procesados', (string)$windowStart, (string)$windowEnd, number_format($processed));
+                } elseif ($mode === 'full') {
+                    $message = sprintf('Reconstrucción (ventana %s → %s): %s CVEs procesados', (string)$windowStart, (string)$windowEnd, number_format($processed));
                 } elseif ($mode === 'incremental') {
                     $message = sprintf('NVD incremental: %s CVEs procesados', number_format($processed));
                 } elseif ($mode === 'backfill') {
@@ -1116,6 +1128,28 @@ class CveSync
     // ============================================================
     // Procesamiento de una página
     // ============================================================
+
+    /**
+     * Aplica un lote de vulnerabilidades ya descargado (import de feeds NVD).
+     *
+     * Reutiliza exactamente el mismo upsert que la sincronización por API
+     * (catálogo, productos, matches del inventario), dentro de una transacción.
+     *
+     * @param array<int, array> $vulns Elementos del feed: ['cve' => [...]]
+     * @return array{inserted:int,updated:int,skipped:int}
+     */
+    public function applyBatch(array $vulns): array
+    {
+        // La sincronización por API inicializa el mapa de inventario en
+        // runChunk(); el import de feeds no pasa por ahí, así que se carga
+        // aquí para que los matches de "Mis CVE" se calculen igual.
+        if ($this->watchlistMap === null) {
+            $this->watchlistMap = $this->watchlistCpeMap();
+        }
+        return CveDatabase::transaction(function (PDO $db) use ($vulns): array {
+            return $this->processPage($db, $vulns);
+        });
+    }
 
     private function processPage(PDO $db, array $vulns): array
     {

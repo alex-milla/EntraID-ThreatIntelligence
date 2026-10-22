@@ -186,6 +186,25 @@ class CveDatabase
             finished_at TEXT
         )");
 
+        // v0.2.8.31: registro de ficheros de feed NVD descargados/importados.
+        $db->exec("CREATE TABLE IF NOT EXISTS cve_import_files (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            filename TEXT NOT NULL UNIQUE,
+            source TEXT,
+            status TEXT NOT NULL DEFAULT 'pending',
+            bytes_total INTEGER NOT NULL DEFAULT 0,
+            bytes_done INTEGER NOT NULL DEFAULT 0,
+            items_total INTEGER NOT NULL DEFAULT 0,
+            items_done INTEGER NOT NULL DEFAULT 0,
+            inserted INTEGER NOT NULL DEFAULT 0,
+            updated INTEGER NOT NULL DEFAULT 0,
+            skipped INTEGER NOT NULL DEFAULT 0,
+            error TEXT,
+            started_at TEXT,
+            finished_at TEXT,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )");
+
         $db->exec("CREATE TABLE IF NOT EXISTS cve_reports (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL,

@@ -20,6 +20,10 @@ storage/cache/*
 storage/exports/*
 !storage/exports/.gitkeep
 
+# Feeds NVD descargados (v0.2.8.31): grandes y regenerables
+storage/cve-import/*
+!storage/cve-import/.gitkeep
+
 # Archivos del sistema
 *.log
 *.bak
