@@ -132,6 +132,8 @@ define('CVE_SYNC_MAX_RETRIES', 4);
 // Timeout por petición a NVD (s). Los tramos web acotados lo rebajan al
 // presupuesto restante para no bloquear la conexión (ver CveSync::runChunk).
 define('CVE_NVD_TIMEOUT', 120);
+// Tamaño mínimo de página NVD: por debajo no se degrada más ante timeouts.
+define('CVE_NVD_MIN_PAGE_SIZE', 100);
 define('CVE_NVD_MAX_PAGE_SIZE', 2000);
 define('CVE_PAGE_SIZE_MEMORY_GUARD', 268435456); // <256M => página de 1000
 // Tramos de la descarga continua por web (segundos por petición HTTP).

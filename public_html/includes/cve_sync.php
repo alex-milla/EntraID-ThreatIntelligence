@@ -890,20 +890,64 @@ class CveSync
                 $stepClient = $this->client();
                 if ($deadline < PHP_FLOAT_MAX) {
                     $stepRemaining = $deadline - microtime(true);
-                    $stepClient = $stepClient->withNvdTimeout(
-                        (int)max(30, min((float)CVE_NVD_TIMEOUT, $stepRemaining + 15.0))
-                    );
+                    $stepClient = $stepClient
+                        ->withNvdTimeout(
+                            (int)max(30, min((float)CVE_NVD_TIMEOUT, $stepRemaining + 15.0))
+                        )
+                        // En tramos acotados el reintento fino lo hace el
+                        // bucle exterior (degradación de página), no el
+                        // backoff interno, que tardaría minutos en agotarse.
+                        ->withMaxRetries(2);
                 }
 
-                $page = $stepClient->nvdPage(
-                    (int)$state['cursor'],
-                    $pageSize,
-                    $pubStart !== null ? (string)$pubStart : null,
-                    $pubEnd !== null ? (string)$pubEnd : null,
-                    $lastModStart !== null ? (string)$lastModStart : null,
-                    $lastModEnd !== null ? (string)$lastModEnd : null,
-                    $virtual !== null ? (string)$virtual : null
-                );
+                try {
+                    $page = $stepClient->nvdPage(
+                        (int)$state['cursor'],
+                        $pageSize,
+                        $pubStart !== null ? (string)$pubStart : null,
+                        $pubEnd !== null ? (string)$pubEnd : null,
+                        $lastModStart !== null ? (string)$lastModStart : null,
+                        $lastModEnd !== null ? (string)$lastModEnd : null,
+                        $virtual !== null ? (string)$virtual : null
+                    );
+                } catch (Throwable $e) {
+                    // Timeout de transferencia ("timed out ... with N bytes
+                    // received"): NVD iba descargando pero la página no cabe
+                    // en el tramo. Reducimos el tamaño de página, lo
+                    // persistimos para los tramos siguientes y reintentamos
+                    // el mismo cursor (la página no llegó a completarse, así
+                    // que no se ha movido nada).
+                    $timeoutSig = preg_match(
+                        '/timed out after \d+ milliseconds with \d+ bytes/',
+                        $e->getMessage()
+                    ) === 1;
+                    $minPage = defined('CVE_NVD_MIN_PAGE_SIZE') ? (int)CVE_NVD_MIN_PAGE_SIZE : 100;
+                    if (!$timeoutSig || $pageSize <= $minPage) {
+                        throw $e;
+                    }
+                    $newSize = max($minPage, (int)floor($pageSize / 2));
+                    try {
+                        setting_set('cve_job_page_size', (string)$newSize);
+                    } catch (Throwable $settingError) {
+                        // Persistir es best-effort: seguimos con el tamaño
+                        // reducido aunque falle el setting.
+                    }
+                    $pageSize = $this->clampPageSize($newSize);
+                    $message = sprintf(
+                        'NVD tarda demasiado: reduciendo la página a %s CVEs y reintentando…',
+                        number_format($pageSize)
+                    );
+                    $this->updateState(['message' => $message], $token);
+                    $this->emitProgress($onProgress, [
+                        'type'      => 'progress',
+                        'phase'     => (string)$state['phase'],
+                        'cursor'    => (int)$state['cursor'],
+                        'total'     => (int)$state['total'],
+                        'processed' => (int)$state['processed'],
+                        'message'   => $message,
+                    ]);
+                    continue;
+                }
 
                 $vulns = $page['vulnerabilities'];
                 $pageCount = count($vulns);

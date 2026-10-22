@@ -91,6 +91,21 @@ class CveClient
     }
 
     /**
+     * Copia del cliente con otro número de reintentos por petición a NVD.
+     *
+     * Los tramos web acotados usan 2 en lugar de 4: el reintento "inteligente"
+     * en ese contexto es el bucle exterior de CveSync::runChunk (que degrada
+     * el tamaño de página ante timeouts), no el backoff interno, que tardaría
+     * minutos en agotarse y quemaría el tramo entero.
+     */
+    public function withMaxRetries(int $retries): self
+    {
+        $clone = clone $this;
+        $clone->maxRetries = max(1, min(8, $retries));
+        return $clone;
+    }
+
+    /**
      * Sondeo rápido a NVD: una sola petición, sin reintentos ni backoff.
      *
      * Sirve para comprobar que la API externa responde antes de crear un job
@@ -762,6 +777,11 @@ class CveClient
             CURLOPT_HTTPHEADER     => $headers,
             CURLOPT_TIMEOUT        => $timeout,
             CURLOPT_CONNECTTIMEOUT => 15,
+            // Aborta en ~30 s si no llegan ni 1 KB/s: una conexión muerta
+            // no debe quemar el timeout total; una transferencia lenta pero
+            // progresando (el caso de NVD saturado) no se corta por esto.
+            CURLOPT_LOW_SPEED_LIMIT => 1024,
+            CURLOPT_LOW_SPEED_TIME  => 30,
             CURLOPT_FOLLOWLOCATION => $follow,
             CURLOPT_MAXREDIRS      => 3,
             CURLOPT_SSL_VERIFYPEER => true,
