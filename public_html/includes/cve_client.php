@@ -777,10 +777,10 @@ class CveClient
             CURLOPT_HTTPHEADER     => $headers,
             CURLOPT_TIMEOUT        => $timeout,
             CURLOPT_CONNECTTIMEOUT => 15,
-            // Aborta en ~30 s si no llegan ni 1 KB/s: una conexión muerta
-            // no debe quemar el timeout total; una transferencia lenta pero
-            // progresando (el caso de NVD saturado) no se corta por esto.
-            CURLOPT_LOW_SPEED_LIMIT => 1024,
+            // Aborta en ~30 s si no llegan ni 256 B/s: una conexión muerta
+            // no debe quemar el timeout total. Umbral bajo a propósito: un
+            // trickle lento pero real (NVD saturado) debe seguir avanzando.
+            CURLOPT_LOW_SPEED_LIMIT => 256,
             CURLOPT_LOW_SPEED_TIME  => 30,
             CURLOPT_FOLLOWLOCATION => $follow,
             CURLOPT_MAXREDIRS      => 3,
@@ -800,13 +800,21 @@ class CveClient
         ];
         curl_setopt_array($ch, $opts);
 
+        $t0 = microtime(true);
         $body = curl_exec($ch);
+        $elapsed = microtime(true) - $t0;
         $http = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $errno = curl_errno($ch);
         $error = curl_error($ch);
         curl_close($ch);
 
         if ($body === false) {
-            throw new RuntimeException($error !== '' ? $error : 'Error de conexión cURL');
+            // Error auto diagnóstico: mensaje de cURL + errno + tiempo real
+            // transcurrido + tope usado, para poder decidir sin adivinar.
+            throw new RuntimeException(
+                ($error !== '' ? $error : 'Error de conexión cURL')
+                . sprintf(' (cURL %d, %.1f s, tope %d s)', $errno, $elapsed, $timeout)
+            );
         }
 
         return [
@@ -814,6 +822,8 @@ class CveClient
             'body'    => (string)$body,
             'headers' => $responseHeaders,
             'error'   => $error !== '' ? $error : null,
+            'errno'   => $errno,
+            'elapsed' => $elapsed,
         ];
     }
 

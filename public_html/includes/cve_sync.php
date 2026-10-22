@@ -911,20 +911,22 @@ class CveSync
                         $virtual !== null ? (string)$virtual : null
                     );
                 } catch (Throwable $e) {
-                    // Timeout de transferencia ("timed out ... with N bytes
-                    // received"): NVD iba descargando pero la página no cabe
-                    // en el tramo. Reducimos el tamaño de página, lo
-                    // persistimos para los tramos siguientes y reintentamos
-                    // el mismo cursor (la página no llegó a completarse, así
-                    // que no se ha movido nada).
-                    $timeoutSig = preg_match(
-                        '/timed out after \d+ milliseconds with \d+ bytes/',
-                        $e->getMessage()
-                    ) === 1;
+                    // Timeout de transferencia: bien por tope de tiempo
+                    // ("timed out ... with N bytes received") o bien por
+                    // estancamiento real ("Operation too slow"). En los dos
+                    // casos NVD iba descargando pero la página no cabe en el
+                    // tramo: reducimos el tamaño de página, lo persistimos para
+                    // los tramos siguientes y reintentamos el mismo cursor (la
+                    // página no llegó a completarse, así que no se ha movido
+                    // nada).
+                    $msgText = $e->getMessage();
+                    $timeoutSig = preg_match('/timed out after \d+ milliseconds with \d+ bytes/', $msgText) === 1
+                        || str_contains($msgText, 'Operation too slow');
                     $minPage = defined('CVE_NVD_MIN_PAGE_SIZE') ? (int)CVE_NVD_MIN_PAGE_SIZE : 100;
                     if (!$timeoutSig || $pageSize <= $minPage) {
                         throw $e;
                     }
+                    $oldSize = $pageSize;
                     $newSize = max($minPage, (int)floor($pageSize / 2));
                     try {
                         setting_set('cve_job_page_size', (string)$newSize);
@@ -936,6 +938,21 @@ class CveSync
                     $message = sprintf(
                         'NVD tarda demasiado: reduciendo la página a %s CVEs y reintentando…',
                         number_format($pageSize)
+                    );
+                    // Trazabilidad en cve_sync_log: cada degradación deja rastro
+                    // con el motivo exacto, el cursor y los tamaños implicados.
+                    $this->logEvent(
+                        'nvd',
+                        'warning',
+                        0,
+                        sprintf(
+                            'NVD lento: timeout con página de %s CVEs (cursor %s); se reintenta con %s CVEs. %s',
+                            number_format($oldSize),
+                            number_format((int)$state['cursor']),
+                            number_format($pageSize),
+                            substr($msgText, 0, 300)
+                        ),
+                        (string)($state['mode'] ?? '')
                     );
                     $this->updateState(['message' => $message], $token);
                     $this->emitProgress($onProgress, [
@@ -1046,8 +1063,23 @@ class CveSync
                 'base_url'  => (string)($state['base_url'] ?? ''),
             ];
         } catch (Throwable $e) {
-            $message = substr($e->getMessage(), 0, 1000);
             $stateNow = $this->state();
+            // Contexto completo en el log y en pantalla: con qué página se
+            // descargaba, en qué cursor, fase, modo y ventana temporal, para
+            // poder diagnosticar el Error # sin reproducir a ciegas.
+            $window = !empty($stateNow['window_start'])
+                ? ', ventana=' . (string)$stateNow['window_start'] . ' → ' . (string)($stateNow['window_end'] ?? '')
+                : '';
+            $context = sprintf(
+                ' [contexto: página=%s, cursor=%s/%s, fase=%s, modo=%s%s]',
+                number_format($pageSize),
+                number_format((int)($stateNow['cursor'] ?? 0)),
+                number_format((int)($stateNow['total'] ?? 0)),
+                ((string)($stateNow['phase'] ?? '')) !== '' ? (string)$stateNow['phase'] : '—',
+                ((string)($stateNow['mode'] ?? '')) !== '' ? (string)$stateNow['mode'] : '—',
+                $window
+            );
+            $message = substr($e->getMessage(), 0, 700) . $context;
             $errorId = $this->logEvent(
                 'nvd',
                 'error',
