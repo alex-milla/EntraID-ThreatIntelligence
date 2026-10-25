@@ -237,8 +237,7 @@ foreach ($files as $file) {
         $lt = strrpos($before, '<');
         if ($lt !== false) {
             $open = substr($before, $lt);
-            if (preg_match('/^<(input|select|textarea)\b/i', $open)
-                && !str_contains(substr($src, $attrOffset, 160), '>')) {
+            if (preg_match('/^<(input|select|textarea)\b/i', $open) && !str_contains($open, '>')) {
                 $value = preg_replace('/(?<![\w:-])bg-surface(?![\w:-])/', 'bg-input', $value);
             }
         }

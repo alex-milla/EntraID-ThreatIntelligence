@@ -1,0 +1,100 @@
+/* ============================================================
+   print.css — Documento de impresión (solo `media="print"`)
+   Sistema visual: md/ESPECIFICACION-UI.md §10
+   Autocontenido: no depende de ui.css ni de las utilities.
+   ============================================================ */
+
+@page {
+    size: A4;
+    margin: 16mm 14mm 18mm;
+}
+
+@media print {
+    /* --- Caja de página --- */
+    html,
+    body {
+        height: auto !important;
+        overflow: visible !important;
+        background: #fff !important;
+        color: #111827;
+        font-size: 10.5pt;
+    }
+
+    /* --- Ocultar mobiliario de pantalla --- */
+    .no-print,
+    .app-sidebar,
+    .app-header,
+    .page-footer,
+    .back-to-top,
+    .tdl-toast-stack,
+    .tdl-modal-overlay,
+    .detail-drawer,
+    .dd-overlay,
+    .filter-overlay,
+    .bulk-toolbar,
+    .action-menu,
+    .filter-toggle {
+        display: none !important;
+    }
+
+    /* --- El shell deja de ser una app con scroll propio --- */
+    .app-shell {
+        display: block !important;
+        height: auto !important;
+        overflow: visible !important;
+    }
+
+    .app-body,
+    .app-main {
+        display: block !important;
+        height: auto !important;
+        overflow: visible !important;
+        margin: 0 !important;
+    }
+
+    .page-container {
+        max-width: none !important;
+        padding: 0 !important;
+    }
+
+    /* --- Contenido --- */
+    .card,
+    .alert,
+    .notice,
+    .stat {
+        break-inside: avoid;
+        box-shadow: none !important;
+    }
+
+    thead {
+        display: table-header-group;
+    }
+
+    tr {
+        break-inside: avoid;
+    }
+
+    h1,
+    h2,
+    h3 {
+        break-after: avoid;
+        page-break-after: avoid;
+    }
+
+    p,
+    li {
+        orphans: 3;
+        widows: 3;
+    }
+
+    a {
+        color: inherit;
+        text-decoration: none;
+    }
+
+    /* El color es información (severidades, estados) */
+    * {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+}

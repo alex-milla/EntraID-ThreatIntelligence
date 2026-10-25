@@ -45,6 +45,7 @@
     --color-line:        var(--border);
     --color-line-subtle: var(--border-subtle);
     --color-line-strong: var(--border-strong);
+    --color-input:       var(--input-bg);
 
     /* --- Acción primaria --- */
     --color-primary:        var(--primary);

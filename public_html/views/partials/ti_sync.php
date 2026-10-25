@@ -5,25 +5,25 @@
  */
 $tiSyncTenant = (int)($selectedTenant ?? 0);
 ?>
-<div id="ti-sync-progress" class="hidden fixed bottom-4 left-4 z-50 w-full max-w-md bg-white dark:bg-surface-dark border border-gray-200 dark:border-gray-700 rounded-xl shadow-lg p-4">
-    <p class="text-sm font-medium mb-2">Sincronizando: <span id="ti-sync-phase" class="text-gray-500"></span></p>
-    <div class="h-2 w-full bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
+<div id="ti-sync-progress" class="hidden fixed bottom-4 left-4 z-50 w-full max-w-md card shadow-lg p-4">
+    <p class="text-sm font-medium mb-2">Sincronizando: <span id="ti-sync-phase" class="text-ink-muted"></span></p>
+    <div class="h-2 w-full bg-muted rounded-full overflow-hidden">
         <div id="ti-sync-bar" class="h-full bg-brand-500 transition-all" style="width:0%"></div>
     </div>
-    <p id="ti-sync-text" class="text-xs text-gray-400 mt-1.5"></p>
+    <p id="ti-sync-text" class="text-xs text-ink-soft mt-1.5"></p>
 </div>
 
-<div id="ti-bg-progress" class="hidden fixed bottom-4 right-4 z-50 w-full max-w-md bg-white dark:bg-surface-dark border border-gray-200 dark:border-gray-700 rounded-xl shadow-lg p-4" data-job="">
+<div id="ti-bg-progress" class="hidden fixed bottom-4 right-4 z-50 w-full max-w-md card shadow-lg p-4" data-job="">
     <div class="flex items-center justify-between mb-2">
         <p class="text-sm font-medium">Sincronización en 2º plano</p>
         <button type="button" id="ti-bg-cancel" onclick="tiBgCancel()" class="text-xs text-red-500 hover:underline">Cancelar</button>
     </div>
-    <p class="text-xs text-gray-500 mb-1">Fase: <span id="ti-bg-phase">—</span></p>
-    <div class="h-2 w-full bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
+    <p class="text-xs text-ink-muted mb-1">Fase: <span id="ti-bg-phase">—</span></p>
+    <div class="h-2 w-full bg-muted rounded-full overflow-hidden">
         <div id="ti-bg-bar" class="h-full bg-brand-500 transition-all" style="width:0%"></div>
     </div>
-    <p id="ti-bg-text" class="text-xs text-gray-400 mt-1.5"></p>
-    <p class="text-[11px] text-gray-400 mt-1">Puedes seguir navegando o cerrar esta pestaña: el trabajo continúa en el servidor.</p>
+    <p id="ti-bg-text" class="text-xs text-ink-soft mt-1.5"></p>
+    <p class="text-[11px] text-ink-soft mt-1">Puedes seguir navegando o cerrar esta pestaña: el trabajo continúa en el servidor.</p>
 </div>
 <script>
 function runTiSync() {

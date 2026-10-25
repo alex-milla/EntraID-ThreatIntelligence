@@ -823,13 +823,13 @@ class Module_Cve extends BaseModule
 
         if ($data === null) {
             http_response_code(404);
-            echo '<div class="p-4 text-sm text-gray-500">No hay datos para este CVE en el catálogo local.</div>';
+            echo '<div class="p-4 text-sm text-ink-muted">No hay datos para este CVE en el catálogo local.</div>';
             return;
         }
 
         $isInline = true;
         extract($data);
-        echo '<div class="p-4 bg-gray-50/70 dark:bg-gray-900/40 border-t border-gray-100 dark:border-gray-800">';
+        echo '<div class="p-4 bg-muted/70 dark:bg-gray-900/40 border-t border-line-subtle">';
         require __DIR__ . '/views/_cve_detail_content.php';
         echo '</div>';
     }
@@ -891,7 +891,7 @@ class Module_Cve extends BaseModule
 
         if ($cve === null) {
             http_response_code(404);
-            echo '<div class="p-4 text-sm text-gray-500">No hay datos para este CVE en el catálogo local.</div>';
+            echo '<div class="p-4 text-sm text-ink-muted">No hay datos para este CVE en el catálogo local.</div>';
             return;
         }
 
@@ -1473,7 +1473,7 @@ class Module_Cve extends BaseModule
         $payload = $id > 0 ? $this->aiReportPayload($id) : null;
         if ($payload === null) {
             http_response_code(404);
-            echo '<div class="p-4 text-sm text-gray-500">Informe no encontrado o sin acceso.</div>';
+            echo '<div class="p-4 text-sm text-ink-muted">Informe no encontrado o sin acceso.</div>';
             return;
         }
 
@@ -1487,8 +1487,8 @@ class Module_Cve extends BaseModule
         $isAdmin = Auth::isAdmin();
 
         echo '<div class="no-print mb-3 flex items-center justify-between gap-2">'
-            . '<span class="text-xs text-gray-500">Informe #' . (int)$id . '</span>'
-            . '<a href="' . e(base_url('modules/cve/report-ai/' . (int)$id)) . '" class="text-xs text-brand-600 dark:text-brand-400 hover:underline">Abrir informe completo</a>'
+            . '<span class="text-xs text-ink-muted">Informe #' . (int)$id . '</span>'
+            . '<a href="' . e(base_url('modules/cve/report-ai/' . (int)$id)) . '" class="text-xs text-primary hover:underline">Abrir informe completo</a>'
             . '</div>';
         require __DIR__ . '/views/_ai_report_body.php';
     }
@@ -2229,7 +2229,7 @@ class Module_Cve extends BaseModule
             header('Cache-Control: no-store, no-cache, must-revalidate');
             if ($data === null) {
                 http_response_code(404);
-                echo '<div class="p-6 text-sm text-red-600">Informe no encontrado.</div>';
+                echo '<div class="p-6 text-sm text-danger">Informe no encontrado.</div>';
                 return;
             }
             extract($data);

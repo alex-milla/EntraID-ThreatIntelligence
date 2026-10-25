@@ -18,10 +18,10 @@ $isNew24 = $created && (strtotime((string)$created) !== false) && (strtotime((st
     <a href="<?= base_url('modules/threat_intelligence') ?>" class="text-xs text-brand-500 hover:underline">← Volver</a>
     <div class="flex items-center gap-2 mt-2">
         <span id="art-new" class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-brand-500 text-white <?= $unread ? '' : 'hidden' ?>">New</span>
-        <?php if ($isNew24): ?><span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300" title="Publicado en las últimas 24 h">24 h</span><?php endif; ?>
+        <?php if ($isNew24): ?><span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-warning-bg text-warning" title="Publicado en las últimas 24 h">24 h</span><?php endif; ?>
         <h1 class="text-xl font-semibold"><?= e($article['title']) ?></h1>
     </div>
-    <p class="text-xs text-gray-400 mt-1">
+    <p class="text-xs text-ink-soft mt-1">
         <?= e($tenant['name'] ?? '') ?> ·
         Publicado el <?= format_date($created ?: $updated) ?>
         <?php if ($showUpdated): ?> · actualizado el <?= format_date($updated) ?><?php endif; ?>
@@ -30,7 +30,7 @@ $isNew24 = $created && (strtotime((string)$created) !== false) && (strtotime((st
         <div class="flex flex-wrap gap-1 mt-2">
             <?php foreach ($tags as $tag): ?>
                 <?php $tval = is_array($tag) ? ($tag['value'] ?? $tag['name'] ?? '') : $tag; ?>
-                <?php if ($tval !== ''): ?><span class="inline-flex px-2 py-0.5 text-xs rounded-full bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300"><?= e((string)$tval) ?></span><?php endif; ?>
+                <?php if ($tval !== ''): ?><span class="inline-flex px-2 py-0.5 text-xs rounded-full bg-muted text-ink-muted"><?= e((string)$tval) ?></span><?php endif; ?>
             <?php endforeach; ?>
         </div>
     <?php endif; ?>
@@ -39,15 +39,15 @@ $isNew24 = $created && (strtotime((string)$created) !== false) && (strtotime((st
 <!-- Estado de triaje: leído / favorito -->
 <div class="mb-4 flex flex-wrap items-center gap-2">
     <button type="button" id="btn-read" onclick="tiReadToggle()"
-            class="inline-flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 dark:border-gray-700 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+            class="inline-flex items-center gap-1.5 px-3 py-1.5 border border-line text-xs font-medium rounded-lg hover:bg-muted transition-colors">
+        <i class="material-icons icon-16" aria-hidden="true">check</i>
         <span id="btn-read-label"><?= $unread ? 'Confirmar como leído' : 'Dejar sin leer' ?></span>
     </button>
     <button type="button" id="btn-fav" onclick="tiFavToggle()"
             class="inline-flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 dark:border-gray-700 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors <?= $fav ? 'text-amber-500' : '' ?>">
         <span id="btn-fav-label"><?= $fav ? '★ Favorito' : '☆ Añadir a favoritos' ?></span>
     </button>
-    <span id="state-msg" class="text-xs text-gray-400"></span>
+    <span id="state-msg" class="text-xs text-ink-soft"></span>
 </div>
 
 <!-- Navegación anterior / siguiente -->
@@ -72,79 +72,79 @@ if (!empty($_GET['only_favorites'])) { $navQs .= '&only_favorites=1'; }
 
 <!-- Acciones -->
 <div class="mb-6 flex flex-wrap items-center gap-2">
-    <span class="text-xs text-gray-500 mr-1">Exportar IOCs del artículo:</span>
-    <button onclick="exportArticle('txt')" class="px-3 py-1.5 border border-gray-200 dark:border-gray-700 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">TXT</button>
-    <button onclick="exportArticle('csv')" class="px-3 py-1.5 border border-gray-200 dark:border-gray-700 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">CSV</button>
-    <button onclick="exportArticle('stix')" class="px-3 py-1.5 border border-gray-200 dark:border-gray-700 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">STIX 2.1</button>
-    <button onclick="exportArticle('misp')" class="px-3 py-1.5 border border-gray-200 dark:border-gray-700 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">MISP</button>
-    <span id="export-msg" class="text-xs text-gray-500"></span>
+    <span class="text-xs text-ink-muted mr-1">Exportar IOCs del artículo:</span>
+    <button onclick="exportArticle('txt')" class="px-3 py-1.5 border border-line text-xs font-medium rounded-lg hover:bg-muted transition-colors">TXT</button>
+    <button onclick="exportArticle('csv')" class="px-3 py-1.5 border border-line text-xs font-medium rounded-lg hover:bg-muted transition-colors">CSV</button>
+    <button onclick="exportArticle('stix')" class="px-3 py-1.5 border border-line text-xs font-medium rounded-lg hover:bg-muted transition-colors">STIX 2.1</button>
+    <button onclick="exportArticle('misp')" class="px-3 py-1.5 border border-line text-xs font-medium rounded-lg hover:bg-muted transition-colors">MISP</button>
+    <span id="export-msg" class="text-xs text-ink-muted"></span>
 </div>
 
 <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
     <!-- Columna izquierda: contenido del artículo -->
     <div class="lg:col-span-2 space-y-6">
         <?php if ($summaryHtml !== ''): ?>
-            <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-5 md-body">
+            <div class="card p-5 md-body">
                 <?= $summaryHtml ?>
             </div>
         <?php endif; ?>
 
-        <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-5">
+        <div class="card p-5">
             <details>
                 <summary class="text-sm font-semibold cursor-pointer select-none">Cuerpo del artículo</summary>
                 <?php if ($bodyHtml !== ''): ?>
                     <div class="md-body mt-4"><?= $bodyHtml ?></div>
                 <?php else: ?>
-                    <p class="mt-3 text-sm text-gray-500">(sin cuerpo)</p>
+                    <p class="mt-3 text-sm text-ink-muted">(sin cuerpo)</p>
                 <?php endif; ?>
             </details>
         </div>
 
         <!-- Traducción IA al español -->
-        <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-5">
+        <div class="card p-5">
             <div class="flex items-center justify-between gap-3">
                 <h2 class="text-sm font-semibold">Traducción al español (IA)</h2>
                 <div class="flex items-center gap-2">
                     <button type="button" id="btn-translate" onclick="tiTranslate()"
-                            class="inline-flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 dark:border-gray-700 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">
+                            class="inline-flex items-center gap-1.5 px-3 py-1.5 border border-line text-xs font-medium rounded-lg hover:bg-muted transition-colors">
                         <?= $hasTranslation ? 'Ver traducción' : 'Traducir al español' ?>
                     </button>
                     <button type="button" id="btn-translation-hide" onclick="tiTranslationHide()"
-                            class="hidden px-3 py-1.5 border border-gray-200 dark:border-gray-700 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">Ver original</button>
+                            class="hidden px-3 py-1.5 border border-line text-xs font-medium rounded-lg hover:bg-muted transition-colors">Ver original</button>
                 </div>
             </div>
             <div id="translation-body" class="md-body mt-3 <?= $hasTranslation ? '' : 'hidden' ?>"><?= $translationHtml ?? '' ?></div>
-            <p id="translation-msg" class="text-xs text-gray-400 mt-2"><?= $hasTranslation ? 'Traducción guardada (se reutiliza hasta que cambie el artículo o pasen 90 días).' : '' ?></p>
+            <p id="translation-msg" class="text-xs text-ink-soft mt-2"><?= $hasTranslation ? 'Traducción guardada (se reutiliza hasta que cambie el artículo o pasen 90 días).' : '' ?></p>
         </div>
     </div>
 
     <!-- Columna derecha: IA + IOCs (IA primero para no tener que bajar) -->
     <div class="lg:col-span-1 flex flex-col gap-6">
-        <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden order-2">
-            <div class="px-4 py-3 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between gap-2">
+        <div class="card overflow-hidden order-2">
+            <div class="px-4 py-3 border-b border-line flex items-center justify-between gap-2">
                 <h2 class="text-sm font-semibold">IOCs (<?= count($iocs) ?>)</h2>
                 <?php if (!empty($iocs)): ?>
                     <div class="flex items-center gap-3">
-                        <label class="inline-flex items-center gap-1 text-[11px] text-gray-500 cursor-pointer" title="Ofusca IP y dominio con [.] para informes">
-                            <input type="checkbox" onchange="toggleIocDefang(this)" class="rounded border-gray-300 text-brand-500 focus:ring-brand-500"> [.] seguro
+                        <label class="inline-flex items-center gap-1 text-[11px] text-ink-muted cursor-pointer" title="Ofusca IP y dominio con [.] para informes">
+                            <input type="checkbox" onchange="toggleIocDefang(this)" class="rounded border-line-strong text-brand-500 focus:ring-brand-500"> [.] seguro
                         </label>
                         <button onclick="copyAll()" class="text-xs text-brand-500 hover:underline">Copiar todos</button>
                     </div>
                 <?php endif; ?>
             </div>
             <?php if (empty($iocs)): ?>
-                <p class="px-4 py-6 text-sm text-gray-500 text-center">Este artículo no tiene IOCs.</p>
+                <p class="px-4 py-6 text-sm text-ink-muted text-center">Este artículo no tiene IOCs.</p>
             <?php else: ?>
-                <div class="divide-y divide-gray-100 dark:divide-gray-700/50 max-h-[70vh] overflow-y-auto">
+                <div class="divide-y divide-line-subtle max-h-[70vh] overflow-y-auto">
                     <?php foreach ($iocs as $ioc): ?>
                         <div class="px-4 py-2.5">
                             <div class="flex items-center justify-between gap-2">
-                                <span class="font-mono text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-gray-500"><?= e($ioc['ioc_type']) ?></span>
-                                <button onclick="copyIoc(this)" class="text-[11px] text-gray-400 hover:text-brand-500" title="Copiar">copiar</button>
+                                <span class="font-mono text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-muted text-ink-muted"><?= e($ioc['ioc_type']) ?></span>
+                                <button onclick="copyIoc(this)" class="text-[11px] text-ink-soft hover:text-brand-500" title="Copiar">copiar</button>
                             </div>
                             <p class="font-mono text-xs break-all mt-1" data-ioc="<?= e($ioc['ioc_value']) ?>" data-ioc-defang="<?= e(defang_ioc((string)$ioc['ioc_value'], (string)$ioc['ioc_type'])) ?>"><?= e($ioc['ioc_value']) ?></p>
                             <?php if (!empty($ioc['severity']) || !empty($ioc['source'])): ?>
-                                <p class="text-[11px] text-gray-400 mt-0.5">
+                                <p class="text-[11px] text-ink-soft mt-0.5">
                                     <?php if (!empty($ioc['severity'])): ?><?= e($ioc['severity']) ?><?php endif; ?>
                                     <?php if (!empty($ioc['severity']) && !empty($ioc['source'])): ?> · <?php endif; ?>
                                     <?php if (!empty($ioc['source'])): ?><?= e($ioc['source']) ?><?php endif; ?>
@@ -156,23 +156,23 @@ if (!empty($_GET['only_favorites'])) { $navQs .= '&only_favorites=1'; }
             <?php endif; ?>
         </div>
 
-        <div id="ai-panel" class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-5 order-1">
+        <div id="ai-panel" class="card p-5 order-1">
             <div class="flex items-center justify-between mb-3">
                 <h2 class="text-sm font-semibold">Análisis con IA</h2>
                 <div class="flex items-center gap-2">
                     <?php if (Auth::isAdmin()): ?>
-                        <button type="button" onclick="scopeOpenEditor()" class="w-7 h-7 inline-flex items-center justify-center rounded-lg text-gray-400 hover:text-brand-500 hover:bg-gray-100 dark:hover:bg-gray-800 text-lg leading-none" title="Editar acciones">&#8942;</button>
+                        <button type="button" onclick="scopeOpenEditor()" class="w-7 h-7 inline-flex items-center justify-center rounded-lg text-ink-soft hover:text-brand-500 hover:bg-muted text-lg leading-none" title="Editar acciones">&#8942;</button>
                     <?php endif; ?>
                     <div id="art-result-actions" class="hidden items-center gap-2">
-                        <button type="button" onclick="copyArtAnalysis()" class="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">Copiar</button>
-                        <button type="button" onclick="downloadArtAnalysis()" class="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">Descargar .md</button>
+                        <button type="button" onclick="copyArtAnalysis()" class="btn btn-small btn-outline">Copiar</button>
+                        <button type="button" onclick="downloadArtAnalysis()" class="btn btn-small btn-outline">Descargar .md</button>
                     </div>
                 </div>
             </div>
             <?php if (empty($profiles)): ?>
-                <p class="text-xs text-gray-400">No hay perfiles de IA configurados. Añádelos en <a href="<?= base_url('admin/apis') ?>" class="text-brand-500 hover:underline">Admin → APIs</a>.</p>
+                <p class="text-xs text-ink-soft">No hay perfiles de IA configurados. Añádelos en <a href="<?= base_url('admin/apis') ?>" class="text-brand-500 hover:underline">Admin → APIs</a>.</p>
             <?php else: ?>
-                <select id="ia-profile" class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm focus:ring-2 focus:ring-brand-500 outline-none mb-3">
+                <select id="ia-profile" class="w-full px-2 py-1.5 rounded-lg border border-line-strong bg-input text-sm focus:ring-2 focus:ring-brand-500 outline-none mb-3">
                     <?php foreach ($profiles as $p): ?>
                         <option value="<?= (int)$p['id'] ?>" <?= (int)($defaultProfileId ?? 0) === (int)$p['id'] ? 'selected' : '' ?>><?= e($p['name']) ?><?= !empty($p['model']) ? ' · ' . e($p['model']) : '' ?></option>
                     <?php endforeach; ?>
@@ -180,19 +180,19 @@ if (!empty($_GET['only_favorites'])) { $navQs .= '&only_favorites=1'; }
                 <?php if (!empty($actions)): ?>
                     <div class="flex flex-wrap gap-2">
                         <?php foreach ($actions as $ac): ?>
-                            <button type="button" onclick="analyzeArticleIA(<?= (int)$ac['id'] ?>)" class="inline-flex items-center px-3 py-1.5 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-muted-dark text-xs font-medium rounded-lg transition-colors"><?= e($ac['label']) ?></button>
+                            <button type="button" onclick="analyzeArticleIA(<?= (int)$ac['id'] ?>)" class="btn btn-small btn-outline"><?= e($ac['label']) ?></button>
                         <?php endforeach; ?>
                     </div>
                 <?php endif; ?>
-                <label class="inline-flex items-center gap-2 text-xs text-gray-500 mt-3 cursor-pointer" title="Ofusca IP y dominio con [.] en el informe generado">
-                    <input type="checkbox" id="ia-defang" class="rounded border-gray-300 text-brand-500 focus:ring-brand-500"> Defang [.] en el informe
+                <label class="inline-flex items-center gap-2 text-xs text-ink-muted mt-3 cursor-pointer" title="Ofusca IP y dominio con [.] en el informe generado">
+                    <input type="checkbox" id="ia-defang" class="rounded border-line-strong text-brand-500 focus:ring-brand-500"> Defang [.] en el informe
                 </label>
-                <textarea id="ia-question" rows="2" placeholder="Pregunta libre (opcional)…" class="w-full mt-3 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm focus:ring-2 focus:ring-brand-500 outline-none"></textarea>
+                <textarea id="ia-question" rows="2" placeholder="Pregunta libre (opcional)…" class="w-full mt-3 px-3 py-2 rounded-lg border border-line-strong bg-input text-sm focus:ring-2 focus:ring-brand-500 outline-none"></textarea>
                 <div class="flex items-center gap-2 mt-2">
-                    <button type="button" onclick="analyzeArticleIA(0)" class="flex-1 px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors">Preguntar</button>
-                    <button type="button" onclick="analyzeAI()" class="px-3 py-2 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-muted-dark text-xs font-medium rounded-lg transition-colors" title="Extrae los IOCs del artículo en tabla estructurada">Extraer IOCs</button>
+                    <button type="button" onclick="analyzeArticleIA(0)" class="flex-1 btn">Preguntar</button>
+                    <button type="button" onclick="analyzeAI()" class="px-3 py-2 border border-line hover:bg-muted text-xs font-medium rounded-lg transition-colors" title="Extrae los IOCs del artículo en tabla estructurada">Extraer IOCs</button>
                 </div>
-                <div id="ai-result" class="hidden md-body mt-3 border-t border-gray-100 dark:border-gray-700 pt-3"></div>
+                <div id="ai-result" class="hidden md-body mt-3 border-t border-line-subtle pt-3"></div>
             <?php endif; ?>
         </div>
     </div>
@@ -356,11 +356,11 @@ function analyzeAI() {
             if (!p) { box.innerHTML = '<div class="md-body">' + (res.content_html || esc(res.content || '')) + '</div>'; return; }
             var html = '<p class="whitespace-pre-wrap">' + esc(p.resumen || '') + '</p>';
             if (p.iocs && p.iocs.length) {
-                html += '<table class="mt-3 w-full text-xs"><thead><tr class="text-gray-500 uppercase"><th class="text-left py-1">Tipo</th><th class="text-left py-1">Valor</th></tr></thead><tbody>';
+                html += '<table class="data-table mt-3 w-full text-xs"><thead><tr class="text-ink-muted uppercase"><th class="text-left py-1">Tipo</th><th class="text-left py-1">Valor</th></tr></thead><tbody>';
                 p.iocs.forEach(function(i) { html += '<tr><td class="py-1 pr-3 font-mono">' + esc(i.tipo || '') + '</td><td class="py-1 font-mono break-all">' + esc(i.valor || '') + '</td></tr>'; });
                 html += '</tbody></table>';
             }
-            if (p.recomendaciones) { html += '<p class="mt-3 text-gray-500">' + esc(p.recomendaciones) + '</p>'; }
+            if (p.recomendaciones) { html += '<p class="mt-3 text-ink-muted">' + esc(p.recomendaciones) + '</p>'; }
             box.innerHTML = html;
         })
         .catch(function() { box.innerHTML = '<p class="text-sm text-red-500">Error de conexión</p>'; });

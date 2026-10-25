@@ -125,12 +125,12 @@ $exposureLabel = static function (string $value): string {
 <div class="ai-report-body" data-report-id="<?= (int)($report['id'] ?? 0) ?>" data-status="<?= e($bodyStatus) ?>" data-group-id="<?= (int)($report['group_id'] ?? 0) ?>" data-profile-id="<?= (int)($report['ai_profile_id'] ?? 0) ?>" data-ai-profile-name="<?= e((string)($report['ai_profile_name'] ?? '')) ?>" data-ai-profile-model="<?= e((string)($report['ai_profile_model'] ?? '')) ?>" data-ai-model="<?= e((string)($report['ai_model'] ?? '')) ?>" data-ai-error="<?= e((string)($report['ai_error'] ?? '')) ?>">
 
     <?php if ($bodyProcessing): ?>
-        <div class="mb-5 px-4 py-3 rounded-lg text-sm bg-blue-50 text-blue-700 flex items-start justify-between gap-3 flex-wrap no-print" id="ai-processing-banner">
+        <div class="mb-5 px-4 py-3 rounded-lg text-sm bg-info-bg text-info flex items-start justify-between gap-3 flex-wrap no-print" id="ai-processing-banner">
             <div class="flex items-start gap-3 min-w-0 flex-1">
-                <svg class="w-4 h-4 animate-spin shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg>
+                <i class="material-icons icon-16 animate-spin mt-0.5" aria-hidden="true">progress_activity</i>
                 <div class="min-w-0 flex-1">
                     <span id="ai-processing-text"><?= e($progressText) ?></span>
-                    <div class="mt-2 h-1.5 w-full max-w-xs rounded-full bg-blue-100 overflow-hidden">
+                    <div class="mt-2 h-1.5 w-full max-w-xs rounded-full bg-info-bg overflow-hidden">
                         <div id="ai-processing-bar" class="h-full bg-blue-600 transition-all" style="width: <?= $progressPct ?>%"></div>
                     </div>
                 </div>
@@ -142,7 +142,7 @@ $exposureLabel = static function (string $value): string {
                         Ejecutar ahora
                     </button>
                     <button type="button" onclick="cancelCveAiReport()"
-                            class="px-3 py-1.5 border border-blue-200 text-blue-700 text-xs font-medium rounded-lg hover:bg-blue-100 transition-colors">
+                            class="px-3 py-1.5 border border-info-border text-info text-xs font-medium rounded-lg hover:bg-blue-100 transition-colors">
                         Cancelar
                     </button>
                 </div>
@@ -151,7 +151,7 @@ $exposureLabel = static function (string $value): string {
     <?php endif; ?>
 
     <?php if ($bodyStatus === 'error' && $bodyError !== ''): ?>
-        <div class="mb-5 px-4 py-3 rounded-lg text-sm bg-red-50 text-red-700 flex items-start justify-between gap-3 flex-wrap no-print">
+        <div class="mb-5 px-4 py-3 rounded-lg text-sm bg-danger-bg text-danger flex items-start justify-between gap-3 flex-wrap no-print">
             <div class="min-w-0">
                 <p class="font-semibold">La evaluación con IA no se pudo completar</p>
                 <p class="text-xs mt-1 break-words"><?= e($bodyError) ?></p>
@@ -166,7 +166,7 @@ $exposureLabel = static function (string $value): string {
     <?php endif; ?>
 
     <?php if ($bodyStatus === 'canceled'): ?>
-        <div class="mb-5 px-4 py-3 rounded-lg text-sm bg-amber-50 text-amber-700 flex items-start justify-between gap-3 flex-wrap no-print">
+        <div class="mb-5 px-4 py-3 rounded-lg text-sm bg-warning-bg text-warning flex items-start justify-between gap-3 flex-wrap no-print">
             <div class="min-w-0">
                 <p class="font-semibold">Informe cancelado</p>
                 <p class="text-xs mt-1">Puedes reintentarlo cuando quieras; se volverá a encolar y ejecutar.</p>
@@ -180,9 +180,9 @@ $exposureLabel = static function (string $value): string {
         </div>
     <?php endif; ?>
 
-    <article class="report-doc bg-white text-gray-900 rounded-xl border border-gray-200 shadow-sm">
-        <header class="px-7 pt-7 pb-5 border-b border-gray-200">
-            <p class="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-400">Informe de vulnerabilidad</p>
+    <article class="report-doc bg-surface text-ink rounded-xl border border-line shadow-sm">
+        <header class="px-7 pt-7 pb-5 border-b border-line">
+            <p class="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-soft">Informe de vulnerabilidad</p>
             <h1 class="text-2xl font-bold mt-1 break-words">
                 <?php if (count($items) === 1): ?>
                     <?= e((string)$items[0]['cve_id']) ?>
@@ -198,7 +198,7 @@ $exposureLabel = static function (string $value): string {
                     <?php foreach ($cveIds as $cveId): ?>
                         <a href="https://nvd.nist.gov/vuln/detail/<?= e(rawurlencode($cveId)) ?>"
                            target="_blank" rel="noopener noreferrer"
-                           class="px-2 py-0.5 rounded-md bg-gray-100 text-[11px] font-mono text-gray-700 hover:bg-gray-200">
+                           class="px-2 py-0.5 rounded-md bg-muted text-[11px] font-mono text-ink hover:bg-gray-200">
                             <?= e($cveId) ?>
                         </a>
                     <?php endforeach; ?>
@@ -207,7 +207,7 @@ $exposureLabel = static function (string $value): string {
 
             <?php if ($reportTags !== []): ?>
                 <div class="flex items-center gap-1.5 flex-wrap mt-2">
-                    <span class="text-[10px] font-semibold uppercase tracking-wide text-gray-400">Tags</span>
+                    <span class="text-[10px] font-semibold uppercase tracking-wide text-ink-soft">Tags</span>
                     <?php foreach ($reportTags as $tag): ?>
                         <span class="report-badge inline-flex px-2 py-0.5 rounded-full border border-brand-200 bg-brand-50 text-[10px] font-medium text-brand-700">
                             #<?= e($tag) ?>
@@ -217,10 +217,10 @@ $exposureLabel = static function (string $value): string {
             <?php endif; ?>
 
             <?php if ($itemGroups !== []): ?>
-                <p class="text-[11px] text-gray-500 mt-2">Grupos: <?= e(implode(' · ', $itemGroups)) ?></p>
+                <p class="text-[11px] text-ink-muted mt-2">Grupos: <?= e(implode(' · ', $itemGroups)) ?></p>
             <?php endif; ?>
 
-            <div class="flex items-center gap-2 flex-wrap mt-4 text-xs text-gray-500">
+            <div class="flex items-center gap-2 flex-wrap mt-4 text-xs text-ink-muted">
                 <?php if ($bodyStatus !== 'done' && ($bodyStatusLabels[$bodyStatus] ?? '') !== ''): ?>
                     <span class="px-2 py-0.5 rounded-full text-[10px] font-medium <?= $bodyStatusClasses[$bodyStatus] ?? 'bg-gray-100 text-gray-600' ?>">
                         <?= e($bodyStatusLabels[$bodyStatus] ?? $bodyStatus) ?>
@@ -245,21 +245,21 @@ $exposureLabel = static function (string $value): string {
         </header>
 
         <?php if ($items !== []): ?>
-            <div class="report-summary grid grid-cols-2 sm:grid-cols-4 border-b border-gray-200 divide-x divide-gray-200">
+            <div class="report-summary grid grid-cols-2 sm:grid-cols-4 border-b border-line divide-x divide-line">
                 <div class="px-5 py-4">
-                    <p class="text-[10px] font-semibold uppercase tracking-wide text-gray-400">CVEs</p>
+                    <p class="text-[10px] font-semibold uppercase tracking-wide text-ink-soft">CVEs</p>
                     <p class="text-xl font-bold mt-0.5"><?= count($items) ?></p>
                 </div>
                 <div class="px-5 py-4">
-                    <p class="text-[10px] font-semibold uppercase tracking-wide text-gray-400">En CISA KEV</p>
+                    <p class="text-[10px] font-semibold uppercase tracking-wide text-ink-soft">En CISA KEV</p>
                     <p class="text-xl font-bold mt-0.5 <?= $kevCount > 0 ? 'text-red-600' : '' ?>"><?= $kevCount ?></p>
                 </div>
                 <div class="px-5 py-4">
-                    <p class="text-[10px] font-semibold uppercase tracking-wide text-gray-400">CVSS máximo</p>
+                    <p class="text-[10px] font-semibold uppercase tracking-wide text-ink-soft">CVSS máximo</p>
                     <p class="text-xl font-bold mt-0.5"><?= $maxCvss !== null ? e(number_format($maxCvss, 1, '.', '')) : '—' ?></p>
                 </div>
                 <div class="px-5 py-4">
-                    <p class="text-[10px] font-semibold uppercase tracking-wide text-gray-400">Prioridad máxima</p>
+                    <p class="text-[10px] font-semibold uppercase tracking-wide text-ink-soft">Prioridad máxima</p>
                     <p class="text-xl font-bold mt-0.5"><?= $maxPriority !== null ? e($maxPriority) : '—' ?></p>
                 </div>
             </div>
@@ -269,7 +269,7 @@ $exposureLabel = static function (string $value): string {
             <?php if ($items === []): ?>
                 <div class="py-8 text-center">
                     <h2 class="text-sm font-semibold">Sin datos del catálogo</h2>
-                    <p class="text-sm text-gray-500 mt-2">
+                    <p class="text-sm text-ink-muted mt-2">
                         El informe no tiene datos asociados. Vuelve a generarlo desde la pestaña Informes.
                     </p>
                 </div>
@@ -315,8 +315,8 @@ $exposureLabel = static function (string $value): string {
                 ?>
                 <section class="report-cve border-l-4 <?= $severity === 'Critical' ? 'border-red-500' : ($severity === 'High' ? 'border-orange-500' : ($severity === 'Medium' ? 'border-amber-500' : ($severity === 'Low' ? 'border-green-500' : 'border-gray-300'))) ?> pl-5" id="cve-<?= e($cveId) ?>">
                     <?php if ($interactive && $isAdmin && $itemId > 0): ?>
-                        <label class="no-print inline-flex items-center gap-1.5 mb-2 text-[10px] font-medium text-gray-400 cursor-pointer">
-                            <input type="checkbox" class="ai-cve-check rounded border-gray-300 text-brand-500 focus:ring-brand-500"
+                        <label class="no-print inline-flex items-center gap-1.5 mb-2 text-[10px] font-medium text-ink-soft cursor-pointer">
+                            <input type="checkbox" class="ai-cve-check rounded border-line-strong text-brand-500 focus:ring-brand-500"
                                    data-item-id="<?= $itemId ?>"
                                    data-cve-id="<?= e($cveId) ?>"
                                    data-tags="<?= e(json_encode($itemTags, JSON_UNESCAPED_UNICODE)) ?>">
@@ -332,14 +332,14 @@ $exposureLabel = static function (string $value): string {
                                 </span>
                             <?php endforeach; ?>
                             <?php if ($itemGroup !== ''): ?>
-                                <span class="text-[10px] text-gray-500"><?= $itemGroupKind === 'company' ? 'Empresa' : 'Grupo' ?>: <strong><?= e($itemGroup) ?></strong></span>
+                                <span class="text-[10px] text-ink-muted"><?= $itemGroupKind === 'company' ? 'Empresa' : 'Grupo' ?>: <strong><?= e($itemGroup) ?></strong></span>
                             <?php endif; ?>
                         </div>
                     <?php endif; ?>
 
                     <div class="flex items-start justify-between gap-3 flex-wrap">
                         <div class="min-w-0">
-                            <p class="text-[10px] font-semibold uppercase tracking-wide text-gray-400">Vulnerabilidad</p>
+                            <p class="text-[10px] font-semibold uppercase tracking-wide text-ink-soft">Vulnerabilidad</p>
                             <h2 class="text-xl font-bold mt-0.5 font-mono"><?= e($cveId) ?></h2>
                         </div>
                         <div class="flex items-center gap-2 flex-wrap">
@@ -352,65 +352,65 @@ $exposureLabel = static function (string $value): string {
                                 </span>
                             <?php endif; ?>
                             <a href="<?= e($nvdUrl) ?>" target="_blank" rel="noopener noreferrer"
-                               class="px-2.5 py-1 rounded-md border border-gray-200 text-[11px] font-medium text-gray-600 hover:bg-gray-50">
+                               class="px-2.5 py-1 rounded-md border border-line text-[11px] font-medium text-ink-muted hover:bg-gray-50">
                                 NVD <span class="print-hide">↗</span>
                             </a>
                             <span class="print-url"><?= e($nvdUrl) ?></span>
                         </div>
                     </div>
 
-                    <dl class="grid grid-cols-2 sm:grid-cols-4 gap-4 mt-5 pb-5 border-b border-gray-100">
+                    <dl class="grid grid-cols-2 sm:grid-cols-4 gap-4 mt-5 pb-5 border-b border-line-subtle">
                         <div>
-                            <dt class="text-[10px] font-semibold uppercase tracking-wide text-gray-400">CVSS</dt>
+                            <dt class="text-[10px] font-semibold uppercase tracking-wide text-ink-soft">CVSS</dt>
                             <dd class="text-3xl font-bold mt-0.5 leading-none"><?= $cvss !== null ? e(number_format($cvss, 1, '.', '')) : '—' ?></dd>
                             <span class="report-meter block mt-1 h-1 rounded-full <?= $severityBar ?>" style="width: <?= $cvss !== null ? e(number_format(min(100, $cvss * 10), 0, '.', '')) : 0 ?>%"></span>
                         </div>
                         <div>
-                            <dt class="text-[10px] font-semibold uppercase tracking-wide text-gray-400">EPSS</dt>
+                            <dt class="text-[10px] font-semibold uppercase tracking-wide text-ink-soft">EPSS</dt>
                             <dd class="mt-1">
                                 <span class="text-sm font-semibold"><?= $epss !== null ? e(number_format($epssPct, 2, ',', '')) . ' %' : '—' ?></span>
-                                <span class="report-meter block mt-1 h-1.5 rounded-full bg-gray-100 overflow-hidden">
+                                <span class="report-meter block mt-1 h-1.5 rounded-full bg-muted overflow-hidden">
                                     <span class="block h-full rounded-full bg-amber-500" style="width: <?= e(number_format($epssPct, 1, '.', '')) ?>%"></span>
                                 </span>
                             </dd>
                         </div>
                         <div>
-                            <dt class="text-[10px] font-semibold uppercase tracking-wide text-gray-400">CISA KEV</dt>
+                            <dt class="text-[10px] font-semibold uppercase tracking-wide text-ink-soft">CISA KEV</dt>
                             <dd class="mt-0.5">
                                 <?php if ($isKev): ?>
-                                    <span class="inline-flex px-2 py-0.5 rounded-md bg-red-100 text-red-700 text-[11px] font-semibold">Sí</span>
+                                    <span class="inline-flex px-2 py-0.5 rounded-md bg-danger-bg text-danger text-[11px] font-semibold">Sí</span>
                                     <?php if (!empty($item['kev_added'])): ?>
-                                        <span class="block text-[10px] text-gray-500 mt-1">Añadido <?= e((string)$item['kev_added']) ?></span>
+                                        <span class="block text-[10px] text-ink-muted mt-1">Añadido <?= e((string)$item['kev_added']) ?></span>
                                     <?php endif; ?>
                                 <?php else: ?>
-                                    <span class="inline-flex px-2 py-0.5 rounded-md bg-gray-100 text-gray-600 text-[11px] font-semibold">No</span>
+                                    <span class="inline-flex px-2 py-0.5 rounded-md bg-muted text-ink-muted text-[11px] font-semibold">No</span>
                                 <?php endif; ?>
                             </dd>
                         </div>
                         <div>
-                            <dt class="text-[10px] font-semibold uppercase tracking-wide text-gray-400">Publicado</dt>
+                            <dt class="text-[10px] font-semibold uppercase tracking-wide text-ink-soft">Publicado</dt>
                             <dd class="text-sm font-semibold mt-0.5"><?= e($published !== '' ? $published : '—') ?></dd>
                         </div>
                     </dl>
 
                     <?php if ($vector !== ''): ?>
-                        <p class="mt-4 text-[11px] font-mono text-gray-500 break-all"><?= e($vector) ?></p>
+                        <p class="mt-4 text-[11px] font-mono text-ink-muted break-all"><?= e($vector) ?></p>
                     <?php endif; ?>
 
                     <?php if ($description !== ''): ?>
                         <div class="mt-4">
                             <div class="flex items-center gap-2">
-                                <p class="text-[10px] font-semibold uppercase tracking-wide text-gray-400">Descripción</p>
-                                <span class="text-[10px] text-gray-400">
+                                <p class="text-[10px] font-semibold uppercase tracking-wide text-ink-soft">Descripción</p>
+                                <span class="text-[10px] text-ink-soft">
                                     <?= $descriptionLang === 'es' ? 'catálogo local' : 'original (inglés)' ?>
                                 </span>
                             </div>
-                            <p class="text-sm leading-relaxed text-gray-600 mt-1"><?= e($description) ?></p>
+                            <p class="text-sm leading-relaxed text-ink-muted mt-1"><?= e($description) ?></p>
                         </div>
                     <?php endif; ?>
 
                     <?php if ($isKev && (!empty($item['kev_action']) || !empty($item['kev_due']) || strcasecmp((string)($item['kev_ransomware'] ?? ''), 'Known') === 0)): ?>
-                        <div class="report-kev-action mt-4 px-4 py-3 rounded-lg bg-red-50 border border-red-100">
+                        <div class="report-kev-action mt-4 px-4 py-3 rounded-lg bg-danger-bg border border-red-100">
                             <div class="flex items-center gap-2 flex-wrap">
                                 <p class="text-[10px] font-semibold uppercase tracking-wide text-red-500">Acción requerida (CISA)</p>
                                 <?php if ($kevActionEs === '' && $kevAction !== ''): ?>
@@ -420,7 +420,7 @@ $exposureLabel = static function (string $value): string {
                             <?php if ($kevAction !== ''): ?>
                                 <p class="text-sm text-red-800 mt-1"><?= e($kevAction) ?></p>
                             <?php endif; ?>
-                            <p class="text-[11px] text-red-700 mt-1">
+                            <p class="text-[11px] text-danger mt-1">
                                 <?php if (!empty($item['kev_due'])): ?>Vence el <?= e((string)$item['kev_due']) ?>. <?php endif; ?>
                                 <?php if (strcasecmp((string)($item['kev_ransomware'] ?? ''), 'Known') === 0): ?>Ransomware conocido.<?php endif; ?>
                             </p>
@@ -428,28 +428,28 @@ $exposureLabel = static function (string $value): string {
                     <?php endif; ?>
 
                     <?php if ($exposure !== null): ?>
-                        <div class="report-exposure mt-5 rounded-lg border border-blue-100 bg-blue-50/60 p-4">
+                        <div class="report-exposure mt-5 rounded-lg border border-blue-100 bg-info-bg/60 p-4">
                             <div class="flex items-center justify-between gap-2 flex-wrap">
-                                <p class="text-[10px] font-semibold uppercase tracking-wide text-blue-600">Exposición en tu entorno · Defender</p>
-                                <span class="text-[10px] text-gray-400">Foto: <?= e(format_db_date((string)($defender['generated_at'] ?? ''), 'd/m/Y H:i')) ?></span>
+                                <p class="text-[10px] font-semibold uppercase tracking-wide text-info">Exposición en tu entorno · Defender</p>
+                                <span class="text-[10px] text-ink-soft">Foto: <?= e(format_db_date((string)($defender['generated_at'] ?? ''), 'd/m/Y H:i')) ?></span>
                             </div>
                             <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-3 text-xs">
                                 <div>
-                                    <p class="text-gray-500">Equipos afectados</p>
+                                    <p class="text-ink-muted">Equipos afectados</p>
                                     <p class="text-lg font-bold"><?= (int)($exposure['machine_total'] ?? 0) ?></p>
                                 </div>
                                 <div>
-                                    <p class="text-gray-500">Expuestos (Defender)</p>
+                                    <p class="text-ink-muted">Expuestos (Defender)</p>
                                     <p class="text-lg font-bold"><?= (int)($exposure['exposed_machines'] ?? 0) ?></p>
                                 </div>
                                 <div>
-                                    <p class="text-gray-500">Exploit público</p>
+                                    <p class="text-ink-muted">Exploit público</p>
                                     <p class="text-sm font-semibold <?= !empty($exposure['public_exploit']) ? 'text-red-600' : 'text-gray-600' ?>">
                                         <?= !empty($exposure['public_exploit']) ? 'Sí' : 'No' ?>
                                     </p>
                                 </div>
                                 <div>
-                                    <p class="text-gray-500">Exploit verificado</p>
+                                    <p class="text-ink-muted">Exploit verificado</p>
                                     <p class="text-sm font-semibold <?= !empty($exposure['exploit_verified']) ? 'text-red-600' : 'text-gray-600' ?>">
                                         <?= !empty($exposure['exploit_verified']) ? 'Sí' : 'No' ?>
                                     </p>
@@ -457,21 +457,21 @@ $exposureLabel = static function (string $value): string {
                             </div>
                             <?php if (!empty($exposure['products'])): ?>
                                 <p class="text-xs mt-3">
-                                    <span class="text-gray-500">Productos:</span>
+                                    <span class="text-ink-muted">Productos:</span>
                                     <?= e(implode(' · ', array_slice((array)$exposure['products'], 0, 6))) ?>
                                 </p>
                             <?php endif; ?>
                             <?php if (!empty($exposure['tenants'])): ?>
                                 <p class="text-xs mt-1">
-                                    <span class="text-gray-500">Tenants:</span>
+                                    <span class="text-ink-muted">Tenants:</span>
                                     <?= e(implode(' · ', (array)$exposure['tenants'])) ?>
                                 </p>
                             <?php endif; ?>
                             <?php if (!empty($exposure['machines'])): ?>
                                 <div class="mt-3 overflow-x-auto">
-                                    <table class="w-full text-xs">
+                                    <table class="data-table w-full text-xs">
                                         <thead>
-                                            <tr class="text-[10px] uppercase text-gray-400 border-b border-blue-100">
+                                            <tr class="text-[10px] uppercase text-ink-soft border-b border-blue-100">
                                                 <th class="text-left py-1.5 pr-3">Equipo</th>
                                                 <th class="text-left py-1.5 pr-3">SO</th>
                                                 <th class="text-left py-1.5 pr-3">Exposición</th>
@@ -483,18 +483,18 @@ $exposureLabel = static function (string $value): string {
                                         <tbody class="divide-y divide-blue-50">
                                             <?php foreach ($exposure['machines'] as $machine): ?>
                                                 <tr>
-                                                    <td class="py-1.5 pr-3 font-medium text-gray-700"><?= e((string)($machine['name'] ?? '—')) ?></td>
-                                                    <td class="py-1.5 pr-3 text-gray-600"><?= e((string)($machine['os'] ?? '—')) ?></td>
-                                                    <td class="py-1.5 pr-3 text-gray-600"><?= e($exposureLabel((string)($machine['exposure'] ?? '—'))) ?></td>
-                                                    <td class="py-1.5 pr-3 text-gray-600"><?= e($exposureLabel((string)($machine['risk'] ?? '—'))) ?></td>
-                                                    <td class="py-1.5 pr-3 text-gray-500 whitespace-nowrap"><?= e(format_db_date((string)($machine['last_seen'] ?? ''), 'd/m/Y H:i')) ?></td>
-                                                    <td class="py-1.5 text-gray-600"><?= e((string)($machine['tenant'] ?? '—')) ?></td>
+                                                    <td class="py-1.5 pr-3 font-medium text-ink"><?= e((string)($machine['name'] ?? '—')) ?></td>
+                                                    <td class="py-1.5 pr-3 text-ink-muted"><?= e((string)($machine['os'] ?? '—')) ?></td>
+                                                    <td class="py-1.5 pr-3 text-ink-muted"><?= e($exposureLabel((string)($machine['exposure'] ?? '—'))) ?></td>
+                                                    <td class="py-1.5 pr-3 text-ink-muted"><?= e($exposureLabel((string)($machine['risk'] ?? '—'))) ?></td>
+                                                    <td class="py-1.5 pr-3 text-ink-muted whitespace-nowrap"><?= e(format_db_date((string)($machine['last_seen'] ?? ''), 'd/m/Y H:i')) ?></td>
+                                                    <td class="py-1.5 text-ink-muted"><?= e((string)($machine['tenant'] ?? '—')) ?></td>
                                                 </tr>
                                             <?php endforeach; ?>
                                         </tbody>
                                     </table>
                                     <?php if ((int)($exposure['machine_total'] ?? 0) > count($exposure['machines'])): ?>
-                                        <p class="text-[11px] text-gray-400 mt-1">… y <?= (int)$exposure['machine_total'] - count($exposure['machines']) ?> equipos más.</p>
+                                        <p class="text-[11px] text-ink-soft mt-1">… y <?= (int)$exposure['machine_total'] - count($exposure['machines']) ?> equipos más.</p>
                                     <?php endif; ?>
                                 </div>
                             <?php endif; ?>
@@ -502,12 +502,12 @@ $exposureLabel = static function (string $value): string {
                     <?php endif; ?>
 
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-5">
-                        <div class="report-links-card rounded-lg border border-gray-200 p-4">
-                            <p class="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+                        <div class="report-links-card rounded-lg border border-line p-4">
+                            <p class="text-[10px] font-semibold uppercase tracking-wide text-ink-soft">
                                 Exploits públicos (<?= count($exploitItems) ?>)
                             </p>
                             <?php if ($exploitItems === [] && $github === []): ?>
-                                <p class="text-sm text-gray-500 mt-2">Sin exploits en las fuentes consultadas (GitHub PoC, Nuclei).</p>
+                                <p class="text-sm text-ink-muted mt-2">Sin exploits en las fuentes consultadas (GitHub PoC, Nuclei).</p>
                             <?php else: ?>
                                 <?php if ($exploitItems !== []): ?>
                                     <ul class="mt-2 space-y-2">
@@ -519,14 +519,14 @@ $exposureLabel = static function (string $value): string {
                                             $exploitDate = trim((string)($exploit['published_at'] ?? ''));
                                             ?>
                                             <li>
-                                                <p class="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+                                                <p class="text-[10px] font-semibold uppercase tracking-wide text-ink-soft">
                                                     <?= e($exploitSource) ?>
                                                     <?php if ($exploitDate !== ''): ?>
                                                         · <?= e(format_db_date($exploitDate, 'd/m/Y')) ?>
                                                     <?php endif; ?>
                                                 </p>
                                                 <?php if ($exploitTitle !== '' && $exploitTitle !== $exploitUrl): ?>
-                                                    <p class="text-xs text-gray-600 mt-0.5"><?= e(truncate($exploitTitle, 140)) ?></p>
+                                                    <p class="text-xs text-ink-muted mt-0.5"><?= e(truncate($exploitTitle, 140)) ?></p>
                                                 <?php endif; ?>
                                                 <a href="<?= e($exploitUrl) ?>" target="_blank" rel="noopener noreferrer"
                                                    class="text-sm text-brand-600 hover:underline break-all">
@@ -537,19 +537,19 @@ $exposureLabel = static function (string $value): string {
                                         <?php endforeach; ?>
                                     </ul>
                                     <?php if (count($exploitItems) > 12): ?>
-                                        <p class="text-[11px] text-gray-400 mt-1">… y <?= count($exploitItems) - 12 ?> más</p>
+                                        <p class="text-[11px] text-ink-soft mt-1">… y <?= count($exploitItems) - 12 ?> más</p>
                                     <?php endif; ?>
                                 <?php endif; ?>
 
                                 <?php if ($github !== []): ?>
-                                    <p class="text-[10px] font-semibold uppercase tracking-wide text-gray-400 mt-3">
+                                    <p class="text-[10px] font-semibold uppercase tracking-wide text-ink-soft mt-3">
                                         Referencias GitHub (sin verificar) (<?= count($github) ?>)
                                     </p>
                                     <ul class="mt-1 space-y-1">
                                         <?php foreach (array_slice($github, 0, 6) as $url): ?>
                                             <li>
                                                 <a href="<?= e((string)$url) ?>" target="_blank" rel="noopener noreferrer"
-                                                   class="text-xs text-gray-500 hover:underline break-all">
+                                                   class="text-xs text-ink-muted hover:underline break-all">
                                                     <?= e($linkLabel((string)$url)) ?> <span class="print-hide">↗</span>
                                                 </a>
                                                 <span class="print-url"><?= e((string)$url) ?></span>
@@ -557,24 +557,24 @@ $exposureLabel = static function (string $value): string {
                                         <?php endforeach; ?>
                                     </ul>
                                     <?php if (count($github) > 6): ?>
-                                        <p class="text-[11px] text-gray-400 mt-1">… y <?= count($github) - 6 ?> más</p>
+                                        <p class="text-[11px] text-ink-soft mt-1">… y <?= count($github) - 6 ?> más</p>
                                     <?php endif; ?>
                                 <?php endif; ?>
                             <?php endif; ?>
                             <a href="<?= e($packetStormUrl) ?>"
                                target="_blank" rel="noopener noreferrer"
-                               class="inline-block mt-3 text-[11px] font-medium text-gray-500 hover:text-gray-800">
+                               class="inline-block mt-3 text-[11px] font-medium text-ink-muted hover:text-gray-800">
                                 Buscar en PacketStorm <span class="print-hide">↗</span>
                             </a>
                             <span class="print-url"><?= e($packetStormUrl) ?></span>
                         </div>
 
-                        <div class="report-links-card rounded-lg border border-gray-200 p-4">
-                            <p class="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+                        <div class="report-links-card rounded-lg border border-line p-4">
+                            <p class="text-[10px] font-semibold uppercase tracking-wide text-ink-soft">
                                 Referencias (<?= count($references) ?>)
                             </p>
                             <?php if ($references === []): ?>
-                                <p class="text-sm text-gray-500 mt-2">Sin referencias adicionales.</p>
+                                <p class="text-sm text-ink-muted mt-2">Sin referencias adicionales.</p>
                             <?php else: ?>
                                 <ul class="mt-2 space-y-1.5">
                                     <?php foreach (array_slice($references, 0, 12) as $url): ?>
@@ -589,14 +589,14 @@ $exposureLabel = static function (string $value): string {
                                     <?php endforeach; ?>
                                 </ul>
                                 <?php if (count($references) > 12): ?>
-                                    <p class="text-[11px] text-gray-400 mt-1">… y <?= count($references) - 12 ?> más</p>
+                                    <p class="text-[11px] text-ink-soft mt-1">… y <?= count($references) - 12 ?> más</p>
                                 <?php endif; ?>
                             <?php endif; ?>
                         </div>
                     </div>
 
                     <?php if ($itemAiStatus === 'error'): ?>
-                        <div class="mt-5 px-4 py-3 rounded-lg bg-red-50 border border-red-100 text-xs text-red-700">
+                        <div class="mt-5 px-4 py-3 rounded-lg bg-danger-bg border border-red-100 text-xs text-danger">
                             <strong>Análisis IA no disponible:</strong>
                             <?= e($itemAiError !== '' ? $itemAiError : 'Error desconocido.') ?>
                             <?php if ($interactive && $isAdmin && $itemId > 0): ?>
@@ -606,16 +606,16 @@ $exposureLabel = static function (string $value): string {
                             <?php endif; ?>
                         </div>
                     <?php elseif ($itemSections !== []): ?>
-                        <div class="report-ai report-ai-cve mt-5 pt-4 border-t border-gray-100">
+                        <div class="report-ai report-ai-cve mt-5 pt-4 border-t border-line-subtle">
                             <div class="flex items-center gap-2 flex-wrap">
                                 <h3 class="text-sm font-semibold">Análisis con IA</h3>
                                 <?php if ($itemAiModel !== ''): ?>
-                                    <span class="text-[10px] text-gray-400"><?= e($itemAiModel) ?></span>
+                                    <span class="text-[10px] text-ink-soft"><?= e($itemAiModel) ?></span>
                                 <?php endif; ?>
                             </div>
                             <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3">
                                 <?php foreach ($itemSections as $sectionIndex => $itemSection): ?>
-                                    <div class="report-ai-block rounded-lg border border-gray-200 p-3">
+                                    <div class="report-ai-block rounded-lg border border-line p-3">
                                         <h4 class="text-xs font-semibold flex items-center gap-2">
                                             <span class="inline-flex items-center justify-center w-4 h-4 rounded-full bg-gray-900 text-white text-[9px] font-bold">
                                                 <?= (int)$sectionIndex + 1 ?>
@@ -623,42 +623,42 @@ $exposureLabel = static function (string $value): string {
                                             <?= e((string)($itemSection['title'] ?? 'Análisis')) ?>
                                         </h4>
                                         <?php if (!empty($itemSection['bullets'])): ?>
-                                            <ul class="mt-2 space-y-1 text-xs leading-relaxed text-gray-600 list-disc pl-4">
+                                            <ul class="mt-2 space-y-1 text-xs leading-relaxed text-ink-muted list-disc pl-4">
                                                 <?php foreach ($itemSection['bullets'] as $bullet): ?>
                                                     <li><?= e((string)$bullet) ?></li>
                                                 <?php endforeach; ?>
                                             </ul>
                                         <?php endif; ?>
                                         <?php foreach (($itemSection['paragraphs'] ?? []) as $paragraph): ?>
-                                            <p class="mt-2 text-xs leading-relaxed text-gray-600"><?= e((string)$paragraph) ?></p>
+                                            <p class="mt-2 text-xs leading-relaxed text-ink-muted"><?= e((string)$paragraph) ?></p>
                                         <?php endforeach; ?>
                                     </div>
                                 <?php endforeach; ?>
                             </div>
                         </div>
                     <?php elseif (in_array($itemAiStatus, ['pending', 'running'], true)): ?>
-                        <p class="no-print mt-4 text-xs text-blue-600">Análisis de IA pendiente para este CVE…</p>
+                        <p class="no-print mt-4 text-xs text-info">Análisis de IA pendiente para este CVE…</p>
                     <?php endif; ?>
                 </section>
 
                 <?php if ($index < count($items) - 1): ?>
-                    <hr class="border-gray-100">
+                    <hr class="border-line-subtle">
                 <?php endif; ?>
             <?php endforeach; ?>
 
             <?php if ($bodyNoAi): ?>
-                <div class="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-600">
+                <div class="rounded-lg border border-line bg-muted px-4 py-3 text-sm text-ink-muted">
                     Informe generado en <strong>modo solo datos</strong>: no se solicitó análisis a la IA.
                 </div>
             <?php elseif ($sections !== []): ?>
                 <section class="report-ai pt-2">
                     <div class="flex items-center gap-2">
                         <h2 class="text-base font-semibold">Análisis con IA</h2>
-                        <span class="text-[10px] px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">Generado automáticamente</span>
+                        <span class="text-[10px] px-2 py-0.5 rounded-full bg-muted text-ink-muted">Generado automáticamente</span>
                     </div>
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
                         <?php foreach ($sections as $i => $section): ?>
-                            <div class="report-ai-block rounded-lg border border-gray-200 p-4">
+                            <div class="report-ai-block rounded-lg border border-line p-4">
                                 <h3 class="text-sm font-semibold flex items-center gap-2">
                                     <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-gray-900 text-white text-[10px] font-bold">
                                         <?= (int)$i + 1 ?>
@@ -666,14 +666,14 @@ $exposureLabel = static function (string $value): string {
                                     <?= e((string)$section['title']) ?>
                                 </h3>
                                 <?php if (!empty($section['bullets'])): ?>
-                                    <ul class="mt-2.5 space-y-1.5 text-sm leading-relaxed text-gray-600 list-disc pl-5">
+                                    <ul class="mt-2.5 space-y-1.5 text-sm leading-relaxed text-ink-muted list-disc pl-5">
                                         <?php foreach ($section['bullets'] as $bullet): ?>
                                             <li><?= e((string)$bullet) ?></li>
                                         <?php endforeach; ?>
                                     </ul>
                                 <?php endif; ?>
                                 <?php foreach (($section['paragraphs'] ?? []) as $paragraph): ?>
-                                    <p class="mt-2.5 text-sm leading-relaxed text-gray-600"><?= e((string)$paragraph) ?></p>
+                                    <p class="mt-2.5 text-sm leading-relaxed text-ink-muted"><?= e((string)$paragraph) ?></p>
                                 <?php endforeach; ?>
                             </div>
                         <?php endforeach; ?>
@@ -682,12 +682,12 @@ $exposureLabel = static function (string $value): string {
             <?php elseif ($aiText !== ''): ?>
                 <section class="report-ai pt-2">
                     <h2 class="text-base font-semibold">Análisis con IA</h2>
-                    <p class="mt-2 text-sm leading-relaxed text-gray-600 whitespace-pre-line"><?= e($aiText) ?></p>
+                    <p class="mt-2 text-sm leading-relaxed text-ink-muted whitespace-pre-line"><?= e($aiText) ?></p>
                 </section>
             <?php endif; ?>
         </div>
 
-        <footer class="px-7 py-5 border-t border-gray-200 text-[11px] leading-relaxed text-gray-400">
+        <footer class="px-7 py-5 border-t border-line text-[11px] leading-relaxed text-ink-soft">
             <p>Fuentes: NVD · CISA KEV · EPSS · GitHub PoC · Nuclei · Exploit-DB · Metasploit. Prioridad calculada con la fórmula de SploitScan (KEV, CVSS, EPSS y exploits públicos).</p>
             <p class="mt-1">La evaluación de riesgo es una estimación generada por IA; verifica siempre la información antes de tomar decisiones.</p>
         </footer>

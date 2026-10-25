@@ -23,63 +23,63 @@ $quickPrompts = [
 <div class="grid grid-cols-1 lg:grid-cols-4 gap-5">
 
     <aside class="lg:col-span-1 space-y-4">
-        <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-4">
-            <p class="text-[10px] font-semibold uppercase tracking-wide text-gray-400">Contexto</p>
+        <div class="card p-4">
+            <p class="text-[10px] font-semibold uppercase tracking-wide text-ink-soft">Contexto</p>
             <p class="text-sm font-semibold mt-1"><?= e((string)$org['name']) ?></p>
-            <p class="text-[11px] text-gray-500 mt-0.5">
+            <p class="text-[11px] text-ink-muted mt-0.5">
                 <?= $org['kind'] === 'tenant' ? 'Tenant vinculado a Defender' : 'Organización manual' ?>
             </p>
 
             <?php if ($selectedTask !== null): ?>
-                <div class="mt-3 px-3 py-2 rounded-lg bg-gray-50 dark:bg-gray-800/60">
+                <div class="mt-3 px-3 py-2 rounded-lg bg-muted/60">
                     <p class="font-mono text-xs font-semibold"><?= e((string)$selectedTask['cve_id']) ?></p>
-                    <p class="text-[11px] text-gray-500 truncate mt-0.5"><?= e((string)($selectedTask['title'] ?? '')) ?></p>
+                    <p class="text-[11px] text-ink-muted truncate mt-0.5"><?= e((string)($selectedTask['title'] ?? '')) ?></p>
                     <a href="<?= e($modUrl . '?tab=tasks&org=' . $selectedOrgId . '&task=' . (int)$selectedTask['id']) ?>"
-                       class="inline-block mt-1 text-[11px] text-brand-600 dark:text-brand-400 hover:underline">Ver tarea</a>
+                       class="inline-block mt-1 text-[11px] text-primary hover:underline">Ver tarea</a>
                 </div>
             <?php elseif ($cveQuery !== ''): ?>
-                <div class="mt-3 px-3 py-2 rounded-lg bg-gray-50 dark:bg-gray-800/60">
+                <div class="mt-3 px-3 py-2 rounded-lg bg-muted/60">
                     <p class="font-mono text-xs font-semibold"><?= e($cveQuery) ?></p>
-                    <p class="text-[11px] text-gray-500 mt-0.5">
+                    <p class="text-[11px] text-ink-muted mt-0.5">
                         <?= $cveContext !== null ? e((string)($cveContext['catalog']['severity'] ?? '')) : 'Sin datos locales del CVE' ?>
                     </p>
                 </div>
                 <label class="block mt-3">
-                    <span class="block text-[10px] font-semibold uppercase tracking-wide text-gray-400 mb-1">Cambiar CVE</span>
+                    <span class="block text-[10px] font-semibold uppercase tracking-wide text-ink-soft mb-1">Cambiar CVE</span>
                     <input type="text" id="assistant-cve" value="<?= e($cveQuery) ?>" placeholder="CVE-2024-38063"
-                           class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs font-mono">
+                           class="w-full px-2 py-1.5 rounded-lg border border-line-strong bg-surface text-ink text-xs font-mono">
                 </label>
             <?php else: ?>
                 <label class="block mt-3">
-                    <span class="block text-[10px] font-semibold uppercase tracking-wide text-gray-400 mb-1">CVE (opcional)</span>
+                    <span class="block text-[10px] font-semibold uppercase tracking-wide text-ink-soft mb-1">CVE (opcional)</span>
                     <input type="text" id="assistant-cve" placeholder="CVE-2024-38063"
-                           class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs font-mono">
+                           class="w-full px-2 py-1.5 rounded-lg border border-line-strong bg-input text-ink text-xs font-mono">
                 </label>
-                <p class="text-[10px] text-gray-400 mt-1">Sin CVE, el asistente responde sobre procesos, controles y hardening.</p>
+                <p class="text-[10px] text-ink-soft mt-1">Sin CVE, el asistente responde sobre procesos, controles y hardening.</p>
             <?php endif; ?>
         </div>
 
-        <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
-            <div class="px-4 py-3 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+        <div class="card overflow-hidden">
+            <div class="px-4 py-3 border-b border-line flex items-center justify-between">
                 <h2 class="text-sm font-semibold">Conversaciones</h2>
-                <a href="<?= e($assistantUrl) ?>" class="text-[11px] text-brand-600 dark:text-brand-400 hover:underline">Nueva</a>
+                <a href="<?= e($assistantUrl) ?>" class="text-[11px] text-primary hover:underline">Nueva</a>
             </div>
             <?php if ($chats === []): ?>
-                <p class="px-4 py-5 text-xs text-gray-500 text-center">Aún no hay conversaciones.</p>
+                <p class="px-4 py-5 text-xs text-ink-muted text-center">Aún no hay conversaciones.</p>
             <?php else: ?>
-                <div class="max-h-64 overflow-y-auto divide-y divide-gray-100 dark:divide-gray-800">
+                <div class="max-h-64 overflow-y-auto divide-y divide-line-subtle">
                     <?php foreach ($chats as $item): ?>
                         <div class="flex items-start gap-1 px-2 py-1.5 <?= $chat !== null && (int)$chat['id'] === (int)$item['id'] ? 'bg-brand-50 dark:bg-brand-950/40' : '' ?>">
                             <a href="<?= e($modUrl . '?tab=assistant&org=' . $selectedOrgId . '&chat=' . (int)$item['id']) ?>"
-                               class="min-w-0 flex-1 px-2 py-1 rounded hover:bg-gray-50 dark:hover:bg-gray-800/40">
+                               class="min-w-0 flex-1 px-2 py-1 rounded hover:bg-muted">
                                 <span class="block text-xs truncate"><?= e((string)($item['title'] ?? 'Conversación')) ?></span>
-                                <span class="block text-[10px] text-gray-400 mt-0.5"><?= e(format_date((string)$item['updated_at'], 'd/m/Y H:i')) ?></span>
+                                <span class="block text-[10px] text-ink-soft mt-0.5"><?= e(format_date((string)$item['updated_at'], 'd/m/Y H:i')) ?></span>
                             </a>
                             <form method="POST" action="<?= base_url('modules/remediation/chats/delete') ?>"
                                   data-confirm="¿Eliminar esta conversación?" data-confirm-danger>
                                 <?= Csrf::field() ?>
                                 <input type="hidden" name="id" value="<?= (int)$item['id'] ?>">
-                                <button type="submit" title="Eliminar" class="px-1.5 py-1 text-gray-400 hover:text-red-500">×</button>
+                                <button type="submit" title="Eliminar" class="px-1.5 py-1 text-ink-soft hover:text-red-500">×</button>
                             </form>
                         </div>
                     <?php endforeach; ?>
@@ -88,7 +88,7 @@ $quickPrompts = [
         </div>
 
         <?php if (!$llmConfigured): ?>
-            <div class="px-4 py-3 rounded-xl bg-amber-50 dark:bg-amber-900/20 text-xs text-amber-700 dark:text-amber-300">
+            <div class="px-4 py-3 rounded-xl bg-warning-bg text-xs text-warning">
                 La IA no está configurada.
                 <?php if (!empty($isAdmin)): ?>
                     <a href="<?= base_url('admin/apis') ?>" class="underline">Configúrala en Admin → APIs</a>.
@@ -99,18 +99,18 @@ $quickPrompts = [
         <?php endif; ?>
     </aside>
 
-    <section class="lg:col-span-3 bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 flex flex-col h-[calc(100vh-230px)] min-h-[540px] overflow-hidden">
-        <div class="px-4 py-3 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between gap-3 flex-wrap">
+    <section class="lg:col-span-3 card flex flex-col h-[calc(100vh-230px)] min-h-[540px] overflow-hidden">
+        <div class="px-4 py-3 border-b border-line flex items-center justify-between gap-3 flex-wrap">
             <div class="min-w-0">
                 <h2 class="text-sm font-semibold truncate">
                     <?= $selectedTask !== null ? 'Asistente · ' . e((string)$selectedTask['cve_id']) : ($cveQuery !== '' ? 'Asistente · ' . e($cveQuery) : 'Asistente de remediación') ?>
                 </h2>
-                <p class="text-[11px] text-gray-500">Implementación, controles, verificación, rollback y hardening.</p>
+                <p class="text-[11px] text-ink-muted">Implementación, controles, verificación, rollback y hardening.</p>
             </div>
             <?php if (count($profiles) > 1): ?>
-                <label class="flex items-center gap-1.5 text-[11px] text-gray-500">
+                <label class="flex items-center gap-1.5 text-[11px] text-ink-muted">
                     Perfil IA
-                    <select id="assistant-profile" class="px-2 py-1 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-[11px]">
+                    <select id="assistant-profile" class="px-2 py-1 rounded-lg border border-line-strong bg-input text-ink text-[11px]">
                         <option value="0">Predeterminado de la tarea</option>
                         <?php foreach ($profiles as $profile): ?>
                             <option value="<?= (int)$profile['id'] ?>" <?= (int)$profile['id'] === $defaultProfile ? 'selected' : '' ?>>
@@ -126,14 +126,14 @@ $quickPrompts = [
             <?php if ($messages === []): ?>
                 <div class="max-w-xl mx-auto text-center py-8">
                     <p class="text-sm font-semibold">Pregunta por la remediación de este CVE</p>
-                    <p class="text-xs text-gray-500 mt-1">
+                    <p class="text-xs text-ink-muted mt-1">
                         El asistente recibe el contexto de la organización<?= $contextCve ? ', del CVE' : '' ?><?= $selectedTask !== null ? ' y de la tarea' : '' ?>.
                         No se envían datos de otros tenants.
                     </p>
                     <div class="mt-4 flex flex-wrap justify-center gap-2">
                         <?php foreach ($quickPrompts as $prompt): ?>
                             <button type="button" data-prompt="<?= e($prompt) ?>"
-                                    class="quick-prompt px-3 py-1.5 rounded-full border border-gray-300 dark:border-gray-600 text-[11px] text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800">
+                                    class="quick-prompt px-3 py-1.5 rounded-full border border-line-strong text-[11px] text-ink-muted hover:bg-muted">
                                 <?= e($prompt) ?>
                             </button>
                         <?php endforeach; ?>
@@ -158,19 +158,19 @@ $quickPrompts = [
             <?php endif; ?>
         </div>
 
-        <div class="border-t border-gray-200 dark:border-gray-700 p-3">
+        <div class="border-t border-line p-3">
             <input type="hidden" name="csrf_token" value="<?= e(Csrf::token()) ?>">
             <div class="flex items-end gap-2">
                 <textarea id="assistant-input" rows="2" placeholder="Escribe tu pregunta… (Enter para enviar, Shift+Enter para nueva línea)"
-                          class="flex-1 resize-none px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none"></textarea>
+                          class="flex-1 resize-none px-3 py-2 rounded-lg border border-line-strong bg-input text-ink text-sm focus:ring-2 focus:ring-brand-500 outline-none"></textarea>
                 <button type="button" id="assistant-send"
                         class="px-4 py-2.5 bg-brand-500 hover:bg-brand-600 disabled:opacity-50 text-white text-sm font-medium rounded-lg">
                     Enviar
                 </button>
             </div>
             <div class="flex items-center justify-between gap-2 mt-1.5">
-                <p class="text-[10px] text-gray-400">La IA puede equivocarse. Verifica versiones, KB y pasos antes de aplicarlos.</p>
-                <button type="button" id="assistant-clear" class="text-[10px] text-gray-400 hover:text-gray-600">Limpiar</button>
+                <p class="text-[10px] text-ink-soft">La IA puede equivocarse. Verifica versiones, KB y pasos antes de aplicarlos.</p>
+                <button type="button" id="assistant-clear" class="text-[10px] text-ink-soft hover:text-gray-600">Limpiar</button>
             </div>
         </div>
     </section>

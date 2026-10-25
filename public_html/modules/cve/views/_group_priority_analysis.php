@@ -124,36 +124,34 @@ $groupKindLabel = $selectedGroupIsCompany ? 'empresa' : 'grupo de aplicaciones';
     }
 </style>
 
-<div id="cve-priority-print" class="cve-priority-card bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden mt-4">
-    <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700 flex items-start justify-between gap-3 flex-wrap">
+<div id="cve-priority-print" class="cve-priority-card card overflow-hidden mt-4">
+    <div class="px-5 py-4 border-b border-line flex items-start justify-between gap-3 flex-wrap">
         <div class="flex items-start gap-2">
             <button type="button" id="cve-priority-toggle"
                     onclick="cveToggleCard('cve-priority-body', this)"
                     aria-expanded="false" aria-controls="cve-priority-body"
                     title="Mostrar u ocultar el informe de prioridad"
-                    class="no-print mt-0.5 inline-flex items-center justify-center w-7 h-7 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-500 hover:text-brand-600 hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">
-                <svg class="w-4 h-4 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M9 5l7 7-7 7"/>
-                </svg>
+                    class="no-print mt-0.5 inline-flex items-center justify-center w-7 h-7 rounded-lg border border-line text-ink-muted hover:text-brand-600 hover:bg-muted transition-colors">
+                <i class="material-icons icon-16 transition-transform" aria-hidden="true">chevron_right</i>
             </button>
             <div>
                 <div class="flex items-center gap-2 flex-wrap">
                     <h2 class="text-sm font-semibold">Prioridad de parcheo (IA)</h2>
                     <?php if ($groupAnalysis !== null && ($analysisShort || $analysisStale)): ?>
-                        <span class="inline-flex px-2 py-0.5 text-[10px] rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">Desactualizado</span>
+                        <span class="dark:bg-amber-900/30 dark:text-amber-300 status-pending">Desactualizado</span>
                     <?php endif; ?>
                     <?php if ($missingCves !== []): ?>
-                        <span class="inline-flex px-2 py-0.5 text-[10px] rounded-full bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300">Cobertura incompleta</span>
+                        <span class="dark:bg-red-900/30 dark:text-red-300 status-failed">Cobertura incompleta</span>
                     <?php endif; ?>
                 </div>
                 <?php if ($groupAnalysis !== null): ?>
-                    <p class="text-xs text-gray-500 mt-1">
+                    <p class="text-xs text-ink-muted mt-1">
                         <?= e($analysisDate !== '' ? format_db_date($analysisDate, 'd/m/Y H:i') : '—') ?>
                         · <?= (int)$analysisCount ?> <?= $analysisCount === 1 ? 'CVE' : 'CVEs' ?><?php if ($analysisShort): ?> de <?= (int)$currentCount ?><?php endif; ?>
                         <?php if ($analysisModel !== ''): ?> · <?= e($analysisModel) ?><?php endif; ?>
                     </p>
                 <?php else: ?>
-                    <p class="text-xs text-gray-500 mt-1">
+                    <p class="text-xs text-ink-muted mt-1">
                         Análisis del <?= e($groupKindLabel) ?> «<?= e($selectedGroupName) ?>» usando solo sus CVEs asignados.
                     </p>
                 <?php endif; ?>
@@ -162,7 +160,7 @@ $groupKindLabel = $selectedGroupIsCompany ? 'empresa' : 'grupo de aplicaciones';
         <div class="flex items-center gap-2 no-print">
             <?php if ($groupAnalysis !== null): ?>
                 <button type="button" onclick="window.print()"
-                        class="px-3 py-1.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-muted-dark text-xs font-medium rounded-lg transition-colors">
+                        class="px-3 py-1.5 border border-line-strong text-ink hover:bg-muted text-xs font-medium rounded-lg transition-colors">
                     Imprimir
                 </button>
             <?php endif; ?>
@@ -177,16 +175,16 @@ $groupKindLabel = $selectedGroupIsCompany ? 'empresa' : 'grupo de aplicaciones';
 
     <div id="cve-priority-body" class="hidden">
     <?php if ($analysisShort): ?>
-        <div class="px-5 py-2 bg-amber-50 dark:bg-amber-900/20 border-b border-amber-200 dark:border-amber-800 text-[11px] text-amber-700 dark:text-amber-300">
+        <div class="px-5 py-2 bg-warning-bg border-b border-warning-border text-[11px] text-warning">
             Este análisis cubre <?= (int)$analysisCount ?> de <?= (int)$currentCount ?> CVEs. Recalcula para analizarlos todos.
         </div>
     <?php elseif ($analysisStale): ?>
-        <div class="px-5 py-2 bg-amber-50 dark:bg-amber-900/20 border-b border-amber-200 dark:border-amber-800 text-[11px] text-amber-700 dark:text-amber-300">
+        <div class="px-5 py-2 bg-warning-bg border-b border-warning-border text-[11px] text-warning">
             El listado de CVEs asignados ha cambiado desde este análisis. Recalcula para actualizarlo.
         </div>
     <?php endif; ?>
     <?php if ($missingCves !== []): ?>
-        <div class="px-5 py-2 bg-red-50 dark:bg-red-900/20 border-b border-red-200 dark:border-red-800 text-[11px] text-red-700 dark:text-red-300">
+        <div class="px-5 py-2 bg-danger-bg border-b border-danger-border text-[11px] text-danger">
             La IA no mencionó <?= count($missingCves) ?> de los <?= (int)$currentCount ?> CVEs:
             <?= e(implode(', ', array_slice($missingCves, 0, 8))) ?><?= count($missingCves) > 8 ? '…' : '' ?>.
             Recalcula o revisa el informe.
@@ -195,17 +193,17 @@ $groupKindLabel = $selectedGroupIsCompany ? 'empresa' : 'grupo de aplicaciones';
 
     <?php if ($groupAnalysis === null): ?>
         <div class="px-5 py-8 text-center">
-            <p class="text-sm text-gray-500">Todavía no hay un análisis de prioridad para este <?= e($groupKindLabel) ?>.</p>
-            <p class="text-xs text-gray-400 mt-1">Se usarán únicamente los CVEs asignados a «<?= e($selectedGroupName) ?>».</p>
+            <p class="text-sm text-ink-muted">Todavía no hay un análisis de prioridad para este <?= e($groupKindLabel) ?>.</p>
+            <p class="text-xs text-ink-soft mt-1">Se usarán únicamente los CVEs asignados a «<?= e($selectedGroupName) ?>».</p>
         </div>
     <?php elseif ($analysisHtml !== ''): ?>
-        <div class="cve-priority-content px-5 py-4 text-sm leading-relaxed text-gray-600 dark:text-gray-300">
+        <div class="cve-priority-content px-5 py-4 text-sm leading-relaxed text-ink-muted">
             <?= $analysisHtml ?>
         </div>
     <?php elseif ($analysisText !== ''): ?>
-        <pre class="px-5 py-4 text-xs whitespace-pre-wrap text-gray-600 dark:text-gray-300"><?= e($analysisText) ?></pre>
+        <pre class="px-5 py-4 text-xs whitespace-pre-wrap text-ink-muted"><?= e($analysisText) ?></pre>
     <?php else: ?>
-        <div class="px-5 py-6 text-sm text-gray-500">El análisis está vacío.</div>
+        <div class="px-5 py-6 text-sm text-ink-muted">El análisis está vacío.</div>
     <?php endif; ?>
     </div><!-- /#cve-priority-body -->
 </div>

@@ -11,7 +11,7 @@ $cveTabs = [
 ];
 $currentTab = (isset($tab) && isset($cveTabs[$tab])) ? $tab : 'catalog';
 ?>
-<div class="no-print sticky top-0 z-20 -mx-6 px-6 bg-gray-50/95 dark:bg-gray-900/95 backdrop-blur border-b border-gray-200 dark:border-gray-700 mb-5">
+<div class="no-print sticky top-0 z-20 -mx-6 px-6 bg-muted/95 dark:bg-gray-900/95 backdrop-blur border-b border-line mb-5">
     <nav class="flex items-center gap-2">
         <?php foreach ($cveTabs as $key => $label): ?>
             <a href="<?= base_url('modules/cve?tab=' . $key) ?>"

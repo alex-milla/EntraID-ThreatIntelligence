@@ -60,7 +60,7 @@ $flashData = flash();
 <div class="no-print mb-6 flex items-start justify-between gap-4 flex-wrap">
     <div>
         <h1 class="text-xl font-semibold">Remediación</h1>
-        <p class="text-sm text-gray-500 mt-1">
+        <p class="text-sm text-ink-muted mt-1">
             Tareas de remediación por organización, con SLA, parcheo, evidencia y asistente IA.
         </p>
     </div>
@@ -68,9 +68,9 @@ $flashData = flash();
         <form method="GET" action="<?= e($modUrl) ?>" class="flex items-end gap-2">
             <input type="hidden" name="tab" value="<?= e($tab) ?>">
             <label class="block">
-                <span class="block text-[10px] font-semibold uppercase tracking-wide text-gray-400 mb-1">Organización</span>
+                <span class="block text-[10px] font-semibold uppercase tracking-wide text-ink-soft mb-1">Organización</span>
                 <select name="org" onchange="this.form.submit()"
-                        class="min-w-[220px] px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+                        class="min-w-[220px] px-3 py-2 rounded-lg border border-line-strong bg-input text-ink text-sm focus:ring-2 focus:ring-brand-500 outline-none">
                     <?php foreach ($orgs as $o): ?>
                         <option value="<?= (int)$o['id'] ?>" <?= (int)$o['id'] === $selectedOrgId ? 'selected' : '' ?>>
                             <?= e((string)$o['name']) ?><?= $o['kind'] === 'tenant' ? ' · tenant' : '' ?>
@@ -80,7 +80,7 @@ $flashData = flash();
             </label>
         </form>
         <button type="button" onclick="openOrgModal()"
-                class="px-3 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark">
+                class="px-3 py-2 border border-line-strong text-ink text-xs font-medium rounded-lg hover:bg-muted">
             + Organización
         </button>
         <?php if ($org !== null): ?>
@@ -91,14 +91,14 @@ $flashData = flash();
                 'tenant_id' => (int)($org['tenant_id'] ?? 0),
                 'notes' => (string)($org['notes'] ?? ''),
             ], JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_TAG | JSON_UNESCAPED_UNICODE) ?>)'
-                    class="px-3 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark">
+                    class="px-3 py-2 border border-line-strong text-ink text-xs font-medium rounded-lg hover:bg-muted">
                 Editar
             </button>
         <?php endif; ?>
     </div>
 </div>
 
-<div class="no-print flex items-center gap-2 mb-5 border-b border-gray-200 dark:border-gray-700">
+<div class="no-print flex items-center gap-2 mb-5 border-b border-line">
     <?php
     $tabs = [
         'tasks'     => 'Bandeja',
@@ -120,9 +120,9 @@ $flashData = flash();
 </div>
 
 <?php if ($org === null): ?>
-    <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-8 text-center">
+    <div class="card p-8 text-center">
         <p class="text-sm font-semibold">No hay organización seleccionada</p>
-        <p class="text-xs text-gray-500 mt-1">Crea una organización manual o vincula un tenant para empezar.</p>
+        <p class="text-xs text-ink-muted mt-1">Crea una organización manual o vincula un tenant para empezar.</p>
     </div>
 <?php else: ?>
     <?php if ($tab === 'assistant'): ?>
@@ -139,36 +139,36 @@ $flashData = flash();
 <!-- Modal organización -->
 <div id="org-modal" class="hidden fixed inset-0 z-50 no-print">
     <div class="absolute inset-0 bg-black/40" onclick="closeOrgModal()"></div>
-    <div class="relative mx-auto mt-20 w-[calc(100%-2rem)] max-w-lg bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 shadow-xl p-5">
+    <div class="relative mx-auto mt-20 w-[calc(100%-2rem)] max-w-lg card shadow-xl p-5">
         <div class="flex items-start justify-between gap-3">
             <div>
                 <h3 class="text-sm font-semibold" id="org-modal-title">Nueva organización</h3>
-                <p class="text-xs text-gray-500 mt-1">Manual (sin Graph) o vinculada a un tenant de Defender.</p>
+                <p class="text-xs text-ink-muted mt-1">Manual (sin Graph) o vinculada a un tenant de Defender.</p>
             </div>
-            <button type="button" onclick="closeOrgModal()" class="text-xs text-gray-400 hover:text-gray-600">Cerrar</button>
+            <button type="button" onclick="closeOrgModal()" class="text-xs text-ink-soft hover:text-gray-600">Cerrar</button>
         </div>
 
         <form method="POST" action="<?= base_url('modules/remediation/orgs/save') ?>" class="mt-4 space-y-3">
             <?= Csrf::field() ?>
             <input type="hidden" name="id" id="org-id" value="0">
             <label class="block">
-                <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Nombre</span>
+                <span class="block text-xs font-medium text-ink-muted mb-1">Nombre</span>
                 <input type="text" name="name" id="org-name" maxlength="120" required
-                       class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+                       class="w-full px-3 py-2 rounded-lg border border-line-strong bg-input text-ink text-sm focus:ring-2 focus:ring-brand-500 outline-none">
             </label>
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <label class="block">
-                    <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Tipo</span>
+                    <span class="block text-xs font-medium text-ink-muted mb-1">Tipo</span>
                     <select name="kind" id="org-kind" onchange="syncOrgKind()"
-                            class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+                            class="w-full px-3 py-2 rounded-lg border border-line-strong bg-input text-ink text-sm focus:ring-2 focus:ring-brand-500 outline-none">
                         <option value="manual">Manual (sin Graph)</option>
                         <option value="tenant">Vinculada a un tenant</option>
                     </select>
                 </label>
                 <label class="block">
-                    <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Tenant</span>
+                    <span class="block text-xs font-medium text-ink-muted mb-1">Tenant</span>
                     <select name="tenant_id" id="org-tenant" disabled
-                            class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none disabled:opacity-50">
+                            class="w-full px-3 py-2 rounded-lg border border-line-strong bg-input text-ink text-sm focus:ring-2 focus:ring-brand-500 outline-none disabled:opacity-50">
                         <option value="0">—</option>
                         <?php foreach (($tenants ?? []) as $tenant): ?>
                             <option value="<?= (int)$tenant['id'] ?>"><?= e((string)$tenant['name']) ?></option>
@@ -177,13 +177,13 @@ $flashData = flash();
                 </label>
             </div>
             <label class="block">
-                <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Notas</span>
+                <span class="block text-xs font-medium text-ink-muted mb-1">Notas</span>
                 <textarea name="notes" id="org-notes" rows="3"
-                          class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none"></textarea>
+                          class="w-full px-3 py-2 rounded-lg border border-line-strong bg-input text-ink text-sm focus:ring-2 focus:ring-brand-500 outline-none"></textarea>
             </label>
             <div class="flex items-center justify-end gap-2 pt-2">
                 <button type="button" onclick="closeOrgModal()"
-                        class="px-3 py-2 border border-gray-300 dark:border-gray-600 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark">
+                        class="px-3 py-2 border border-line-strong text-xs font-medium rounded-lg hover:bg-muted">
                     Cancelar
                 </button>
                 <button type="submit"
@@ -194,11 +194,11 @@ $flashData = flash();
         </form>
 
         <?php if ($isAdmin && $org !== null): ?>
-            <form method="POST" action="<?= base_url('modules/remediation/orgs/delete') ?>" class="mt-3 pt-3 border-t border-gray-100 dark:border-gray-700"
+            <form method="POST" action="<?= base_url('modules/remediation/orgs/delete') ?>" class="mt-3 pt-3 border-t border-line-subtle"
                   data-confirm="¿Eliminar la organización «<?= e((string)$org['name']) ?>»? Se borrarán sus tareas y conversaciones." data-confirm-danger>
                 <?= Csrf::field() ?>
                 <input type="hidden" name="id" value="<?= (int)$org['id'] ?>">
-                <button type="submit" class="text-xs text-red-600 dark:text-red-400 hover:underline">Eliminar organización actual</button>
+                <button type="submit" class="text-xs text-danger hover:underline">Eliminar organización actual</button>
             </form>
         <?php endif; ?>
     </div>

@@ -68,15 +68,15 @@ foreach ($flashData as $type => $msg):
 <div class="no-print mb-6 flex items-start justify-between gap-4 flex-wrap">
     <div>
         <h1 class="text-xl font-semibold">CVE</h1>
-        <p class="text-sm text-gray-500 mt-1">
+        <p class="text-sm text-ink-muted mt-1">
             Catálogo público de CVEs e inventario de software de tus entornos. Actualiza el catálogo de forma
             incremental y sincroniza cada producto desde su CPE.
         </p>
     </div>
     <?php if ($isAdmin): ?>
         <a href="<?= base_url('admin/apis') ?>"
-           class="inline-flex items-center gap-2 px-3 py-2 border border-gray-200 dark:border-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+           class="inline-flex items-center gap-2 px-3 py-2 border border-line text-sm font-medium rounded-lg hover:bg-muted transition-colors">
+            <i class="material-icons icon-16" aria-hidden="true">settings</i>
             Configurar fuentes
         </a>
     <?php endif; ?>
@@ -102,10 +102,10 @@ foreach ($companyGroups as $companyRow) {
 ?>
 
 <?php if (!empty($dbError)): ?>
-    <div class="bg-white dark:bg-surface-dark rounded-xl border border-red-200 dark:border-red-800 p-6">
-        <h2 class="text-sm font-semibold text-red-600 dark:text-red-400 mb-2">No se pudo abrir la base de datos de CVEs</h2>
-        <p class="text-sm text-gray-600 dark:text-gray-300"><?= e($dbError) ?></p>
-        <p class="text-xs text-gray-400 mt-3">
+    <div class="bg-surface rounded-xl border border-danger-border p-6">
+        <h2 class="text-sm font-semibold text-danger mb-2">No se pudo abrir la base de datos de CVEs</h2>
+        <p class="text-sm text-ink-muted"><?= e($dbError) ?></p>
+        <p class="text-xs text-ink-soft mt-3">
             Comprueba que el directorio <code class="font-mono">storage/</code> tenga permisos de escritura.
             La ruta configurada es <code class="font-mono"><?= e(CVE_DB_PATH) ?></code>.
         </p>
@@ -143,7 +143,7 @@ foreach ($companyGroups as $companyRow) {
         || !empty($catalogFilters['cves']);
     ?>
 
-    <div id="cve-sync-box" class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-5 mb-6">
+    <div id="cve-sync-box" class="card p-5 mb-6">
         <div class="flex items-start justify-between gap-4 flex-wrap">
             <div class="min-w-0">
                 <div class="flex items-center gap-2">
@@ -152,17 +152,17 @@ foreach ($companyGroups as $companyRow) {
                         <?= $syncRunning ? 'Sincronizando' : e(ucfirst($syncStatus)) ?>
                     </span>
                 </div>
-                <p id="cve-sync-message" class="text-xs text-gray-500 mt-1">
+                <p id="cve-sync-message" class="text-xs text-ink-muted mt-1">
                     <?= e($syncMessage !== '' ? $syncMessage : 'Listo para descargar el catálogo público.') ?>
                 </p>
-                <p class="text-xs text-gray-400 mt-1">
+                <p class="text-xs text-ink-soft mt-1">
                     <?php if (!empty($syncState['last_success_at'])): ?>
                         Última sincronización correcta: <?= e(format_date((string)$syncState['last_success_at'])) ?>.
                     <?php else: ?>
                         Todavía no se ha completado ninguna sincronización.
                     <?php endif; ?>
                     <?php if ($syncRunning && $syncAge > 30): ?>
-                        <span class="text-amber-600 dark:text-amber-400">Sin progreso reciente; pulsa «Continuar» para retomar la descarga.</span>
+                        <span class="text-warning">Sin progreso reciente; pulsa «Continuar» para retomar la descarga.</span>
                     <?php endif; ?>
                 </p>
             </div>
@@ -171,7 +171,7 @@ foreach ($companyGroups as $companyRow) {
                     <button type="button" id="cve-start-btn" onclick="startCveSync('auto')"
                             title="Incremental si ya hay catálogo; primera carga completa si está vacío."
                             class="<?= $syncRunning ? 'hidden' : 'inline-flex' ?> items-center gap-2 px-3 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                        <i class="material-icons icon-16" aria-hidden="true">sync</i>
                         Actualizar catálogo
                     </button>
                     <button type="button" id="cve-rebuild-btn" onclick="startCveSync('full')"
@@ -198,99 +198,97 @@ foreach ($companyGroups as $companyRow) {
         </div>
 
         <div id="cve-sync-progress-wrap" class="mt-4 <?= $syncRunning ? '' : 'hidden' ?>">
-            <div class="h-2 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
+            <div class="h-2 rounded-full bg-muted overflow-hidden">
                 <div id="cve-sync-progress" class="h-full bg-brand-500 transition-all" style="width: <?= $syncPct ?>%"></div>
             </div>
-            <p id="cve-sync-counts" class="text-[11px] text-gray-400 mt-1">
+            <p id="cve-sync-counts" class="text-[11px] text-ink-soft mt-1">
                 <?= number_format($syncProcessed) ?><?= $syncTotal > 0 ? ' / ' . number_format($syncTotal) : '' ?> CVEs procesados
             </p>
-            <p class="text-[11px] text-gray-400 mt-1">
+            <p class="text-[11px] text-ink-soft mt-1">
                 La descarga continua se ejecuta en esta pestaña. Si la cierras, se reanuda desde el último CVE al volver.
             </p>
         </div>
     </div>
 
     <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-6">
-        <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-4">
-            <p class="text-xs text-gray-500">CVEs</p>
+        <div class="card p-4">
+            <p class="text-xs text-ink-muted">CVEs</p>
             <p class="text-2xl font-bold mt-1"><?= number_format((int)($stats['catalog'] ?? 0)) ?></p>
         </div>
-        <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-4">
-            <p class="text-xs text-gray-500">Críticos</p>
+        <div class="card p-4">
+            <p class="text-xs text-ink-muted">Críticos</p>
             <p class="text-2xl font-bold mt-1 text-red-500"><?= number_format((int)($stats['critical'] ?? 0)) ?></p>
         </div>
-        <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-4">
-            <p class="text-xs text-gray-500">Altos</p>
+        <div class="card p-4">
+            <p class="text-xs text-ink-muted">Altos</p>
             <p class="text-2xl font-bold mt-1 text-orange-500"><?= number_format((int)($stats['high'] ?? 0)) ?></p>
         </div>
-        <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-4">
-            <p class="text-xs text-gray-500">KEV</p>
+        <div class="card p-4">
+            <p class="text-xs text-ink-muted">KEV</p>
             <p class="text-2xl font-bold mt-1 text-red-500"><?= number_format((int)($stats['kev'] ?? 0)) ?></p>
         </div>
-        <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-4">
-            <p class="text-xs text-gray-500">EPSS ≥ 0,1</p>
+        <div class="card p-4">
+            <p class="text-xs text-ink-muted">EPSS ≥ 0,1</p>
             <p class="text-2xl font-bold mt-1 text-amber-500"><?= number_format((int)($stats['epss_high'] ?? 0)) ?></p>
         </div>
-        <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-4">
-            <p class="text-xs text-gray-500">Mis CVEs</p>
+        <div class="card p-4">
+            <p class="text-xs text-ink-muted">Mis CVEs</p>
             <p class="text-2xl font-bold mt-1 text-brand-500"><?= number_format((int)($stats['matched_cves'] ?? 0)) ?></p>
         </div>
     </div>
 
-    <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
-        <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between gap-3 flex-wrap">
+    <div class="card overflow-hidden">
+        <div class="px-5 py-4 border-b border-line flex items-center justify-between gap-3 flex-wrap">
             <h2 class="text-sm font-semibold">CVEs (<?= number_format($catalogTotal) ?>)</h2>
             <?php if ($hasCatalogFilters): ?>
                 <span class="inline-flex px-2 py-0.5 text-[10px] rounded-full bg-brand-50 text-brand-700 dark:bg-brand-950/40 dark:text-brand-300">Filtros aplicados</span>
             <?php endif; ?>
         </div>
 
-        <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50/60 dark:bg-gray-900/20">
+        <div class="px-5 py-4 border-b border-line bg-muted/60 dark:bg-gray-900/20">
             <form method="GET" action="<?= base_url('modules/cve') ?>" class="space-y-4">
                 <input type="hidden" name="tab" value="catalog">
 
                 <div class="flex flex-col sm:flex-row gap-2">
                     <div class="relative flex-1">
-                        <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M21 21l-4.35-4.35M17 10.5a6.5 6.5 0 11-13 0 6.5 6.5 0 0113 0z"/>
-                        </svg>
+                        <i class="material-icons icon-16 absolute left-3 top-1/2 -translate-y-1/2 text-ink-soft" aria-hidden="true">search</i>
                         <input type="text" name="q" value="<?= e($catalogFilters['q'] ?? '') ?>"
                                placeholder="Buscar por CVE o descripción…"
-                               class="w-full pl-9 pr-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+                               class="w-full pl-9 pr-3 py-2 rounded-lg border border-line-strong bg-surface text-ink text-sm focus:ring-2 focus:ring-brand-500 outline-none">
                     </div>
                     <select name="severity" aria-label="Filtrar por severidad"
-                            class="w-full sm:w-48 px-2 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+                            class="w-full sm:w-48 px-2 py-2 rounded-lg border border-line-strong bg-input text-ink text-sm focus:ring-2 focus:ring-brand-500 outline-none">
                         <option value="">Todas las severidades</option>
                         <?php foreach (['Critical' => 'Crítica', 'High' => 'Alta', 'Medium' => 'Media', 'Low' => 'Baja'] as $sev => $sevLabel): ?>
                             <option value="<?= e($sev) ?>" <?= ($catalogFilters['severity'] ?? '') === $sev ? 'selected' : '' ?>><?= e($sevLabel) ?></option>
                         <?php endforeach; ?>
                     </select>
                     <div class="flex items-center gap-2">
-                        <button type="submit" class="px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors">
+                        <button type="submit" class="btn">
                             Buscar
                         </button>
                         <?php if ($hasCatalogFilters): ?>
-                            <a href="<?= base_url('modules/cve?tab=catalog') ?>" class="px-3 py-2 text-xs text-gray-500 hover:text-red-500">Limpiar</a>
+                            <a href="<?= base_url('modules/cve?tab=catalog') ?>" class="px-3 py-2 text-xs text-ink-muted hover:text-red-500">Limpiar</a>
                         <?php endif; ?>
                     </div>
                 </div>
-                <p class="text-[11px] text-gray-400">Pulsa Intro o Buscar para aplicar los filtros.</p>
+                <p class="text-[11px] text-ink-soft">Pulsa Intro o Buscar para aplicar los filtros.</p>
 
                 <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
                     <label class="block">
-                        <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Producto</span>
+                        <span class="block text-xs font-medium text-ink-muted mb-1">Producto</span>
                         <input type="text" name="product" value="<?= e($catalogFilters['product'] ?? '') ?>" placeholder="vendor / producto"
-                               class="w-full px-2 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                               class="w-full px-2 py-2 rounded-lg border border-line-strong bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500 outline-none">
                     </label>
                     <label class="block">
-                        <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">EPSS mínimo</span>
+                        <span class="block text-xs font-medium text-ink-muted mb-1">EPSS mínimo</span>
                         <input type="number" name="epss_min" min="0" max="1" step="0.01" value="<?= e((string)($catalogFilters['epss_min'] ?? '')) ?>" placeholder="0.10"
-                               class="w-full px-2 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                               class="w-full px-2 py-2 rounded-lg border border-line-strong bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500 outline-none">
                     </label>
                     <label class="block">
-                        <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Ordenar por</span>
+                        <span class="block text-xs font-medium text-ink-muted mb-1">Ordenar por</span>
                         <select name="sort"
-                                class="w-full px-2 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                                class="w-full px-2 py-2 rounded-lg border border-line-strong bg-input text-ink text-xs focus:ring-2 focus:ring-brand-500 outline-none">
                             <?php $sortValue = (string)($catalogFilters['sort'] ?? 'published'); ?>
                             <option value="published" <?= $sortValue === 'published' ? 'selected' : '' ?>>Más recientes</option>
                             <option value="cvss" <?= $sortValue === 'cvss' ? 'selected' : '' ?>>Mayor CVSS</option>
@@ -301,12 +299,12 @@ foreach ($companyGroups as $companyRow) {
                 </div>
 
                 <div>
-                    <p class="text-[10px] font-semibold uppercase tracking-wide text-gray-400 mb-2">Inventario</p>
+                    <p class="text-[10px] font-semibold uppercase tracking-wide text-ink-soft mb-2">Inventario</p>
                     <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 items-end">
                         <label class="block sm:col-span-2">
-                            <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Mi software</span>
+                            <span class="block text-xs font-medium text-ink-muted mb-1">Mi software</span>
                             <select name="software_id"
-                                    class="w-full px-2 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                                    class="w-full px-2 py-2 rounded-lg border border-line-strong bg-input text-ink text-xs focus:ring-2 focus:ring-brand-500 outline-none">
                                 <option value="0">Mi software (todos)</option>
                                 <?php foreach (($softwareOptions ?? []) as $so): ?>
                                     <option value="<?= (int)$so['id'] ?>" <?= (int)($catalogFilters['software_id'] ?? 0) === (int)$so['id'] ? 'selected' : '' ?>>
@@ -315,29 +313,29 @@ foreach ($companyGroups as $companyRow) {
                                 <?php endforeach; ?>
                             </select>
                         </label>
-                        <label class="flex items-center gap-2 h-[38px] text-xs text-gray-600 dark:text-gray-300">
-                            <input type="checkbox" name="mine" value="1" <?= !empty($catalogFilters['mine']) ? 'checked' : '' ?> class="rounded border-gray-300 text-brand-500 focus:ring-brand-500">
+                        <label class="flex items-center gap-2 h-[38px] text-xs text-ink-muted">
+                            <input type="checkbox" name="mine" value="1" <?= !empty($catalogFilters['mine']) ? 'checked' : '' ?> class="rounded border-line-strong text-brand-500 focus:ring-brand-500">
                             Solo mis productos
                         </label>
-                        <label class="flex items-center gap-2 h-[38px] text-xs text-gray-600 dark:text-gray-300">
-                            <input type="checkbox" name="kev" value="1" <?= !empty($catalogFilters['kev']) ? 'checked' : '' ?> class="rounded border-gray-300 text-brand-500 focus:ring-brand-500">
+                        <label class="flex items-center gap-2 h-[38px] text-xs text-ink-muted">
+                            <input type="checkbox" name="kev" value="1" <?= !empty($catalogFilters['kev']) ? 'checked' : '' ?> class="rounded border-line-strong text-brand-500 focus:ring-brand-500">
                             Solo KEV
                         </label>
                     </div>
                 </div>
 
                 <details class="text-xs" <?= (string)($catalogFilters['cves'] ?? '') !== '' ? 'open' : '' ?>>
-                    <summary class="cursor-pointer text-xs font-medium text-gray-500 hover:text-brand-600 dark:hover:text-brand-400">
+                    <summary class="cursor-pointer text-xs font-medium text-ink-muted hover:text-primary-hover">
                         Filtros avanzados · pegar lista de CVEs
                     </summary>
                     <div class="mt-3">
                         <label class="block">
-                            <span class="block text-[10px] font-semibold uppercase tracking-wide text-gray-400 mb-1">
+                            <span class="block text-[10px] font-semibold uppercase tracking-wide text-ink-soft mb-1">
                                 Pegar CVEs (separados por comas, espacios o líneas; máximo 200)
                             </span>
                             <textarea name="cves" rows="3" maxlength="6000" placeholder="CVE-2024-38063&#10;CVE-2024-21762, CVE-2023-48795"
-                                      class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs font-mono focus:ring-2 focus:ring-brand-500 outline-none"><?= e((string)($catalogFilters['cves'] ?? '')) ?></textarea>
-                            <span class="block text-[10px] text-gray-400 mt-1">Se muestran solo los que estén en el catálogo local y tengan formato CVE-AAAA-NNNN.</span>
+                                      class="w-full px-2 py-1.5 rounded-lg border border-line-strong bg-input text-ink text-xs font-mono focus:ring-2 focus:ring-brand-500 outline-none"><?= e((string)($catalogFilters['cves'] ?? '')) ?></textarea>
+                            <span class="block text-[10px] text-ink-soft mt-1">Se muestran solo los que estén en el catálogo local y tengan formato CVE-AAAA-NNNN.</span>
                         </label>
                     </div>
                 </details>
@@ -345,7 +343,7 @@ foreach ($companyGroups as $companyRow) {
         </div>
 
         <?php if (($cvesMissing ?? []) !== []): ?>
-            <div class="px-5 py-3 border-b border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 text-xs text-amber-700 dark:text-amber-300">
+            <div class="px-5 py-3 border-b border-warning-border bg-warning-bg text-xs text-warning">
                 <strong>No están en el catálogo local (<?= count($cvesMissing) ?>):</strong>
                 <span class="font-mono break-all">
                     <?= e(implode(', ', array_slice($cvesMissing, 0, 20))) ?><?= count($cvesMissing) > 20 ? ' …' : '' ?>
@@ -355,34 +353,34 @@ foreach ($companyGroups as $companyRow) {
         <?php endif; ?>
 
         <?php if ($isAdmin && $catalog !== []): ?>
-            <div class="px-5 py-2 border-b border-gray-200 dark:border-gray-700 flex items-center gap-3 flex-wrap bg-gray-50 dark:bg-gray-800/40">
-                <span id="catalog-selection-count" class="text-xs font-medium text-gray-600 dark:text-gray-300">0 seleccionados</span>
+            <div class="px-5 py-2 border-b border-line flex items-center gap-3 flex-wrap bg-muted/40">
+                <span id="catalog-selection-count" class="text-xs font-medium text-ink-muted">0 seleccionados</span>
                 <button type="button" id="catalog-send-ai" onclick="catalogSendToAi()" disabled
                         class="px-3 py-1.5 bg-brand-500 hover:bg-brand-600 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-medium rounded-lg transition-colors">
                     Enviar a informe con IA
                 </button>
-                <span class="text-[11px] text-gray-400">Máximo <?= (int)CveReportAi::MAX_CVES ?> CVEs por informe.</span>
+                <span class="text-[11px] text-ink-soft">Máximo <?= (int)CveReportAi::MAX_CVES ?> CVEs por informe.</span>
             </div>
         <?php endif; ?>
 
         <?php if (empty($catalog)): ?>
             <div class="px-5 py-12 text-center">
-                <p class="text-sm text-gray-500">
+                <p class="text-sm text-ink-muted">
                     <?= $catalogTotal === 0 ? 'El catálogo está vacío. Configura las fuentes y pulsa «Actualizar catálogo».' : 'No hay CVEs con estos filtros.' ?>
                 </p>
                 <?php if ($catalogTotal === 0 && $isAdmin): ?>
-                    <button type="button" onclick="startCveSync('auto')" class="inline-block mt-3 text-sm text-brand-600 dark:text-brand-400 hover:underline">Descargar catálogo NVD</button>
+                    <button type="button" onclick="startCveSync('auto')" class="inline-block mt-3 text-sm text-primary hover:underline">Descargar catálogo NVD</button>
                 <?php endif; ?>
             </div>
         <?php else: ?>
             <div class="overflow-x-auto">
-                <table id="catalog-cve-table" class="w-full text-sm">
+                <table id="catalog-cve-table" class="data-table w-full text-sm">
                     <thead>
-                        <tr class="border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-xs text-gray-500 uppercase">
+                        <tr class="border-b border-line bg-muted text-xs text-ink-muted uppercase">
                             <?php if ($isAdmin): ?>
                                 <th class="text-left px-3 py-2 w-8">
                                     <input id="catalog-select-all" type="checkbox" title="Seleccionar todos los CVEs de esta página"
-                                           class="rounded border-gray-300 text-brand-500 focus:ring-brand-500">
+                                           class="rounded border-line-strong text-brand-500 focus:ring-brand-500">
                                 </th>
                             <?php endif; ?>
                             <th class="text-left px-4 py-2">CVE</th>
@@ -396,7 +394,7 @@ foreach ($companyGroups as $companyRow) {
                             <th class="text-left px-4 py-2">Descripción</th>
                         </tr>
                     </thead>
-                    <tbody class="divide-y divide-gray-100 dark:divide-gray-700/50">
+                    <tbody class="divide-y divide-line-subtle">
                         <?php $catalogColspan = $isAdmin ? 10 : 9; ?>
                         <?php foreach ($catalog as $cve): ?>
                             <?php
@@ -412,31 +410,29 @@ foreach ($companyGroups as $companyRow) {
                             }
                             $extraProducts = max(0, count($products) - 3);
                             ?>
-                            <tr class="hover:bg-gray-50 dark:hover:bg-gray-800/50 align-top">
+                            <tr class="hover:bg-muted align-top">
                                 <?php if ($isAdmin): ?>
                                     <td class="px-3 py-3 align-top">
-                                        <input type="checkbox" class="catalog-cve-check rounded border-gray-300 text-brand-500 focus:ring-brand-500"
+                                        <input type="checkbox" class="catalog-cve-check rounded border-line-strong text-brand-500 focus:ring-brand-500"
                                                data-cve="<?= e((string)$cve['cve_id']) ?>" value="<?= e((string)$cve['cve_id']) ?>"
                                                title="Seleccionar <?= e((string)$cve['cve_id']) ?>">
                                     </td>
                                 <?php endif; ?>
                                 <td class="px-4 py-3 whitespace-nowrap">
                                     <button type="button"
-                                            class="js-catalog-toggle cursor-pointer inline-flex items-center gap-1.5 font-mono text-xs font-medium text-brand-600 dark:text-brand-400 hover:underline"
+                                            class="js-catalog-toggle cursor-pointer inline-flex items-center gap-1.5 font-mono text-xs font-medium text-primary hover:underline"
                                             data-panel-url="<?= e(base_url('modules/cve/detail/' . rawurlencode((string)$cve['cve_id']) . '/catalog-panel')) ?>"
                                             title="Desplegar detalle del CVE"
                                             aria-expanded="false"
                                             aria-controls="catalog-panel-<?= e((string)$cve['cve_id']) ?>">
-                                        <svg class="js-catalog-chevron w-3.5 h-3.5 text-gray-400 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
-                                        </svg>
+                                        <i class="material-icons icon-14 js-catalog-chevron text-ink-soft transition-transform" aria-hidden="true">chevron_right</i>
                                         <?= e((string)$cve['cve_id']) ?>
                                     </button>
                                 </td>
                                 <td class="px-4 py-3">
                                     <span class="inline-flex px-2 py-0.5 text-[10px] rounded-full <?= $sevClass ?>"><?= e($sev !== '' ? $sev : '—') ?></span>
                                 </td>
-                                <td class="px-4 py-3 text-xs text-gray-500">
+                                <td class="px-4 py-3 text-xs text-ink-muted">
                                     <?php
                                     $cvss = $cve['cvss_v3_score'] !== null
                                         ? (float)$cve['cvss_v3_score']
@@ -447,40 +443,40 @@ foreach ($companyGroups as $companyRow) {
                                     ?>
                                     <?= $cvss !== null ? e(number_format($cvss, 1)) : '—' ?>
                                 </td>
-                                <td class="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">
+                                <td class="px-4 py-3 text-xs text-ink-muted whitespace-nowrap">
                                     <?php if ($epssScore !== null): ?>
-                                        <span class="font-medium text-gray-700 dark:text-gray-300"><?= e(number_format($epssScore, 3)) ?></span>
-                                        <?php if ($epssPercentile !== null): ?><span class="text-gray-400">(<?= e(number_format($epssPercentile, 2)) ?>)</span><?php endif; ?>
+                                        <span class="font-medium text-ink"><?= e(number_format($epssScore, 3)) ?></span>
+                                        <?php if ($epssPercentile !== null): ?><span class="text-ink-soft">(<?= e(number_format($epssPercentile, 2)) ?>)</span><?php endif; ?>
                                     <?php else: ?>
                                         —
                                     <?php endif; ?>
                                 </td>
                                 <td class="px-4 py-3 text-xs whitespace-nowrap">
                                     <?php if ($isKev): ?>
-                                        <span class="inline-flex px-2 py-0.5 text-[10px] rounded-full bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300" title="<?= e((string)($cve['kev_date'] ?? '')) ?>">KEV</span>
+                                        <span class="dark:bg-red-900/30 dark:text-red-300 status-failed" title="<?= e((string)($cve['kev_date'] ?? '')) ?>">KEV</span>
                                     <?php else: ?>
-                                        <span class="text-gray-400">—</span>
+                                        <span class="text-ink-soft">—</span>
                                     <?php endif; ?>
                                 </td>
-                                <td class="px-4 py-3 text-xs text-gray-500 max-w-[180px]">
+                                <td class="px-4 py-3 text-xs text-ink-muted max-w-[180px]">
                                     <?php
                                     $matchedCompanies = (string)($cve['matched_companies'] ?? '');
                                     $matchedGroups = (string)($cve['matched_groups'] ?? '');
                                     ?>
                                     <?= e(truncate((string)($cve['matched_software'] ?? ''), 60)) ?: '—' ?>
                                     <?php if ($matchedCompanies !== ''): ?>
-                                        <p class="text-[10px] text-gray-400 mt-0.5">Empresas: <?= e(truncate($matchedCompanies, 60)) ?></p>
+                                        <p class="text-[10px] text-ink-soft mt-0.5">Empresas: <?= e(truncate($matchedCompanies, 60)) ?></p>
                                     <?php endif; ?>
                                     <?php if ($matchedGroups !== ''): ?>
-                                        <p class="text-[10px] text-gray-400 mt-0.5">Grupos: <?= e(truncate($matchedGroups, 60)) ?></p>
+                                        <p class="text-[10px] text-ink-soft mt-0.5">Grupos: <?= e(truncate($matchedGroups, 60)) ?></p>
                                     <?php endif; ?>
                                 </td>
-                                <td class="px-4 py-3 text-xs text-gray-500 whitespace-nowrap"><?= e(format_date($cve['published_at'] ?? null, 'd/m/Y')) ?></td>
-                                <td class="px-4 py-3 text-xs text-gray-500">
+                                <td class="px-4 py-3 text-xs text-ink-muted whitespace-nowrap"><?= e(format_date($cve['published_at'] ?? null, 'd/m/Y')) ?></td>
+                                <td class="px-4 py-3 text-xs text-ink-muted">
                                     <?= e(implode(', ', $productLabels)) ?: '—' ?>
-                                    <?php if ($extraProducts > 0): ?><span class="text-gray-400"> +<?= $extraProducts ?></span><?php endif; ?>
+                                    <?php if ($extraProducts > 0): ?><span class="text-ink-soft"> +<?= $extraProducts ?></span><?php endif; ?>
                                 </td>
-                                <td class="px-4 py-3 text-xs text-gray-500 max-w-[420px]">
+                                <td class="px-4 py-3 text-xs text-ink-muted max-w-[420px]">
                                     <?= e(truncate((string)($cve['description'] ?? ''), 180)) ?>
                                 </td>
                             </tr>
@@ -493,14 +489,14 @@ foreach ($companyGroups as $companyRow) {
             </div>
 
             <?php if ($catalogPages > 1): ?>
-                <div class="px-5 py-3 border-t border-gray-200 dark:border-gray-700 flex items-center justify-between text-xs text-gray-500">
+                <div class="px-5 py-3 border-t border-line flex items-center justify-between text-xs text-ink-muted">
                     <span>Página <?= (int)$catalogPage ?> de <?= (int)$catalogPages ?></span>
                     <div class="flex items-center gap-2">
                         <?php if ($catalogPage > 1): ?>
-                            <a href="<?= base_url('modules/cve?' . http_build_query(array_merge($baseQuery, ['page' => $catalogPage - 1]))) ?>" class="px-2 py-1 rounded border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-muted-dark">Anterior</a>
+                            <a href="<?= base_url('modules/cve?' . http_build_query(array_merge($baseQuery, ['page' => $catalogPage - 1]))) ?>" class="px-2 py-1 rounded border border-line hover:bg-muted">Anterior</a>
                         <?php endif; ?>
                         <?php if ($catalogPage < $catalogPages): ?>
-                            <a href="<?= base_url('modules/cve?' . http_build_query(array_merge($baseQuery, ['page' => $catalogPage + 1]))) ?>" class="px-2 py-1 rounded border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-muted-dark">Siguiente</a>
+                            <a href="<?= base_url('modules/cve?' . http_build_query(array_merge($baseQuery, ['page' => $catalogPage + 1]))) ?>" class="px-2 py-1 rounded border border-line hover:bg-muted">Siguiente</a>
                         <?php endif; ?>
                     </div>
                 </div>
@@ -1027,11 +1023,11 @@ foreach ($companyGroups as $companyRow) {
             }
 
             panel.dataset.loading = '1';
-            cell.innerHTML = '<div class="p-4 text-xs text-gray-500">Cargando CVE…</div>';
+            cell.innerHTML = '<div class="p-4 text-xs text-ink-muted">Cargando CVE…</div>';
             var url = button.dataset.panelUrl || '';
             if (!url) {
                 delete panel.dataset.loading;
-                cell.innerHTML = '<div class="p-4 text-xs text-red-600">No se pudo cargar el CVE.</div>';
+                cell.innerHTML = '<div class="p-4 text-xs text-danger">No se pudo cargar el CVE.</div>';
                 return;
             }
 
@@ -1050,7 +1046,7 @@ foreach ($companyGroups as $companyRow) {
                 delete panel.dataset.loading;
             }).catch(function (err) {
                 delete panel.dataset.loading;
-                cell.innerHTML = '<div class="p-4 text-xs text-red-600">No se pudo cargar el CVE: '
+                cell.innerHTML = '<div class="p-4 text-xs text-danger">No se pudo cargar el CVE: '
                     + (err && err.message ? err.message : 'error desconocido') + '</div>';
             });
         });
@@ -1094,31 +1090,31 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
 <div class="no-print mb-4 flex items-center justify-between gap-3 flex-wrap">
     <div>
         <h2 class="text-lg font-bold">Informes</h2>
-        <p class="text-xs text-gray-400">Selecciona un informe para verlo aquí mismo, o crea uno nuevo con IA.</p>
+        <p class="text-xs text-ink-soft">Selecciona un informe para verlo aquí mismo, o crea uno nuevo con IA.</p>
     </div>
     <button type="button" onclick="toggleCveAiFullscreen()"
-            class="no-print inline-flex items-center gap-2 px-3 py-2 border border-gray-200 dark:border-gray-700 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">
-        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4 8V4h4M20 8V4h-4M4 16v4h4M20 16v4h-4"/></svg>
+            class="no-print inline-flex items-center gap-2 px-3 py-2 border border-line text-xs font-medium rounded-lg hover:bg-muted transition-colors">
+        <i class="material-icons icon-14" aria-hidden="true">open_in_full</i>
         Pantalla completa
     </button>
 </div>
 
-<div id="ai-batch-banner" class="hidden no-print mb-4 px-4 py-3 rounded-lg border border-brand-200 dark:border-brand-800 bg-brand-50 dark:bg-brand-950/40 text-sm font-medium text-brand-700 dark:text-brand-300"></div>
+<div id="ai-batch-banner" class="hidden no-print mb-4 px-4 py-3 rounded-lg border border-brand-200 dark:border-brand-900 bg-brand-50 dark:bg-brand-950/40 text-sm font-medium text-brand-700 dark:text-brand-300"></div>
 
 <div id="ai-workspace"
-     class="ai-workspace bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden flex flex-col lg:flex-row"
+     class="ai-workspace card overflow-hidden flex flex-col lg:flex-row"
      style="height: calc(100vh - 215px); min-height: 540px;">
 
     <!-- Panel izquierdo: lista de informes -->
-    <aside class="no-print w-full lg:w-[340px] shrink-0 border-b lg:border-b-0 lg:border-r border-gray-200 dark:border-gray-700 flex flex-col max-h-[42vh] lg:max-h-none">
-        <div class="p-3 border-b border-gray-200 dark:border-gray-700">
+    <aside class="no-print w-full lg:w-[340px] shrink-0 border-b lg:border-b-0 lg:border-r border-line flex flex-col max-h-[42vh] lg:max-h-none">
+        <div class="p-3 border-b border-line">
             <?php if ($isAdmin): ?>
                 <button type="button" onclick="cveAiNew()"
                         class="w-full px-3 py-2 bg-brand-500 hover:bg-brand-600 text-white text-xs font-semibold rounded-lg transition-colors">
                     + Nuevo informe con IA
                 </button>
                 <button type="button" onclick="cveAiDefenderOpen()"
-                        class="mt-2 w-full px-3 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 text-xs font-semibold rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">
+                        class="mt-2 w-full px-3 py-2 border border-line-strong text-ink text-xs font-semibold rounded-lg hover:bg-muted transition-colors">
                     Desde Defender
                 </button>
                 <button type="button" id="ai-reports-run-pending" onclick="cveAiRunPending(this)"
@@ -1128,18 +1124,18 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
             <?php endif; ?>
             <input id="ai-list-search" type="search" oninput="cveAiFilterList(this.value)"
                    placeholder="Buscar por CVE o título…"
-                   class="mt-2 w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                   class="mt-2 w-full px-2 py-1.5 rounded-lg border border-line-strong bg-input text-ink text-xs focus:ring-2 focus:ring-brand-500 outline-none">
             <div class="mt-2 grid grid-cols-2 gap-2">
                 <select id="ai-list-assignment-filter" onchange="cveAiFilterAssignment(this.value)"
                         title="Filtrar por asignación"
-                        class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                        class="w-full px-2 py-1.5 rounded-lg border border-line-strong bg-input text-ink text-xs focus:ring-2 focus:ring-brand-500 outline-none">
                     <option value="unassigned" <?= $assignmentFilter === 'unassigned' ? 'selected' : '' ?>>Sin asignar</option>
                     <option value="all" <?= $assignmentFilter === 'all' ? 'selected' : '' ?>>Todos</option>
                     <option value="assigned" <?= $assignmentFilter === 'assigned' ? 'selected' : '' ?>>Asignados</option>
                 </select>
                 <select id="ai-list-status-filter" onchange="cveAiFilterStatus(this.value)"
                         title="Filtrar por estado"
-                        class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                        class="w-full px-2 py-1.5 rounded-lg border border-line-strong bg-input text-ink text-xs focus:ring-2 focus:ring-brand-500 outline-none">
                     <option value="">Todos los estados</option>
                     <option value="done">Listos</option>
                     <option value="pending">Pendientes</option>
@@ -1150,30 +1146,30 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
             </div>
             <?php if ($isAdmin): ?>
                 <div class="mt-2 flex items-center gap-2 text-[11px] flex-wrap">
-                    <label class="inline-flex items-center gap-1.5 text-gray-500 dark:text-gray-400 cursor-pointer">
+                    <label class="inline-flex items-center gap-1.5 text-ink-muted cursor-pointer">
                         <input id="ai-reports-select-all" type="checkbox"
-                               class="rounded border-gray-300 text-brand-500 focus:ring-brand-500"
+                               class="rounded border-line-strong text-brand-500 focus:ring-brand-500"
                                title="Seleccionar todos los informes visibles">
                         Todos
                     </label>
-                    <span id="ai-reports-selected-count" class="text-gray-500 dark:text-gray-400"></span>
+                    <span id="ai-reports-selected-count" class="text-ink-muted"></span>
                     <button type="button" id="ai-reports-bulk-retry" onclick="cveAiBulkRetryOpen()"
-                            class="hidden px-2 py-1 rounded border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 font-medium hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">
+                            class="hidden px-2 py-1 rounded border border-line-strong text-ink font-medium hover:bg-muted transition-colors">
                         Reintentar
                     </button>
                     <button type="button" id="ai-reports-bulk-group" onclick="cveAiBulkGroupOpen()"
-                            class="hidden ml-auto px-2 py-1 rounded border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 font-medium hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">
+                            class="hidden ml-auto px-2 py-1 rounded border border-line-strong text-ink font-medium hover:bg-muted transition-colors">
                         Enviar a grupo
                     </button>
                     <button type="button" id="ai-reports-bulk-delete" onclick="cveAiBulkDelete()"
-                            class="hidden px-2 py-1 rounded border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 font-medium hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">
+                            class="hidden px-2 py-1 rounded border border-danger-border text-danger font-medium hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">
                         Eliminar
                     </button>
                 </div>
             <?php endif; ?>
         </div>
 
-        <div id="ai-list-filter-empty" class="hidden px-4 py-3 text-center text-xs text-gray-500 border-b border-gray-100 dark:border-gray-800">
+        <div id="ai-list-filter-empty" class="hidden px-4 py-3 text-center text-xs text-ink-muted border-b border-line-subtle">
             No hay informes con este filtro.
         </div>
 
@@ -1184,31 +1180,31 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
 
     <!-- Panel derecho: informe seleccionado -->
     <section class="flex-1 min-w-0 flex flex-col">
-        <div class="no-print px-4 py-2 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between gap-2">
-            <p id="ai-detail-title" class="text-xs text-gray-500 truncate"></p>
+        <div class="no-print px-4 py-2 border-b border-line flex items-center justify-between gap-2">
+            <p id="ai-detail-title" class="text-xs text-ink-muted truncate"></p>
             <div class="flex items-center gap-2 shrink-0 flex-wrap justify-end">
                 <?php if ($isAdmin): ?>
-                    <span id="ai-selection-count" class="hidden text-[11px] font-medium text-gray-600 dark:text-gray-300"></span>
+                    <span id="ai-selection-count" class="hidden text-[11px] font-medium text-ink-muted"></span>
                     <button type="button" id="ai-select-all-btn" onclick="cveAiSelectAll()"
-                            class="hidden px-2 py-1 text-[11px] text-gray-500 hover:text-brand-600 transition-colors">
+                            class="hidden px-2 py-1 text-[11px] text-ink-muted hover:text-brand-600 transition-colors">
                         Todos
                     </button>
                     <button type="button" id="ai-tags-btn" onclick="cveAiTagsOpen()"
-                            class="hidden px-3 py-1.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">
+                            class="hidden px-3 py-1.5 border border-line-strong text-ink text-xs font-medium rounded-lg hover:bg-muted transition-colors">
                         Etiquetar
                     </button>
                     <button type="button" id="ai-items-group-btn" onclick="cveAiItemsGroupOpen()"
-                            class="hidden px-3 py-1.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">
+                            class="hidden px-3 py-1.5 border border-line-strong text-ink text-xs font-medium rounded-lg hover:bg-muted transition-colors">
                         Enviar seleccionados
                     </button>
                 <?php endif; ?>
                 <?php if ($isAdmin): ?>
                     <button type="button" id="ai-refresh-btn" onclick="cveAiRefresh()"
-                            class="hidden px-3 py-1.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">
+                            class="hidden px-3 py-1.5 border border-line-strong text-ink text-xs font-medium rounded-lg hover:bg-muted transition-colors">
                         Actualizar
                     </button>
                     <button type="button" id="ai-group-btn" onclick="cveAiAssignOpen()"
-                            class="hidden px-3 py-1.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">
+                            class="hidden px-3 py-1.5 border border-line-strong text-ink text-xs font-medium rounded-lg hover:bg-muted transition-colors">
                         Enviar informe a grupo
                     </button>
                 <?php endif; ?>
@@ -1218,14 +1214,14 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
                 </button>
                 <?php if ($isAdmin): ?>
                     <button type="button" id="ai-delete-btn" onclick="cveAiDeleteSelected()"
-                            class="hidden px-3 py-1.5 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 text-xs font-medium rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">
+                            class="hidden px-3 py-1.5 border border-danger-border text-danger text-xs font-medium rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">
                         Eliminar
                     </button>
                 <?php endif; ?>
             </div>
         </div>
 
-        <div id="ai-detail-scroll" class="flex-1 overflow-y-auto p-4 lg:p-6 bg-gray-50 dark:bg-gray-950/40">
+        <div id="ai-detail-scroll" class="flex-1 overflow-y-auto p-4 lg:p-6 bg-muted dark:bg-gray-950/40">
             <div id="ai-detail">
                 <?php if ($selectedAiData !== null): ?>
                     <?php
@@ -1239,9 +1235,9 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
                 <?php else: ?>
                     <div id="ai-empty" class="h-full flex items-center justify-center">
                         <div class="text-center max-w-sm">
-                            <svg class="w-10 h-10 mx-auto text-gray-300 dark:text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+                            <i class="material-icons icon-18 mx-auto text-gray-300 dark:text-gray-600" aria-hidden="true">description</i>
                             <p class="text-sm font-medium mt-3">Ningún informe seleccionado</p>
-                            <p class="text-xs text-gray-500 mt-1">Elige un informe de la lista o crea uno nuevo con IA.</p>
+                            <p class="text-xs text-ink-muted mt-1">Elige un informe de la lista o crea uno nuevo con IA.</p>
                             <?php if ($isAdmin): ?>
                                 <button type="button" onclick="cveAiNew()"
                                         class="mt-4 px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white text-xs font-semibold rounded-lg transition-colors">
@@ -1255,20 +1251,20 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
 
             <!-- Formulario de nuevo informe (oculto) -->
             <div id="ai-new-form" class="hidden">
-                <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-5 max-w-3xl">
+                <div class="card p-5 max-w-3xl">
                     <div class="flex items-start justify-between gap-3 flex-wrap">
                         <div>
                             <h3 class="text-sm font-semibold">Nuevo informe con IA</h3>
-                            <p class="text-xs text-gray-500 mt-1">
+                            <p class="text-xs text-ink-muted mt-1">
                                 Introduce uno o varios CVEs (separados por comas). Los datos salen del catálogo local;
                                 la IA redacta el análisis.
                             </p>
                         </div>
-                        <button type="button" onclick="cveAiCancelNew()" class="text-xs text-gray-400 hover:text-gray-600">Cerrar</button>
+                        <button type="button" onclick="cveAiCancelNew()" class="text-xs text-ink-soft hover:text-gray-600">Cerrar</button>
                     </div>
 
                     <?php if (!$llmConfigured): ?>
-                        <div class="mt-4 px-4 py-3 rounded-lg text-xs bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-300">
+                        <div class="mt-4 px-4 py-3 rounded-lg text-xs bg-warning-bg text-warning">
                             La IA no está configurada todavía.
                             <a href="<?= base_url('admin/apis') ?>" class="font-semibold underline">Configúrala en Admin → APIs</a>
                             o marca «Solo datos locales».
@@ -1277,16 +1273,16 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
 
                     <div class="grid grid-cols-1 lg:grid-cols-3 gap-3 mt-4">
                         <label class="block lg:col-span-2">
-                            <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">CVEs</span>
+                            <span class="block text-xs font-medium text-ink-muted mb-1">CVEs</span>
                             <input id="ai-report-cves" type="text" maxlength="500"
                                    placeholder="CVE-2024-38063, CVE-2024-21762, CVE-2023-48795"
-                                   class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs font-mono focus:ring-2 focus:ring-brand-500 outline-none">
+                                   class="w-full px-2 py-1.5 rounded-lg border border-line-strong bg-input text-ink text-xs font-mono focus:ring-2 focus:ring-brand-500 outline-none">
                         </label>
                         <?php if (!empty($llmProfiles)): ?>
                             <label class="block">
-                                <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Perfil de IA</span>
+                                <span class="block text-xs font-medium text-ink-muted mb-1">Perfil de IA</span>
                                 <select id="ai-report-profile"
-                                        class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                                        class="w-full px-2 py-1.5 rounded-lg border border-line-strong bg-input text-ink text-xs focus:ring-2 focus:ring-brand-500 outline-none">
                                     <option value="0">Automático (predeterminado)</option>
                                     <?php foreach ($llmProfiles as $profile): ?>
                                         <option value="<?= (int)$profile['id'] ?>">
@@ -1296,34 +1292,34 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
                                 </select>
                             </label>
                         <?php endif; ?>
-                        <label class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300 mt-5">
-                            <input id="ai-report-local" type="checkbox" class="rounded border-gray-300 text-brand-500 focus:ring-brand-500">
+                        <label class="flex items-center gap-2 text-xs text-ink-muted mt-5">
+                            <input id="ai-report-local" type="checkbox" class="rounded border-line-strong text-brand-500 focus:ring-brand-500">
                             Solo datos locales (sin IA)
                         </label>
                     </div>
 
                     <div class="grid grid-cols-1 lg:grid-cols-3 gap-3 mt-3">
                         <label class="block lg:col-span-2">
-                            <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Tags / origen</span>
+                            <span class="block text-xs font-medium text-ink-muted mb-1">Tags / origen</span>
                             <input id="ai-report-tags" type="text" maxlength="500"
                                    placeholder="web, endpoint, cliente-acme (separados por comas)"
-                                   class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                                   class="w-full px-2 py-1.5 rounded-lg border border-line-strong bg-input text-ink text-xs focus:ring-2 focus:ring-brand-500 outline-none">
                         </label>
-                        <label class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300 mt-5">
-                            <input id="ai-report-extended" type="checkbox" checked class="rounded border-gray-300 text-brand-500 focus:ring-brand-500">
+                        <label class="flex items-center gap-2 text-xs text-ink-muted mt-5">
+                            <input id="ai-report-extended" type="checkbox" checked class="rounded border-line-strong text-brand-500 focus:ring-brand-500">
                             Análisis extendido por CVE
                         </label>
                     </div>
 
                     <div class="mt-4 flex items-center gap-3 flex-wrap">
                         <button type="button" onclick="cveAiGenerate(this)" id="ai-report-button"
-                                class="inline-flex items-center gap-2 px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                                class="btn disabled:opacity-60 disabled:cursor-not-allowed"
                                 <?= !$llmConfigured ? 'disabled' : '' ?>>
                             Generar informe con IA
                         </button>
-                        <span id="ai-report-message" class="text-xs text-gray-500"></span>
+                        <span id="ai-report-message" class="text-xs text-ink-muted"></span>
                     </div>
-                    <p class="text-[11px] text-gray-400 mt-2">
+                    <p class="text-[11px] text-ink-soft mt-2">
                         Máximo <?= (int)CveReportAi::MAX_CVES ?> CVEs por creación. Se creará un informe individual por CVE.
                         El análisis extendido hace una llamada a la IA por CVE y puede tardar varios minutos; verás el progreso
                         y podrás retomar los pendientes desde la lista.
@@ -1333,28 +1329,28 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
 
             <!-- Nuevo informe desde Defender (oculto) -->
             <div id="ai-defender-form" class="hidden">
-                <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-5">
+                <div class="card p-5">
                     <div class="flex items-start justify-between gap-3 flex-wrap">
                         <div>
                             <h3 class="text-sm font-semibold">Nuevo informe desde Defender</h3>
-                            <p class="text-xs text-gray-500 mt-1">
+                            <p class="text-xs text-ink-muted mt-1">
                                 Elige CVEs expuestos en tus equipos según Defender for Endpoint. El informe añadirá
                                 la exposición real (equipos, productos y KB) a los datos del catálogo.
                             </p>
                         </div>
-                        <button type="button" onclick="cveAiDefenderClose()" class="text-xs text-gray-400 hover:text-gray-600">Cerrar</button>
+                        <button type="button" onclick="cveAiDefenderClose()" class="text-xs text-ink-soft hover:text-gray-600">Cerrar</button>
                     </div>
 
                     <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-4">
                         <label class="block">
-                            <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Tenant</span>
-                            <select id="ai-def-tenant" class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                            <span class="block text-xs font-medium text-ink-muted mb-1">Tenant</span>
+                            <select id="ai-def-tenant" class="w-full px-2 py-1.5 rounded-lg border border-line-strong bg-input text-ink text-xs focus:ring-2 focus:ring-brand-500 outline-none">
                                 <option value="0">Todos</option>
                             </select>
                         </label>
                         <label class="block">
-                            <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Severidad</span>
-                            <select id="ai-def-severity" class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                            <span class="block text-xs font-medium text-ink-muted mb-1">Severidad</span>
+                            <select id="ai-def-severity" class="w-full px-2 py-1.5 rounded-lg border border-line-strong bg-input text-ink text-xs focus:ring-2 focus:ring-brand-500 outline-none">
                                 <option value="">Todas</option>
                                 <option value="CRITICAL">Crítica</option>
                                 <option value="HIGH">Alta</option>
@@ -1363,28 +1359,28 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
                             </select>
                         </label>
                         <label class="block">
-                            <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">EPSS mínimo</span>
+                            <span class="block text-xs font-medium text-ink-muted mb-1">EPSS mínimo</span>
                             <input id="ai-def-epss" type="number" min="0" max="1" step="0.01" placeholder="0.10"
-                                   class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                                   class="w-full px-2 py-1.5 rounded-lg border border-line-strong bg-input text-ink text-xs focus:ring-2 focus:ring-brand-500 outline-none">
                         </label>
                         <label class="block">
-                            <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Equipos mínimos</span>
+                            <span class="block text-xs font-medium text-ink-muted mb-1">Equipos mínimos</span>
                             <input id="ai-def-machines" type="number" min="0" step="1" placeholder="1"
-                                   class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                                   class="w-full px-2 py-1.5 rounded-lg border border-line-strong bg-input text-ink text-xs focus:ring-2 focus:ring-brand-500 outline-none">
                         </label>
-                        <label class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300 mt-5">
-                            <input id="ai-def-exploited" type="checkbox" class="rounded border-gray-300 text-brand-500 focus:ring-brand-500">
+                        <label class="flex items-center gap-2 text-xs text-ink-muted mt-5">
+                            <input id="ai-def-exploited" type="checkbox" class="rounded border-line-strong text-brand-500 focus:ring-brand-500">
                             Con exploit público
                         </label>
-                        <label class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300 mt-5">
-                            <input id="ai-def-kev" type="checkbox" class="rounded border-gray-300 text-brand-500 focus:ring-brand-500">
+                        <label class="flex items-center gap-2 text-xs text-ink-muted mt-5">
+                            <input id="ai-def-kev" type="checkbox" class="rounded border-line-strong text-brand-500 focus:ring-brand-500">
                             En CISA KEV
                         </label>
                         <label class="block lg:col-span-2">
-                            <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Buscar CVE</span>
+                            <span class="block text-xs font-medium text-ink-muted mb-1">Buscar CVE</span>
                             <div class="flex gap-2">
                                 <input id="ai-def-q" type="text" placeholder="CVE-2024-…"
-                                       class="flex-1 px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs font-mono focus:ring-2 focus:ring-brand-500 outline-none">
+                                       class="flex-1 px-2 py-1.5 rounded-lg border border-line-strong bg-input text-ink text-xs font-mono focus:ring-2 focus:ring-brand-500 outline-none">
                                 <button type="button" onclick="cveAiDefenderFetch()"
                                         class="px-3 py-1.5 bg-gray-900 hover:bg-black text-white text-xs font-medium rounded-lg">
                                     Aplicar
@@ -1394,23 +1390,23 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
                     </div>
 
                     <div class="mt-4 flex items-center justify-between gap-2 flex-wrap">
-                        <p id="ai-def-summary" class="text-xs text-gray-500">Cargando…</p>
-                        <p id="ai-def-selected" class="text-xs font-medium text-gray-600 dark:text-gray-300">0 seleccionados</p>
+                        <p id="ai-def-summary" class="text-xs text-ink-muted">Cargando…</p>
+                        <p id="ai-def-selected" class="text-xs font-medium text-ink-muted">0 seleccionados</p>
                     </div>
 
-                    <div id="ai-def-list" class="mt-2 max-h-72 overflow-y-auto border border-gray-200 dark:border-gray-700 rounded-lg divide-y divide-gray-100 dark:divide-gray-800">
-                        <p class="p-4 text-xs text-gray-500">Cargando vulnerabilidades de Defender…</p>
+                    <div id="ai-def-list" class="mt-2 max-h-72 overflow-y-auto border border-line rounded-lg divide-y divide-line-subtle">
+                        <p class="p-4 text-xs text-ink-muted">Cargando vulnerabilidades de Defender…</p>
                     </div>
 
                     <div class="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
                         <label class="block sm:col-span-2">
-                            <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Tags / origen</span>
+                            <span class="block text-xs font-medium text-ink-muted mb-1">Tags / origen</span>
                             <input id="ai-def-tags" type="text" maxlength="500"
                                    placeholder="web, endpoint, cliente-acme (separados por comas)"
-                                   class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                                   class="w-full px-2 py-1.5 rounded-lg border border-line-strong bg-input text-ink text-xs focus:ring-2 focus:ring-brand-500 outline-none">
                         </label>
-                        <label class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300 mt-5">
-                            <input id="ai-def-extended" type="checkbox" checked class="rounded border-gray-300 text-brand-500 focus:ring-brand-500">
+                        <label class="flex items-center gap-2 text-xs text-ink-muted mt-5">
+                            <input id="ai-def-extended" type="checkbox" checked class="rounded border-line-strong text-brand-500 focus:ring-brand-500">
                             Análisis extendido por CVE
                         </label>
                     </div>
@@ -1418,9 +1414,9 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
                     <div class="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3">
                         <?php if (!empty($llmProfiles)): ?>
                             <label class="block sm:col-span-1">
-                                <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Perfil de IA</span>
+                                <span class="block text-xs font-medium text-ink-muted mb-1">Perfil de IA</span>
                                 <select id="ai-def-profile"
-                                        class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                                        class="w-full px-2 py-1.5 rounded-lg border border-line-strong bg-input text-ink text-xs focus:ring-2 focus:ring-brand-500 outline-none">
                                     <option value="0">Automático</option>
                                     <?php foreach ($llmProfiles as $profile): ?>
                                         <option value="<?= (int)$profile['id'] ?>"><?= e((string)$profile['name']) ?> · <?= e((string)$profile['provider']) ?></option>
@@ -1428,18 +1424,18 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
                                 </select>
                             </label>
                         <?php endif; ?>
-                        <label class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300 mt-5">
-                            <input id="ai-def-local" type="checkbox" class="rounded border-gray-300 text-brand-500 focus:ring-brand-500">
+                        <label class="flex items-center gap-2 text-xs text-ink-muted mt-5">
+                            <input id="ai-def-local" type="checkbox" class="rounded border-line-strong text-brand-500 focus:ring-brand-500">
                             Solo datos locales (sin IA)
                         </label>
                         <div class="flex items-end">
                             <button type="button" onclick="cveAiDefenderCreate(this)"
-                                    class="w-full px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors">
+                                    class="btn w-full">
                                 Crear informe
                             </button>
                         </div>
                     </div>
-                    <p id="ai-def-message" class="text-xs text-gray-500 mt-2"></p>
+                    <p id="ai-def-message" class="text-xs text-ink-muted mt-2"></p>
                 </div>
             </div>
         </div>
@@ -1448,14 +1444,14 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
     <!-- Modal: enviar a grupo -->
     <div id="ai-group-modal" class="hidden fixed inset-0 z-50 no-print">
         <div class="absolute inset-0 bg-black/40" onclick="cveAiAssignClose()"></div>
-        <div class="relative mx-auto mt-24 w-[calc(100%-2rem)] max-w-md bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 shadow-xl p-5">
+        <div class="relative mx-auto mt-24 w-[calc(100%-2rem)] max-w-md card shadow-xl p-5">
             <h3 class="text-sm font-semibold">Enviar informe a una empresa o grupo</h3>
-            <p class="text-xs text-gray-500 mt-1">Asigna el informe a una empresa o a un grupo de aplicaciones. Si no existe, se crea.</p>
+            <p class="text-xs text-ink-muted mt-1">Asigna el informe a una empresa o a un grupo de aplicaciones. Si no existe, se crea.</p>
     
             <label class="block mt-4">
-                <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Destino existente</span>
+                <span class="block text-xs font-medium text-ink-muted mb-1">Destino existente</span>
                 <select id="ai-group-select"
-                        class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                        class="w-full px-2 py-1.5 rounded-lg border border-line-strong bg-input text-ink text-xs focus:ring-2 focus:ring-brand-500 outline-none">
                     <option value="0">— Sin grupo —</option>
                     <?php if ($companyGroups !== []): ?>
                         <optgroup label="Empresas">
@@ -1475,12 +1471,12 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
             </label>
     
             <label class="block mt-3">
-                <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">o crear uno nuevo</span>
+                <span class="block text-xs font-medium text-ink-muted mb-1">o crear uno nuevo</span>
                 <div class="grid grid-cols-2 gap-2">
                     <input id="ai-group-new" type="text" maxlength="120" placeholder="Nombre"
-                           class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                           class="w-full px-2 py-1.5 rounded-lg border border-line-strong bg-input text-ink text-xs focus:ring-2 focus:ring-brand-500 outline-none">
                     <select id="ai-group-new-kind"
-                            class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                            class="w-full px-2 py-1.5 rounded-lg border border-line-strong bg-input text-ink text-xs focus:ring-2 focus:ring-brand-500 outline-none">
                         <option value="application">Grupo de aplicaciones</option>
                         <option value="company">Empresa</option>
                     </select>
@@ -1489,11 +1485,11 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
     
             <div class="mt-4 flex items-center justify-end gap-2">
                 <button type="button" onclick="cveAiAssignClose()"
-                        class="px-3 py-1.5 border border-gray-300 dark:border-gray-600 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark">
+                        class="px-3 py-1.5 border border-line-strong text-xs font-medium rounded-lg hover:bg-muted">
                     Cancelar
                 </button>
                 <button type="button" onclick="cveAiAssignSubmit(this)"
-                        class="px-3 py-1.5 bg-brand-500 hover:bg-brand-600 text-white text-xs font-semibold rounded-lg">
+                        class="btn btn-small">
                     Enviar
                 </button>
             </div>
@@ -1504,44 +1500,44 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
 <!-- Modal: etiquetar CVEs seleccionados -->
 <div id="ai-tags-modal" class="hidden fixed inset-0 z-50 no-print">
     <div class="absolute inset-0 bg-black/40" onclick="cveAiTagsClose()"></div>
-    <div class="relative mx-auto mt-24 w-[calc(100%-2rem)] max-w-lg bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 shadow-xl p-5">
+    <div class="relative mx-auto mt-24 w-[calc(100%-2rem)] max-w-lg card shadow-xl p-5">
         <div class="flex items-start justify-between gap-3">
             <div>
                 <h3 class="text-sm font-semibold">Etiquetar CVEs seleccionados</h3>
-                <p class="text-xs text-gray-500 mt-1" id="ai-tags-count"></p>
+                <p class="text-xs text-ink-muted mt-1" id="ai-tags-count"></p>
             </div>
-            <button type="button" onclick="cveAiTagsClose()" class="text-xs text-gray-400 hover:text-gray-600">Cerrar</button>
+            <button type="button" onclick="cveAiTagsClose()" class="text-xs text-ink-soft hover:text-gray-600">Cerrar</button>
         </div>
 
         <label class="block mt-4">
-            <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Tags / origen</span>
+            <span class="block text-xs font-medium text-ink-muted mb-1">Tags / origen</span>
             <input id="ai-tags-input" type="text" maxlength="500"
                    placeholder="web, endpoint, cliente-acme (separados por comas)"
-                   class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                   class="w-full px-2 py-1.5 rounded-lg border border-line-strong bg-input text-ink text-xs focus:ring-2 focus:ring-brand-500 outline-none">
         </label>
-        <label class="flex items-center gap-2 mt-2 text-[11px] text-gray-600 dark:text-gray-300">
-            <input id="ai-tags-append" type="checkbox" class="rounded border-gray-300 text-brand-500 focus:ring-brand-500">
+        <label class="flex items-center gap-2 mt-2 text-[11px] text-ink-muted">
+            <input id="ai-tags-append" type="checkbox" class="rounded border-line-strong text-brand-500 focus:ring-brand-500">
             Añadir sin borrar los tags actuales
         </label>
 
         <div id="ai-tags-suggestions" class="hidden mt-4 space-y-2">
             <div id="ai-tags-suggestions-tags-wrap">
-                <p class="text-[10px] font-semibold uppercase tracking-wide text-gray-400">Tags usados</p>
+                <p class="text-[10px] font-semibold uppercase tracking-wide text-ink-soft">Tags usados</p>
                 <div id="ai-tags-suggestions-tags" class="flex flex-wrap gap-1.5 mt-1"></div>
             </div>
             <div id="ai-tags-suggestions-groups-wrap">
-                <p class="text-[10px] font-semibold uppercase tracking-wide text-gray-400">Grupos de software detectados</p>
+                <p class="text-[10px] font-semibold uppercase tracking-wide text-ink-soft">Grupos de software detectados</p>
                 <div id="ai-tags-suggestions-groups" class="flex flex-wrap gap-1.5 mt-1"></div>
             </div>
         </div>
 
         <div class="mt-4 flex items-center justify-end gap-2">
             <button type="button" onclick="cveAiTagsClose()"
-                    class="px-3 py-1.5 border border-gray-300 dark:border-gray-600 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark">
+                    class="px-3 py-1.5 border border-line-strong text-xs font-medium rounded-lg hover:bg-muted">
                 Cancelar
             </button>
             <button type="button" onclick="cveAiTagsSubmit(this)"
-                    class="px-3 py-1.5 bg-brand-500 hover:bg-brand-600 text-white text-xs font-semibold rounded-lg">
+                    class="btn btn-small">
                 Aplicar tags
             </button>
         </div>
@@ -1551,19 +1547,19 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
 <!-- Modal: enviar CVEs seleccionados a grupo -->
 <div id="ai-items-group-modal" class="hidden fixed inset-0 z-50 no-print">
     <div class="absolute inset-0 bg-black/40" onclick="cveAiItemsGroupClose()"></div>
-    <div class="relative mx-auto mt-24 w-[calc(100%-2rem)] max-w-md bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 shadow-xl p-5">
+    <div class="relative mx-auto mt-24 w-[calc(100%-2rem)] max-w-md card shadow-xl p-5">
         <div class="flex items-start justify-between gap-3">
             <div>
                 <h3 class="text-sm font-semibold">Enviar CVEs a una empresa o grupo</h3>
-                <p class="text-xs text-gray-500 mt-1" id="ai-items-group-count"></p>
+                <p class="text-xs text-ink-muted mt-1" id="ai-items-group-count"></p>
             </div>
-            <button type="button" onclick="cveAiItemsGroupClose()" class="text-xs text-gray-400 hover:text-gray-600">Cerrar</button>
+            <button type="button" onclick="cveAiItemsGroupClose()" class="text-xs text-ink-soft hover:text-gray-600">Cerrar</button>
         </div>
 
         <label class="block mt-4">
-            <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Destino existente</span>
+            <span class="block text-xs font-medium text-ink-muted mb-1">Destino existente</span>
             <select id="ai-items-group-select"
-                    class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                    class="w-full px-2 py-1.5 rounded-lg border border-line-strong bg-input text-ink text-xs focus:ring-2 focus:ring-brand-500 outline-none">
                 <option value="0">— Sin grupo —</option>
                 <?php if ($companyGroups !== []): ?>
                     <optgroup label="Empresas">
@@ -1583,12 +1579,12 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
         </label>
 
         <label class="block mt-3">
-            <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">o crear uno nuevo</span>
+            <span class="block text-xs font-medium text-ink-muted mb-1">o crear uno nuevo</span>
             <div class="grid grid-cols-2 gap-2">
                 <input id="ai-items-group-new" type="text" maxlength="120" placeholder="Nombre"
-                       class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                       class="w-full px-2 py-1.5 rounded-lg border border-line-strong bg-input text-ink text-xs focus:ring-2 focus:ring-brand-500 outline-none">
                 <select id="ai-items-group-new-kind"
-                        class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                        class="w-full px-2 py-1.5 rounded-lg border border-line-strong bg-input text-ink text-xs focus:ring-2 focus:ring-brand-500 outline-none">
                     <option value="application">Grupo de aplicaciones</option>
                     <option value="company">Empresa</option>
                 </select>
@@ -1597,11 +1593,11 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
 
         <div class="mt-4 flex items-center justify-end gap-2">
             <button type="button" onclick="cveAiItemsGroupClose()"
-                    class="px-3 py-1.5 border border-gray-300 dark:border-gray-600 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark">
+                    class="px-3 py-1.5 border border-line-strong text-xs font-medium rounded-lg hover:bg-muted">
                 Cancelar
             </button>
             <button type="button" onclick="cveAiItemsGroupSubmit(this)"
-                    class="px-3 py-1.5 bg-brand-500 hover:bg-brand-600 text-white text-xs font-semibold rounded-lg">
+                    class="btn btn-small">
                 Enviar
             </button>
         </div>
@@ -1611,24 +1607,24 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
 <!-- Modal: enviar informes seleccionados a empresa/grupo -->
 <div id="ai-reports-group-modal" class="hidden fixed inset-0 z-50 no-print">
     <div class="absolute inset-0 bg-black/40" onclick="cveAiBulkGroupClose()"></div>
-    <div class="relative mx-auto mt-24 w-[calc(100%-2rem)] max-w-md bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 shadow-xl p-5">
+    <div class="relative mx-auto mt-24 w-[calc(100%-2rem)] max-w-md card shadow-xl p-5">
         <div class="flex items-start justify-between gap-3">
             <div>
                 <h3 class="text-sm font-semibold">Enviar informes a una empresa o grupo</h3>
-                <p class="text-xs text-gray-500 mt-1" id="ai-reports-group-count"></p>
+                <p class="text-xs text-ink-muted mt-1" id="ai-reports-group-count"></p>
             </div>
-            <button type="button" onclick="cveAiBulkGroupClose()" class="text-xs text-gray-400 hover:text-gray-600">Cerrar</button>
+            <button type="button" onclick="cveAiBulkGroupClose()" class="text-xs text-ink-soft hover:text-gray-600">Cerrar</button>
         </div>
 
-        <p class="mt-3 px-3 py-2 rounded-lg bg-amber-50 dark:bg-amber-900/20 text-[11px] text-amber-700 dark:text-amber-300">
+        <p class="mt-3 px-3 py-2 rounded-lg bg-warning-bg text-[11px] text-warning">
             Se asignarán todos los CVEs de los informes seleccionados, incluidos los que ya tuvieran otro grupo.
             Los informes en curso se omitirán.
         </p>
 
         <label class="block mt-3">
-            <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Destino existente</span>
+            <span class="block text-xs font-medium text-ink-muted mb-1">Destino existente</span>
             <select id="ai-reports-group-select"
-                    class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                    class="w-full px-2 py-1.5 rounded-lg border border-line-strong bg-input text-ink text-xs focus:ring-2 focus:ring-brand-500 outline-none">
                 <option value="0">— Sin grupo —</option>
                 <?php if ($companyGroups !== []): ?>
                     <optgroup label="Empresas">
@@ -1648,12 +1644,12 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
         </label>
 
         <label class="block mt-3">
-            <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">o crear uno nuevo</span>
+            <span class="block text-xs font-medium text-ink-muted mb-1">o crear uno nuevo</span>
             <div class="grid grid-cols-2 gap-2">
                 <input id="ai-reports-group-new" type="text" maxlength="120" placeholder="Nombre"
-                       class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                       class="w-full px-2 py-1.5 rounded-lg border border-line-strong bg-input text-ink text-xs focus:ring-2 focus:ring-brand-500 outline-none">
                 <select id="ai-reports-group-new-kind"
-                        class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                        class="w-full px-2 py-1.5 rounded-lg border border-line-strong bg-input text-ink text-xs focus:ring-2 focus:ring-brand-500 outline-none">
                     <option value="application">Grupo de aplicaciones</option>
                     <option value="company">Empresa</option>
                 </select>
@@ -1662,11 +1658,11 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
 
         <div class="mt-4 flex items-center justify-end gap-2">
             <button type="button" onclick="cveAiBulkGroupClose()"
-                    class="px-3 py-1.5 border border-gray-300 dark:border-gray-600 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark">
+                    class="px-3 py-1.5 border border-line-strong text-xs font-medium rounded-lg hover:bg-muted">
                 Cancelar
             </button>
             <button type="button" onclick="cveAiBulkGroupSubmit(this)"
-                    class="px-3 py-1.5 bg-brand-500 hover:bg-brand-600 text-white text-xs font-semibold rounded-lg">
+                    class="btn btn-small">
                 Enviar
             </button>
         </div>
@@ -1676,36 +1672,36 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
 <!-- Modal: CVEs con informe reciente -->
 <div id="ai-duplicates-modal" class="hidden fixed inset-0 z-50 no-print">
     <div class="absolute inset-0 bg-black/40" onclick="cveAiDuplicatesCancel()"></div>
-    <div class="relative mx-auto mt-20 w-[calc(100%-2rem)] max-w-lg bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 shadow-xl p-5">
+    <div class="relative mx-auto mt-20 w-[calc(100%-2rem)] max-w-lg card shadow-xl p-5">
         <div class="flex items-start justify-between gap-3">
             <div>
                 <h3 class="text-sm font-semibold">CVEs con informe reciente</h3>
-                <p class="text-xs text-gray-500 mt-1" id="ai-duplicates-summary"></p>
+                <p class="text-xs text-ink-muted mt-1" id="ai-duplicates-summary"></p>
             </div>
-            <button type="button" onclick="cveAiDuplicatesCancel()" class="text-xs text-gray-400 hover:text-gray-600">Cerrar</button>
+            <button type="button" onclick="cveAiDuplicatesCancel()" class="text-xs text-ink-soft hover:text-gray-600">Cerrar</button>
         </div>
 
-        <div id="ai-duplicates-list" class="mt-3 max-h-64 overflow-y-auto border border-gray-200 dark:border-gray-700 rounded-lg divide-y divide-gray-100 dark:divide-gray-800"></div>
+        <div id="ai-duplicates-list" class="mt-3 max-h-64 overflow-y-auto border border-line rounded-lg divide-y divide-line-subtle"></div>
 
-        <div id="ai-duplicates-warning" class="hidden mt-3 px-3 py-2 rounded-lg bg-amber-50 dark:bg-amber-900/20 text-[11px] text-amber-700 dark:text-amber-300"></div>
+        <div id="ai-duplicates-warning" class="hidden mt-3 px-3 py-2 rounded-lg bg-warning-bg text-[11px] text-warning"></div>
 
-        <p class="mt-3 text-[11px] text-gray-400">
+        <p class="mt-3 text-[11px] text-ink-soft">
             «Actualizar existentes» regenera el análisis y conserva la empresa/grupo actual.
             «Crear nuevos» crea entradas nuevas sin asignar para que puedas moverlas a otro grupo.
         </p>
 
         <div class="mt-5 flex items-center justify-between gap-2 flex-wrap">
             <button type="button" onclick="cveAiDuplicatesCancel()"
-                    class="px-3 py-1.5 border border-gray-300 dark:border-gray-600 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark">
+                    class="px-3 py-1.5 border border-line-strong text-xs font-medium rounded-lg hover:bg-muted">
                 Cancelar
             </button>
             <div class="flex items-center gap-2">
                 <button type="button" id="ai-duplicates-create" onclick="cveAiDuplicatesNew(this)"
-                        class="px-3 py-1.5 border border-gray-300 dark:border-gray-600 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark">
+                        class="px-3 py-1.5 border border-line-strong text-xs font-medium rounded-lg hover:bg-muted">
                     Crear nuevos igualmente
                 </button>
                 <button type="button" id="ai-duplicates-update" onclick="cveAiDuplicatesUpdate(this)"
-                        class="px-3 py-1.5 bg-brand-500 hover:bg-brand-600 text-white text-xs font-semibold rounded-lg">
+                        class="btn btn-small">
                     Actualizar existentes
                 </button>
             </div>
@@ -1716,23 +1712,23 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
 <!-- Modal: reintentar informe con otro perfil de IA -->
 <div id="ai-retry-modal" class="hidden fixed inset-0 z-50 no-print">
     <div class="absolute inset-0 bg-black/40" onclick="cveAiRetryClose()"></div>
-    <div class="relative mx-auto mt-24 w-[calc(100%-2rem)] max-w-md bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 shadow-xl p-5">
+    <div class="relative mx-auto mt-24 w-[calc(100%-2rem)] max-w-md card shadow-xl p-5">
         <div class="flex items-start justify-between gap-3">
             <div>
                 <h3 class="text-sm font-semibold"><span id="ai-retry-title">Reintentar informe</span> <span id="ai-retry-id"></span></h3>
-                <p class="text-xs text-gray-500 mt-1">Elige el perfil de IA con el que quieres volver a generarlo.</p>
+                <p class="text-xs text-ink-muted mt-1">Elige el perfil de IA con el que quieres volver a generarlo.</p>
             </div>
-            <button type="button" onclick="cveAiRetryClose()" class="text-xs text-gray-400 hover:text-gray-600">Cerrar</button>
+            <button type="button" onclick="cveAiRetryClose()" class="text-xs text-ink-soft hover:text-gray-600">Cerrar</button>
         </div>
 
-        <p id="ai-retry-model" class="mt-3 text-xs text-gray-400"></p>
-        <div id="ai-retry-error" class="hidden mt-3 px-3 py-2 rounded-lg bg-red-50 dark:bg-red-900/20 text-[11px] text-red-700 dark:text-red-300 max-h-24 overflow-y-auto"></div>
-        <div id="ai-retry-bulk-summary" class="hidden mt-3 px-3 py-2 rounded-lg bg-amber-50 dark:bg-amber-900/20 text-[11px] text-amber-700 dark:text-amber-300"></div>
+        <p id="ai-retry-model" class="mt-3 text-xs text-ink-soft"></p>
+        <div id="ai-retry-error" class="hidden mt-3 px-3 py-2 rounded-lg bg-danger-bg text-[11px] text-danger max-h-24 overflow-y-auto"></div>
+        <div id="ai-retry-bulk-summary" class="hidden mt-3 px-3 py-2 rounded-lg bg-warning-bg text-[11px] text-warning"></div>
 
         <label class="block mt-4">
-            <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Perfil de IA</span>
+            <span class="block text-xs font-medium text-ink-muted mb-1">Perfil de IA</span>
             <select id="ai-retry-profile"
-                    class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                    class="w-full px-2 py-1.5 rounded-lg border border-line-strong bg-input text-ink text-xs focus:ring-2 focus:ring-brand-500 outline-none">
                 <option value="0">Automático (predeterminado)</option>
                 <?php foreach (($llmProfiles ?? []) as $profile): ?>
                     <option value="<?= (int)$profile['id'] ?>">
@@ -1742,21 +1738,21 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
             </select>
         </label>
 
-        <label class="mt-4 flex items-start gap-2 text-xs text-gray-600 dark:text-gray-300 cursor-pointer">
-            <input id="ai-retry-all" type="checkbox" class="mt-0.5 rounded border-gray-300 text-brand-500 focus:ring-brand-500">
+        <label class="mt-4 flex items-start gap-2 text-xs text-ink-muted cursor-pointer">
+            <input id="ai-retry-all" type="checkbox" class="mt-0.5 rounded border-line-strong text-brand-500 focus:ring-brand-500">
             <span>
                 Regenerar también los CVEs completados
-                <span class="block text-[10px] text-gray-400">Si lo dejas desmarcado, solo se reintentan los que fallaron.</span>
+                <span class="block text-[10px] text-ink-soft">Si lo dejas desmarcado, solo se reintentan los que fallaron.</span>
             </span>
         </label>
 
         <div class="mt-5 flex items-center justify-end gap-2">
             <button type="button" onclick="cveAiRetryClose()"
-                    class="px-3 py-1.5 border border-gray-300 dark:border-gray-600 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark">
+                    class="px-3 py-1.5 border border-line-strong text-xs font-medium rounded-lg hover:bg-muted">
                 Cancelar
             </button>
             <button type="button" onclick="cveAiRetrySubmit(this)"
-                    class="px-3 py-1.5 bg-brand-500 hover:bg-brand-600 text-white text-xs font-semibold rounded-lg">
+                    class="btn btn-small">
                 Reintentar
             </button>
         </div>
@@ -1764,18 +1760,18 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
 </div>
 
 <!-- Informes preventivos (plegados) -->
-<details class="no-print mt-6 bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
+<details class="no-print mt-6 card overflow-hidden">
     <summary class="px-5 py-4 cursor-pointer text-sm font-semibold flex items-center gap-2">
-        <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 5l7 7-7 7"/></svg>
+        <i class="material-icons icon-16 text-ink-soft" aria-hidden="true">chevron_right</i>
         Informes preventivos (inventario de software)
     </summary>
-    <div class="p-5 border-t border-gray-200 dark:border-gray-700">
+    <div class="p-5 border-t border-line">
         <?php if ($isAdmin): ?>
         <div class="mb-5">
             <div class="flex items-start justify-between gap-4 flex-wrap">
                 <div>
                     <h2 class="text-sm font-semibold">Generar informe preventivo</h2>
-                    <p class="text-xs text-gray-500 mt-1">
+                    <p class="text-xs text-ink-muted mt-1">
                         Informe de los CVEs que afectan al software identificado, con prioridad KEV &gt; EPSS &gt; CVSS.
                     </p>
                 </div>
@@ -1783,18 +1779,18 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
 
             <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-4">
                 <label class="block">
-                    <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Alcance</span>
+                    <span class="block text-xs font-medium text-ink-muted mb-1">Alcance</span>
                     <select id="report-scope" onchange="syncCveReportScope()"
-                            class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                            class="w-full px-2 py-1.5 rounded-lg border border-line-strong bg-input text-ink text-xs focus:ring-2 focus:ring-brand-500 outline-none">
                         <option value="all">Todo el inventario</option>
                         <option value="group">Un grupo</option>
                         <option value="software">Un software</option>
                     </select>
                 </label>
                 <label class="block">
-                    <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Grupo</span>
+                    <span class="block text-xs font-medium text-ink-muted mb-1">Grupo</span>
                     <select id="report-group" disabled
-                            class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none disabled:opacity-50">
+                            class="w-full px-2 py-1.5 rounded-lg border border-line-strong bg-input text-ink text-xs focus:ring-2 focus:ring-brand-500 outline-none disabled:opacity-50">
                         <option value="0">—</option>
                         <?php if ($companyGroups !== []): ?>
                             <optgroup label="Empresas">
@@ -1813,9 +1809,9 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
                     </select>
                 </label>
                 <label class="block">
-                    <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Software</span>
+                    <span class="block text-xs font-medium text-ink-muted mb-1">Software</span>
                     <select id="report-software" disabled
-                            class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none disabled:opacity-50">
+                            class="w-full px-2 py-1.5 rounded-lg border border-line-strong bg-input text-ink text-xs focus:ring-2 focus:ring-brand-500 outline-none disabled:opacity-50">
                         <option value="0">—</option>
                         <?php foreach (($softwareOptions ?? []) as $so): ?>
                             <option value="<?= (int)$so['id'] ?>">
@@ -1825,9 +1821,9 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
                     </select>
                 </label>
                 <label class="block">
-                    <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Periodo</span>
+                    <span class="block text-xs font-medium text-ink-muted mb-1">Periodo</span>
                     <select id="report-period" onchange="syncCveReportPeriod()"
-                            class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                            class="w-full px-2 py-1.5 rounded-lg border border-line-strong bg-input text-ink text-xs focus:ring-2 focus:ring-brand-500 outline-none">
                         <option value="7d">Últimos 7 días</option>
                         <option value="30d" selected>Últimos 30 días</option>
                         <option value="90d">Últimos 90 días</option>
@@ -1835,9 +1831,9 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
                     </select>
                 </label>
                 <label class="block">
-                    <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Severidad</span>
+                    <span class="block text-xs font-medium text-ink-muted mb-1">Severidad</span>
                     <select id="report-severity"
-                            class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                            class="w-full px-2 py-1.5 rounded-lg border border-line-strong bg-input text-ink text-xs focus:ring-2 focus:ring-brand-500 outline-none">
                         <option value="">Todas</option>
                         <option value="Critical">Crítica</option>
                         <option value="High">Alta</option>
@@ -1846,45 +1842,45 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
                     </select>
                 </label>
                 <label class="block">
-                    <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">EPSS mínimo</span>
+                    <span class="block text-xs font-medium text-ink-muted mb-1">EPSS mínimo</span>
                     <input id="report-epss" type="number" min="0" max="1" step="0.01" placeholder="0.10"
-                           class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                           class="w-full px-2 py-1.5 rounded-lg border border-line-strong bg-input text-ink text-xs focus:ring-2 focus:ring-brand-500 outline-none">
                 </label>
-                <label class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300 mt-5">
-                    <input id="report-new" type="checkbox" checked class="rounded border-gray-300 text-brand-500 focus:ring-brand-500">
+                <label class="flex items-center gap-2 text-xs text-ink-muted mt-5">
+                    <input id="report-new" type="checkbox" checked class="rounded border-line-strong text-brand-500 focus:ring-brand-500">
                     Solo nuevas o recién detectadas
                 </label>
-                <label class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300 mt-5">
-                    <input id="report-kev" type="checkbox" class="rounded border-gray-300 text-brand-500 focus:ring-brand-500">
+                <label class="flex items-center gap-2 text-xs text-ink-muted mt-5">
+                    <input id="report-kev" type="checkbox" class="rounded border-line-strong text-brand-500 focus:ring-brand-500">
                     Solo KEV
                 </label>
             </div>
 
             <div class="mt-4 flex items-center gap-3 flex-wrap">
                 <button type="button" onclick="generateCveReport(this)"
-                        class="inline-flex items-center gap-2 px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors">
+                        class="btn">
                     Generar informe
                 </button>
-                <span id="report-message" class="text-xs text-gray-500"></span>
+                <span id="report-message" class="text-xs text-ink-muted"></span>
             </div>
-            <p class="text-[11px] text-gray-400 mt-2">
+            <p class="text-[11px] text-ink-soft mt-2">
                 Se guardan hasta <?= number_format((int)(defined('CVE_REPORT_MAX_ROWS') ? CVE_REPORT_MAX_ROWS : 5000)) ?> afectaciones por informe.
                 Puedes exportar el resultado a CSV o imprimirlo en PDF desde la vista del informe.
             </p>
         </div>
         <?php endif; ?>
 
-        <div class="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
-            <div class="px-4 py-3 border-b border-gray-200 dark:border-gray-700">
-                <h4 class="text-xs font-semibold uppercase tracking-wide text-gray-500">Informes generados</h4>
+        <div class="border border-line rounded-lg overflow-hidden">
+            <div class="px-4 py-3 border-b border-line">
+                <h4 class="text-xs font-semibold uppercase tracking-wide text-ink-muted">Informes generados</h4>
             </div>
             <?php if (empty($reports)): ?>
-                <div class="p-8 text-center text-sm text-gray-500">Todavía no hay informes preventivos.</div>
+                <div class="p-8 text-center text-sm text-ink-muted">Todavía no hay informes preventivos.</div>
             <?php else: ?>
                 <div class="overflow-x-auto">
-                    <table class="w-full text-sm">
+                    <table class="data-table w-full text-sm">
                         <thead>
-                            <tr class="border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-xs text-gray-500 uppercase">
+                            <tr class="border-b border-line bg-muted text-xs text-ink-muted uppercase">
                                 <th class="text-left px-4 py-2">Informe</th>
                                 <th class="text-left px-4 py-2">Periodo</th>
                                 <th class="text-left px-4 py-2">Resumen</th>
@@ -1892,7 +1888,7 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
                                 <th class="text-right px-4 py-2"></th>
                             </tr>
                         </thead>
-                        <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
+                        <tbody class="divide-y divide-line-subtle">
                             <?php foreach ($reports as $reportRow): ?>
                                 <?php
                                 $rowSummary = safe_json_decode($reportRow['summary_json'] ?? '{}', []);
@@ -1903,29 +1899,29 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
                                     ? format_date((string)$reportRow['period_start'], 'd/m/Y') . ' — ' . format_date((string)($reportRow['period_end'] ?? ''), 'd/m/Y')
                                     : 'Histórico';
                                 ?>
-                                <tr class="hover:bg-gray-50 dark:hover:bg-gray-800/40">
+                                <tr class="hover:bg-muted">
                                     <td class="px-4 py-3">
                                         <a href="<?= base_url('modules/cve/report/' . (int)$reportRow['id']) ?>"
-                                           class="font-medium text-brand-600 dark:text-brand-400 hover:underline">
+                                           class="font-medium text-primary hover:underline">
                                             <?= e((string)$reportRow['title']) ?>
                                         </a>
                                     </td>
-                                    <td class="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">
+                                    <td class="px-4 py-3 text-xs text-ink-muted whitespace-nowrap">
                                         <?= e($rowPeriod !== '' ? $rowPeriod : '—') ?>
                                     </td>
-                                    <td class="px-4 py-3 text-xs text-gray-500">
+                                    <td class="px-4 py-3 text-xs text-ink-muted">
                                         <?= number_format((int)($rowSummary['unique_cves'] ?? 0)) ?> CVEs ·
                                         <?= number_format((int)($rowSummary['software_count'] ?? 0)) ?> productos ·
                                         <?= number_format((int)($rowSummary['kev'] ?? 0)) ?> KEV
                                     </td>
-                                    <td class="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">
+                                    <td class="px-4 py-3 text-xs text-ink-muted whitespace-nowrap">
                                         <?= e(format_date((string)($reportRow['generated_at'] ?? ''), 'd/m/Y H:i')) ?>
                                     </td>
                                     <td class="px-4 py-3 text-right whitespace-nowrap">
                                         <a href="<?= base_url('modules/cve/report/' . (int)$reportRow['id']) ?>"
-                                           class="text-xs text-brand-600 dark:text-brand-400 hover:underline">Ver</a>
+                                           class="text-xs text-primary hover:underline">Ver</a>
                                         <a href="<?= base_url('modules/cve/report/' . (int)$reportRow['id'] . '/csv') ?>"
-                                           class="text-xs text-gray-600 dark:text-gray-300 hover:underline ml-3">CSV</a>
+                                           class="text-xs text-ink-muted hover:underline ml-3">CSV</a>
                                     </td>
                                 </tr>
                             <?php endforeach; ?>
@@ -2259,7 +2255,7 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
         if (defenderForm) {
             defenderForm.classList.add('hidden');
         }
-        detail.innerHTML = '<div class="p-8 text-center text-sm text-gray-500">Cargando informe…</div>';
+        detail.innerHTML = '<div class="p-8 text-center text-sm text-ink-muted">Cargando informe…</div>';
 
         fetch(PARTIAL + '/' + id + '?partial=1', {
             headers: {'X-Requested-With': 'XMLHttpRequest'},
@@ -2279,7 +2275,7 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
             }
             activate();
         }).catch(function (err) {
-            detail.innerHTML = '<div class="p-6 text-sm text-red-600">No se pudo cargar el informe: ' + errorText(err) + '</div>';
+            detail.innerHTML = '<div class="p-6 text-sm text-danger">No se pudo cargar el informe: ' + errorText(err) + '</div>';
         });
     }
 
@@ -2702,7 +2698,7 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
                     } else {
                         state.id = 0;
                         state.status = '';
-                        detail.innerHTML = '<div class="h-full flex items-center justify-center"><div class="text-center"><p class="text-sm font-medium">Ningún informe seleccionado</p><p class="text-xs text-gray-500 mt-1">Elige un informe de la lista o crea uno nuevo con IA.</p></div></div>';
+                        detail.innerHTML = '<div class="h-full flex items-center justify-center"><div class="text-center"><p class="text-sm font-medium">Ningún informe seleccionado</p><p class="text-xs text-ink-muted mt-1">Elige un informe de la lista o crea uno nuevo con IA.</p></div></div>';
                         updateToolbar();
                         if (window.history && window.history.replaceState) {
                             window.history.replaceState({}, '', PAGE_URL);
@@ -3010,7 +3006,7 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
             newForm.classList.add('hidden');
         }
         if (detail) {
-            detail.innerHTML = '<div class="h-full flex items-center justify-center"><p class="text-sm text-gray-500">Generando informes individuales…</p></div>';
+            detail.innerHTML = '<div class="h-full flex items-center justify-center"><p class="text-sm text-ink-muted">Generando informes individuales…</p></div>';
         }
         if (titleEl) {
             titleEl.textContent = 'Informes en cola';
@@ -3726,7 +3722,7 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
                     if (row) {
                         load(id, false);
                     } else if (detail) {
-                        detail.innerHTML = '<div class="h-full flex items-center justify-center p-6"><p class="text-sm text-gray-500 text-center">Informe asignado correctamente.<br><span class="text-xs">Ya no aparece en la vista actual. Cambia a «Todos» o «Asignados» para verlo.</span></p></div>';
+                        detail.innerHTML = '<div class="h-full flex items-center justify-center p-6"><p class="text-sm text-ink-muted text-center">Informe asignado correctamente.<br><span class="text-xs">Ya no aparece en la vista actual. Cambia a «Todos» o «Asignados» para verlo.</span></p></div>';
                     }
                 }).catch(function () {
                     load(id, false);
@@ -4070,7 +4066,7 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
     window.cveAiDefenderFetch = function () {
         var listEl = document.getElementById('ai-def-list');
         if (listEl) {
-            listEl.innerHTML = '<p class="p-4 text-xs text-gray-500">Cargando vulnerabilidades de Defender…</p>';
+            listEl.innerHTML = '<p class="p-4 text-xs text-ink-muted">Cargando vulnerabilidades de Defender…</p>';
         }
 
         var params = new URLSearchParams();
@@ -4092,14 +4088,14 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
         getJson(DEFENDER_LIST_URL + '?' + params.toString()).then(function (res) {
             if (!res.success) {
                 if (listEl) {
-                    listEl.innerHTML = '<p class="p-4 text-xs text-red-600">' + escapeHtml(res.error || 'No se pudo consultar Defender.') + '</p>';
+                    listEl.innerHTML = '<p class="p-4 text-xs text-danger">' + escapeHtml(res.error || 'No se pudo consultar Defender.') + '</p>';
                 }
                 return;
             }
             renderDefenderList(res);
         }).catch(function (err) {
             if (listEl) {
-                listEl.innerHTML = '<p class="p-4 text-xs text-red-600">Error: ' + escapeHtml(errorText(err)) + '</p>';
+                listEl.innerHTML = '<p class="p-4 text-xs text-danger">Error: ' + escapeHtml(errorText(err)) + '</p>';
             }
         });
     };
@@ -4129,7 +4125,7 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
         }
 
         if (!cves.length) {
-            listEl.innerHTML = '<p class="p-4 text-xs text-gray-500">No hay vulnerabilidades con esos filtros. Comprueba que el módulo Vulnerabilidades de Defender esté sincronizado.</p>';
+            listEl.innerHTML = '<p class="p-4 text-xs text-ink-muted">No hay vulnerabilidades con esos filtros. Comprueba que el módulo Vulnerabilidades de Defender esté sincronizado.</p>';
             window.cveAiDefenderUpdateCount();
             return;
         }
@@ -4138,16 +4134,16 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
         cves.forEach(function (c) {
             var badges = '';
             if (c.in_kev) {
-                badges += '<span class="px-1.5 py-0.5 rounded bg-red-100 text-red-700 text-[10px] font-semibold">KEV</span> ';
+                badges += '<span class="px-1.5 py-0.5 rounded bg-danger-bg text-danger text-[10px] font-semibold">KEV</span> ';
             }
             if (c.public_exploit) {
                 badges += '<span class="px-1.5 py-0.5 rounded bg-orange-100 text-orange-700 text-[10px] font-semibold">Exploit</span> ';
             }
             if (c.exploit_verified) {
-                badges += '<span class="px-1.5 py-0.5 rounded bg-red-100 text-red-700 text-[10px] font-semibold">Verificado</span> ';
+                badges += '<span class="px-1.5 py-0.5 rounded bg-danger-bg text-danger text-[10px] font-semibold">Verificado</span> ';
             }
             if (!c.in_catalog) {
-                badges += '<span class="px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 text-[10px] font-semibold">NVD bajo demanda</span>';
+                badges += '<span class="px-1.5 py-0.5 rounded bg-info-bg text-info text-[10px] font-semibold">NVD bajo demanda</span>';
             }
 
             var meta = [];
@@ -4162,17 +4158,17 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
                 meta.push(c.products.slice(0, 2).join(', '));
             }
 
-            html += '<label class="flex items-start gap-3 p-3 hover:bg-gray-50 dark:hover:bg-gray-800/40">' +
-                '<input type="checkbox" class="ai-def-cve mt-0.5 rounded border-gray-300 text-brand-500 focus:ring-brand-500" value="' +
+            html += '<label class="flex items-start gap-3 p-3 hover:bg-muted">' +
+                '<input type="checkbox" class="ai-def-cve mt-0.5 rounded border-line-strong text-brand-500 focus:ring-brand-500" value="' +
                 escapeHtml(c.cve_id) + '" onchange="cveAiDefenderUpdateCount()">' +
                 '<span class="min-w-0">' +
                 '<span class="flex items-center gap-2 flex-wrap">' +
                 '<span class="font-mono text-xs font-semibold">' + escapeHtml(c.cve_id) + '</span>' +
-                '<span class="text-[10px] uppercase font-semibold text-gray-500">' + escapeHtml(c.severity) + '</span>' +
+                '<span class="text-[10px] uppercase font-semibold text-ink-muted">' + escapeHtml(c.severity) + '</span>' +
                 badges +
                 '</span>' +
-                '<span class="block text-[11px] text-gray-500 mt-0.5">' + escapeHtml(meta.join(' · ')) + '</span>' +
-                (!c.in_catalog ? '<span class="block text-[11px] text-blue-600 mt-0.5">Se descargará de NVD al crear el informe.</span>' : '') +
+                '<span class="block text-[11px] text-ink-muted mt-0.5">' + escapeHtml(meta.join(' · ')) + '</span>' +
+                (!c.in_catalog ? '<span class="block text-[11px] text-info mt-0.5">Se descargará de NVD al crear el informe.</span>' : '') +
                 '</span></label>';
         });
 
@@ -4355,32 +4351,32 @@ syncCveReportPeriod();
 <?php else: ?>
 
     <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-3 mb-6">
-        <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-4">
-            <p class="text-xs text-gray-500">Empresas</p>
+        <div class="card p-4">
+            <p class="text-xs text-ink-muted">Empresas</p>
             <p class="text-2xl font-bold mt-1"><?= number_format((int)($stats['companies'] ?? 0)) ?></p>
         </div>
-        <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-4">
-            <p class="text-xs text-gray-500">Grupos de aplicaciones</p>
+        <div class="card p-4">
+            <p class="text-xs text-ink-muted">Grupos de aplicaciones</p>
             <p class="text-2xl font-bold mt-1"><?= number_format((int)($stats['application_groups'] ?? 0)) ?></p>
         </div>
-        <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-4">
-            <p class="text-xs text-gray-500">Software</p>
+        <div class="card p-4">
+            <p class="text-xs text-ink-muted">Software</p>
             <p class="text-2xl font-bold mt-1"><?= number_format((int)($stats['software'] ?? 0)) ?></p>
         </div>
-        <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-4">
-            <p class="text-xs text-gray-500">Matches</p>
+        <div class="card p-4">
+            <p class="text-xs text-ink-muted">Matches</p>
             <p class="text-2xl font-bold mt-1"><?= number_format((int)($stats['matches'] ?? 0)) ?></p>
         </div>
-        <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-4">
-            <p class="text-xs text-gray-500">KEV míos</p>
+        <div class="card p-4">
+            <p class="text-xs text-ink-muted">KEV míos</p>
             <p class="text-2xl font-bold mt-1 text-red-500"><?= number_format((int)($stats['my_kev'] ?? 0)) ?></p>
         </div>
-        <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-4">
-            <p class="text-xs text-gray-500">EPSS ≥ 0,1 míos</p>
+        <div class="card p-4">
+            <p class="text-xs text-ink-muted">EPSS ≥ 0,1 míos</p>
             <p class="text-2xl font-bold mt-1 text-amber-500"><?= number_format((int)($stats['my_epss_high'] ?? 0)) ?></p>
         </div>
-        <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-4">
-            <p class="text-xs text-gray-500">DB CVE</p>
+        <div class="card p-4">
+            <p class="text-xs text-ink-muted">DB CVE</p>
             <p class="text-lg font-bold mt-1"><?= e($dbSizeLabel) ?></p>
         </div>
     </div>
@@ -4404,42 +4400,42 @@ syncCveReportPeriod();
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <!-- Grupos -->
         <div class="space-y-4">
-            <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
-                <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between gap-2 flex-wrap">
+            <div class="card overflow-hidden">
+                <div class="px-5 py-4 border-b border-line flex items-center justify-between gap-2 flex-wrap">
                     <h2 class="text-sm font-semibold">Empresas</h2>
                     <?php if ($isAdmin): ?>
                         <a href="<?= base_url('modules/cve?tab=software&new_group=1&kind=company') ?>"
-                           class="text-xs text-brand-600 dark:text-brand-400 hover:underline">Nueva empresa</a>
+                           class="text-xs text-primary hover:underline">Nueva empresa</a>
                     <?php endif; ?>
                 </div>
-                <p class="px-5 pt-3 text-[11px] text-gray-400">
+                <p class="px-5 pt-3 text-[11px] text-ink-soft">
                     Organizaciones a las que puedes asignar software, CVEs e informes. No dependen de ningún grupo.
                 </p>
                 <?php if ($companyGroups === []): ?>
-                    <p class="px-5 py-6 text-sm text-gray-500">Todavía no hay empresas.</p>
+                    <p class="px-5 py-6 text-sm text-ink-muted">Todavía no hay empresas.</p>
                 <?php else: ?>
                     <div class="py-2">
                         <?php foreach ($companyGroups as $g): ?>
-                            <div class="group flex items-center gap-2 pr-3 py-1.5 hover:bg-gray-50 dark:hover:bg-gray-800/50"
+                            <div class="group flex items-center gap-2 pr-3 py-1.5 hover:bg-muted"
                                  style="padding-left: 12px">
-                                <svg class="w-3.5 h-3.5 text-blue-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0H5m14 0h2m-2 0h-4m-4 0H3m6 0v-4a2 2 0 012-2h2a2 2 0 012 2v4M9 7h.01M15 7h.01M9 11h.01M15 11h.01"/></svg>
+                                <i class="material-icons icon-14 text-blue-400" aria-hidden="true">business</i>
                                 <a href="<?= base_url('modules/cve?tab=software&group=' . (int)$g['id']) ?>"
                                    class="text-sm truncate <?= $selectedGroup === (int)$g['id'] ? 'font-semibold text-brand-600 dark:text-brand-300' : 'text-gray-700 dark:text-gray-300' ?>">
                                     <?= e($g['name']) ?>
                                 </a>
-                                <span class="text-[10px] text-gray-400 whitespace-nowrap" title="CVEs asignados · software inventariado">
+                                <span class="text-[10px] text-ink-soft whitespace-nowrap" title="CVEs asignados · software inventariado">
                                     <?= (int)($g['assigned_cve_count'] ?? 0) ?> CVEs · <?= (int)($g['software_count'] ?? 0) ?> sw
                                 </span>
                                 <?php if ($isAdmin): ?>
                                     <span class="ml-auto flex items-center gap-1">
-                                        <a href="<?= base_url('modules/cve?tab=software&edit_group=' . (int)$g['id']) ?>" class="p-1 text-gray-400 hover:text-brand-500" title="Editar empresa">
-                                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                                        <a href="<?= base_url('modules/cve?tab=software&edit_group=' . (int)$g['id']) ?>" class="p-1 text-ink-soft hover:text-brand-500" title="Editar empresa">
+                                            <i class="material-icons icon-14" aria-hidden="true">edit</i>
                                         </a>
                                         <form method="POST" action="<?= base_url('modules/cve/groups/delete') ?>" class="inline" data-confirm="¿Eliminar la empresa «<?= e($g['name']) ?>»? Sus grupos se conservarán sin empresa." data-confirm-danger>
                                             <?= Csrf::field() ?>
                                             <input type="hidden" name="id" value="<?= (int)$g['id'] ?>">
-                                            <button type="submit" class="p-1 text-gray-400 hover:text-red-500" title="Eliminar">
-                                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                                            <button type="submit" class="p-1 text-ink-soft hover:text-red-500" title="Eliminar">
+                                                <i class="material-icons icon-14" aria-hidden="true">delete</i>
                                             </button>
                                         </form>
                                     </span>
@@ -4450,19 +4446,19 @@ syncCveReportPeriod();
                 <?php endif; ?>
             </div>
 
-            <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
-                <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between gap-2 flex-wrap">
+            <div class="card overflow-hidden">
+                <div class="px-5 py-4 border-b border-line flex items-center justify-between gap-2 flex-wrap">
                     <h2 class="text-sm font-semibold">Grupos de aplicaciones</h2>
                     <?php if ($isAdmin): ?>
                         <a href="<?= base_url('modules/cve?tab=software&new_group=1&kind=application' . ($newGroupParentId > 0 ? '&parent=' . $newGroupParentId : '')) ?>"
-                           class="text-xs text-brand-600 dark:text-brand-400 hover:underline">Nuevo grupo</a>
+                           class="text-xs text-primary hover:underline">Nuevo grupo</a>
                     <?php endif; ?>
                 </div>
-                <p class="px-5 pt-3 text-[11px] text-gray-400">
+                <p class="px-5 pt-3 text-[11px] text-ink-soft">
                     Agrupaciones de software independientes. Pueden vincularse opcionalmente a una empresa.
                 </p>
                 <?php if ($applicationGroups === []): ?>
-                    <p class="px-5 py-6 text-sm text-gray-500">Todavía no hay grupos de aplicaciones.</p>
+                    <p class="px-5 py-6 text-sm text-ink-muted">Todavía no hay grupos de aplicaciones.</p>
                 <?php else: ?>
                     <div class="py-2">
                         <?php foreach ($applicationGroups as $g): ?>
@@ -4470,29 +4466,29 @@ syncCveReportPeriod();
                             $gCompanyId = (int)($g['company_id'] ?? 0);
                             $gCompanyName = $companyNamesById[$gCompanyId] ?? '';
                             ?>
-                            <div class="group flex items-center gap-2 pr-3 py-1.5 hover:bg-gray-50 dark:hover:bg-gray-800/50"
+                            <div class="group flex items-center gap-2 pr-3 py-1.5 hover:bg-muted"
                                  style="padding-left: <?= 12 + ((int)$g['depth'] * 18) ?>px">
-                                <svg class="w-3.5 h-3.5 text-gray-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
+                                <i class="material-icons icon-14 text-ink-soft" aria-hidden="true">folder</i>
                                 <a href="<?= base_url('modules/cve?tab=software&group=' . (int)$g['id']) ?>"
                                    class="text-sm truncate <?= $selectedGroup === (int)$g['id'] ? 'font-semibold text-brand-600 dark:text-brand-300' : 'text-gray-700 dark:text-gray-300' ?>">
                                     <?= e($g['name']) ?>
                                 </a>
                                 <?php if ($gCompanyName !== ''): ?>
-                                    <span class="px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 text-[9px] font-medium truncate max-w-[120px]" title="Empresa vinculada"><?= e($gCompanyName) ?></span>
+                                    <span class="px-1.5 py-0.5 rounded bg-muted text-ink-muted text-[9px] font-medium truncate max-w-[120px]" title="Empresa vinculada"><?= e($gCompanyName) ?></span>
                                 <?php endif; ?>
-                                <span class="text-[10px] text-gray-400 whitespace-nowrap" title="CVEs asignados · software inventariado">
+                                <span class="text-[10px] text-ink-soft whitespace-nowrap" title="CVEs asignados · software inventariado">
                                     <?= (int)($g['assigned_cve_count'] ?? 0) ?> CVEs · <?= (int)($g['software_count'] ?? 0) ?> sw
                                 </span>
                                 <?php if ($isAdmin): ?>
                                     <span class="ml-auto flex items-center gap-1">
-                                        <a href="<?= base_url('modules/cve?tab=software&edit_group=' . (int)$g['id']) ?>" class="p-1 text-gray-400 hover:text-brand-500" title="Editar grupo">
-                                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                                        <a href="<?= base_url('modules/cve?tab=software&edit_group=' . (int)$g['id']) ?>" class="p-1 text-ink-soft hover:text-brand-500" title="Editar grupo">
+                                            <i class="material-icons icon-14" aria-hidden="true">edit</i>
                                         </a>
                                         <form method="POST" action="<?= base_url('modules/cve/groups/delete') ?>" class="inline" data-confirm="¿Eliminar el grupo «<?= e($g['name']) ?>»? El software quedará sin grupo." data-confirm-danger>
                                             <?= Csrf::field() ?>
                                             <input type="hidden" name="id" value="<?= (int)$g['id'] ?>">
-                                            <button type="submit" class="p-1 text-gray-400 hover:text-red-500" title="Eliminar">
-                                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                                            <button type="submit" class="p-1 text-ink-soft hover:text-red-500" title="Eliminar">
+                                                <i class="material-icons icon-14" aria-hidden="true">delete</i>
                                             </button>
                                         </form>
                                     </span>
@@ -4513,7 +4509,7 @@ syncCveReportPeriod();
                 $grIsCompany = $grKind === 'company';
                 ?>
                 <form method="POST" action="<?= base_url('modules/cve/groups/save') ?>"
-                      class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-5 space-y-3">
+                      class="card p-5 space-y-3">
                     <?= Csrf::field() ?>
                     <input type="hidden" name="id" value="<?= $grId ?>">
                     <div class="flex items-center justify-between">
@@ -4522,37 +4518,37 @@ syncCveReportPeriod();
                                 ? ($grIsCompany ? 'Editar empresa' : 'Editar grupo de aplicaciones')
                                 : ($grIsCompany ? 'Nueva empresa' : 'Nuevo grupo de aplicaciones') ?>
                         </h2>
-                        <a href="<?= base_url('modules/cve?tab=software') ?>" class="text-xs text-gray-400 hover:underline">Cancelar</a>
+                        <a href="<?= base_url('modules/cve?tab=software') ?>" class="text-xs text-ink-soft hover:underline">Cancelar</a>
                     </div>
-                    <p class="text-[11px] text-gray-400">
+                    <p class="text-[11px] text-ink-soft">
                         <?= $grIsCompany
                             ? 'Las empresas son independientes de los grupos de aplicaciones.'
                             : 'Los grupos de aplicaciones no dependen de una empresa; puedes vincularlos opcionalmente.' ?>
                     </p>
                     <div>
-                        <label class="block text-xs text-gray-500 mb-1">Tipo</label>
+                        <label class="block text-xs text-ink-muted mb-1">Tipo</label>
                         <?php if ($grId): ?>
                             <input type="hidden" name="kind" value="<?= e($grKind) ?>">
-                            <p class="px-3 py-2 rounded-lg bg-gray-50 dark:bg-gray-800 text-sm text-gray-600 dark:text-gray-300">
+                            <p class="px-3 py-2 rounded-lg bg-muted text-sm text-ink-muted">
                                 <?= $grIsCompany ? 'Empresa' : 'Grupo de aplicaciones' ?>
                             </p>
                         <?php else: ?>
                             <select name="kind" id="cve-group-kind" onchange="cveGroupKindChanged()"
-                                    class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+                                    class="w-full px-3 py-2 rounded-lg border border-line-strong bg-input text-ink text-sm focus:ring-2 focus:ring-brand-500 outline-none">
                                 <option value="company" <?= $grIsCompany ? 'selected' : '' ?>>Empresa</option>
                                 <option value="application" <?= $grIsCompany ? '' : 'selected' ?>>Grupo de aplicaciones</option>
                             </select>
                         <?php endif; ?>
                     </div>
                     <div>
-                        <label class="block text-xs text-gray-500 mb-1">Nombre</label>
+                        <label class="block text-xs text-ink-muted mb-1">Nombre</label>
                         <input type="text" name="name" required maxlength="120" value="<?= e($gr['name'] ?? '') ?>"
-                               class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+                               class="w-full px-3 py-2 rounded-lg border border-line-strong bg-surface text-ink text-sm focus:ring-2 focus:ring-brand-500 outline-none">
                     </div>
                     <div id="cve-group-company-wrap" class="<?= $grIsCompany ? 'hidden' : '' ?>">
-                        <label class="block text-xs text-gray-500 mb-1">Empresa vinculada (opcional)</label>
+                        <label class="block text-xs text-ink-muted mb-1">Empresa vinculada (opcional)</label>
                         <select name="company_id"
-                                class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+                                class="w-full px-3 py-2 rounded-lg border border-line-strong bg-input text-ink text-sm focus:ring-2 focus:ring-brand-500 outline-none">
                             <option value="0">— Sin empresa —</option>
                             <?php foreach ($companyGroups as $company): ?>
                                 <option value="<?= (int)$company['id'] ?>" <?= $grCompanyId === (int)$company['id'] ? 'selected' : '' ?>>
@@ -4562,9 +4558,9 @@ syncCveReportPeriod();
                         </select>
                     </div>
                     <div id="cve-group-parent-wrap" class="<?= $grIsCompany ? 'hidden' : '' ?>">
-                        <label class="block text-xs text-gray-500 mb-1">Dentro de (grupo de aplicaciones)</label>
+                        <label class="block text-xs text-ink-muted mb-1">Dentro de (grupo de aplicaciones)</label>
                         <select name="parent_id"
-                                class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+                                class="w-full px-3 py-2 rounded-lg border border-line-strong bg-input text-ink text-sm focus:ring-2 focus:ring-brand-500 outline-none">
                             <option value="0">— Sin grupo padre —</option>
                             <?php foreach ($applicationGroups as $g): ?>
                                 <?php if ((int)$g['id'] === $grId) continue; ?>
@@ -4575,11 +4571,11 @@ syncCveReportPeriod();
                         </select>
                     </div>
                     <div>
-                        <label class="block text-xs text-gray-500 mb-1">Posición</label>
+                        <label class="block text-xs text-ink-muted mb-1">Posición</label>
                         <input type="number" name="position" value="<?= (int)($gr['position'] ?? 0) ?>" min="0" max="9999"
-                               class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+                               class="w-full px-3 py-2 rounded-lg border border-line-strong bg-surface text-ink text-sm focus:ring-2 focus:ring-brand-500 outline-none">
                     </div>
-                    <button type="submit" class="w-full px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors">
+                    <button type="submit" class="btn w-full">
                         <?= $grIsCompany ? 'Guardar empresa' : 'Guardar grupo' ?>
                     </button>
                 </form>
@@ -4623,20 +4619,18 @@ syncCveReportPeriod();
                 $autoReportIds = array_slice($autoMatchedIds, 0, 100);
                 $autoReportUrl = base_url('modules/cve?tab=reports&new_cves=' . rawurlencode(implode(',', $autoReportIds)));
                 ?>
-                <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
-                    <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between gap-3 flex-wrap">
+                <div class="card overflow-hidden">
+                    <div class="px-5 py-4 border-b border-line flex items-center justify-between gap-3 flex-wrap">
                         <div class="flex items-center gap-2">
                             <button type="button" onclick="cveToggleCard('auto-matched-body', this)"
                                     aria-expanded="false" aria-controls="auto-matched-body"
                                     title="Mostrar u ocultar los CVEs detectados automáticamente"
-                                    class="inline-flex items-center justify-center w-7 h-7 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-500 hover:text-brand-600 hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">
-                                <svg class="w-4 h-4 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M9 5l7 7-7 7"/>
-                                </svg>
+                                    class="inline-flex items-center justify-center w-7 h-7 rounded-lg border border-line text-ink-muted hover:text-brand-600 hover:bg-muted transition-colors">
+                                <i class="material-icons icon-16 transition-transform" aria-hidden="true">chevron_right</i>
                             </button>
                             <div>
                                 <h2 class="text-sm font-semibold">CVEs detectados automáticamente</h2>
-                                <p class="text-xs text-gray-500 mt-1">
+                                <p class="text-xs text-ink-muted mt-1">
                                     <?= $selectedGroupIsCompany ? 'Empresa' : 'Grupo de aplicaciones' ?>
                                     «<?= e($selectedGroupName) ?>» ·
                                     <?= count($autoMatchedCves) ?> <?= count($autoMatchedCves) === 1 ? 'CVE' : 'CVEs' ?>
@@ -4647,34 +4641,34 @@ syncCveReportPeriod();
                         <div class="flex items-center gap-3">
                             <?php if ($isAdmin && $autoReportIds !== []): ?>
                                 <a href="<?= $autoReportUrl ?>"
-                                   class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-brand-500 hover:bg-brand-600 text-white text-xs font-semibold rounded-lg transition-colors"
+                                   class="inline-flex items-center gap-1.5 btn btn-small transition-colors"
                                    title="Abre Informes con estos CVEs precargados (máximo 100)">
                                     Preparar informe
                                 </a>
                             <?php endif; ?>
                             <a href="<?= base_url('modules/cve?tab=catalog&mine=1') ?>"
-                               class="text-xs text-brand-600 dark:text-brand-400 hover:underline">Ver todos mis CVEs en Catálogo</a>
+                               class="text-xs text-primary hover:underline">Ver todos mis CVEs en Catálogo</a>
                         </div>
                     </div>
                     <div id="auto-matched-body" class="hidden">
                         <?php if ($autoMatchedCves === []): ?>
                             <div class="px-5 py-8 text-center">
-                                <p class="text-sm text-gray-500">Todavía no hay CVEs detectados para este <?= e($selectedGroupEntity) ?>.</p>
-                                <p class="text-xs text-gray-400 mt-1">
+                                <p class="text-sm text-ink-muted">Todavía no hay CVEs detectados para este <?= e($selectedGroupEntity) ?>.</p>
+                                <p class="text-xs text-ink-soft mt-1">
                                     Añade software con CPE (o importa una lista) y ejecuta una sincronización.
                                     Cada CVE nuevo se mostrará aquí automáticamente.
                                 </p>
                             </div>
                         <?php else: ?>
-                        <p class="px-5 pt-3 text-[11px] text-gray-400">
+                        <p class="px-5 pt-3 text-[11px] text-ink-soft">
                             Coincidencias de CPE detectadas durante las sincronizaciones.
                             <strong>Nuevo</strong> = aparece desde la última sincronización completada.
                             Se muestran hasta 300.
                         </p>
                         <div class="overflow-x-auto mt-2">
-                            <table class="w-full text-sm">
+                            <table class="data-table w-full text-sm">
                                 <thead>
-                                    <tr class="border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-xs text-gray-500 uppercase">
+                                    <tr class="border-b border-line bg-muted text-xs text-ink-muted uppercase">
                                         <th class="text-left px-4 py-2">CVE</th>
                                         <th class="text-left px-4 py-2">Severidad</th>
                                         <th class="text-left px-4 py-2">CVSS / EPSS</th>
@@ -4683,7 +4677,7 @@ syncCveReportPeriod();
                                         <th class="text-left px-4 py-2">Detectado</th>
                                     </tr>
                                 </thead>
-                                <tbody class="divide-y divide-gray-100 dark:divide-gray-700/50">
+                                <tbody class="divide-y divide-line-subtle">
                                     <?php foreach ($autoMatchedCves as $autoCve): ?>
                                         <?php
                                         $autoCveId = (string)($autoCve['cve_id'] ?? '');
@@ -4695,10 +4689,10 @@ syncCveReportPeriod();
                                         $autoFirstSeen = (string)($autoCve['first_seen_at'] ?? '');
                                         $autoIsNew = $autoMatchedLastSync !== '' && $autoFirstSeen > $autoMatchedLastSync;
                                         ?>
-                                        <tr class="hover:bg-gray-50 dark:hover:bg-gray-800/50">
+                                        <tr class="hover:bg-muted">
                                             <td class="px-4 py-3 text-xs font-mono whitespace-nowrap">
                                                 <a href="<?= base_url('modules/cve/detail/' . rawurlencode($autoCveId)) ?>"
-                                                   class="text-brand-600 dark:text-brand-400 hover:underline"><?= e($autoCveId) ?></a>
+                                                   class="text-primary hover:underline"><?= e($autoCveId) ?></a>
                                                 <?php if ($autoIsNew): ?>
                                                     <span class="ml-1 px-1.5 py-0.5 rounded bg-brand-100 dark:bg-brand-900/40 text-brand-700 dark:text-brand-300 text-[9px] font-semibold uppercase">Nuevo</span>
                                                 <?php endif; ?>
@@ -4707,10 +4701,10 @@ syncCveReportPeriod();
                                                 <?php if ($autoSeverity !== ''): ?>
                                                     <span class="inline-flex px-2 py-0.5 text-xs rounded-full <?= $autoSeverityClass ?>"><?= e($autoSeverity) ?></span>
                                                 <?php else: ?>
-                                                    <span class="text-xs text-gray-400">—</span>
+                                                    <span class="text-xs text-ink-soft">—</span>
                                                 <?php endif; ?>
                                             </td>
-                                            <td class="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">
+                                            <td class="px-4 py-3 text-xs text-ink-muted whitespace-nowrap">
                                                 <span class="font-mono"><?= $autoCvss !== null ? e(number_format((float)$autoCvss, 1)) : '—' ?></span>
                                                 <span class="mx-1 text-gray-300">/</span>
                                                 <span class="font-mono <?= ($autoEpss !== null && (float)$autoEpss >= 0.1) ? 'text-amber-500 font-semibold' : '' ?>">
@@ -4719,15 +4713,15 @@ syncCveReportPeriod();
                                             </td>
                                             <td class="px-4 py-3 text-xs">
                                                 <?php if (!empty($autoCve['kev_id'])): ?>
-                                                    <span class="inline-flex px-2 py-0.5 rounded-full bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300 font-semibold">KEV</span>
+                                                    <span class="dark:bg-red-900/30 dark:text-red-300 font-semibold status-failed">KEV</span>
                                                 <?php else: ?>
-                                                    <span class="text-gray-400">—</span>
+                                                    <span class="text-ink-soft">—</span>
                                                 <?php endif; ?>
                                             </td>
-                                            <td class="px-4 py-3 text-xs text-gray-500 max-w-[220px]" title="<?= e($autoSoftware) ?>">
+                                            <td class="px-4 py-3 text-xs text-ink-muted max-w-[220px]" title="<?= e($autoSoftware) ?>">
                                                 <?= e(truncate($autoSoftware, 60)) ?>
                                             </td>
-                                            <td class="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">
+                                            <td class="px-4 py-3 text-xs text-ink-muted whitespace-nowrap">
                                                 <?= e(format_date($autoFirstSeen, 'd/m/Y H:i')) ?>
                                             </td>
                                         </tr>
@@ -4739,21 +4733,19 @@ syncCveReportPeriod();
                     </div>
                 </div>
 
-                <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
-                    <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between gap-3 flex-wrap">
+                <div class="card overflow-hidden">
+                    <div class="px-5 py-4 border-b border-line flex items-center justify-between gap-3 flex-wrap">
                         <div class="flex items-center gap-2">
                             <button type="button" id="assigned-cves-toggle"
                                     onclick="cveToggleCard('assigned-cves-body', this)"
                                     aria-expanded="false" aria-controls="assigned-cves-body"
                                     title="Mostrar u ocultar los CVEs asignados"
-                                    class="inline-flex items-center justify-center w-7 h-7 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-500 hover:text-brand-600 hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">
-                                <svg class="w-4 h-4 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M9 5l7 7-7 7"/>
-                                </svg>
+                                    class="inline-flex items-center justify-center w-7 h-7 rounded-lg border border-line text-ink-muted hover:text-brand-600 hover:bg-muted transition-colors">
+                                <i class="material-icons icon-16 transition-transform" aria-hidden="true">chevron_right</i>
                             </button>
                             <div>
                                 <h2 class="text-sm font-semibold">CVEs asignados</h2>
-                                <p class="text-xs text-gray-500 mt-1">
+                                <p class="text-xs text-ink-muted mt-1">
                                     <?= $selectedGroupIsCompany ? 'Empresa' : 'Grupo de aplicaciones' ?>
                                     «<?= e($selectedGroupName) ?>» ·
                                     <?= count($assignedCves) ?> <?= count($assignedCves) === 1 ? 'CVE' : 'CVEs' ?>
@@ -4763,41 +4755,41 @@ syncCveReportPeriod();
                         <div class="flex items-center gap-3">
                             <?php if ($isAdmin && $assignedCves !== []): ?>
                                 <button type="button" onclick="cvePriorityOpen(<?= (int)$selectedGroup ?>)"
-                                        class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-brand-500 hover:bg-brand-600 text-white text-xs font-semibold rounded-lg transition-colors">
+                                        class="inline-flex items-center gap-1.5 btn btn-small transition-colors">
                                     Analizar prioridad con IA
                                 </button>
                             <?php endif; ?>
                             <a href="<?= base_url('modules/cve?tab=reports') ?>"
-                               class="text-xs text-brand-600 dark:text-brand-400 hover:underline">Ir a Informes</a>
+                               class="text-xs text-primary hover:underline">Ir a Informes</a>
                         </div>
                     </div>
 
                     <div id="assigned-cves-body" class="hidden">
                     <?php if ($assignedCves === []): ?>
                         <div class="px-5 py-8 text-center">
-                            <p class="text-sm text-gray-500">
+                            <p class="text-sm text-ink-muted">
                                 No hay CVEs asignados directamente a este <?= e($selectedGroupEntity) ?>.
                             </p>
-                            <p class="text-xs text-gray-400 mt-1">
+                            <p class="text-xs text-ink-soft mt-1">
                                 Asígnalos desde Informes con «Enviar informe a grupo» o «Enviar seleccionados».
                             </p>
                         </div>
                     <?php else: ?>
-                        <p class="px-5 pt-3 text-[11px] text-gray-400">
+                        <p class="px-5 pt-3 text-[11px] text-ink-soft">
                             Pulsa un CVE o un informe para verlo aquí debajo. <strong>KEV</strong> = explotación confirmada por CISA;
                             <strong>Exploit</strong> = PoC/exploit público en la caché de fuentes.
                         </p>
                         <div class="overflow-x-auto mt-2">
-                            <table id="assigned-cve-table" class="w-full text-sm">
+                            <table id="assigned-cve-table" class="data-table w-full text-sm">
                                 <thead>
-                                    <tr class="border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-xs text-gray-500 uppercase">
+                                    <tr class="border-b border-line bg-muted text-xs text-ink-muted uppercase">
                                         <th class="text-left px-4 py-2">
-                                            <button type="button" class="js-sort inline-flex items-center gap-1 hover:text-brand-600 dark:hover:text-brand-400" data-sort-key="cve" data-sort-type="number">
+                                            <button type="button" class="js-sort inline-flex items-center gap-1 hover:text-primary-hover" data-sort-key="cve" data-sort-type="number">
                                                 CVE <span class="js-sort-arrow text-[9px]"></span>
                                             </button>
                                         </th>
                                         <th class="text-left px-4 py-2">
-                                            <button type="button" class="js-sort inline-flex items-center gap-1 hover:text-brand-600 dark:hover:text-brand-400" data-sort-key="severity" data-sort-type="number">
+                                            <button type="button" class="js-sort inline-flex items-center gap-1 hover:text-primary-hover" data-sort-key="severity" data-sort-type="number">
                                                 Severidad <span class="js-sort-arrow text-[9px]"></span>
                                             </button>
                                         </th>
@@ -4805,35 +4797,35 @@ syncCveReportPeriod();
                                             <div class="flex flex-col gap-0.5">
                                                 <span>CVSS / EPSS</span>
                                                 <span class="flex items-center gap-2 text-[10px] normal-case">
-                                                    <button type="button" class="js-sort hover:text-brand-600 dark:hover:text-brand-400" data-sort-key="cvss" data-sort-type="number">CVSS <span class="js-sort-arrow text-[9px]"></span></button>
-                                                    <button type="button" class="js-sort hover:text-brand-600 dark:hover:text-brand-400" data-sort-key="epss" data-sort-type="number">EPSS <span class="js-sort-arrow text-[9px]"></span></button>
+                                                    <button type="button" class="js-sort hover:text-primary-hover" data-sort-key="cvss" data-sort-type="number">CVSS <span class="js-sort-arrow text-[9px]"></span></button>
+                                                    <button type="button" class="js-sort hover:text-primary-hover" data-sort-key="epss" data-sort-type="number">EPSS <span class="js-sort-arrow text-[9px]"></span></button>
                                                 </span>
                                             </div>
                                         </th>
                                         <th class="text-left px-4 py-2">
-                                            <button type="button" class="js-sort inline-flex items-center gap-1 hover:text-brand-600 dark:hover:text-brand-400" data-sort-key="kev" data-sort-type="number">
+                                            <button type="button" class="js-sort inline-flex items-center gap-1 hover:text-primary-hover" data-sort-key="kev" data-sort-type="number">
                                                 KEV <span class="js-sort-arrow text-[9px]"></span>
                                             </button>
                                         </th>
                                         <th class="text-left px-4 py-2">
-                                            <button type="button" class="js-sort inline-flex items-center gap-1 hover:text-brand-600 dark:hover:text-brand-400" data-sort-key="exploit" data-sort-type="number">
+                                            <button type="button" class="js-sort inline-flex items-center gap-1 hover:text-primary-hover" data-sort-key="exploit" data-sort-type="number">
                                                 Exploit <span class="js-sort-arrow text-[9px]"></span>
                                             </button>
                                         </th>
                                         <th class="text-left px-4 py-2">
-                                            <button type="button" class="js-sort inline-flex items-center gap-1 hover:text-brand-600 dark:hover:text-brand-400" data-sort-key="reports" data-sort-type="number">
+                                            <button type="button" class="js-sort inline-flex items-center gap-1 hover:text-primary-hover" data-sort-key="reports" data-sort-type="number">
                                                 Informes <span class="js-sort-arrow text-[9px]"></span>
                                             </button>
                                         </th>
                                         <th class="text-left px-4 py-2">
-                                            <button type="button" class="js-sort inline-flex items-center gap-1 hover:text-brand-600 dark:hover:text-brand-400" data-sort-key="assigned" data-sort-type="text">
+                                            <button type="button" class="js-sort inline-flex items-center gap-1 hover:text-primary-hover" data-sort-key="assigned" data-sort-type="text">
                                                 Asignado <span class="js-sort-arrow text-[9px]"></span>
                                             </button>
                                         </th>
                                         <th class="text-right px-4 py-2"></th>
                                     </tr>
                                 </thead>
-                                <tbody class="divide-y divide-gray-100 dark:divide-gray-700/50">
+                                <tbody class="divide-y divide-line-subtle">
                                     <?php
                                     $severityRanks = ['Critical' => 4, 'High' => 3, 'Medium' => 2, 'Low' => 1];
                                     $exploitSourceLabels = ['github' => 'GitHub', 'nuclei' => 'Nuclei', 'exploitdb' => 'Exploit-DB', 'metasploit' => 'Metasploit'];
@@ -4866,7 +4858,7 @@ syncCveReportPeriod();
                                         }
                                         $cvePanelUrl = base_url('modules/cve/detail/' . rawurlencode($assignedCveId) . '/panel');
                                         ?>
-                                        <tr class="js-assigned-row hover:bg-gray-50 dark:hover:bg-gray-800/50"
+                                        <tr class="js-assigned-row hover:bg-muted"
                                             data-cve-id="<?= e($assignedCveId) ?>"
                                             data-sort-cve="<?= e($cveSortValue) ?>"
                                             data-sort-severity="<?= (int)($severityRanks[$assignedSeverity] ?? 0) ?>"
@@ -4878,13 +4870,13 @@ syncCveReportPeriod();
                                             data-sort-assigned="<?= e($assignedAt) ?>">
                                             <td class="px-4 py-3">
                                                 <a href="<?= base_url('modules/cve/detail/' . rawurlencode($assignedCveId)) ?>"
-                                                   class="js-inline-cve font-mono text-xs font-semibold text-brand-600 dark:text-brand-400 hover:underline"
+                                                   class="js-inline-cve font-mono text-xs font-semibold text-primary hover:underline"
                                                    data-panel-url="<?= e($cvePanelUrl) ?>"
                                                    title="Ver la ficha aquí debajo">
                                                     <?= e($assignedCveId) ?>
                                                 </a>
                                                 <?php if ($assignedTags !== []): ?>
-                                                    <p class="text-[10px] text-gray-400 mt-0.5">
+                                                    <p class="text-[10px] text-ink-soft mt-0.5">
                                                         <?php foreach ($assignedTags as $assignedTag): ?>
                                                             #<?= e((string)$assignedTag) ?>
                                                         <?php endforeach; ?>
@@ -4897,20 +4889,20 @@ syncCveReportPeriod();
                                                         <?= e($assignedSeverity) ?>
                                                     </span>
                                                 <?php else: ?>
-                                                    <span class="text-xs text-gray-400">—</span>
+                                                    <span class="text-xs text-ink-soft">—</span>
                                                 <?php endif; ?>
                                             </td>
-                                            <td class="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">
+                                            <td class="px-4 py-3 text-xs text-ink-muted whitespace-nowrap">
                                                 <?= $assignedCvss !== null ? 'CVSS ' . number_format((float)$assignedCvss, 1) : 'CVSS —' ?>
                                                 <span class="text-gray-300 dark:text-gray-600">·</span>
                                                 <?= $assignedEpss !== null ? 'EPSS ' . number_format((float)$assignedEpss * 100, 1) . ' %' : 'EPSS —' ?>
                                             </td>
                                             <td class="px-4 py-3 text-xs whitespace-nowrap">
                                                 <?php if (!empty($assignedCve['kev_id'])): ?>
-                                                    <span class="inline-flex px-2 py-0.5 text-[10px] rounded-full bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300"
+                                                    <span class="dark:bg-red-900/30 dark:text-red-300 status-failed"
                                                           title="<?= e((string)($assignedCve['kev_date'] ?? '')) ?>">KEV</span>
                                                 <?php else: ?>
-                                                    <span class="text-gray-400">—</span>
+                                                    <span class="text-ink-soft">—</span>
                                                 <?php endif; ?>
                                             </td>
                                             <td class="px-4 py-3 text-xs whitespace-nowrap">
@@ -4920,18 +4912,18 @@ syncCveReportPeriod();
                                                         Sí (<?= $assignedExploitTotal ?>)
                                                     </span>
                                                 <?php else: ?>
-                                                    <span class="inline-flex px-2 py-0.5 text-[10px] rounded-full bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400"
+                                                    <span class="inline-flex px-2 py-0.5 text-[10px] rounded-full bg-muted text-ink-muted dark:bg-gray-800 dark:text-gray-400"
                                                           title="<?= e($assignedExploitTitle) ?>">No</span>
                                                 <?php endif; ?>
                                             </td>
-                                            <td class="px-4 py-3 text-xs text-gray-500">
+                                            <td class="px-4 py-3 text-xs text-ink-muted">
                                                 <?php if ($assignedReports === []): ?>
                                                     —
                                                 <?php else: ?>
                                                     <div class="flex flex-col gap-0.5">
                                                         <?php foreach ($assignedReports as $assignedReport): ?>
                                                             <a href="<?= base_url('modules/cve?tab=reports&report=' . (int)$assignedReport['id']) ?>"
-                                                               class="js-inline-report text-brand-600 dark:text-brand-400 hover:underline truncate max-w-[220px]"
+                                                               class="js-inline-report text-primary hover:underline truncate max-w-[220px]"
                                                                data-panel-url="<?= e(base_url('modules/cve/report-ai/' . (int)$assignedReport['id'] . '/panel')) ?>"
                                                                title="<?= e((string)($assignedReport['title'] ?? '')) ?>">
                                                                 Informe #<?= (int)$assignedReport['id'] ?>
@@ -4940,7 +4932,7 @@ syncCveReportPeriod();
                                                     </div>
                                                 <?php endif; ?>
                                             </td>
-                                            <td class="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">
+                                            <td class="px-4 py-3 text-xs text-ink-muted whitespace-nowrap">
                                                 <?= $assignedAt !== '' ? e(format_db_date($assignedAt, 'd/m/Y H:i')) : '—' ?>
                                             </td>
                                             <td class="px-4 py-3 text-right whitespace-nowrap">
@@ -4951,7 +4943,7 @@ syncCveReportPeriod();
                                                     <?= Csrf::field() ?>
                                                     <input type="hidden" name="group_id" value="<?= (int)$selectedGroup ?>">
                                                     <input type="hidden" name="cve_id" value="<?= e($assignedCveId) ?>">
-                                                    <button type="submit" class="text-xs text-gray-400 hover:text-red-500">Quitar</button>
+                                                    <button type="submit" class="text-xs text-ink-soft hover:text-red-500">Quitar</button>
                                                 </form>
                                             </td>
                                         </tr>
@@ -4970,26 +4962,26 @@ syncCveReportPeriod();
             <?php endif; ?>
 
             <?php if ($showImportForm): ?>
-                <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
+                <div class="card overflow-hidden">
                     <form method="POST" action="<?= base_url('modules/cve/software/import') ?>" class="p-5 space-y-4">
                         <?= Csrf::field() ?>
                         <div class="flex items-center justify-between gap-3">
                             <div>
                                 <h2 class="text-sm font-semibold">Importar lista de software</h2>
-                                <p class="text-[11px] text-gray-400 mt-0.5">
+                                <p class="text-[11px] text-ink-soft mt-0.5">
                                     Define el software estándar de una empresa o grupo. La sincronización
                                     detectará automáticamente los CVEs nuevos de cada producto.
                                 </p>
                             </div>
                             <a href="<?= base_url('modules/cve?tab=software' . ($selectedGroup > 0 ? '&group=' . (int)$selectedGroup : '')) ?>"
-                               class="text-xs text-gray-400 hover:underline">Cancelar</a>
+                               class="text-xs text-ink-soft hover:underline">Cancelar</a>
                         </div>
 
                         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                             <div>
-                                <label class="block text-xs text-gray-500 mb-1">Empresa o grupo destino *</label>
+                                <label class="block text-xs text-ink-muted mb-1">Empresa o grupo destino *</label>
                                 <select name="group_id" required
-                                        class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+                                        class="w-full px-3 py-2 rounded-lg border border-line-strong bg-input text-ink text-sm focus:ring-2 focus:ring-brand-500 outline-none">
                                     <option value="">Selecciona un destino…</option>
                                     <?php if ($companyGroups !== []): ?>
                                         <optgroup label="Empresas">
@@ -5014,10 +5006,10 @@ syncCveReportPeriod();
                             <div class="flex items-end">
                                 <label class="inline-flex items-start gap-2 cursor-pointer">
                                     <input type="checkbox" name="auto_cpe" value="1" checked
-                                           class="mt-0.5 rounded border-gray-300 dark:border-gray-600 text-brand-500 focus:ring-brand-500">
-                                    <span class="text-xs text-gray-600 dark:text-gray-300">
+                                           class="mt-0.5 rounded border-line-strong text-brand-500 focus:ring-brand-500">
+                                    <span class="text-xs text-ink-muted">
                                         Resolver CPE automáticamente
-                                        <span class="block text-[11px] text-gray-400">
+                                        <span class="block text-[11px] text-ink-soft">
                                             El mejor resultado de NVD. Los productos sin resolver quedan pendientes de revisión.
                                         </span>
                                     </span>
@@ -5026,11 +5018,11 @@ syncCveReportPeriod();
                         </div>
 
                         <div>
-                            <label class="block text-xs text-gray-500 mb-1">Lista de software *</label>
+                            <label class="block text-xs text-ink-muted mb-1">Lista de software *</label>
                             <textarea name="software_list" rows="8" required
                                       placeholder="Teams Classic&#10;Chrome | Google&#10;Windows 11 | Microsoft&#10;Office 2016 | Microsoft&#10;7-Zip | 7-zip&#10;&#10;También puedes pegar una tabla con Nombre, Plataforma y Fabricante."
-                                      class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm font-mono focus:ring-2 focus:ring-brand-500 outline-none"></textarea>
-                            <p class="text-[11px] text-gray-400 mt-1">
+                                      class="w-full px-3 py-2 rounded-lg border border-line-strong bg-input text-ink text-sm font-mono focus:ring-2 focus:ring-brand-500 outline-none"></textarea>
+                            <p class="text-[11px] text-ink-soft mt-1">
                                 Un producto por línea. Separadores admitidos: <code>|</code>, <code>;</code> o tabulador.
                                 Máximo 80 líneas. Los duplicados del mismo grupo se omiten.
                             </p>
@@ -5038,15 +5030,15 @@ syncCveReportPeriod();
 
                         <div class="flex items-center gap-3">
                             <button type="submit"
-                                    class="inline-flex items-center gap-1.5 px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors">
-                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+                                    class="inline-flex items-center gap-1.5 btn">
+                                <i class="material-icons icon-16" aria-hidden="true">download</i>
                                 Importar lista
                             </button>
                             <a href="<?= base_url('modules/cve?tab=software' . ($selectedGroup > 0 ? '&group=' . (int)$selectedGroup : '')) ?>"
-                               class="text-sm text-gray-500 hover:underline">Cancelar</a>
+                               class="text-sm text-ink-muted hover:underline">Cancelar</a>
                         </div>
 
-                        <p class="text-[11px] text-gray-400">
+                        <p class="text-[11px] text-ink-soft">
                             Los CVEs históricos no se descargan al importar: usa «Sincronizar» en cada fila
                             (o espera a la próxima sincronización). Los CVEs nuevos aparecerán automáticamente
                             en «CVEs detectados automáticamente».
@@ -5055,14 +5047,14 @@ syncCveReportPeriod();
                 </div>
             <?php endif; ?>
 
-            <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
-                <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between gap-3 flex-wrap">
+            <div class="card overflow-hidden">
+                <div class="px-5 py-4 border-b border-line flex items-center justify-between gap-3 flex-wrap">
                     <h2 class="text-sm font-semibold">Software identificado</h2>
                     <div class="flex items-center gap-2">
                         <form method="GET" action="<?= base_url('modules/cve') ?>" class="flex items-center gap-2">
                             <input type="hidden" name="tab" value="software">
                             <select name="group" onchange="this.form.submit()"
-                                    class="px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                                    class="px-2 py-1.5 rounded-lg border border-line-strong bg-input text-ink text-xs focus:ring-2 focus:ring-brand-500 outline-none">
                                 <option value="0">Todas las empresas y grupos</option>
                                 <?php if ($companyGroups !== []): ?>
                                     <optgroup label="Empresas">
@@ -5084,18 +5076,18 @@ syncCveReportPeriod();
                                 <?php endif; ?>
                             </select>
                             <input type="text" name="q" value="<?= e($q) ?>" placeholder="Buscar software..."
-                                   class="w-40 px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
-                            <button type="submit" class="px-2.5 py-1.5 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 text-xs font-medium rounded-lg transition-colors">Filtrar</button>
+                                   class="w-40 px-2 py-1.5 rounded-lg border border-line-strong bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                            <button type="submit" class="px-2.5 py-1.5 bg-muted hover:bg-surface-3 text-ink text-xs font-medium rounded-lg transition-colors">Filtrar</button>
                         </form>
                         <?php if ($isAdmin): ?>
                             <a href="<?= base_url('modules/cve?tab=software&import=1' . ($selectedGroup > 0 ? '&group=' . (int)$selectedGroup : '')) ?>"
-                               class="inline-flex items-center gap-1.5 px-3 py-1.5 border border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300 text-xs font-medium rounded-lg transition-colors">
-                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+                               class="inline-flex items-center gap-1.5 px-3 py-1.5 border border-line-strong hover:bg-muted text-ink text-xs font-medium rounded-lg transition-colors">
+                                <i class="material-icons icon-14" aria-hidden="true">download</i>
                                 Importar lista
                             </a>
                             <a href="<?= base_url('modules/cve?tab=software&new_software=1') ?>"
                                class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-brand-500 hover:bg-brand-600 text-white text-xs font-medium rounded-lg transition-colors">
-                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+                                <i class="material-icons icon-14" aria-hidden="true">add</i>
                                 Nuevo software
                             </a>
                         <?php endif; ?>
@@ -5104,16 +5096,16 @@ syncCveReportPeriod();
 
                 <?php if (empty($software)): ?>
                     <div class="px-5 py-10 text-center">
-                        <p class="text-sm text-gray-500">No hay software en el inventario con estos filtros.</p>
+                        <p class="text-sm text-ink-muted">No hay software en el inventario con estos filtros.</p>
                         <?php if ($isAdmin): ?>
-                            <a href="<?= base_url('modules/cve?tab=software&new_software=1') ?>" class="inline-block mt-3 text-sm text-brand-600 dark:text-brand-400 hover:underline">Añadir el primero</a>
+                            <a href="<?= base_url('modules/cve?tab=software&new_software=1') ?>" class="inline-block mt-3 text-sm text-primary hover:underline">Añadir el primero</a>
                         <?php endif; ?>
                     </div>
                 <?php else: ?>
                     <div class="overflow-x-auto">
-                        <table class="w-full text-sm">
+                        <table class="data-table w-full text-sm">
                             <thead>
-                                <tr class="border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-xs text-gray-500 uppercase">
+                                <tr class="border-b border-line bg-muted text-xs text-ink-muted uppercase">
                                     <th class="text-left px-4 py-2">Software</th>
                                     <th class="text-left px-4 py-2">Grupo</th>
                                     <th class="text-left px-4 py-2">Versión</th>
@@ -5125,22 +5117,22 @@ syncCveReportPeriod();
                                     <th class="text-right px-4 py-2"></th>
                                 </tr>
                             </thead>
-                            <tbody class="divide-y divide-gray-100 dark:divide-gray-700/50">
+                            <tbody class="divide-y divide-line-subtle">
                                 <?php foreach ($software as $s): ?>
                                     <?php
                                     $crit = (string)($s['criticality'] ?? 'medium');
                                     $critClass = $criticalityClasses[$crit] ?? $criticalityClasses['medium'];
                                     ?>
-                                    <tr class="hover:bg-gray-50 dark:hover:bg-gray-800/50">
+                                    <tr class="hover:bg-muted">
                                         <td class="px-4 py-3">
                                             <p class="font-medium"><?= e($s['name']) ?></p>
-                                            <p class="text-xs text-gray-400">
+                                            <p class="text-xs text-ink-soft">
                                                 <?= e(trim(($s['vendor'] ?? '') . ' ' . ($s['product'] ?? ''))) ?: '—' ?>
                                                 <?php if (!empty($s['environment'])): ?> · <?= e($s['environment']) ?><?php endif; ?>
                                                 <?php if (!empty($s['asset_count'])): ?> · <?= number_format((int)$s['asset_count']) ?> activos<?php endif; ?>
                                             </p>
                                         </td>
-                                        <td class="px-4 py-3 text-xs text-gray-500">
+                                        <td class="px-4 py-3 text-xs text-ink-muted">
                                             <?php
                                             $softwareCompany = (string)($s['company_name'] ?? '');
                                             $softwareGroup = (string)($s['group_name'] ?? '');
@@ -5154,24 +5146,24 @@ syncCveReportPeriod();
                                             ?>
                                             <?= e($softwareGroupLabel) ?>
                                         </td>
-                                        <td class="px-4 py-3 text-xs font-mono text-gray-500"><?= e(!empty($s['version']) ? $s['version'] : '—') ?></td>
+                                        <td class="px-4 py-3 text-xs font-mono text-ink-muted"><?= e(!empty($s['version']) ? $s['version'] : '—') ?></td>
                                         <td class="px-4 py-3">
                                             <span class="inline-flex px-2 py-0.5 text-xs rounded-full <?= $critClass ?>"><?= e($criticalityLabels[$crit] ?? $crit) ?></span>
                                         </td>
-                                        <td class="px-4 py-3 text-xs font-mono text-gray-400 max-w-[260px] truncate" title="<?= e($s['cpe_name'] ?? '') ?>">
+                                        <td class="px-4 py-3 text-xs font-mono text-ink-soft max-w-[260px] truncate" title="<?= e($s['cpe_name'] ?? '') ?>">
                                             <?php if (trim((string)($s['cpe_name'] ?? '')) === ''): ?>
-                                                <span class="inline-flex px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300 text-[10px] font-medium">Pendiente de CPE</span>
+                                                <span class="dark:bg-amber-900/30 dark:text-amber-300 font-medium status-pending">Pendiente de CPE</span>
                                             <?php else: ?>
                                                 <?= e($s['cpe_name']) ?>
                                                 <?php if ((int)($s['cpe_count'] ?? 0) > 1): ?>
-                                                    <span class="text-gray-500"> +<?= (int)$s['cpe_count'] - 1 ?></span>
+                                                    <span class="text-ink-muted"> +<?= (int)$s['cpe_count'] - 1 ?></span>
                                                 <?php endif; ?>
                                             <?php endif; ?>
                                         </td>
-                                        <td class="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">
+                                        <td class="px-4 py-3 text-xs text-ink-muted whitespace-nowrap">
                                             <?= number_format((int)($s['match_count'] ?? 0)) ?>
                                             <?php if ((int)($s['match_count'] ?? 0) > 0): ?>
-                                                <a href="<?= base_url('modules/cve?tab=catalog&software_id=' . (int)$s['id']) ?>" class="text-brand-600 dark:text-brand-400 hover:underline ml-1">Ver</a>
+                                                <a href="<?= base_url('modules/cve?tab=catalog&software_id=' . (int)$s['id']) ?>" class="text-primary hover:underline ml-1">Ver</a>
                                             <?php endif; ?>
                                         </td>
                                         <td class="px-4 py-3 text-xs font-medium <?= (int)($s['kev_count'] ?? 0) > 0 ? 'text-red-500' : 'text-gray-400' ?>">
@@ -5182,18 +5174,18 @@ syncCveReportPeriod();
                                         </td>
                                         <td class="px-4 py-3 text-right whitespace-nowrap">
                                             <?php if ($isAdmin): ?>
-                                                <a href="<?= base_url('modules/cve?tab=software&edit_software=' . (int)$s['id']) ?>" class="text-xs text-gray-400 hover:text-brand-500 mr-2">Editar</a>
+                                                <a href="<?= base_url('modules/cve?tab=software&edit_software=' . (int)$s['id']) ?>" class="text-xs text-ink-soft hover:text-brand-500 mr-2">Editar</a>
                                                 <?php if ((int)($s['cpe_count'] ?? 0) > 0): ?>
                                                     <form method="POST" action="<?= base_url('modules/cve/software/backfill') ?>" class="inline mr-2">
                                                         <?= Csrf::field() ?>
                                                         <input type="hidden" name="id" value="<?= (int)$s['id'] ?>">
-                                                        <button type="submit" class="text-xs text-gray-400 hover:text-brand-500">Sincronizar</button>
+                                                        <button type="submit" class="text-xs text-ink-soft hover:text-brand-500">Sincronizar</button>
                                                     </form>
                                                 <?php endif; ?>
                                                 <form method="POST" action="<?= base_url('modules/cve/software/delete') ?>" class="inline" data-confirm="¿Eliminar «<?= e($s['name']) ?>» del inventario?" data-confirm-danger>
                                                     <?= Csrf::field() ?>
                                                     <input type="hidden" name="id" value="<?= (int)$s['id'] ?>">
-                                                    <button type="submit" class="text-xs text-gray-400 hover:text-red-500">Eliminar</button>
+                                                    <button type="submit" class="text-xs text-ink-soft hover:text-red-500">Eliminar</button>
                                                 </form>
                                             <?php endif; ?>
                                         </td>
@@ -5210,25 +5202,25 @@ syncCveReportPeriod();
                 $cpeValue = (string)($sw['cpe_list'] ?? $sw['cpe_name'] ?? '');
                 ?>
                 <form method="POST" action="<?= base_url('modules/cve/software/save') ?>"
-                      class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-6 space-y-4">
+                      class="card p-6 space-y-4">
                     <?= Csrf::field() ?>
                     <input type="hidden" name="id" value="<?= $swId ?>">
                     <div class="flex items-center justify-between">
                         <h2 class="text-lg font-semibold"><?= $swId ? 'Editar software' : 'Nuevo software' ?></h2>
-                        <a href="<?= base_url('modules/cve?tab=software') ?>" class="text-sm text-gray-500 hover:underline">Cancelar</a>
+                        <a href="<?= base_url('modules/cve?tab=software') ?>" class="text-sm text-ink-muted hover:underline">Cancelar</a>
                     </div>
 
                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div>
-                            <label class="block text-xs text-gray-500 mb-1">Nombre *</label>
+                            <label class="block text-xs text-ink-muted mb-1">Nombre *</label>
                             <input type="text" name="name" required maxlength="160" value="<?= e($sw['name'] ?? '') ?>"
                                    placeholder="Google Chrome"
-                                   class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+                                   class="w-full px-3 py-2 rounded-lg border border-line-strong bg-surface text-ink text-sm focus:ring-2 focus:ring-brand-500 outline-none">
                         </div>
                         <div>
-                            <label class="block text-xs text-gray-500 mb-1">Grupo</label>
+                            <label class="block text-xs text-ink-muted mb-1">Grupo</label>
                             <select name="group_id"
-                                    class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+                                    class="w-full px-3 py-2 rounded-lg border border-line-strong bg-input text-ink text-sm focus:ring-2 focus:ring-brand-500 outline-none">
                                 <option value="0">— Sin grupo —</option>
                                 <?php if ($companyGroups !== []): ?>
                                     <optgroup label="Empresas">
@@ -5251,77 +5243,77 @@ syncCveReportPeriod();
                             </select>
                         </div>
                         <div>
-                            <label class="block text-xs text-gray-500 mb-1">Vendor</label>
+                            <label class="block text-xs text-ink-muted mb-1">Vendor</label>
                             <input type="text" name="vendor" maxlength="120" value="<?= e($sw['vendor'] ?? '') ?>"
                                    placeholder="Google"
-                                   class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+                                   class="w-full px-3 py-2 rounded-lg border border-line-strong bg-surface text-ink text-sm focus:ring-2 focus:ring-brand-500 outline-none">
                         </div>
                         <div>
-                            <label class="block text-xs text-gray-500 mb-1">Producto</label>
+                            <label class="block text-xs text-ink-muted mb-1">Producto</label>
                             <input type="text" name="product" maxlength="120" value="<?= e($sw['product'] ?? '') ?>"
                                    placeholder="Chrome"
-                                   class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+                                   class="w-full px-3 py-2 rounded-lg border border-line-strong bg-surface text-ink text-sm focus:ring-2 focus:ring-brand-500 outline-none">
                         </div>
                         <div>
-                            <label class="block text-xs text-gray-500 mb-1">Versión</label>
+                            <label class="block text-xs text-ink-muted mb-1">Versión</label>
                             <input type="text" name="version" maxlength="120" value="<?= e($sw['version'] ?? '') ?>"
                                    placeholder="120.0.6099.109"
-                                   class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm font-mono focus:ring-2 focus:ring-brand-500 outline-none">
+                                   class="w-full px-3 py-2 rounded-lg border border-line-strong bg-surface text-ink text-sm font-mono focus:ring-2 focus:ring-brand-500 outline-none">
                         </div>
                         <div>
-                            <label class="block text-xs text-gray-500 mb-1">Entorno</label>
+                            <label class="block text-xs text-ink-muted mb-1">Entorno</label>
                             <input type="text" name="environment" maxlength="120" value="<?= e($sw['environment'] ?? '') ?>"
                                    placeholder="Corporativo / Producción"
-                                   class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+                                   class="w-full px-3 py-2 rounded-lg border border-line-strong bg-surface text-ink text-sm focus:ring-2 focus:ring-brand-500 outline-none">
                         </div>
                         <div>
-                            <label class="block text-xs text-gray-500 mb-1">Criticidad</label>
+                            <label class="block text-xs text-ink-muted mb-1">Criticidad</label>
                             <select name="criticality"
-                                    class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+                                    class="w-full px-3 py-2 rounded-lg border border-line-strong bg-input text-ink text-sm focus:ring-2 focus:ring-brand-500 outline-none">
                                 <?php foreach ($criticalityLabels as $val => $label): ?>
                                     <option value="<?= e($val) ?>" <?= (string)($sw['criticality'] ?? 'medium') === $val ? 'selected' : '' ?>><?= e($label) ?></option>
                                 <?php endforeach; ?>
                             </select>
                         </div>
                         <div>
-                            <label class="block text-xs text-gray-500 mb-1">Nº de activos</label>
+                            <label class="block text-xs text-ink-muted mb-1">Nº de activos</label>
                             <input type="number" name="asset_count" min="0" max="1000000" value="<?= e((string)($sw['asset_count'] ?? '')) ?>"
                                    placeholder="0"
-                                   class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+                                   class="w-full px-3 py-2 rounded-lg border border-line-strong bg-surface text-ink text-sm focus:ring-2 focus:ring-brand-500 outline-none">
                         </div>
                     </div>
 
                     <div>
-                        <label class="block text-xs text-gray-500 mb-1">CPEs (uno por línea)</label>
+                        <label class="block text-xs text-ink-muted mb-1">CPEs (uno por línea)</label>
                         <textarea name="cpe_list" id="cve-cpe-list" rows="3"
                                   placeholder="cpe:2.3:a:google:chrome&#10;cpe:2.3:a:google:chrome_os"
-                                  class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm font-mono focus:ring-2 focus:ring-brand-500 outline-none"><?= e($cpeValue) ?></textarea>
+                                  class="w-full px-3 py-2 rounded-lg border border-line-strong bg-input text-ink text-sm font-mono focus:ring-2 focus:ring-brand-500 outline-none"><?= e($cpeValue) ?></textarea>
                         <div class="flex items-center gap-2 mt-2">
                             <input type="text" id="cve-cpe-query" placeholder="Buscar en NVD: Chrome, Adobe Acrobat…"
-                                   class="flex-1 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none"
+                                   class="flex-1 px-3 py-2 rounded-lg border border-line-strong bg-input text-ink text-sm focus:ring-2 focus:ring-brand-500 outline-none"
                                    onkeydown="if (event.key === 'Enter') { event.preventDefault(); cveSearchCpe(); }">
                             <button type="button" onclick="cveSearchCpe()"
-                                    class="px-3 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 text-sm font-medium rounded-lg transition-colors">
+                                    class="px-3 py-2 bg-muted hover:bg-surface-3 text-ink text-sm font-medium rounded-lg transition-colors">
                                 Buscar CPE
                             </button>
                         </div>
                         <div id="cve-cpe-results" class="mt-2 space-y-1"></div>
-                        <p class="text-xs text-gray-400 mt-1">
+                        <p class="text-xs text-ink-soft mt-1">
                             Formato NVD: <code class="font-mono">cpe:2.3:a:vendor:product</code>. Puedes añadir varios CPE; el primero será el principal.
                         </p>
                     </div>
 
                     <div>
-                        <label class="block text-xs text-gray-500 mb-1">Notas</label>
+                        <label class="block text-xs text-ink-muted mb-1">Notas</label>
                         <textarea name="notes" rows="2"
-                                  class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none"><?= e($sw['notes'] ?? '') ?></textarea>
+                                  class="w-full px-3 py-2 rounded-lg border border-line-strong bg-input text-ink text-sm focus:ring-2 focus:ring-brand-500 outline-none"><?= e($sw['notes'] ?? '') ?></textarea>
                     </div>
 
-                    <div class="flex items-center gap-3 pt-2 border-t border-gray-100 dark:border-gray-700">
-                        <button type="submit" class="px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors">
+                    <div class="flex items-center gap-3 pt-2 border-t border-line-subtle">
+                        <button type="submit" class="btn">
                             Guardar software
                         </button>
-                        <a href="<?= base_url('modules/cve?tab=software') ?>" class="text-sm text-gray-500 hover:underline">Cancelar</a>
+                        <a href="<?= base_url('modules/cve?tab=software') ?>" class="text-sm text-ink-muted hover:underline">Cancelar</a>
                     </div>
                 </form>
             <?php endif; ?>
@@ -5331,13 +5323,13 @@ syncCveReportPeriod();
     <!-- Modal: análisis de prioridad de parcheo por empresa/grupo -->
     <div id="cve-priority-modal" class="hidden fixed inset-0 z-50 no-print">
         <div class="absolute inset-0 bg-black/40" onclick="cvePriorityClose()"></div>
-        <div class="relative mx-auto mt-24 w-[calc(100%-2rem)] max-w-md bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 shadow-xl p-5">
+        <div class="relative mx-auto mt-24 w-[calc(100%-2rem)] max-w-md card shadow-xl p-5">
             <div class="flex items-start justify-between gap-3">
                 <div>
                     <h3 class="text-sm font-semibold">Análisis de prioridad de parcheo</h3>
-                    <p class="text-xs text-gray-500 mt-1" id="cve-priority-scope"></p>
+                    <p class="text-xs text-ink-muted mt-1" id="cve-priority-scope"></p>
                 </div>
-                <button type="button" onclick="cvePriorityClose()" class="text-xs text-gray-400 hover:text-gray-600">Cerrar</button>
+                <button type="button" onclick="cvePriorityClose()" class="text-xs text-ink-soft hover:text-gray-600">Cerrar</button>
             </div>
 
             <p class="mt-3 px-3 py-2 rounded-lg bg-brand-50 dark:bg-brand-950/40 text-[11px] text-brand-700 dark:text-brand-300">
@@ -5345,9 +5337,9 @@ syncCveReportPeriod();
             </p>
 
             <label class="block mt-4">
-                <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Perfil de IA</span>
+                <span class="block text-xs font-medium text-ink-muted mb-1">Perfil de IA</span>
                 <select id="cve-priority-profile"
-                        class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                        class="w-full px-2 py-1.5 rounded-lg border border-line-strong bg-input text-ink text-xs focus:ring-2 focus:ring-brand-500 outline-none">
                     <option value="0">Automático (predeterminado)</option>
                     <?php foreach (($llmProfiles ?? []) as $profile): ?>
                         <option value="<?= (int)$profile['id'] ?>">
@@ -5357,11 +5349,11 @@ syncCveReportPeriod();
                 </select>
             </label>
 
-            <p id="cve-priority-message" class="mt-3 text-xs text-gray-500"></p>
+            <p id="cve-priority-message" class="mt-3 text-xs text-ink-muted"></p>
 
             <div class="mt-4 flex items-center justify-end gap-2">
                 <button type="button" onclick="cvePriorityClose()"
-                        class="px-3 py-1.5 border border-gray-300 dark:border-gray-600 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark">
+                        class="px-3 py-1.5 border border-line-strong text-xs font-medium rounded-lg hover:bg-muted">
                     Cancelar
                 </button>
                 <button type="button" id="cve-priority-submit" onclick="cvePrioritySubmit(this)"
@@ -5557,7 +5549,7 @@ syncCveReportPeriod();
         window.cveSearchCpe = function () {
             var q = input ? input.value.trim() : '';
             if (!results || q.length < 2) return;
-            results.innerHTML = '<p class="text-xs text-gray-400">Buscando en NVD…</p>';
+            results.innerHTML = '<p class="text-xs text-ink-soft">Buscando en NVD…</p>';
             api('GET', searchUrl + '?q=' + encodeURIComponent(q)).then(function (res) {
                 if (!res || !res.success) {
                     results.innerHTML = '<p class="text-xs text-red-500">' + esc((res && res.error) ? res.error : 'Error al buscar CPE.') + '</p>';
@@ -5565,13 +5557,13 @@ syncCveReportPeriod();
                 }
                 var items = res.results || [];
                 if (!items.length) {
-                    results.innerHTML = '<p class="text-xs text-gray-400">Sin resultados. Puedes escribir el CPE manualmente.</p>';
+                    results.innerHTML = '<p class="text-xs text-ink-soft">Sin resultados. Puedes escribir el CPE manualmente.</p>';
                     return;
                 }
                 results.innerHTML = items.map(function (item) {
-                    return '<button type="button" class="block w-full text-left px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-muted-dark" data-cpe="' + esc(item.cpe) + '">'
+                    return '<button type="button" class="block w-full text-left px-3 py-2 rounded-lg border border-line hover:bg-muted" data-cpe="' + esc(item.cpe) + '">'
                         + '<span class="block text-xs font-medium">' + esc(item.title || item.cpe) + '</span>'
-                        + '<span class="block text-[10px] font-mono text-gray-400">' + esc(item.cpe) + '</span>'
+                        + '<span class="block text-[10px] font-mono text-ink-soft">' + esc(item.cpe) + '</span>'
                         + '</button>';
                 }).join('');
                 results.querySelectorAll('button[data-cpe]').forEach(function (btn) {

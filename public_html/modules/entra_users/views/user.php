@@ -21,7 +21,7 @@ $methodsMap = [
     <div class="min-w-0">
         <a href="<?= base_url('modules/entra_users?tenant=' . (int)$tenant['id']) ?>" class="text-xs text-brand-500 hover:underline">← Volver</a>
         <h1 class="text-xl font-semibold mt-2"><?= e($user['displayName'] ?? 'Usuario') ?></h1>
-        <p class="text-xs text-gray-400 font-mono mt-1"><?= e($user['userPrincipalName'] ?? '') ?> · <?= e($tenant['name'] ?? '') ?></p>
+        <p class="text-xs text-ink-soft font-mono mt-1"><?= e($user['userPrincipalName'] ?? '') ?> · <?= e($tenant['name'] ?? '') ?></p>
     </div>
     <?php if (!empty($user['accountEnabled']) || (isset($user['accountEnabled']) && $user['accountEnabled'] === false)): ?>
         <span class="inline-flex px-2 py-0.5 text-xs rounded-full shrink-0 <?= !empty($user['accountEnabled']) ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300' ?>">
@@ -31,30 +31,30 @@ $methodsMap = [
 </div>
 
 <?php if (!empty($profileError)): ?>
-    <div class="mb-4 px-4 py-3 rounded-lg text-sm text-red-600 bg-red-50 dark:bg-red-900/20">No se pudo leer el perfil: <?= e($profileError) ?></div>
+    <div class="alert alert-error">No se pudo leer el perfil: <?= e($profileError) ?></div>
 <?php endif; ?>
 
 <!-- Tarjetas -->
 <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-    <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-5">
-        <h2 class="text-xs font-semibold text-gray-500 uppercase mb-3">Perfil</h2>
+    <div class="card p-5">
+        <h2 class="text-xs font-semibold text-ink-muted uppercase mb-3">Perfil</h2>
         <dl class="space-y-2 text-sm">
-            <div><dt class="text-gray-400 text-xs">Departamento</dt><dd class="font-medium"><?= e($user['department'] ?? '—') ?></dd></div>
-            <div><dt class="text-gray-400 text-xs">Empresa</dt><dd class="font-medium"><?= e($user['companyName'] ?? '—') ?></dd></div>
-            <div><dt class="text-gray-400 text-xs">Cargo</dt><dd class="font-medium"><?= e($user['jobTitle'] ?? '—') ?></dd></div>
-            <div><dt class="text-gray-400 text-xs">País / ciudad</dt><dd class="font-medium"><?= e(trim(($user['country'] ?? '') . ' ' . ($user['city'] ?? '')) ?: '—') ?></dd></div>
+            <div><dt class="text-ink-soft text-xs">Departamento</dt><dd class="font-medium"><?= e($user['department'] ?? '—') ?></dd></div>
+            <div><dt class="text-ink-soft text-xs">Empresa</dt><dd class="font-medium"><?= e($user['companyName'] ?? '—') ?></dd></div>
+            <div><dt class="text-ink-soft text-xs">Cargo</dt><dd class="font-medium"><?= e($user['jobTitle'] ?? '—') ?></dd></div>
+            <div><dt class="text-ink-soft text-xs">País / ciudad</dt><dd class="font-medium"><?= e(trim(($user['country'] ?? '') . ' ' . ($user['city'] ?? '')) ?: '—') ?></dd></div>
         </dl>
     </div>
 
-    <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-5">
-        <h2 class="text-xs font-semibold text-gray-500 uppercase mb-3">Contraseña</h2>
+    <div class="card p-5">
+        <h2 class="text-xs font-semibold text-ink-muted uppercase mb-3">Contraseña</h2>
         <p class="text-sm font-medium"><?= !empty($user['lastPasswordChangeDateTime']) ? format_date($user['lastPasswordChangeDateTime']) : '—' ?></p>
-        <p class="text-xs text-gray-400 mt-1">Último cambio de contraseña</p>
-        <p class="text-xs text-gray-400 mt-3">Alta: <?= !empty($user['createdDateTime']) ? format_date($user['createdDateTime']) : '—' ?></p>
+        <p class="text-xs text-ink-soft mt-1">Último cambio de contraseña</p>
+        <p class="text-xs text-ink-soft mt-3">Alta: <?= !empty($user['createdDateTime']) ? format_date($user['createdDateTime']) : '—' ?></p>
     </div>
 
-    <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-5">
-        <h2 class="text-xs font-semibold text-gray-500 uppercase mb-3">MFA</h2>
+    <div class="card p-5">
+        <h2 class="text-xs font-semibold text-ink-muted uppercase mb-3">MFA</h2>
         <?php if (!empty($mfaError) && empty($methods)): ?>
             <p class="text-xs text-red-500"><?= e($mfaError) ?></p>
         <?php else: ?>
@@ -64,11 +64,11 @@ $methodsMap = [
                     <?= $mfaOk ? 'MFA registrado' : 'MFA no registrado' ?>
                 </span>
                 <?php if (isset($mfa['isMfaCapable'])): ?>
-                    <span class="text-xs text-gray-400"><?= !empty($mfa['isMfaCapable']) ? 'capaz' : 'no capaz' ?></span>
+                    <span class="text-xs text-ink-soft"><?= !empty($mfa['isMfaCapable']) ? 'capaz' : 'no capaz' ?></span>
                 <?php endif; ?>
             </div>
             <?php if (!empty($methods)): ?>
-                <ul class="text-xs text-gray-600 dark:text-gray-300 space-y-1">
+                <ul class="text-xs text-ink-muted space-y-1">
                     <?php foreach ($methods as $m): ?>
                         <?php
                         $t = (string)($m['@odata.type'] ?? '');
@@ -81,15 +81,15 @@ $methodsMap = [
                     <?php endforeach; ?>
                 </ul>
             <?php elseif (empty($mfaError)): ?>
-                <p class="text-xs text-gray-500">Sin métodos detectados.</p>
+                <p class="text-xs text-ink-muted">Sin métodos detectados.</p>
             <?php endif; ?>
         <?php endif; ?>
     </div>
 
-    <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-5">
-        <h2 class="text-xs font-semibold text-gray-500 uppercase mb-3">Riesgo</h2>
+    <div class="card p-5">
+        <h2 class="text-xs font-semibold text-ink-muted uppercase mb-3">Riesgo</h2>
         <?php if (!empty($riskError)): ?>
-            <p class="text-xs text-gray-500"><?= e($riskError) ?></p>
+            <p class="text-xs text-ink-muted"><?= e($riskError) ?></p>
         <?php elseif (!empty($risk)): ?>
             <?php
             $rl = strtolower((string)($risk['riskLevel'] ?? ''));
@@ -99,45 +99,45 @@ $methodsMap = [
                 : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400'));
             ?>
             <span class="inline-flex px-2 py-0.5 text-xs rounded-full <?= $rlClass ?>"><?= e($risk['riskLevel'] ?? '—') ?></span>
-            <p class="text-sm mt-2"><span class="text-gray-400 text-xs">Estado:</span> <?= e($risk['riskState'] ?? '—') ?></p>
-            <p class="text-sm"><span class="text-gray-400 text-xs">Detalle:</span> <?= e($risk['riskDetail'] ?? '—') ?></p>
-            <p class="text-xs text-gray-400 mt-2">Actualizado: <?= !empty($risk['riskLastUpdatedDateTime']) ? format_date($risk['riskLastUpdatedDateTime']) : '—' ?></p>
+            <p class="text-sm mt-2"><span class="text-ink-soft text-xs">Estado:</span> <?= e($risk['riskState'] ?? '—') ?></p>
+            <p class="text-sm"><span class="text-ink-soft text-xs">Detalle:</span> <?= e($risk['riskDetail'] ?? '—') ?></p>
+            <p class="text-xs text-ink-soft mt-2">Actualizado: <?= !empty($risk['riskLastUpdatedDateTime']) ? format_date($risk['riskLastUpdatedDateTime']) : '—' ?></p>
         <?php else: ?>
-            <p class="text-sm text-gray-500">Sin riesgo registrado.</p>
-            <p class="text-xs text-gray-400 mt-1">(Requiere Entra ID P2)</p>
+            <p class="text-sm text-ink-muted">Sin riesgo registrado.</p>
+            <p class="text-xs text-ink-soft mt-1">(Requiere Entra ID P2)</p>
         <?php endif; ?>
     </div>
 </div>
 
 <!-- Sign-ins -->
 <?php $mfaCodes = [50074, 50076, 500121, 50158]; ?>
-<div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
-    <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between gap-3 flex-wrap">
+<div class="card overflow-hidden">
+    <div class="px-5 py-4 border-b border-line flex items-center justify-between gap-3 flex-wrap">
         <div class="flex items-center gap-3 flex-wrap">
             <h2 class="text-sm font-semibold">Inicios de sesión (<?= count($signIns) ?>)</h2>
             <div class="flex items-center gap-2 text-xs">
-                <span class="text-gray-400">Periodo:</span>
+                <span class="text-ink-soft">Periodo:</span>
                 <?php foreach ([1 => '24 h', 7 => '7 días', 14 => '14 días', 30 => '30 días', 0 => 'Sin filtro'] as $d => $lbl): ?>
                     <a href="?tenant=<?= (int)$tenant['id'] ?>&days=<?= $d ?>" class="<?= (int)($days ?? 7) === $d ? 'font-semibold text-brand-500' : 'text-gray-500 hover:underline' ?>"><?= $lbl ?></a>
                 <?php endforeach; ?>
             </div>
         </div>
         <div class="flex items-center gap-3 flex-wrap text-xs">
-            <select id="filter-state" onchange="applyFilters()" class="px-2 py-1 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-xs">
+            <select id="filter-state" onchange="applyFilters()" class="px-2 py-1 rounded-lg border border-line-strong bg-input text-xs">
                 <option value="">Todos los resultados</option>
                 <option value="ok">Correcto</option>
                 <option value="mfa">MFA no completado</option>
                 <option value="fail">Fallido</option>
             </select>
             <label class="inline-flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" id="only-outside" onchange="applyFilters()" class="rounded border-gray-300 text-brand-500 focus:ring-brand-500">
+                <input type="checkbox" id="only-outside" onchange="applyFilters()" class="rounded border-line-strong text-brand-500 focus:ring-brand-500">
                 Solo fuera del país habitual
             </label>
         </div>
     </div>
 
     <?php if (!empty($signInsFallback)): ?>
-        <div class="px-5 py-2 text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-800">
+        <div class="px-5 py-2 text-xs text-warning bg-warning-bg/30 border-b border-warning-border">
             El filtro de fecha no devolvió resultados; mostrando los inicios de sesión más recientes.
         </div>
     <?php endif; ?>
@@ -145,22 +145,22 @@ $methodsMap = [
     <?php if (!empty($signInsError)): ?>
         <div class="px-5 py-6 text-sm text-red-500">
             No se pudieron leer los sign-ins: <?= e($signInsError) ?>
-            <p class="text-xs text-gray-400 mt-1">Requiere el permiso <code>AuditLog.Read.All</code>.</p>
+            <p class="text-xs text-ink-soft mt-1">Requiere el permiso <code>AuditLog.Read.All</code>.</p>
         </div>
     <?php elseif (empty($signIns)): ?>
-        <p class="px-5 py-6 text-sm text-gray-500">Sin inicios de sesión en el periodo seleccionado. <span class="text-gray-400">(El histórico es de 7 días; con Entra ID P1/P2, hasta 30).</span></p>
+        <p class="px-5 py-6 text-sm text-ink-muted">Sin inicios de sesión en el periodo seleccionado. <span class="text-ink-soft">(El histórico es de 7 días; con Entra ID P1/P2, hasta 30).</span></p>
     <?php else: ?>
-        <div class="px-5 py-3 border-b border-gray-200 dark:border-gray-700 flex items-center gap-4 text-xs flex-wrap">
-            <span class="text-gray-400">Mostrando <strong id="cnt-shown"><?= count($signIns) ?></strong>:</span>
-            <span class="text-green-600 dark:text-green-400">● Correctos: <strong id="cnt-ok">0</strong></span>
+        <div class="px-5 py-3 border-b border-line flex items-center gap-4 text-xs flex-wrap">
+            <span class="text-ink-soft">Mostrando <strong id="cnt-shown"><?= count($signIns) ?></strong>:</span>
+            <span class="text-success">● Correctos: <strong id="cnt-ok">0</strong></span>
             <span class="text-orange-500 dark:text-orange-400">● MFA no completado: <strong id="cnt-mfa">0</strong></span>
-            <span class="text-red-600 dark:text-red-400">● Fallidos: <strong id="cnt-fail">0</strong></span>
-            <span class="text-gray-400">· País habitual: <strong class="text-gray-600 dark:text-gray-300"><?= e($usualCountry ?? '—') ?></strong></span>
+            <span class="text-danger">● Fallidos: <strong id="cnt-fail">0</strong></span>
+            <span class="text-ink-soft">· País habitual: <strong class="text-ink-muted"><?= e($usualCountry ?? '—') ?></strong></span>
         </div>
         <div class="overflow-x-auto">
-            <table class="w-full text-sm">
+            <table class="data-table w-full text-sm">
                 <thead>
-                    <tr class="border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-xs text-gray-500 uppercase">
+                    <tr class="border-b border-line bg-muted text-xs text-ink-muted uppercase">
                         <th class="text-left px-4 py-2">Fecha</th>
                         <th class="text-left px-4 py-2">IP</th>
                         <th class="text-left px-4 py-2">País / ciudad</th>
@@ -168,7 +168,7 @@ $methodsMap = [
                         <th class="text-left px-4 py-2">Resultado</th>
                     </tr>
                 </thead>
-                <tbody id="signin-body" class="divide-y divide-gray-100 dark:divide-gray-700/50">
+                <tbody id="signin-body" class="divide-y divide-line-subtle">
                     <?php foreach ($signIns as $s): ?>
                         <?php
                         $country = $s['location']['countryOrRegion'] ?? '';
@@ -195,13 +195,13 @@ $methodsMap = [
                             <td class="px-4 py-2 text-xs font-mono"><?= e($s['ipAddress'] ?? '—') ?></td>
                             <td class="px-4 py-2 text-xs">
                                 <?= e($country ?: '—') ?><?= $city ? ' · ' . e($city) : '' ?>
-                                <?php if ($outside): ?><span class="ml-1 inline-flex px-1.5 py-0.5 text-[10px] rounded bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300">fuera</span><?php endif; ?>
+                                <?php if ($outside): ?><span class="ml-1 inline-flex px-1.5 py-0.5 text-[10px] rounded bg-danger-bg text-danger">fuera</span><?php endif; ?>
                             </td>
-                            <td class="px-4 py-2 text-xs text-gray-500"><?= e($s['clientAppUsed'] ?? '—') ?></td>
+                            <td class="px-4 py-2 text-xs text-ink-muted"><?= e($s['clientAppUsed'] ?? '—') ?></td>
                             <td class="px-4 py-2 text-xs">
                                 <span class="inline-flex px-2 py-0.5 rounded text-[11px] <?= $badge ?>"><?= e($label) ?></span>
-                                <?php if ($ec !== 0): ?><span class="ml-1 text-[10px] text-gray-400 font-mono"><?= $ec ?></span><?php endif; ?>
-                                <?php if ($fr !== ''): ?><div class="text-[10px] text-gray-400 mt-0.5"><?= e(truncate($fr, 90)) ?></div><?php endif; ?>
+                                <?php if ($ec !== 0): ?><span class="ml-1 text-[10px] text-ink-soft font-mono"><?= $ec ?></span><?php endif; ?>
+                                <?php if ($fr !== ''): ?><div class="text-[10px] text-ink-soft mt-0.5"><?= e(truncate($fr, 90)) ?></div><?php endif; ?>
                             </td>
                         </tr>
                     <?php endforeach; ?>

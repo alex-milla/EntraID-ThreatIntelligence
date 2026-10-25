@@ -23,13 +23,13 @@ foreach ($flashData as $type => $msg):
             <div class="flex items-start justify-between gap-3">
                 <div class="min-w-0">
                     <h3 class="text-sm font-semibold"><?= e($mod['name']) ?></h3>
-                    <p class="text-xs text-gray-400 font-mono mt-0.5"><?= e($mod['module_key']) ?> v<?= e($mod['version']) ?></p>
+                    <p class="text-xs text-ink-soft font-mono mt-0.5"><?= e($mod['module_key']) ?> v<?= e($mod['version']) ?></p>
                 </div>
                 <span class="inline-flex px-2 py-0.5 text-xs rounded-full shrink-0 <?= $mod['is_active'] ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400' ?>">
                     <?= $mod['is_active'] ? 'Activo' : 'Inactivo' ?>
                 </span>
             </div>
-            <p class="text-sm text-gray-500 mt-2 line-clamp-2"><?= e($mod['description'] ?? '') ?></p>
+            <p class="text-sm text-ink-muted mt-2 line-clamp-2"><?= e($mod['description'] ?? '') ?></p>
             <form method="POST" action="<?= base_url('admin/module/toggle') ?>" class="mt-4">
                 <?= Csrf::field() ?>
                 <input type="hidden" name="module_key" value="<?= e($mod['module_key']) ?>">

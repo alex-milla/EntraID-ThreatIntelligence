@@ -20,21 +20,21 @@ $tab = 'reports';
 require __DIR__ . '/_tabs.php';
 ?>
 <?php if ($report === null): ?>
-    <div class="bg-white rounded-xl border border-red-200 p-6">
-        <h1 class="text-lg font-semibold text-red-600">Informe no encontrado</h1>
-        <p class="text-sm text-gray-500 mt-2">El informe solicitado no existe o ha sido eliminado.</p>
+    <div class="bg-surface rounded-xl border border-danger-border p-6">
+        <h1 class="text-lg font-semibold text-danger">Informe no encontrado</h1>
+        <p class="text-sm text-ink-muted mt-2">El informe solicitado no existe o ha sido eliminado.</p>
         <a href="<?= base_url('modules/cve?tab=reports') ?>" class="inline-block mt-4 text-sm text-brand-600 hover:underline">Volver a informes</a>
     </div>
 <?php else: ?>
 
     <div class="mb-5 flex items-start justify-between gap-4 flex-wrap no-print">
-        <a href="<?= base_url('modules/cve?tab=reports') ?>" class="inline-flex items-center gap-2 text-sm text-gray-500 hover:text-gray-700">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 19l-7-7 7-7"/></svg>
+        <a href="<?= base_url('modules/cve?tab=reports') ?>" class="inline-flex items-center gap-2 text-sm text-ink-muted hover:text-gray-700">
+            <i class="material-icons icon-16" aria-hidden="true">chevron_left</i>
             Informes CVE
         </a>
         <div class="flex items-center gap-2 flex-wrap">
             <a href="<?= base_url('modules/cve?tab=reports&report=' . (int)$report['id']) ?>"
-               class="px-3 py-2 border border-gray-300 dark:border-gray-600 text-sm font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">
+               class="px-3 py-2 border border-line-strong text-sm font-medium rounded-lg hover:bg-muted transition-colors">
                 Abrir en el workspace
             </a>
             <?php if (!$isProcessing): ?>
@@ -44,7 +44,7 @@ require __DIR__ . '/_tabs.php';
                 </button>
             <?php endif; ?>
             <button type="button" disabled title="Pendiente de configurar: el envío por email llegará en una próxima versión."
-                    class="px-3 py-2 border border-gray-300 text-sm font-medium rounded-lg opacity-50 cursor-not-allowed">
+                    class="px-3 py-2 border border-line-strong text-sm font-medium rounded-lg opacity-50 cursor-not-allowed">
                 Enviar por email
             </button>
         </div>

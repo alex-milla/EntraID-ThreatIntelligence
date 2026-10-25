@@ -61,19 +61,19 @@ $jobLabels = ['pending' => 'En cola', 'running' => 'Generando', 'done' => 'Listo
 $ext = is_array($diag['ext'] ?? null) ? $diag['ext'] : [];
 ?>
 
-<?php if (!empty($success)): ?><div class="mb-4 px-4 py-3 rounded-lg text-sm text-green-600 bg-green-50 dark:bg-green-900/20"><?= e($success) ?></div><?php endif; ?>
-<?php if (!empty($error)): ?><div class="mb-4 px-4 py-3 rounded-lg text-sm text-red-600 bg-red-50 dark:bg-red-900/20"><?= e($error) ?></div><?php endif; ?>
+<?php if (!empty($success)): ?><div class="alert alert-success"><?= e($success) ?></div><?php endif; ?>
+<?php if (!empty($error)): ?><div class="alert alert-error"><?= e($error) ?></div><?php endif; ?>
 
 <div class="mb-6 flex items-start justify-between gap-4 flex-wrap">
     <div>
         <h2 class="text-xl font-bold">Logs</h2>
-        <p class="text-xs text-gray-400 mt-1">
+        <p class="text-xs text-ink-soft mt-1">
             Errores PHP, actividad de usuarios y trazas de la aplicación. Se leen como máximo los últimos 1 MB de cada fichero.
         </p>
     </div>
     <div class="flex items-center gap-2 flex-wrap">
         <a href="<?= base_url('admin/logs/download?source=' . rawurlencode($source)) ?>"
-           class="px-3 py-2 border border-gray-200 dark:border-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">
+           class="px-3 py-2 border border-line text-sm font-medium rounded-lg hover:bg-muted transition-colors">
             Descargar
         </a>
         <form method="POST" action="<?= base_url('admin/logs/clear') ?>" class="inline"
@@ -81,7 +81,7 @@ $ext = is_array($diag['ext'] ?? null) ? $diag['ext'] : [];
             <?= Csrf::field() ?>
             <input type="hidden" name="source" value="<?= e($source) ?>">
             <button type="submit"
-                    class="px-3 py-2 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 text-sm font-medium rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">
+                    class="px-3 py-2 border border-danger-border text-danger text-sm font-medium rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">
                 Vaciar
             </button>
         </form>
@@ -97,7 +97,7 @@ $ext = is_array($diag['ext'] ?? null) ? $diag['ext'] : [];
                ? 'bg-brand-50 dark:bg-brand-950 text-brand-700 dark:text-brand-300 border-brand-200 dark:border-brand-900'
                : 'bg-white dark:bg-surface-dark text-gray-600 dark:text-gray-400 border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-muted-dark' ?>">
             <?= e($meta['label']) ?>
-            <span class="ml-1 text-[10px] text-gray-400">
+            <span class="ml-1 text-[10px] text-ink-soft">
                 <?= $info['exists'] ? e($fb($info['size'])) : 'sin fichero' ?>
             </span>
         </a>
@@ -105,12 +105,12 @@ $ext = is_array($diag['ext'] ?? null) ? $diag['ext'] : [];
 </div>
 
 <!-- Filtros -->
-<form method="GET" action="<?= base_url('admin/logs') ?>" class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-4 mb-4">
+<form method="GET" action="<?= base_url('admin/logs') ?>" class="card p-4 mb-4">
     <input type="hidden" name="source" value="<?= e($source) ?>">
     <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         <label class="block">
-            <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Nivel</span>
-            <select name="level" class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+            <span class="block text-xs font-medium text-ink-muted mb-1">Nivel</span>
+            <select name="level" class="w-full px-2 py-1.5 rounded-lg border border-line-strong bg-input text-ink text-xs focus:ring-2 focus:ring-brand-500 outline-none">
                 <option value="">Todos</option>
                 <option value="error" <?= $level === 'error' ? 'selected' : '' ?>>Error</option>
                 <option value="warning" <?= $level === 'warning' ? 'selected' : '' ?>>Aviso</option>
@@ -118,25 +118,25 @@ $ext = is_array($diag['ext'] ?? null) ? $diag['ext'] : [];
             </select>
         </label>
         <label class="block">
-            <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Canal</span>
+            <span class="block text-xs font-medium text-ink-muted mb-1">Canal</span>
             <input type="text" name="channel" value="<?= e($channel) ?>" placeholder="cve_ai, llm, admin…"
-                   class="w-full px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                   class="w-full px-2 py-1.5 rounded-lg border border-line-strong bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500 outline-none">
         </label>
         <label class="block lg:col-span-2">
-            <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Buscar</span>
+            <span class="block text-xs font-medium text-ink-muted mb-1">Buscar</span>
             <div class="flex gap-2">
                 <input type="text" name="q" value="<?= e($q) ?>" placeholder="texto, CVE, mensaje…"
-                       class="flex-1 px-2 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                       class="flex-1 px-2 py-1.5 rounded-lg border border-line-strong bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500 outline-none">
                 <button type="submit" class="px-3 py-1.5 bg-brand-500 hover:bg-brand-600 text-white text-xs font-medium rounded-lg transition-colors">Filtrar</button>
                 <a href="<?= $link(['level' => '', 'channel' => '', 'q' => '', 'page' => 1]) ?>"
-                   class="px-3 py-1.5 border border-gray-200 dark:border-gray-700 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">Limpiar</a>
+                   class="px-3 py-1.5 border border-line text-xs font-medium rounded-lg hover:bg-muted transition-colors">Limpiar</a>
             </div>
         </label>
     </div>
 </form>
 
 <!-- Resumen -->
-<div class="flex items-center justify-between gap-3 flex-wrap mb-3 text-xs text-gray-500">
+<div class="flex items-center justify-between gap-3 flex-wrap mb-3 text-xs text-ink-muted">
     <div class="flex items-center gap-2 flex-wrap">
         <span><?= number_format($total) ?> entradas</span>
         <span class="px-2 py-0.5 rounded-full <?= $levelClasses['error'] ?>"><?= number_format((int)($counts['error'] ?? 0)) ?> errores</span>
@@ -150,13 +150,13 @@ $ext = is_array($diag['ext'] ?? null) ? $diag['ext'] : [];
 </div>
 
 <!-- Entradas -->
-<div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden mb-6">
+<div class="card overflow-hidden mb-6">
     <?php if ($entriesPage === []): ?>
-        <div class="p-8 text-center text-sm text-gray-500">
+        <div class="p-8 text-center text-sm text-ink-muted">
             No hay entradas que coincidan con los filtros.
         </div>
     <?php else: ?>
-        <div class="divide-y divide-gray-100 dark:divide-gray-800">
+        <div class="divide-y divide-line-subtle">
             <?php foreach ($entriesPage as $entry): ?>
                 <?php
                 $ctx = $entry['context'];
@@ -173,18 +173,18 @@ $ext = is_array($diag['ext'] ?? null) ? $diag['ext'] : [];
                         <span class="text-[10px] px-2 py-0.5 rounded-full <?= $levelClasses[$entryLevel] ?? $levelClasses['info'] ?>">
                             <?= e($levelLabels[$entryLevel] ?? $entryLevel) ?>
                         </span>
-                        <span class="text-[10px] font-mono text-gray-400">
+                        <span class="text-[10px] font-mono text-ink-soft">
                             <?= (int)($entry['ts'] ?? 0) > 0 ? e(date('d/m/Y H:i:s', (int)$entry['ts'])) : '—' ?>
                         </span>
-                        <span class="text-[10px] px-2 py-0.5 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 font-mono">
+                        <span class="text-[10px] px-2 py-0.5 rounded-full bg-muted text-ink-muted font-mono">
                             <?= e((string)($entry['channel'] ?? 'app')) ?>
                         </span>
                     </div>
                     <p class="text-sm mt-2 whitespace-pre-wrap break-words"><?= e((string)($entry['message'] ?? '')) ?></p>
                     <?php if ($ctxText !== ''): ?>
                         <details class="mt-2">
-                            <summary class="text-[11px] text-gray-400 cursor-pointer hover:text-gray-600 dark:hover:text-gray-200">Contexto</summary>
-                            <pre class="mt-2 p-3 rounded-lg bg-gray-50 dark:bg-gray-900 text-[11px] overflow-x-auto text-gray-600 dark:text-gray-300"><?= e($ctxText) ?></pre>
+                            <summary class="text-[11px] text-ink-soft cursor-pointer hover:text-gray-600 dark:hover:text-gray-200">Contexto</summary>
+                            <pre class="mt-2 p-3 rounded-lg bg-page text-[11px] overflow-x-auto text-ink-muted"><?= e($ctxText) ?></pre>
                         </details>
                     <?php endif; ?>
                 </div>
@@ -196,29 +196,29 @@ $ext = is_array($diag['ext'] ?? null) ? $diag['ext'] : [];
 <?php if ($pages > 1): ?>
     <div class="flex items-center justify-center gap-2 mb-6">
         <?php if ($page > 1): ?>
-            <a href="<?= $link(['page' => $page - 1]) ?>" class="px-3 py-1.5 border border-gray-200 dark:border-gray-700 rounded-lg text-xs hover:bg-gray-50 dark:hover:bg-muted-dark">Anterior</a>
+            <a href="<?= $link(['page' => $page - 1]) ?>" class="px-3 py-1.5 border border-line rounded-lg text-xs hover:bg-muted">Anterior</a>
         <?php endif; ?>
-        <span class="text-xs text-gray-500">Página <?= (int)$page ?> de <?= (int)$pages ?></span>
+        <span class="text-xs text-ink-muted">Página <?= (int)$page ?> de <?= (int)$pages ?></span>
         <?php if ($page < $pages): ?>
-            <a href="<?= $link(['page' => $page + 1]) ?>" class="px-3 py-1.5 border border-gray-200 dark:border-gray-700 rounded-lg text-xs hover:bg-gray-50 dark:hover:bg-muted-dark">Siguiente</a>
+            <a href="<?= $link(['page' => $page + 1]) ?>" class="px-3 py-1.5 border border-line rounded-lg text-xs hover:bg-muted">Siguiente</a>
         <?php endif; ?>
     </div>
 <?php endif; ?>
 
 <!-- Diagnóstico -->
-<div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-5 mb-6">
+<div class="card p-5 mb-6">
     <h3 class="text-sm font-semibold mb-4">Diagnóstico del entorno</h3>
     <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 text-xs">
-        <div class="p-3 rounded-lg bg-gray-50 dark:bg-gray-900">
-            <p class="text-gray-500">Versión</p>
+        <div class="p-3 rounded-lg bg-page">
+            <p class="text-ink-muted">Versión</p>
             <p class="font-medium mt-0.5"><?= e((string)($diag['app_version'] ?? '—')) ?></p>
         </div>
-        <div class="p-3 rounded-lg bg-gray-50 dark:bg-gray-900">
-            <p class="text-gray-500">PHP</p>
+        <div class="p-3 rounded-lg bg-page">
+            <p class="text-ink-muted">PHP</p>
             <p class="font-medium mt-0.5"><?= e((string)($diag['php'] ?? '')) ?> · <?= e((string)($diag['sapi'] ?? '')) ?></p>
         </div>
-        <div class="p-3 rounded-lg bg-gray-50 dark:bg-gray-900">
-            <p class="text-gray-500">extensiones</p>
+        <div class="p-3 rounded-lg bg-page">
+            <p class="text-ink-muted">extensiones</p>
             <p class="font-medium mt-0.5">
                 <?php foreach (['curl', 'mbstring', 'openssl', 'sqlite3', 'pdo_sqlite'] as $name): ?>
                     <span class="<?= !empty($ext[$name]) ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400' ?>">
@@ -227,55 +227,55 @@ $ext = is_array($diag['ext'] ?? null) ? $diag['ext'] : [];
                 <?php endforeach; ?>
             </p>
         </div>
-        <div class="p-3 rounded-lg bg-gray-50 dark:bg-gray-900">
-            <p class="text-gray-500">max_execution_time</p>
+        <div class="p-3 rounded-lg bg-page">
+            <p class="text-ink-muted">max_execution_time</p>
             <p class="font-medium mt-0.5"><?= e((string)($diag['max_execution_time'] ?? '')) ?> s</p>
         </div>
-        <div class="p-3 rounded-lg bg-gray-50 dark:bg-gray-900">
-            <p class="text-gray-500">memory_limit</p>
+        <div class="p-3 rounded-lg bg-page">
+            <p class="text-ink-muted">memory_limit</p>
             <p class="font-medium mt-0.5"><?= e((string)($diag['memory_limit'] ?? '')) ?></p>
         </div>
-        <div class="p-3 rounded-lg bg-gray-50 dark:bg-gray-900">
-            <p class="text-gray-500">post_max_size</p>
+        <div class="p-3 rounded-lg bg-page">
+            <p class="text-ink-muted">post_max_size</p>
             <p class="font-medium mt-0.5"><?= e((string)($diag['post_max_size'] ?? '')) ?></p>
         </div>
-        <div class="p-3 rounded-lg bg-gray-50 dark:bg-gray-900">
-            <p class="text-gray-500">display_errors / log_errors</p>
+        <div class="p-3 rounded-lg bg-page">
+            <p class="text-ink-muted">display_errors / log_errors</p>
             <p class="font-medium mt-0.5"><?= e((string)($diag['display_errors'] ?? '')) ?> / <?= e((string)($diag['log_errors'] ?? '')) ?></p>
         </div>
-        <div class="p-3 rounded-lg bg-gray-50 dark:bg-gray-900">
-            <p class="text-gray-500">APP_DEBUG / rewrite</p>
+        <div class="p-3 rounded-lg bg-page">
+            <p class="text-ink-muted">APP_DEBUG / rewrite</p>
             <p class="font-medium mt-0.5"><?= !empty($diag['app_debug']) ? 'on' : 'off' ?> / <?= !empty($diag['rewrite']) ? 'sí' : 'no' ?></p>
         </div>
-        <div class="p-3 rounded-lg bg-gray-50 dark:bg-gray-900">
-            <p class="text-gray-500">storage escribible</p>
+        <div class="p-3 rounded-lg bg-page">
+            <p class="text-ink-muted">storage escribible</p>
             <p class="font-medium mt-0.5"><?= !empty($diag['storage_writable']) ? 'sí' : 'NO' ?></p>
         </div>
-        <div class="p-3 rounded-lg bg-gray-50 dark:bg-gray-900">
-            <p class="text-gray-500">disco libre</p>
+        <div class="p-3 rounded-lg bg-page">
+            <p class="text-ink-muted">disco libre</p>
             <p class="font-medium mt-0.5"><?= e($fb((int)($diag['disk_free'] ?? 0))) ?> / <?= e($fb((int)($diag['disk_total'] ?? 0))) ?></p>
         </div>
-        <div class="p-3 rounded-lg bg-gray-50 dark:bg-gray-900">
-            <p class="text-gray-500">database.sqlite</p>
+        <div class="p-3 rounded-lg bg-page">
+            <p class="text-ink-muted">database.sqlite</p>
             <p class="font-medium mt-0.5"><?= e($fb((int)($diag['db_size'] ?? 0))) ?></p>
         </div>
-        <div class="p-3 rounded-lg bg-gray-50 dark:bg-gray-900">
-            <p class="text-gray-500">cve.sqlite</p>
+        <div class="p-3 rounded-lg bg-page">
+            <p class="text-ink-muted">cve.sqlite</p>
             <p class="font-medium mt-0.5"><?= e($fb((int)($diag['cve_db_size'] ?? 0))) ?></p>
         </div>
-        <div class="p-3 rounded-lg bg-gray-50 dark:bg-gray-900">
-            <p class="text-gray-500">IA configurada</p>
+        <div class="p-3 rounded-lg bg-page">
+            <p class="text-ink-muted">IA configurada</p>
             <p class="font-medium mt-0.5"><?= $llmConfigured ? 'sí' : 'no' ?> (<?= count($llmProfiles) ?> perfiles)</p>
         </div>
     </div>
 </div>
 
 <!-- IA: perfiles e informes -->
-<div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-5 mb-6">
+<div class="card p-5 mb-6">
     <div class="flex items-start justify-between gap-3 flex-wrap mb-4">
         <div>
             <h3 class="text-sm font-semibold">Informes con IA</h3>
-            <p class="text-xs text-gray-400 mt-1">
+            <p class="text-xs text-ink-soft mt-1">
                 Tarea «Informe de CVE con IA»:
                 <?php
                 $taskName = 'Predeterminado';
@@ -286,7 +286,7 @@ $ext = is_array($diag['ext'] ?? null) ? $diag['ext'] : [];
                     }
                 }
                 ?>
-                <span class="font-medium text-gray-600 dark:text-gray-300"><?= e($taskName) ?></span>
+                <span class="font-medium text-ink-muted"><?= e($taskName) ?></span>
                 · <?= e(implode(' · ', array_map(
                     static fn($k, $v) => $k . ': ' . $v,
                     array_keys($jobCounts),
@@ -294,15 +294,15 @@ $ext = is_array($diag['ext'] ?? null) ? $diag['ext'] : [];
                 )) ?: 'sin informes') ?>
             </p>
         </div>
-        <a href="<?= base_url('admin/apis') ?>" class="text-xs text-brand-600 dark:text-brand-400 hover:underline">Configurar IA</a>
+        <a href="<?= base_url('admin/apis') ?>" class="text-xs text-primary hover:underline">Configurar IA</a>
     </div>
 
     <?php if ($llmProfiles === []): ?>
-        <p class="text-xs text-gray-500">No hay perfiles de IA configurados. Añade uno en Admin → APIs.</p>
+        <p class="text-xs text-ink-muted">No hay perfiles de IA configurados. Añade uno en Admin → APIs.</p>
     <?php else: ?>
         <div class="flex flex-wrap gap-2 mb-4">
             <?php foreach ($llmProfiles as $profile): ?>
-                <span class="px-2 py-1 rounded-lg bg-gray-50 dark:bg-gray-900 text-[11px] text-gray-600 dark:text-gray-300">
+                <span class="px-2 py-1 rounded-lg bg-page text-[11px] text-ink-muted">
                     <span class="font-medium"><?= e((string)$profile['name']) ?></span>
                     · <?= e((string)$profile['provider']) ?> · <?= e((string)$profile['model']) ?>
                     <?= !empty($profile['api_key_encrypted']) || (string)$profile['provider'] === 'ollama' ? '· 🔑' : '· sin clave' ?>
@@ -312,12 +312,12 @@ $ext = is_array($diag['ext'] ?? null) ? $diag['ext'] : [];
     <?php endif; ?>
 
     <?php if ($jobs === []): ?>
-        <p class="text-xs text-gray-500">Todavía no se ha generado ningún informe con IA.</p>
+        <p class="text-xs text-ink-muted">Todavía no se ha generado ningún informe con IA.</p>
     <?php else: ?>
         <div class="overflow-x-auto">
-            <table class="w-full text-xs">
+            <table class="data-table w-full text-xs">
                 <thead>
-                    <tr class="border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-[10px] text-gray-500 uppercase">
+                    <tr class="border-b border-line bg-muted text-[10px] text-ink-muted uppercase">
                         <th class="text-left px-3 py-2">Informe</th>
                         <th class="text-left px-3 py-2">Estado</th>
                         <th class="text-left px-3 py-2">Modelo</th>
@@ -326,17 +326,17 @@ $ext = is_array($diag['ext'] ?? null) ? $diag['ext'] : [];
                         <th class="text-left px-3 py-2">Fecha</th>
                     </tr>
                 </thead>
-                <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
+                <tbody class="divide-y divide-line-subtle">
                     <?php foreach ($jobs as $job): ?>
                         <?php $jobStatus = (string)($job['status'] ?? 'pending'); ?>
                         <tr>
                             <td class="px-3 py-2">
                                 <a href="<?= base_url('modules/cve/report-ai/' . (int)$job['id']) ?>"
-                                   class="text-brand-600 dark:text-brand-400 hover:underline">
+                                   class="text-primary hover:underline">
                                     #<?= (int)$job['id'] ?> · <?= e(truncate((string)$job['title'], 60)) ?>
                                 </a>
                                 <?php if (!empty($job['no_ai'])): ?>
-                                    <span class="ml-1 text-[10px] text-gray-400">(sin IA)</span>
+                                    <span class="ml-1 text-[10px] text-ink-soft">(sin IA)</span>
                                 <?php endif; ?>
                             </td>
                             <td class="px-3 py-2">
@@ -344,14 +344,14 @@ $ext = is_array($diag['ext'] ?? null) ? $diag['ext'] : [];
                                     <?= e($jobLabels[$jobStatus] ?? $jobStatus) ?>
                                 </span>
                             </td>
-                            <td class="px-3 py-2 text-gray-500"><?= e((string)($job['ai_model'] ?? '—')) ?></td>
-                            <td class="px-3 py-2 text-gray-500">
+                            <td class="px-3 py-2 text-ink-muted"><?= e((string)($job['ai_model'] ?? '—')) ?></td>
+                            <td class="px-3 py-2 text-ink-muted">
                                 <?= !empty($job['ai_duration_ms']) ? e(number_format((int)$job['ai_duration_ms'] / 1000, 1, ',', '.')) . ' s' : '—' ?>
                             </td>
-                            <td class="px-3 py-2 text-red-600 dark:text-red-400 max-w-[320px]">
+                            <td class="px-3 py-2 text-danger max-w-[320px]">
                                 <?= e(truncate((string)($job['ai_error'] ?? ''), 140)) ?>
                             </td>
-                            <td class="px-3 py-2 text-gray-500 whitespace-nowrap">
+                            <td class="px-3 py-2 text-ink-muted whitespace-nowrap">
                                 <?= e(format_db_date((string)($job['created_at'] ?? ''), 'd/m/Y H:i')) ?>
                             </td>
                         </tr>
@@ -362,7 +362,7 @@ $ext = is_array($diag['ext'] ?? null) ? $diag['ext'] : [];
     <?php endif; ?>
 </div>
 
-<p class="text-[11px] text-gray-400">
+<p class="text-[11px] text-ink-soft">
     Los ficheros de log están en <code class="font-mono">storage/</code> y no son accesibles por HTTP.
     El log estructurado (<code class="font-mono">app.log</code>) rota automáticamente al superar 2 MB.
 </p>

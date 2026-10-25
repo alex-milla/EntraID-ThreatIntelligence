@@ -53,26 +53,26 @@ $sectorUrl = function (string $sec) use ($tiBaseQs): string {
             <?php endif; ?>
         </div>
         <?php if ($sectorTop && (int)$sectorTop['count'] > 0): ?>
-            <a href="<?= e($sectorUrl((string)$sectorTop['sector'])) ?>" class="mt-4 inline-flex items-center justify-center px-3 py-1.5 bg-white text-brand-600 text-xs font-semibold rounded-lg hover:bg-white/90 transition-colors">Ver noticias de <?= e((string)$sectorTop['sector']) ?> →</a>
+            <a href="<?= e($sectorUrl((string)$sectorTop['sector'])) ?>" class="mt-4 inline-flex items-center justify-center px-3 py-1.5 bg-surface text-brand-600 text-xs font-semibold rounded-lg hover:bg-white/90 transition-colors">Ver noticias de <?= e((string)$sectorTop['sector']) ?> →</a>
         <?php endif; ?>
     </div>
 
-    <div class="lg:col-span-2 bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-5">
+    <div class="lg:col-span-2 card p-5">
         <div class="flex items-center justify-between mb-3 gap-2">
             <h2 class="text-sm font-semibold">Sectores más afectados</h2>
-            <span class="text-[11px] text-gray-400 text-right"><?= (int)$sectorTotal ?> noticias · un artículo puede afectar a varios sectores</span>
+            <span class="text-[11px] text-ink-soft text-right"><?= (int)$sectorTotal ?> noticias · un artículo puede afectar a varios sectores</span>
         </div>
         <?php if ($sectorTotal === 0 || $sectorMax === 0): ?>
-            <p class="text-sm text-gray-500 py-4 text-center">Sin datos en el periodo seleccionado.</p>
+            <p class="text-sm text-ink-muted py-4 text-center">Sin datos en el periodo seleccionado.</p>
         <?php else: ?>
             <div class="space-y-2">
                 <?php foreach ($sectorList as $s): $cnt = (int)$s['count']; if ($cnt === 0) { continue; } $w = max(4, (int)round($cnt * 100 / $sectorMax)); ?>
                     <a href="<?= e($sectorUrl((string)$s['sector'])) ?>" class="block group" title="Filtrar por <?= e((string)$s['sector']) ?>">
                         <div class="flex items-center justify-between text-xs mb-0.5">
                             <span class="font-medium group-hover:text-brand-500"><?= e((string)$s['sector']) ?></span>
-                            <span class="text-gray-400"><?= $cnt ?> · <?= (int)$s['pct'] ?>%</span>
+                            <span class="text-ink-soft"><?= $cnt ?> · <?= (int)$s['pct'] ?>%</span>
                         </div>
-                        <div class="h-2 w-full bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
+                        <div class="h-2 w-full bg-muted rounded-full overflow-hidden">
                             <div class="h-full bg-brand-500 group-hover:bg-brand-600 transition-all" style="width:<?= $w ?>%"></div>
                         </div>
                     </a>
@@ -86,22 +86,22 @@ $sectorUrl = function (string $sec) use ($tiBaseQs): string {
 <div class="mb-6 space-y-3">
     <form method="GET" class="flex items-end gap-3 flex-wrap">
         <div>
-            <label class="block text-xs text-gray-500 mb-1">Tenant</label>
+            <label class="block text-xs text-ink-muted mb-1">Tenant</label>
             <select name="tenant" onchange="this.form.submit()"
-                    class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 focus:border-transparent outline-none">
+                    class="px-3 py-2 rounded-lg border border-line-strong bg-input text-ink text-sm focus:ring-2 focus:ring-brand-500 focus:border-transparent outline-none">
                 <?php foreach ($tenants as $t): ?>
                     <option value="<?= $t['id'] ?>" <?= (int)($selectedTenant ?? 0) === (int)$t['id'] ? 'selected' : '' ?>><?= e($t['name']) ?></option>
                 <?php endforeach; ?>
             </select>
         </div>
         <div>
-            <label class="block text-xs text-gray-500 mb-1">Buscar</label>
+            <label class="block text-xs text-ink-muted mb-1">Buscar</label>
             <input type="text" name="q" value="<?= e($q ?? '') ?>" placeholder="APT, Storm-2992, sector…"
-                   class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none w-56">
+                   class="px-3 py-2 rounded-lg border border-line-strong bg-surface text-ink text-sm focus:ring-2 focus:ring-brand-500 outline-none w-56">
         </div>
         <div>
-            <label class="block text-xs text-gray-500 mb-1">Tag</label>
-            <select name="tag" class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none max-w-[16rem]">
+            <label class="block text-xs text-ink-muted mb-1">Tag</label>
+            <select name="tag" class="px-3 py-2 rounded-lg border border-line-strong bg-input text-ink text-sm focus:ring-2 focus:ring-brand-500 outline-none max-w-[16rem]">
                 <option value="">Todas las tags</option>
                 <?php foreach (($tagOptions ?? []) as $tg => $cnt): ?>
                     <option value="<?= e($tg) ?>" <?= ($tag ?? '') === $tg ? 'selected' : '' ?>><?= e(truncate((string)$tg, 60)) ?> (<?= (int)$cnt ?>)</option>
@@ -109,8 +109,8 @@ $sectorUrl = function (string $sec) use ($tiBaseQs): string {
             </select>
         </div>
         <div>
-            <label class="block text-xs text-gray-500 mb-1">Sector</label>
-            <select name="sector" class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+            <label class="block text-xs text-ink-muted mb-1">Sector</label>
+            <select name="sector" class="px-3 py-2 rounded-lg border border-line-strong bg-input text-ink text-sm focus:ring-2 focus:ring-brand-500 outline-none">
                 <option value="">Todos los sectores</option>
                 <?php foreach (($sectors ?? []) as $sc): ?>
                     <option value="<?= e($sc) ?>" <?= ($sector ?? '') === $sc ? 'selected' : '' ?>><?= e($sc) ?></option>
@@ -121,18 +121,18 @@ $sectorUrl = function (string $sec) use ($tiBaseQs): string {
             <?php endif; ?>
         </div>
         <div>
-            <label class="block text-xs text-gray-500 mb-1">Desde</label>
+            <label class="block text-xs text-ink-muted mb-1">Desde</label>
             <input type="date" name="from" value="<?= e($dateFrom ?? '') ?>"
-                   class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+                   class="px-3 py-2 rounded-lg border border-line-strong bg-surface text-ink text-sm focus:ring-2 focus:ring-brand-500 outline-none">
         </div>
         <div>
-            <label class="block text-xs text-gray-500 mb-1">Hasta</label>
+            <label class="block text-xs text-ink-muted mb-1">Hasta</label>
             <input type="date" name="to" value="<?= e($dateTo ?? '') ?>"
-                   class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+                   class="px-3 py-2 rounded-lg border border-line-strong bg-surface text-ink text-sm focus:ring-2 focus:ring-brand-500 outline-none">
         </div>
         <?php if ($onlyUnread): ?><input type="hidden" name="only_unread" value="1"><?php endif; ?>
         <?php if ($onlyFavorites): ?><input type="hidden" name="only_favorites" value="1"><?php endif; ?>
-        <button type="submit" class="px-3 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 text-sm font-medium rounded-lg transition-colors">Filtrar</button>
+        <button type="submit" class="px-3 py-2 bg-muted hover:bg-surface-3 text-ink text-sm font-medium rounded-lg transition-colors">Filtrar</button>
         <?php
         $tiDefFrom = $dateDefaultFrom ?? '';
         $tiDefTo   = $dateDefaultTo ?? '';
@@ -140,19 +140,19 @@ $sectorUrl = function (string $sec) use ($tiBaseQs): string {
         ?>
         <?php if (($q ?? '') !== '' || ($tag ?? '') !== '' || ($sector ?? '') !== '' || $tiDatesCustom || $onlyUnread || $onlyFavorites): ?>
             <?php $tiClearQs = http_build_query(array_filter(['tenant' => (int)$selectedTenant, 'from' => $tiDefFrom, 'to' => $tiDefTo], fn($v) => $v !== '' && $v !== null)); ?>
-            <a href="?<?= e($tiClearQs) ?>" class="text-xs text-gray-500 hover:underline">Limpiar</a>
+            <a href="?<?= e($tiClearQs) ?>" class="text-xs text-ink-muted hover:underline">Limpiar</a>
         <?php endif; ?>
     </form>
     <div class="flex items-center gap-3 text-xs flex-wrap">
-        <span class="text-gray-400">Rápido:</span>
+        <span class="text-ink-soft">Rápido:</span>
         <?php foreach ([7 => '7 días', 30 => '30 días', 90 => '90 días'] as $d => $lbl): $f = gmdate('Y-m-d', strtotime($dateTo ?? 'now') - $d * 86400); ?>
             <a href="?<?= e(http_build_query(array_filter(array_merge($tiBaseQs, ['from' => $f, 'to' => $dateTo ?? ''])))) ?>" class="text-brand-500 hover:underline"><?= $lbl ?></a>
         <?php endforeach; ?>
-        <span class="text-gray-400">· máx. 90 días</span>
+        <span class="text-ink-soft">· máx. 90 días</span>
     </div>
     <?php if (!empty($selectedTenant)): ?>
     <div class="flex items-center gap-2 text-xs flex-wrap">
-        <span class="text-gray-400">Triaje:</span>
+        <span class="text-ink-soft">Triaje:</span>
         <a href="?<?= e($tiStateUrl([])) ?>" class="<?= (!$onlyUnread && !$onlyFavorites) ? $chipOn : $chipOff ?>">Todas</a>
         <a href="?<?= e($tiStateUrl(['only_unread' => 1])) ?>" class="<?= $onlyUnread ? $chipOn : $chipOff ?>" title="Artículos sin leer"><span class="text-[10px] font-bold uppercase tracking-wide">New</span> Sin leer (<?= (int)$stateCounts['unread'] ?>)</a>
         <a href="?<?= e($tiStateUrl(['only_favorites' => 1])) ?>" class="<?= $onlyFavorites ? $chipOn : $chipOff ?>">★ Favoritas (<?= (int)$stateCounts['favorites'] ?>)</a>
@@ -165,23 +165,23 @@ $sectorUrl = function (string $sec) use ($tiBaseQs): string {
 <?php if (!empty($stats)): ?>
 <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3 mb-6">
     <?php foreach ($stats as $s): ?>
-        <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-4 text-center">
+        <div class="card p-4 text-center">
             <p class="text-2xl font-bold text-brand-500"><?= number_format($s['cnt']) ?></p>
-            <p class="text-xs text-gray-500 font-mono mt-1"><?= e($s['ioc_type']) ?></p>
+            <p class="text-xs text-ink-muted font-mono mt-1"><?= e($s['ioc_type']) ?></p>
         </div>
     <?php endforeach; ?>
 </div>
 <?php endif; ?>
 
 <!-- Artículos recientes -->
-<div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
-    <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
-        <h2 class="text-sm font-semibold">Artículos recientes <span class="text-gray-400 font-normal">· por fecha de publicación</span></h2>
+<div class="card overflow-hidden">
+    <div class="px-5 py-4 border-b border-line flex items-center justify-between">
+        <h2 class="text-sm font-semibold">Artículos recientes <span class="text-ink-soft font-normal">· por fecha de publicación</span></h2>
         <a href="<?= base_url('modules/threat_intelligence/iocs?tenant=' . $selectedTenant) ?>" class="text-xs text-brand-500 hover:underline">Ver todos los IOCs</a>
     </div>
-    <div class="divide-y divide-gray-100 dark:divide-gray-700/50">
+    <div class="divide-y divide-line-subtle">
         <?php if (empty($articles['data'])): ?>
-            <p class="px-5 py-8 text-sm text-gray-500 text-center">Sin artículos. Sincroniza el tenant para obtener datos.</p>
+            <p class="px-5 py-8 text-sm text-ink-muted text-center">Sin artículos. Sincroniza el tenant para obtener datos.</p>
         <?php else: ?>
             <?php foreach ($articles['data'] as $a):
                 $artId   = (int)$a['id'];
@@ -203,10 +203,10 @@ $sectorUrl = function (string $sec) use ($tiBaseQs): string {
                         <a href="<?= e($rowUrl) ?>" class="min-w-0 flex-1">
                             <div class="flex items-center gap-2 min-w-0">
                                 <span data-role="new" class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-brand-500 text-white <?= $unread ? '' : 'hidden' ?>">New</span>
-                                <?php if ($isNew24): ?><span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300 shrink-0" title="Publicado en las últimas 24 h">24 h</span><?php endif; ?>
+                                <?php if ($isNew24): ?><span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-warning-bg text-warning shrink-0" title="Publicado en las últimas 24 h">24 h</span><?php endif; ?>
                                 <p class="text-sm font-medium truncate"><?= e($a['title']) ?></p>
                             </div>
-                            <p class="text-xs text-gray-400 mt-0.5">
+                            <p class="text-xs text-ink-soft mt-0.5">
                                 <?= format_date($created ?: $updated) ?>
                                 <?php if ($showUpdated): ?> · <span title="Última actualización del artículo">actualizado <?= format_date($updated) ?></span><?php endif; ?>
                                 · <?= (int)$a['ioc_count'] ?> IOCs
@@ -217,7 +217,7 @@ $sectorUrl = function (string $sec) use ($tiBaseQs): string {
                                     class="w-7 h-7 inline-flex items-center justify-center rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 text-base leading-none <?= $fav ? 'text-amber-400' : 'text-gray-300 dark:text-gray-600' ?>"><?= $fav ? '★' : '☆' ?></button>
                             <button type="button" data-role="read" onclick="tiRead(event, <?= $artId ?>)" title="<?= $unread ? 'Marcar como leído' : 'Dejar sin leer' ?>"
                                     class="w-7 h-7 inline-flex items-center justify-center rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 <?= $unread ? 'text-gray-400' : 'text-green-500' ?>">
-                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                                <i class="material-icons icon-16" aria-hidden="true">check</i>
                             </button>
                         </div>
                     </div>
@@ -227,8 +227,8 @@ $sectorUrl = function (string $sec) use ($tiBaseQs): string {
     </div>
 </div>
 <?php else: ?>
-<div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-8 text-center">
-    <p class="text-sm text-gray-500">Selecciona un tenant para ver los datos de Threat Intelligence.</p>
+<div class="card p-8 text-center">
+    <p class="text-sm text-ink-muted">Selecciona un tenant para ver los datos de Threat Intelligence.</p>
 </div>
 <?php endif; ?>
 

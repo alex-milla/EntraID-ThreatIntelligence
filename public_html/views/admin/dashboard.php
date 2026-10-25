@@ -6,41 +6,37 @@ $pageTitle = 'Dashboard';
 ?>
 
 <!-- KPIs -->
-<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-    <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-5">
-        <div class="flex items-center justify-between">
-            <span class="text-sm text-gray-500">Tenants</span>
-            <svg class="w-[18px] h-[18px] text-brand-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/></svg>
+<div class="stat-strip">
+    <div class="stat">
+        <span class="stat-ico"><i class="material-icons icon-18" aria-hidden="true">business</i></span>
+        <div class="min-w-0">
+            <p class="stat-num"><?= $totalStats['tenants'] ?></p>
+            <p class="stat-label">Tenants · <?= $totalStats['activeTenants'] ?> activos</p>
         </div>
-        <p class="text-3xl font-bold mt-2"><?= $totalStats['tenants'] ?></p>
-        <p class="text-xs text-gray-400 mt-1"><?= $totalStats['activeTenants'] ?> activos</p>
     </div>
 
-    <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-5">
-        <div class="flex items-center justify-between">
-            <span class="text-sm text-gray-500">Módulos activos</span>
-            <svg class="w-[18px] h-[18px] text-brand-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg>
+    <div class="stat">
+        <span class="stat-ico info"><i class="material-icons icon-18" aria-hidden="true">widgets</i></span>
+        <div class="min-w-0">
+            <p class="stat-num"><?= $totalStats['modules'] ?></p>
+            <p class="stat-label">Módulos · de <?= count($modules) ?></p>
         </div>
-        <p class="text-3xl font-bold mt-2"><?= $totalStats['modules'] ?></p>
-        <p class="text-xs text-gray-400 mt-1">de <?= count($modules) ?> disponibles</p>
     </div>
 
-    <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-5">
-        <div class="flex items-center justify-between">
-            <span class="text-sm text-gray-500">Reportes generados</span>
-            <svg class="w-[18px] h-[18px] text-brand-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+    <div class="stat">
+        <span class="stat-ico ok"><i class="material-icons icon-18" aria-hidden="true">analytics</i></span>
+        <div class="min-w-0">
+            <p class="stat-num"><?= $totalStats['reports'] ?></p>
+            <p class="stat-label">Reportes generados</p>
         </div>
-        <p class="text-3xl font-bold mt-2"><?= $totalStats['reports'] ?></p>
-        <p class="text-xs text-gray-400 mt-1">histórico total</p>
     </div>
 
-    <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-5">
-        <div class="flex items-center justify-between">
-            <span class="text-sm text-gray-500">Grupos</span>
-            <svg class="w-[18px] h-[18px] text-brand-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+    <div class="stat">
+        <span class="stat-ico warn"><i class="material-icons icon-18" aria-hidden="true">group</i></span>
+        <div class="min-w-0">
+            <p class="stat-num"><?= count($groups) ?></p>
+            <p class="stat-label">Grupos de tenants</p>
         </div>
-        <p class="text-3xl font-bold mt-2"><?= count($groups) ?></p>
-        <p class="text-xs text-gray-400 mt-1">grupos de tenants</p>
     </div>
 </div>
 
@@ -55,25 +51,25 @@ $pageTitle = 'Dashboard';
     ]));
     $spList = array_values(array_filter($sp['stats']['sectors'], fn($s) => (int)$s['count'] > 0));
 ?>
-<div class="mb-6 bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-5">
+<div class="mb-6 card p-5">
     <div class="flex items-center justify-between gap-3 flex-wrap">
         <div>
-            <p class="text-[11px] uppercase tracking-wide text-gray-400">Sector a priorizar (últimas 24 h) · <?= e($sp['tenant']['name']) ?></p>
+            <p class="text-[11px] uppercase tracking-wide text-ink-soft">Sector a priorizar (últimas 24 h) · <?= e($sp['tenant']['name']) ?></p>
             <?php if ($spTop && (int)$spTop['count'] > 0): ?>
                 <p class="text-2xl font-bold text-brand-500 mt-1"><?= e((string)$spTop['sector']) ?></p>
-                <p class="text-xs text-gray-500 mt-0.5">El más afectado: <?= (int)$spTop['count'] ?> noticia<?= (int)$spTop['count'] === 1 ? '' : 's' ?> (<?= (int)$spTop['pct'] ?>% de <?= (int)$sp['stats']['total'] ?>)</p>
+                <p class="text-xs text-ink-muted mt-0.5">El más afectado: <?= (int)$spTop['count'] ?> noticia<?= (int)$spTop['count'] === 1 ? '' : 's' ?> (<?= (int)$spTop['pct'] ?>% de <?= (int)$sp['stats']['total'] ?>)</p>
             <?php else: ?>
-                <p class="text-sm text-gray-500 mt-1">Sin noticias en las últimas 24 h.</p>
+                <p class="text-sm text-ink-muted mt-1">Sin noticias en las últimas 24 h.</p>
             <?php endif; ?>
         </div>
         <?php if ($spTop && (int)$spTop['count'] > 0): ?>
-            <a href="<?= e($spUrl) ?>" class="inline-flex items-center gap-2 px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors">Ver noticias de <?= e((string)$spTop['sector']) ?> →</a>
+            <a href="<?= e($spUrl) ?>" class="btn">Ver noticias de <?= e((string)$spTop['sector']) ?> →</a>
         <?php endif; ?>
     </div>
     <?php if (count($spList) > 1): ?>
         <div class="mt-4 flex flex-wrap gap-x-4 gap-y-1">
             <?php foreach (array_slice($spList, 0, 6) as $s): ?>
-                <span class="text-xs text-gray-500"><?= e((string)$s['sector']) ?> <span class="font-semibold text-gray-700 dark:text-gray-200"><?= (int)$s['count'] ?></span></span>
+                <span class="text-xs text-ink-muted"><?= e((string)$s['sector']) ?> <span class="font-semibold text-ink"><?= (int)$s['count'] ?></span></span>
             <?php endforeach; ?>
         </div>
     <?php endif; ?>
@@ -82,32 +78,32 @@ $pageTitle = 'Dashboard';
 
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
     <!-- Tenants -->
-    <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
-        <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+    <div class="card overflow-hidden">
+        <div class="px-5 py-4 border-b border-line flex items-center justify-between">
             <h2 class="text-sm font-semibold">Tenants</h2>
             <div class="flex items-center gap-3">
                 <?php if (!empty($tenants) && Auth::isAdmin()): ?>
                     <button type="button" onclick="openSync()" class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-brand-500 hover:bg-brand-600 text-white text-xs font-medium rounded-lg transition-colors">
-                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                        <i class="material-icons icon-14" aria-hidden="true">sync</i>
                         Sincronizar
                     </button>
                 <?php endif; ?>
                 <a href="<?= base_url('admin/tenants') ?>" class="text-xs text-brand-500 hover:underline">Gestionar</a>
             </div>
         </div>
-        <div class="divide-y divide-gray-100 dark:divide-gray-700/50">
+        <div class="divide-y divide-line-subtle">
             <?php if (empty($tenants)): ?>
-                <p class="px-5 py-8 text-sm text-gray-500 text-center">No hay tenants configurados</p>
+                <p class="px-5 py-8 text-sm text-ink-muted text-center">No hay tenants configurados</p>
             <?php else: ?>
                 <?php foreach (array_slice($tenants, 0, 5) as $t): ?>
                     <?php $st = $tenantStats[$t['id']] ?? []; ?>
-                    <div class="px-5 py-3 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-gray-800/50">
+                    <div class="px-5 py-3 flex items-center justify-between hover:bg-muted">
                         <div class="min-w-0">
                             <p class="text-sm font-medium truncate"><?= e($t['name']) ?></p>
-                            <p class="text-xs text-gray-400 font-mono truncate"><?= e($t['tenant_id']) ?></p>
+                            <p class="text-xs text-ink-soft font-mono truncate"><?= e($t['tenant_id']) ?></p>
                         </div>
                         <div class="flex items-center gap-3 shrink-0">
-                            <span class="text-xs text-gray-500"><?= array_sum($st) ?> registros</span>
+                            <span class="text-xs text-ink-muted"><?= array_sum($st) ?> registros</span>
                             <span class="inline-flex px-2 py-0.5 text-xs rounded-full <?= $t['is_active'] ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400' ?>">
                                 <?= $t['is_active'] ? 'Activo' : 'Inactivo' ?>
                             </span>
@@ -119,25 +115,25 @@ $pageTitle = 'Dashboard';
     </div>
 
     <!-- Últimas sincronizaciones -->
-    <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
-        <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700">
+    <div class="card overflow-hidden">
+        <div class="px-5 py-4 border-b border-line">
             <h2 class="text-sm font-semibold">Últimas sincronizaciones</h2>
         </div>
-        <div class="divide-y divide-gray-100 dark:divide-gray-700/50">
+        <div class="divide-y divide-line-subtle">
             <?php if (empty($recentSyncs)): ?>
-                <p class="px-5 py-8 text-sm text-gray-500 text-center">Sin sincronizaciones aún</p>
+                <p class="px-5 py-8 text-sm text-ink-muted text-center">Sin sincronizaciones aún</p>
             <?php else: ?>
                 <?php foreach ($recentSyncs as $sync): ?>
                     <div class="px-5 py-3 flex items-center justify-between">
                         <div class="min-w-0">
                             <p class="text-sm font-medium truncate"><?= e($sync['tenant_name']) ?></p>
-                            <p class="text-xs text-gray-400"><?= e($sync['module_key']) ?> · <?= e($sync['sync_type']) ?></p>
+                            <p class="text-xs text-ink-soft"><?= e($sync['module_key']) ?> · <?= e($sync['sync_type']) ?></p>
                         </div>
                         <div class="text-right shrink-0">
                             <span class="inline-flex px-2 py-0.5 text-xs rounded-full <?= $sync['status'] === 'success' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' : ($sync['status'] === 'error' ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300' : 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300') ?>">
                                 <?= e($sync['status']) ?>
                             </span>
-                            <p class="text-xs text-gray-400 mt-0.5"><?= time_ago($sync['started_at']) ?></p>
+                            <p class="text-xs text-ink-soft mt-0.5"><?= time_ago($sync['started_at']) ?></p>
                         </div>
                     </div>
                 <?php endforeach; ?>
@@ -148,19 +144,19 @@ $pageTitle = 'Dashboard';
 
 <?php if (Auth::isAdmin()): ?>
 <!-- Acciones rápidas -->
-<div class="mt-6 bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-5">
+<div class="mt-6 card p-5">
     <h2 class="text-sm font-semibold mb-4">Acciones rápidas</h2>
     <div class="flex flex-wrap gap-3">
-        <a href="<?= base_url('admin/tenant/edit') ?>" class="inline-flex items-center gap-2 px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+        <a href="<?= base_url('admin/tenant/edit') ?>" class="btn">
+            <i class="material-icons icon-16" aria-hidden="true">add</i>
             Nuevo tenant
         </a>
-        <a href="<?= base_url('admin/modules') ?>" class="inline-flex items-center gap-2 px-4 py-2 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-muted-dark text-sm font-medium rounded-lg transition-colors">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6z"/></svg>
+        <a href="<?= base_url('admin/modules') ?>" class="btn btn-outline">
+            <i class="material-icons icon-16" aria-hidden="true">widgets</i>
             Gestionar módulos
         </a>
-        <a href="<?= base_url('modules/reports') ?>" class="inline-flex items-center gap-2 px-4 py-2 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-muted-dark text-sm font-medium rounded-lg transition-colors">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+        <a href="<?= base_url('modules/reports') ?>" class="btn btn-outline">
+            <i class="material-icons icon-16" aria-hidden="true">analytics</i>
             Generar reporte
         </a>
     </div>
@@ -170,32 +166,32 @@ $pageTitle = 'Dashboard';
 <?php if (Auth::isAdmin()): ?>
 <!-- Modal + progreso de sincronización (Dashboard) -->
 <div id="sync-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 p-4">
-    <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 w-full max-w-lg shadow-xl">
-        <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700">
+    <div class="card w-full max-w-lg shadow-xl">
+        <div class="px-5 py-4 border-b border-line">
             <h3 class="text-lg font-semibold">Sincronizar tenants</h3>
-            <p class="text-xs text-gray-500 mt-0.5">Se sincronizan todos los módulos de cada tenant seleccionado.</p>
+            <p class="text-xs text-ink-muted mt-0.5">Se sincronizan todos los módulos de cada tenant seleccionado.</p>
         </div>
         <div class="p-5">
             <div class="flex items-center justify-between mb-2">
-                <label class="inline-flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300">
-                    <input type="checkbox" id="sync-all-chk" class="rounded border-gray-300 text-brand-500 focus:ring-brand-500" checked>
+                <label class="inline-flex items-center gap-2 text-xs text-ink-muted">
+                    <input type="checkbox" id="sync-all-chk" class="rounded border-line-strong text-brand-500 focus:ring-brand-500" checked>
                     Seleccionar todos
                 </label>
-                <span id="sync-count" class="text-xs text-gray-400"></span>
+                <span id="sync-count" class="text-xs text-ink-soft"></span>
             </div>
-            <div id="sync-list" class="max-h-64 overflow-y-auto border border-gray-200 dark:border-gray-700 rounded-lg divide-y divide-gray-100 dark:divide-gray-700/50"></div>
+            <div id="sync-list" class="max-h-64 overflow-y-auto border border-line rounded-lg divide-y divide-line-subtle"></div>
         </div>
-        <div class="px-5 py-4 border-t border-gray-200 dark:border-gray-700 flex items-center justify-end gap-2">
-            <button type="button" onclick="closeSync()" class="px-4 py-2 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 text-sm font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">Cancelar</button>
-            <button type="button" id="sync-run" onclick="runSync()" class="px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors">Sincronizar seleccionados</button>
+        <div class="px-5 py-4 border-t border-line flex items-center justify-end gap-2">
+            <button type="button" onclick="closeSync()" class="px-4 py-2 border border-line text-ink text-sm font-medium rounded-lg hover:bg-muted transition-colors">Cancelar</button>
+            <button type="button" id="sync-run" onclick="runSync()" class="btn">Sincronizar seleccionados</button>
         </div>
     </div>
 </div>
 
-<div id="sync-progress" class="fixed bottom-4 left-4 z-50 hidden max-w-sm bg-white dark:bg-surface-dark border border-gray-200 dark:border-gray-700 rounded-xl shadow-lg p-4">
+<div id="sync-progress" class="fixed bottom-4 left-4 z-50 hidden max-w-sm card shadow-lg p-4">
     <p class="text-sm font-medium mb-1">Sincronizando…</p>
-    <p id="sync-progress-text" class="text-xs text-gray-500"></p>
-    <div class="mt-2 h-1.5 w-full bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
+    <p id="sync-progress-text" class="text-xs text-ink-muted"></p>
+    <div class="mt-2 h-1.5 w-full bg-muted rounded-full overflow-hidden">
         <div id="sync-progress-bar" class="h-full bg-brand-500 transition-all" style="width:0%"></div>
     </div>
 </div>
@@ -214,10 +210,10 @@ function openSync() {
 
     var list = document.getElementById('sync-list');
     list.innerHTML = SYNC_TENANTS.map(function (t) {
-        return '<label class="flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-800/50 cursor-pointer">'
-            + '<input type="checkbox" class="sync-tenant rounded border-gray-300 text-brand-500 focus:ring-brand-500" value="' + t.id + '" checked>'
+        return '<label class="flex items-center gap-3 px-4 py-2.5 hover:bg-muted cursor-pointer">'
+            + '<input type="checkbox" class="sync-tenant rounded border-line-strong text-brand-500 focus:ring-brand-500" value="' + t.id + '" checked>'
             + '<span class="min-w-0 flex-1"><span class="block text-sm truncate">' + syncEsc(t.name) + '</span>'
-            + '<span class="block text-xs ' + (t.active ? 'text-green-600' : 'text-gray-400') + '">' + (t.active ? 'Activo' : 'Inactivo') + '</span></span>'
+            + '<span class="block text-xs ' + (t.active ? 'text-success' : 'text-ink-soft')">' + (t.active ? 'Activo' : 'Inactivo') + '</span></span>'
             + '</label>';
     }).join('');
     list.querySelectorAll('.sync-tenant').forEach(function (cb) { cb.addEventListener('change', updateSyncCount); });

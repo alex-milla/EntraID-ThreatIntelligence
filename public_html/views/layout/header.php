@@ -29,6 +29,7 @@ $__assetVersion = defined('APP_VERSION') ? APP_VERSION : '1';
     <link rel="stylesheet" href="<?= asset_url('css/app.css') ?>?v=<?= $__assetVersion ?>">
     <link rel="stylesheet" href="<?= asset_url('css/ui.css') ?>?v=<?= $__assetVersion ?>">
     <link rel="stylesheet" href="<?= asset_url('css/tw.css') ?>?v=<?= $__assetVersion ?>">
+    <link rel="stylesheet" href="<?= asset_url('css/print.css') ?>?v=<?= $__assetVersion ?>" media="print">
 
     <!-- Tema inicial, antes del primer pintado -->
     <script>

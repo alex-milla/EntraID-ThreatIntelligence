@@ -6,23 +6,23 @@
 <div class="mb-6 flex items-start justify-between gap-3 flex-wrap">
     <div>
         <h2 class="text-xl font-bold">Conexión Microsoft Graph</h2>
-        <p class="text-sm text-gray-500 mt-1">Prueba la conexión y sincroniza datos de cada tenant. Las conexiones nuevas se crean en <strong>Admin → Tenants</strong>.</p>
+        <p class="text-sm text-ink-muted mt-1">Prueba la conexión y sincroniza datos de cada tenant. Las conexiones nuevas se crean en <strong>Admin → Tenants</strong>.</p>
     </div>
-    <a href="<?= base_url('admin/tenant/edit') ?>" class="inline-flex items-center gap-2 px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors">
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+    <a href="<?= base_url('admin/tenant/edit') ?>" class="btn">
+        <i class="material-icons icon-16" aria-hidden="true">add</i>
         Nuevo tenant
     </a>
 </div>
 
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
     <?php foreach ($tenants as $t): ?>
-        <div class="bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-5" data-tenant="<?= $t['id'] ?>">
+        <div class="card p-5" data-tenant="<?= $t['id'] ?>">
             <div class="flex items-start justify-between gap-3 mb-4">
                 <div class="min-w-0">
                     <h3 class="text-sm font-semibold truncate"><?= e($t['name']) ?></h3>
-                    <p class="text-xs text-gray-400 font-mono mt-0.5"><?= e(truncate($t['tenant_id'], 24)) ?></p>
-                    <p class="text-xs text-gray-400 mt-0.5">
-                        Sector: <span class="text-gray-600 dark:text-gray-300"><?= e(($t['industry'] ?? '') !== '' && ($t['industry'] ?? null) !== null ? $t['industry'] : '—') ?></span>
+                    <p class="text-xs text-ink-soft font-mono mt-0.5"><?= e(truncate($t['tenant_id'], 24)) ?></p>
+                    <p class="text-xs text-ink-soft mt-0.5">
+                        Sector: <span class="text-ink-muted"><?= e(($t['industry'] ?? '') !== '' && ($t['industry'] ?? null) !== null ? $t['industry'] : '—') ?></span>
                         <?php if (!empty($t['country'])): ?> · <?= e($t['country']) ?><?php endif; ?>
                     </p>
                 </div>
@@ -32,20 +32,20 @@
             </div>
 
             <div class="flex flex-wrap gap-2">
-                <button onclick="testConnection(<?= $t['id'] ?>)" class="inline-flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 dark:border-gray-700 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">
-                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                <button onclick="testConnection(<?= $t['id'] ?>)" class="inline-flex items-center gap-1.5 px-3 py-1.5 border border-line text-xs font-medium rounded-lg hover:bg-muted transition-colors">
+                    <i class="material-icons icon-14" aria-hidden="true">bolt</i>
                     Probar conexión
                 </button>
                 <button onclick="syncAll(<?= $t['id'] ?>)" class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-brand-500 hover:bg-brand-600 text-white text-xs font-medium rounded-lg transition-colors">
-                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                    <i class="material-icons icon-14" aria-hidden="true">sync</i>
                     Sincronizar todo
                 </button>
-                <button onclick="diagnose(<?= $t['id'] ?>)" class="inline-flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 dark:border-gray-700 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">
-                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                <button onclick="diagnose(<?= $t['id'] ?>)" class="inline-flex items-center gap-1.5 px-3 py-1.5 border border-line text-xs font-medium rounded-lg hover:bg-muted transition-colors">
+                    <i class="material-icons icon-14" aria-hidden="true">check_circle</i>
                     Diagnóstico
                 </button>
-                <button onclick="detectOrg(<?= $t['id'] ?>)" class="inline-flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 dark:border-gray-700 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-muted-dark transition-colors">
-                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 21h18M5 21V7l7-4 7 4v14M9 9h.01M9 13h.01M9 17h.01M15 9h.01M15 13h.01M15 17h.01"/></svg>
+                <button onclick="detectOrg(<?= $t['id'] ?>)" class="inline-flex items-center gap-1.5 px-3 py-1.5 border border-line text-xs font-medium rounded-lg hover:bg-muted transition-colors">
+                    <i class="material-icons icon-14" aria-hidden="true">apartment</i>
                     Detectar organización
                 </button>
             </div>
@@ -53,7 +53,7 @@
             <div id="result-<?= $t['id'] ?>" class="hidden mt-3 text-xs px-3 py-2 rounded-lg"></div>
             <div id="diag-<?= $t['id'] ?>" class="hidden mt-3"></div>
 
-            <div class="mt-3 text-xs text-gray-400">
+            <div class="mt-3 text-xs text-ink-soft">
                 Última sync: <?= $t['last_sync_at'] ? time_ago($t['last_sync_at']) : 'Nunca' ?>
                 <?php if ($t['last_sync_status']): ?>
                     · Estado: <span class="<?= $t['last_sync_status'] === 'success' ? 'text-green-500' : 'text-red-500' ?>"><?= e($t['last_sync_status']) ?></span>
@@ -63,8 +63,8 @@
     <?php endforeach; ?>
 
     <?php if (empty($tenants)): ?>
-        <div class="lg:col-span-2 bg-white dark:bg-surface-dark rounded-xl border border-gray-200 dark:border-gray-700 p-8 text-center">
-            <p class="text-sm text-gray-500">No hay tenants configurados.</p>
+        <div class="lg:col-span-2 card p-8 text-center">
+            <p class="text-sm text-ink-muted">No hay tenants configurados.</p>
             <a href="<?= base_url('admin/tenants') ?>" class="inline-block mt-3 text-sm text-brand-500 hover:underline">Añadir tenant</a>
         </div>
     <?php endif; ?>
@@ -137,7 +137,7 @@ function detectOrg(id) {
 function diagnose(id) {
     var el = document.getElementById('diag-' + id);
     el.classList.remove('hidden');
-    el.innerHTML = '<p class="text-xs text-gray-500">Comprobando conexión y permisos…</p>';
+    el.innerHTML = '<p class="text-xs text-ink-muted">Comprobando conexión y permisos…</p>';
 
     api('POST', '<?= base_url('modules/graph_connector/diagnose') ?>/' + id, {})
         .then(function(res) {
@@ -145,25 +145,25 @@ function diagnose(id) {
                 el.innerHTML = '<p class="text-xs text-red-500">' + esc(res.error || 'Error') + '</p>';
                 return;
             }
-            var html = '<div class="bg-gray-50 dark:bg-gray-800/40 rounded-lg p-3 text-xs space-y-2">';
+            var html = '<div class="bg-muted/40 rounded-lg p-3 text-xs space-y-2">';
             html += '<div><strong>Token:</strong> ' + (res.token && res.token.success
-                ? '<span class="text-green-600">OK</span>'
-                : '<span class="text-red-600">ERROR</span> — ' + esc(res.token ? res.token.message : '')) + '</div>';
+                ? '<span class="text-success">OK</span>'
+                : '<span class="text-danger">ERROR</span> — ' + esc(res.token ? res.token.message : '')) + '</div>';
             html += '<div><strong>Permisos:</strong> ' + res.summary.ok + '/' + res.summary.total + ' OK'
-                + (res.summary.missing ? ' · <span class="text-red-600">' + res.summary.missing + ' faltan</span>' : ' <span class="text-green-600">✔</span>') + '</div>';
+                + (res.summary.missing ? ' · <span class="text-danger">' + res.summary.missing + ' faltan</span>' : ' <span class="text-success">✔</span>') + '</div>';
             html += '<div class="space-y-1 mt-1">';
             res.checks.forEach(function(c) {
-                var icon = c.ok ? '<span class="text-green-600">✔</span>' : '<span class="text-red-600">✘</span>';
+                var icon = c.ok ? '<span class="text-success">✔</span>' : '<span class="text-danger">✘</span>';
                 var detail = c.ok
                     ? (c.count !== null ? (c.count + ' elementos') : 'OK')
                     : ((c.http ? 'HTTP ' + c.http + ' — ' : '') + esc(c.message));
                 html += '<div class="flex items-start gap-2">' + icon
-                    + '<div class="min-w-0"><span class="font-mono">' + esc(c.permission) + '</span> <span class="text-gray-400">[' + esc(c.scope) + ']</span>'
-                    + '<div class="' + (c.ok ? 'text-gray-400' : 'text-red-500') + '">' + detail + '</div></div></div>';
+                    + '<div class="min-w-0"><span class="font-mono">' + esc(c.permission) + '</span> <span class="text-ink-soft">[' + esc(c.scope) + ']</span>'
+                    + '<div class="' + (c.ok ? 'text-ink-soft' : 'text-red-500')">' + detail + '</div></div></div>';
             });
             html += '</div>';
             if (res.last_sync) {
-                html += '<div class="text-gray-400 pt-1 border-t border-gray-200 dark:border-gray-700">Última sync: '
+                html += '<div class="text-ink-soft pt-1 border-t border-line">Última sync: '
                     + esc(res.last_sync.module_key) + ' · ' + esc(res.last_sync.status)
                     + (res.last_sync.error_message ? ' — <span class="text-red-500">' + esc(res.last_sync.error_message) + '</span>' : '') + '</div>';
             }
