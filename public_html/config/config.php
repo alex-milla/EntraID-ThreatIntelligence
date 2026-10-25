@@ -102,6 +102,7 @@ define('CVE_NVD_PAGE_SIZE', 2000);
 define('CVE_SYNC_BUDGET', 25);
 define('CVE_SYNC_STALE', 180);
 define('CVE_SYNC_WATCHDOG', 900);
+define('CVE_PROBE', filter_var($env['CVE_PROBE'] ?? '1', FILTER_VALIDATE_BOOLEAN));
 define('CVE_CRON_ACTIVE_GRACE', 45);
 define('CVE_REPORT_MAX_ROWS', 5000);
 define('CVE_AI_RECENT_DAYS', 30);

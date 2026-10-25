@@ -638,6 +638,16 @@ foreach ($companyGroups as $companyRow) {
                     toast(err || 'No se pudo iniciar', 'error');
                     return;
                 }
+                // La sonda de novedades no encontró CVEs modificados:
+                // no se ha descargado nada y no hay job que seguir.
+                if (res.skipped) {
+                    toast(res.message || 'No hay CVEs nuevos desde la última sincronización.', 'info');
+                    var statusEl = document.getElementById('cve-sync-status');
+                    if (statusEl) { statusEl.textContent = 'Sin novedades'; }
+                    var msgEl = document.getElementById('cve-sync-message');
+                    if (msgEl) { msgEl.textContent = res.message || ''; }
+                    return;
+                }
                 toast(res.message || 'Sincronización iniciada', 'success');
                 setRunningUi(true);
                 var step = document.getElementById('cve-step-btn');

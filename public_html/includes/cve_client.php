@@ -144,6 +144,81 @@ class CveClient
     }
 
     /**
+     * URL de la consulta de conteo de CVEs modificados en una ventana.
+     * No descarga catálogo: `resultsPerPage=1` y el total viene en `totalResults`.
+     */
+    public static function modifiedCountUrl(string $baseUrl, string $fromIso, string $toIso): string
+    {
+        $sep = str_contains($baseUrl, '?') ? '&' : '?';
+
+        return $baseUrl . $sep . http_build_query([
+            'resultsPerPage'   => 1,
+            'startIndex'       => 0,
+            'lastModStartDate' => $fromIso,
+            'lastModEndDate'   => $toIso,
+        ]) . '&noRejected';
+    }
+
+    /**
+     * Extrae `totalResults` de una respuesta de NVD API 2.0.
+     * Devuelve null si el JSON no es válido o no trae el campo.
+     */
+    public static function totalFromJson(string $body): ?int
+    {
+        $data = json_decode($body, true);
+        if (!is_array($data) || !array_key_exists('totalResults', $data)) {
+            return null;
+        }
+
+        return max(0, (int)$data['totalResults']);
+    }
+
+    /**
+     * Cuenta los CVEs modificados en [from, to] con una sola petición (~5 KB).
+     *
+     * Sirve para decidir si arrancar una sincronización incremental: si el
+     * total es 0 no hay nada que descargar y se evita el crawl completo.
+     * No lanza excepciones: cualquier fallo devuelve ok=false para que el
+     * llamante decida (el sync debe poder continuar como siempre).
+     *
+     * @return array{ok:bool,total:int,http:int,error:string}
+     */
+    public function countModified(string $fromIso, string $toIso, int $timeout = 20): array
+    {
+        try {
+            if (!self::isSafeUrl($this->nvdUrl)) {
+                return ['ok' => false, 'total' => 0, 'http' => 0, 'error' => 'URL de NVD no válida (se requiere HTTPS público).'];
+            }
+
+            $url = self::modifiedCountUrl($this->nvdUrl, $fromIso, $toIso);
+            $headers = ['Accept: application/json'];
+            if ($this->nvdKey !== '') {
+                $headers[] = 'apiKey: ' . $this->nvdKey;
+            }
+
+            $res = $this->httpGet($url, $headers, max(5, $timeout), false);
+            $http = (int)($res['http'] ?? 0);
+
+            if ($http !== 200) {
+                $detail = trim((string)($res['error'] ?? ''));
+                $message = $http === 0
+                    ? ('NVD no responde' . ($detail !== '' ? ': ' . $detail : ''))
+                    : ('NVD respondió HTTP ' . $http . ($http === 429 ? ' (rate limit)' : ''));
+                return ['ok' => false, 'total' => 0, 'http' => $http, 'error' => $message];
+            }
+
+            $total = self::totalFromJson((string)($res['body'] ?? ''));
+            if ($total === null) {
+                return ['ok' => false, 'total' => 0, 'http' => 200, 'error' => 'NVD devolvió un JSON sin totalResults.'];
+            }
+
+            return ['ok' => true, 'total' => $total, 'http' => 200, 'error' => ''];
+        } catch (Throwable $e) {
+            return ['ok' => false, 'total' => 0, 'http' => 0, 'error' => 'No se pudo consultar NVD: ' . $e->getMessage()];
+        }
+    }
+
+    /**
      * Peticiones permitidas por ventana según las normas de NVD API 2.0:
      * 5/30 s sin API key y 50/30 s con API key (o el override configurado).
      */

@@ -154,6 +154,7 @@ class CveSync
         $updatedCount = 0;
         $windowStart = null;
         $windowEnd = null;
+        $expectedNew = null;
 
         $currentStatus = $state !== null ? (string)($state['status'] ?? '') : '';
         if ($state && in_array($currentStatus, ['queued', 'running', 'error'], true)) {
@@ -201,6 +202,28 @@ class CveSync
             if ($lastTs <= 0) {
                 return ['success' => false, 'error' => 'No se pudo leer la fecha de la última sincronización.'];
             }
+
+            // Sonda de novedades: una sola petición (~5 KB) sobre la ventana
+            // estricta [último éxito, ahora]. Si no hay ningún CVE modificado,
+            // no se crea el job: se evita descargar y reprocesar el catálogo
+            // completo (la ventana de trabajo lleva 7 días de solape).
+            $newCves = $this->probeNewCves($lastTs, time());
+            if ($newCves === 0) {
+                $this->rememberProbe(0);
+                return [
+                    'success' => true,
+                    'skipped' => true,
+                    'total'   => 0,
+                    'state'   => $this->publicState($state),
+                    'message' => 'No hay CVEs nuevos desde la última sincronización ('
+                        . date('d/m/Y H:i', $lastTs) . '). No se ha descargado nada.',
+                ];
+            }
+            if ($newCves !== null) {
+                $expectedNew = $newCves;
+                $this->rememberProbe($newCves);
+            }
+
             $startTs = $lastTs - (7 * 86400);
             // NVD limita lastMod a 120 días; si hace mucho que no se sincroniza,
             // acotamos la ventana y el usuario puede usar Reconstruir si hace falta.
@@ -235,6 +258,16 @@ class CveSync
         // Guardar el tamaño de página elegido para este job.
         setting_set('cve_job_page_size', (string)$pageSize);
 
+        $startMessage = $resume
+            ? 'Reanudando la sincronización de NVD…'
+            : ($mode === 'kev'
+                ? 'Actualizando KEV y EPSS…'
+                : ($mode === 'incremental'
+                    ? ($expectedNew !== null && $expectedNew > 0
+                        ? 'Preparando actualización incremental (' . number_format($expectedNew) . ' CVEs nuevos)…'
+                        : 'Preparando actualización incremental…')
+                    : ($mode === 'recent' ? 'Preparando descarga reciente…' : 'Preparando reconstrucción completa…')));
+
         CveDatabase::query(
             "UPDATE cve_sync_state
              SET status = 'queued', mode = ?, phase = ?, cursor = ?, total = ?,
@@ -253,13 +286,7 @@ class CveSync
                 $updatedCount,
                 $token,
                 $baseUrl,
-                $resume
-                    ? 'Reanudando la sincronización de NVD…'
-                    : ($mode === 'kev'
-                        ? 'Actualizando KEV y EPSS…'
-                        : ($mode === 'incremental'
-                            ? 'Preparando actualización incremental…'
-                            : ($mode === 'recent' ? 'Preparando descarga reciente…' : 'Preparando reconstrucción completa…'))),
+                $startMessage,
                 $windowStart,
                 $windowEnd,
             ]
@@ -287,15 +314,21 @@ class CveSync
             );
         }
 
+        $suffixNew = ($expectedNew !== null && $expectedNew > 0)
+            ? ' (' . number_format($expectedNew) . ' CVEs nuevos)'
+            : '';
+
         return [
             'success'        => true,
             'state'          => $this->publicState($this->state()),
             'worker_started' => $workerStarted,
-            'message'        => !$launchWorker
+            'expected'       => $expectedNew,
+            'message'        => (!$launchWorker
                 ? 'Sincronización programada iniciada.'
                 : ($workerStarted
                     ? 'Sincronización iniciada en segundo plano.'
-                    : 'No se pudo lanzar el worker. Usa «Continuar» para procesar tramos manualmente.'),
+                    : 'No se pudo lanzar el worker. Usa «Continuar» para procesar tramos manualmente.'))
+                . $suffixNew,
         ];
     }
 
@@ -342,6 +375,21 @@ class CveSync
                     'done'    => false,
                     'chunks'  => 0,
                     'state'   => $start['state'] ?? null,
+                ];
+            }
+            // La sonda de novedades no encontró CVEs modificados: no hay job
+            // que procesar y no es un error.
+            if (!empty($start['skipped'])) {
+                return [
+                    'success' => true,
+                    'done'    => false,
+                    'partial' => false,
+                    'skipped' => true,
+                    'reason'  => 'no-changes',
+                    'error'   => null,
+                    'chunks'  => 0,
+                    'state'   => $start['state'] ?? null,
+                    'message' => (string)($start['message'] ?? ''),
                 ];
             }
             $state = $this->state();
@@ -1898,6 +1946,53 @@ class CveSync
             'rate_max'   => $client->effectiveRateLimit(),
             'rate_window'=> $client->rateWindowSeconds(),
         ];
+    }
+
+    /**
+     * Cuenta los CVEs modificados en [from, to] para decidir si arrancar la
+     * sincronización incremental.
+     *
+     * @return int|null  Número de CVEs, o null si la sonda no es concluyente
+     *                   (red, rate limit, JSON inesperado o sonda desactivada).
+     *                   En ese caso el sync continúa como siempre.
+     */
+    protected function probeNewCves(int $fromTs, int $toTs): ?int
+    {
+        if (!defined('CVE_PROBE') || CVE_PROBE === false) {
+            return null;
+        }
+        if ($fromTs <= 0 || $toTs <= $fromTs) {
+            return null;
+        }
+
+        $client = CveClient::fromSettings();
+        $res = $client->countModified(
+            gmdate('Y-m-d\TH:i:s\Z', $fromTs),
+            gmdate('Y-m-d\TH:i:s\Z', $toTs)
+        );
+
+        if (empty($res['ok'])) {
+            app_log('info', 'cve_probe', 'Sonda de novedades sin concluir; se continúa con el sync', [
+                'error' => (string)($res['error'] ?? ''),
+            ]);
+            return null;
+        }
+
+        return (int)($res['total'] ?? 0);
+    }
+
+    /**
+     * Guarda el resultado de la sonda para diagnóstico (no toca el estado
+     * de la sincronización).
+     */
+    private function rememberProbe(int $total): void
+    {
+        try {
+            setting_set('cve_probe_last_at', date('c'));
+            setting_set('cve_probe_last_total', (string)$total);
+        } catch (Throwable $e) {
+            // Diagnóstico best-effort: nunca debe romper el arranque.
+        }
     }
 
     private function dbTime(?string $value): int
