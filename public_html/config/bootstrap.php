@@ -67,6 +67,7 @@ if (session_status() === PHP_SESSION_NONE) {
 // ============================================================
 
 require_once INCLUDES_PATH . '/helpers.php';
+require_once INCLUDES_PATH . '/llm_prompts.php';
 require_once INCLUDES_PATH . '/encryption.php';
 require_once INCLUDES_PATH . '/csrf.php';
 require_once INCLUDES_PATH . '/session.php';

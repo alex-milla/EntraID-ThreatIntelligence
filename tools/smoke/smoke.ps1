@@ -28,6 +28,7 @@ $routes = @(
     '/admin/tenants',
     '/admin/users',
     '/admin/modules',
+    '/admin/prompts',
     '/admin/settings',
     '/admin/logs',
     '/admin/apis',

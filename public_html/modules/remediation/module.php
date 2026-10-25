@@ -819,10 +819,13 @@ class Module_Remediation extends BaseModule
 
     private function buildAiPrompt(array $org, ?array $task, ?array $cve, string $question): array
     {
-        $system = 'Eres un ingeniero sénior de vulnerabilidades, gestión de parches y hardening (CIS Benchmarks). '
+        $system = llm_prompt(
+            'remediation.assistant.system',
+            'Eres un ingeniero sénior de vulnerabilidades, gestión de parches y hardening (CIS Benchmarks). '
             . 'Respondes en español, con precisión técnica y pasos concretos. Distingue siempre entre implementación, '
             . 'verificación y rollback. Mantén en inglés los términos técnicos habituales (RCE, KB, GPO, WAF, etc.). '
-            . 'No inventes versiones, KB ni URLs: si falta información, dilo. No repitas el contexto; ve al grano.';
+            . 'No inventes versiones, KB ni URLs: si falta información, dilo. No repitas el contexto; ve al grano.'
+        );
 
         $lines = [];
         $lines[] = 'ORGANIZACIÓN: ' . (string)$org['name']

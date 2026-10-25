@@ -709,9 +709,12 @@ final class CveReportAi
 
     public static function systemPrompt(): string
     {
-        return 'Eres un analista sénior de ciberseguridad especializado en vulnerabilidades, '
+        return llm_prompt(
+            'cve.report.system',
+            'Eres un analista sénior de ciberseguridad especializado en vulnerabilidades, '
             . 'explotación y respuesta a incidentes. Escribes en español, con precisión técnica '
-            . 'y sin inventar datos.';
+            . 'y sin inventar datos.'
+        );
     }
 
     /**
@@ -754,11 +757,14 @@ final class CveReportAi
             $blocks[] = $block;
         }
 
-        $system = 'Eres un traductor técnico especializado en ciberseguridad. Traduces al español '
+        $system = llm_prompt(
+            'cve.translate.system',
+            'Eres un traductor técnico especializado en ciberseguridad. Traduces al español '
             . 'manteniendo en inglés los términos técnicos y nombres propios (RCE, buffer overflow, heap, '
-            . 'checksum, kernel, privilege escalation, CISA, KEV, BOD 26-04, etc.). No añades información ni opiniones.';
+            . 'checksum, kernel, privilege escalation, CISA, KEV, BOD 26-04, etc.). No añades información ni opiniones.'
+        );
 
-        $prompt = "Traduce al español los textos de cada bloque.\n\n"
+        $rules = llm_prompt('cve.translate.rules', "Traduce al español los textos de cada bloque.\n\n"
             . "Reglas:\n"
             . "- Devuelve EXACTAMENTE un bloque por CVE, con las mismas claves que recibe, sin nada más:\n"
             . "CVE: CVE-AAAA-NNNN\n"
@@ -766,8 +772,9 @@ final class CveReportAi
             . "ACCION_KEV_ES: ... (solo si el bloque tenía ACCION_KEV)\n"
             . "- Mantén los términos técnicos y nombres propios en inglés cuando sea lo habitual.\n"
             . "- No inventes datos ni añadas URLs.\n"
-            . "- No resumas: traduce el contenido completo.\n\n"
-            . "TEXTOS:\n" . implode("\n\n", $blocks);
+            . "- No resumas: traduce el contenido completo.");
+
+        $prompt = $rules . "\n\nTEXTOS:\n" . implode("\n\n", $blocks);
 
         $maxTokens = min(4000, max(800, 600 * count($pending)));
         $started = microtime(true);
@@ -942,29 +949,39 @@ final class CveReportAi
             }
         }
 
-        return "Eres un analista de seguridad sénior. Usando SOLO la información proporcionada, "
-            . "redacta un análisis BREVE para un responsable técnico. Devuelve EXACTAMENTE estas "
-            . "cuatro secciones, cada una empezando por su encabezado numerado:\n\n"
-            . "1. Evaluación del riesgo\n"
-            . "2. Escenarios de ataque\n"
-            . "3. Mitigación\n"
-            . "4. Resumen ejecutivo\n\n"
-            . "Formato obligatorio:\n"
-            . "- Usa SOLO viñetas, una por línea, empezando por \"- \".\n"
-            . "- Máximo 4 viñetas por sección.\n"
-            . "- Cada viñeta debe ocupar una sola línea y tener 20 palabras como máximo.\n"
-            . "- No escribas párrafos, introducciones ni conclusiones fuera de las cuatro secciones.\n"
-            . "- No repitas CVSS, EPSS, KEV, fechas ni la descripción literal: ya aparecen en el informe.\n"
-            . "- La descripción del CVE ya se muestra en el informe; no la reescribas, resumes ni traduzcas.\n"
-            . "- No incluyas URLs ni enlaces: las referencias se muestran aparte.\n"
-            . "- Sin Markdown (nada de **, #, `), sin emojis, sin tablas.\n"
-            . "- Español técnico y directo. Si un dato es desconocido, escribe una viñeta con \"Desconocido\".\n"
-            . "- Si hay varios CVEs, prioriza los de mayor riesgo y no repitas lo mismo.\n\n"
-            . "Contenido esperado:\n"
-            . "1. Naturaleza, componente afectado, precondiciones, impacto CIA y señal KEV/EPSS/exploits.\n"
-            . "2. Escenario realista: entrada, autenticación, privilegios y consecuencia.\n"
-            . "3. Acciones concretas: parche, mitigación temporal y detección.\n"
-            . "4. Riesgo de negocio, probabilidad y urgencia (2-3 viñetas).\n\n"
+        $intro = llm_prompt(
+            'cve.report.intro',
+            'Eres un analista de seguridad sénior. Usando SOLO la información proporcionada, '
+            . 'redacta un análisis BREVE para un responsable técnico.'
+        );
+        $format = llm_prompt('cve.report.format', <<<'TXT'
+Devuelve EXACTAMENTE estas cuatro secciones, cada una empezando por su encabezado numerado:
+
+1. Evaluación del riesgo
+2. Escenarios de ataque
+3. Mitigación
+4. Resumen ejecutivo
+
+Formato obligatorio:
+- Usa SOLO viñetas, una por línea, empezando por "- ".
+- Máximo 4 viñetas por sección.
+- Cada viñeta debe ocupar una sola línea y tener 20 palabras como máximo.
+- No escribas párrafos, introducciones ni conclusiones fuera de las cuatro secciones.
+- No repitas CVSS, EPSS, KEV, fechas ni la descripción literal: ya aparecen en el informe.
+- La descripción del CVE ya se muestra en el informe; no la reescribas, resumes ni traduzcas.
+- No incluyas URLs ni enlaces: las referencias se muestran aparte.
+- Sin Markdown (nada de **, #, `), sin emojis, sin tablas.
+- Español técnico y directo. Si un dato es desconocido, escribe una viñeta con "Desconocido".
+- Si hay varios CVEs, prioriza los de mayor riesgo y no repitas lo mismo.
+
+Contenido esperado:
+1. Naturaleza, componente afectado, precondiciones, impacto CIA y señal KEV/EPSS/exploits.
+2. Escenario realista: entrada, autenticación, privilegios y consecuencia.
+3. Acciones concretas: parche, mitigación temporal y detección.
+4. Riesgo de negocio, probabilidad y urgencia (2-3 viñetas).
+TXT);
+
+        return $intro . ' ' . $format . "\n\n"
             . ($exposureLines !== []
                 ? "EXPOSICIÓN EN TU ENTORNO (Defender):\n" . implode("\n", $exposureLines) . "\n"
                     . "- Usa la exposición real para priorizar; no inventes equipos ni datos.\n\n"
@@ -1078,25 +1095,35 @@ final class CveReportAi
             }
         }
 
-        return "Analiza ÚNICAMENTE el CVE " . $cveId . ". No mezcles datos de otros CVEs. "
-            . "Redacta un análisis extendido para el equipo que va a remediarlo, usando SOLO los datos aportados. "
-            . "Devuelve EXACTAMENTE estas seis secciones, cada una empezando por su encabezado numerado:\n\n"
-            . "1. Naturaleza y alcance\n"
-            . "2. Evaluación de riesgo\n"
-            . "3. Escenarios de ataque\n"
-            . "4. Impacto y probabilidad\n"
-            . "5. Mitigación y parcheo\n"
-            . "6. Detección, verificación y prioridad\n\n"
-            . "Formato obligatorio:\n"
-            . "- Usa SOLO viñetas, una por línea, empezando por \"- \".\n"
-            . "- Entre 3 y 5 viñetas por sección.\n"
-            . "- Cada viñeta debe ocupar una sola línea y tener 25 palabras como máximo.\n"
-            . "- No escribas párrafos, introducciones ni conclusiones fuera de las seis secciones.\n"
-            . "- No repitas la descripción literal ni los datos CVSS/EPSS/KEV: ya aparecen en el informe; aporta análisis.\n"
-            . "- No inventes KB, versiones, productos ni URLs. Si un dato no consta, escribe \"Desconocido\".\n"
-            . "- En mitigación, distingue parche oficial, mitigación temporal y verificación.\n"
-            . "- Usa las etiquetas/origen solo para contextualizar al equipo responsable; no inventes datos sobre ellas.\n"
-            . "- Sin Markdown (nada de **, #, `), sin emojis, sin tablas. Español técnico y directo.\n\n"
+        $intro = llm_prompt(
+            'cve.item.intro',
+            'Analiza ÚNICAMENTE el CVE {cve_id}. No mezcles datos de otros CVEs. '
+            . 'Redacta un análisis extendido para el equipo que va a remediarlo, usando SOLO los datos aportados.',
+            ['{cve_id}' => (string)$cveId]
+        );
+        $format = llm_prompt('cve.item.format', <<<'TXT'
+Devuelve EXACTAMENTE estas seis secciones, cada una empezando por su encabezado numerado:
+
+1. Naturaleza y alcance
+2. Evaluación de riesgo
+3. Escenarios de ataque
+4. Impacto y probabilidad
+5. Mitigación y parcheo
+6. Detección, verificación y prioridad
+
+Formato obligatorio:
+- Usa SOLO viñetas, una por línea, empezando por "- ".
+- Entre 3 y 5 viñetas por sección.
+- Cada viñeta debe ocupar una sola línea y tener 25 palabras como máximo.
+- No escribas párrafos, introducciones ni conclusiones fuera de las seis secciones.
+- No repitas la descripción literal ni los datos CVSS/EPSS/KEV: ya aparecen en el informe; aporta análisis.
+- No inventes KB, versiones, productos ni URLs. Si un dato no consta, escribe "Desconocido".
+- En mitigación, distingue parche oficial, mitigación temporal y verificación.
+- Usa las etiquetas/origen solo para contextualizar al equipo responsable; no inventes datos sobre ellas.
+- Sin Markdown (nada de **, #, `), sin emojis, sin tablas. Español técnico y directo.
+TXT);
+
+        return $intro . ' ' . $format . "\n\n"
             . ($exposureLines !== []
                 ? "EXPOSICIÓN EN TU ENTORNO (Defender):\n" . implode("\n", $exposureLines) . "\n\n"
                 : "EXPOSICIÓN EN TU ENTORNO (Defender): sin datos para este CVE.\n\n")
@@ -1108,9 +1135,12 @@ final class CveReportAi
      */
     public static function itemSystemPrompt(): string
     {
-        return 'Eres un analista sénior de ciberseguridad especializado en vulnerabilidades, '
+        return llm_prompt(
+            'cve.item.system',
+            'Eres un analista sénior de ciberseguridad especializado en vulnerabilidades, '
             . 'explotación, gestión de parches y respuesta. Analizas un único CVE por respuesta, '
-            . 'escribes en español con precisión técnica y no inventas datos.';
+            . 'escribes en español con precisión técnica y no inventas datos.'
+        );
     }
 
     /**

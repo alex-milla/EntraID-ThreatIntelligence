@@ -35,6 +35,7 @@ $adminItems = [
     ['key' => 'apis',        'url' => base_url('admin/apis'),             'icon' => 'api',           'label' => 'APIs'],
     ['key' => 'logs',        'url' => base_url('admin/logs'),             'icon' => 'article',       'label' => 'Logs'],
     ['key' => 'settings',    'url' => base_url('admin/settings'),         'icon' => 'settings',      'label' => 'Configuración'],
+    ['key' => 'prompts',     'url' => base_url('admin/prompts'),          'icon' => 'edit_note',     'label' => 'Plantillas de prompts'],
     ['key' => 'updates',     'url' => base_url('admin/updates'),          'icon' => 'system_update', 'label' => 'Actualizaciones'],
     ['key' => 'storage',     'url' => base_url('admin/storage'),          'icon' => 'storage',       'label' => 'Almacenamiento'],
     ['key' => 'security',    'url' => base_url('admin/security'),         'icon' => 'security',      'label' => 'Seguridad'],

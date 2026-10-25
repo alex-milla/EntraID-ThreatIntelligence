@@ -456,6 +456,63 @@ class AdminController
     }
 
     /**
+     * Plantillas de prompts (editables desde la interfaz).
+     */
+    public static function prompts(): void
+    {
+        Auth::requireAdmin();
+
+        $prompts = llm_prompts_all();
+        $success = flash('success');
+        $error = flash('error');
+
+        require VIEWS_PATH . '/layout/header.php';
+        require VIEWS_PATH . '/layout/sidebar.php';
+        require VIEWS_PATH . '/admin/prompts.php';
+        require VIEWS_PATH . '/layout/footer.php';
+    }
+
+    /**
+     * Guarda la personalización de un prompt.
+     */
+    public static function promptsSave(): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        $res = llm_prompt_save(
+            (string)($_POST['key'] ?? ''),
+            (string)($_POST['template'] ?? ''),
+            Auth::id()
+        );
+
+        if (!empty($res['ok'])) {
+            flash('success', 'Prompt actualizado. Se aplicará en la próxima llamada a la IA.');
+        } else {
+            flash('error', (string)($res['error'] ?? 'No se pudo guardar el prompt.'));
+        }
+        redirect(base_url('admin/prompts'));
+    }
+
+    /**
+     * Restaura el texto original de un prompt.
+     */
+    public static function promptsReset(): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        $res = llm_prompt_reset((string)($_POST['key'] ?? ''));
+
+        if (!empty($res['ok'])) {
+            flash('success', 'Prompt restaurado a su texto original.');
+        } else {
+            flash('error', (string)($res['error'] ?? 'No se pudo restaurar el prompt.'));
+        }
+        redirect(base_url('admin/prompts'));
+    }
+
+    /**
      * Activar/desactivar módulo.
      */
     public static function moduleToggle(): void
@@ -1604,6 +1661,7 @@ $adminRoutes = [
         'users'            => 'users',
         'user/edit'        => 'userEdit',
         'modules'          => 'modules',
+        'prompts'          => 'prompts',
         'settings'         => 'settings',
         'storage'          => 'storage',
         'security'         => 'security',
@@ -1623,6 +1681,8 @@ $adminRoutes = [
         'user/delete'      => 'userDelete',
         'user/edit'        => 'userEdit',
         'module/toggle'    => 'moduleToggle',
+        'prompts/save'     => 'promptsSave',
+        'prompts/reset'    => 'promptsReset',
         'settings/save'    => 'settingsSave',
         'apis/save'        => 'apisSave',
         'apis/test'        => 'apisTest',

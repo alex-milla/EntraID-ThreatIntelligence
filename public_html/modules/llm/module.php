@@ -430,10 +430,16 @@ class Module_Llm extends BaseModule
             $ctx .= "\nACCIONES RECOMENDADAS (Microsoft): " . truncate((string)$incident['recommended_actions'], 500) . "\n";
         }
 
-        $system = 'Eres un analista de ciberseguridad senior de un SOC. Responde SIEMPRE en español y en Markdown, basándote '
-            . 'EXCLUSIVAMENTE en los datos del incidente que se te dan; no inventes. Estructura la respuesta con: '
+        $system = llm_prompt(
+            'llm.analysis.incident.system',
+            'Eres un analista de ciberseguridad senior de un SOC. Responde SIEMPRE en español y en Markdown, basándote '
+            . 'EXCLUSIVAMENTE en los datos del incidente que se te dan; no inventes.'
+        ) . ' ' . llm_prompt(
+            'llm.analysis.incident.format',
+            'Estructura la respuesta con: '
             . '1) Resumen ejecutivo; 2) Naturaleza y vector (mapea las técnicas MITRE); 3) Impacto potencial; '
-            . '4) Indicadores (IoCs) relevantes; 5) Acciones recomendadas priorizadas (3-5). Sé concreto y accionable.';
+            . '4) Indicadores (IoCs) relevantes; 5) Acciones recomendadas priorizadas (3-5). Sé concreto y accionable.'
+        );
 
         $user = $ctx . "\nTAREA: Analiza este incidente y devuelve el informe según la estructura indicada.";
 
@@ -450,7 +456,11 @@ class Module_Llm extends BaseModule
             [$tenantId, $limit]
         );
 
-        $system = 'Eres un analista de threat intelligence. Clasifica cada IOC en: tipo de amenaza (malware, phishing, C2, etc.), nivel de confianza (alta/media/baja) y una breve descripción. Responde en formato JSON array.';
+        $system = llm_prompt(
+            'llm.ioc.classify.system',
+            'Eres un analista de threat intelligence. Clasifica cada IOC en: tipo de amenaza '
+            . '(malware, phishing, C2, etc.), nivel de confianza (alta/media/baja) y una breve descripción.'
+        ) . ' ' . llm_prompt('llm.ioc.classify.format', 'Responde en formato JSON array.');
         $user = "Clasifica estos IOCs:\n" . json_encode($iocs, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
 
         $result = $this->chat($system, $user, [], $profileId);
@@ -465,9 +475,12 @@ class Module_Llm extends BaseModule
      */
     public function extractIocs(string $text, ?int $profileId = null): array
     {
-        $system = 'Eres un analista de threat intelligence. A partir del texto (artículo o correo), devuelve EXCLUSIVAMENTE un JSON válido con esta forma: '
+        $system = llm_prompt(
+            'llm.ioc.extract.system',
+            'Eres un analista de threat intelligence. A partir del texto (artículo o correo), devuelve EXCLUSIVAMENTE un JSON válido con esta forma: '
             . '{"resumen":"...","iocs":[{"tipo":"ipv4-addr|domain-name|url|file|email-addr|otro","valor":"..."}],"recomendaciones":"..."}. '
-            . 'No inventes IOCs; si no hay, deja el array vacío. Responde en español.';
+            . 'No inventes IOCs; si no hay, deja el array vacío. Responde en español.'
+        );
         $user = "Analiza el siguiente contenido:\n\n" . $text;
 
         $res = $this->chat($system, $user, [], $profileId);
@@ -504,7 +517,10 @@ class Module_Llm extends BaseModule
 
         $data = safe_json_decode($report['data'], []);
 
-        $system = 'Eres un analista de ciberseguridad que escribe informes ejecutivos. Convierte los datos técnicos en un resumen narrativo profesional en español, destacando los hallazgos más relevantes y el estado general de la seguridad.';
+        $system = llm_prompt(
+            'llm.analysis.report.system',
+            'Eres un analista de ciberseguridad que escribe informes ejecutivos. Convierte los datos técnicos en un resumen narrativo profesional en español, destacando los hallazgos más relevantes y el estado general de la seguridad.'
+        );
         $user = "Genera un resumen ejecutivo del siguiente reporte ({$report['title']}):\n" . json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
 
         return $this->chat($system, $user, [], $profileId);
@@ -614,9 +630,12 @@ class Module_Llm extends BaseModule
 
         $context = $this->tenantContextText($tenantId, $detailed);
 
-        $system = 'Eres un analista de ciberseguridad senior. Responde SIEMPRE en español y en Markdown. '
+        $system = llm_prompt(
+            'llm.analysis.tenant.system',
+            'Eres un analista de ciberseguridad senior. Responde SIEMPRE en español y en Markdown. '
             . 'Básate EXCLUSIVAMENTE en los datos del tenant que se te proporcionan; no inventes cifras ni hechos. '
-            . 'Si falta información, dilo explícitamente. Sé concreto, prioriza y propón acciones.';
+            . 'Si falta información, dilo explícitamente. Sé concreto, prioriza y propón acciones.'
+        );
 
         $user = "DATOS DEL TENANT «{$tenant['name']}»:\n\n{$context}\n\nTAREA: {$instruction}";
         if (trim($question) !== '') {
@@ -843,7 +862,10 @@ class Module_Llm extends BaseModule
         }
 
         $instruction = trim($instruction) ?: 'Analiza este perfil de amenaza y resume lo más relevante.';
-        $system = 'Eres un analista de threat intelligence senior. Responde SIEMPRE en español y en Markdown, basándote EXCLUSIVAMENTE en los datos del perfil; no inventes. Sé concreto y accionable.';
+        $system = llm_prompt(
+            'llm.analysis.profile.system',
+            'Eres un analista de threat intelligence senior. Responde SIEMPRE en español y en Markdown, basándote EXCLUSIVAMENTE en los datos del perfil; no inventes. Sé concreto y accionable.'
+        );
         $user = "DATOS DEL PERFIL:\n\n{$ctx}\n\nTAREA: {$instruction}";
         if (trim($question) !== '') { $user .= "\n\nPREGUNTA DEL ANALISTA: " . trim($question); }
 
@@ -864,7 +886,10 @@ class Module_Llm extends BaseModule
         $ctx = 'INDICADORES (mostrando ' . count($iocs) . '):' . "\n" . ($lines ? implode("\n", $lines) : '(sin indicadores con esos filtros)');
 
         $instruction = trim($instruction) ?: 'Analiza estos indicadores y resume lo más relevante.';
-        $system = 'Eres un analista de threat intelligence senior. Responde SIEMPRE en español y en Markdown, basándote EXCLUSIVAMENTE en los indicadores proporcionados; no inventes.';
+        $system = llm_prompt(
+            'llm.analysis.indicators.system',
+            'Eres un analista de threat intelligence senior. Responde SIEMPRE en español y en Markdown, basándote EXCLUSIVAMENTE en los indicadores proporcionados; no inventes.'
+        );
         $user = "DATOS:\n\n{$ctx}\n\nTAREA: {$instruction}";
         if (trim($question) !== '') { $user .= "\n\nPREGUNTA DEL ANALISTA: " . trim($question); }
 
@@ -920,9 +945,17 @@ class Module_Llm extends BaseModule
         }
 
         $instruction = trim($instruction) ?: 'Resume este artículo y destaca lo más relevante para nuestra organización.';
-        $system = 'Eres un analista de threat intelligence senior. Responde SIEMPRE en español y en Markdown. Usa EXCLUSIVAMENTE la información del artículo proporcionado; no inventes datos. Si algo no consta, dilo.';
+        $system = llm_prompt(
+            'llm.analysis.article.system',
+            'Eres un analista de threat intelligence senior. Responde SIEMPRE en español y en Markdown. Usa EXCLUSIVAMENTE la información del artículo proporcionado; no inventes datos. Si algo no consta, dilo.'
+        );
         $user = "DATOS DEL ARTÍCULO:\n\n{$ctx}\n\nTAREA: {$instruction}";
-        if ($defang) { $user .= "\n\nIMPORTANTE: al listar direcciones IP y dominios, ofusca el ÚLTIMO punto como \"[.]\" (defanging) para que el texto sea seguro de publicar."; }
+        if ($defang) {
+            $user .= "\n\n" . llm_prompt(
+                'llm.analysis.article.defang',
+                'IMPORTANTE: al listar direcciones IP y dominios, ofusca el ÚLTIMO punto como "[.]" (defanging) para que el texto sea seguro de publicar.'
+            );
+        }
         if (trim($question) !== '') { $user .= "\n\nPREGUNTA DEL ANALISTA: " . trim($question); }
 
         return $this->chat($system, $user, ['max_tokens' => 3000], $llmProfileId);
@@ -972,7 +1005,10 @@ class Module_Llm extends BaseModule
         }
         $src = $this->ctxClip($src, 12000);
 
-        $system = 'Eres un traductor profesional especializado en ciberseguridad. Traduce al ESPAÑOL (de España) el artículo que se te proporciona. Reglas: conserva el formato Markdown y la estructura (títulos, listas, tablas); NO traduzcas indicadores técnicos ni términos que deban permanecer literales (direcciones IP, dominios, URLs, hashes, nombres de malware/actores, comandos, código, identificadores CVE/MITRE); no añadas ni omitas información; no resumas. Devuelve ÚNICAMENTE la traducción en Markdown, sin comentarios adicionales.';
+        $system = llm_prompt(
+            'llm.article.translate.system',
+            'Eres un traductor profesional especializado en ciberseguridad. Traduce al ESPAÑOL (de España) el artículo que se te proporciona. Reglas: conserva el formato Markdown y la estructura (títulos, listas, tablas); NO traduzcas indicadores técnicos ni términos que deban permanecer literales (direcciones IP, dominios, URLs, hashes, nombres de malware/actores, comandos, código, identificadores CVE/MITRE); no añadas ni omitas información; no resumas. Devuelve ÚNICAMENTE la traducción en Markdown, sin comentarios adicionales.'
+        );
         $user = "TEXTO ORIGINAL (Markdown):\n\n{$src}";
 
         $res = $this->chat($system, $user, ['max_tokens' => 4000], $profileId);

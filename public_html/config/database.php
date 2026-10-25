@@ -472,6 +472,15 @@ class Database
             updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         )");
 
+        // Personalizaciones de los prompts de sistema. Sin fila, se usa el
+        // texto por defecto del catálogo (includes/llm_prompts.php).
+        $db->exec("CREATE TABLE IF NOT EXISTS llm_prompts (
+            key TEXT PRIMARY KEY,
+            template TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_by INTEGER
+        )");
+
         // Migración: columna scope en instalaciones antiguas
         $actionCols = [];
         foreach ($db->query("PRAGMA table_info(llm_actions)") as $c) {

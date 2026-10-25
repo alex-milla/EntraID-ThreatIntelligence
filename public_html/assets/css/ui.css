@@ -1251,6 +1251,10 @@
     animation: tdlFade .18s ease-out;
 }
 
+.tdl-modal-overlay[hidden] {
+    display: none;
+}
+
 .tdl-modal {
     width: min(440px, 100%);
     background: var(--surface);

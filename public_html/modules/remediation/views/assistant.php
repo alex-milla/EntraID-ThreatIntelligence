@@ -12,13 +12,16 @@ $assistantUrl = $modUrl . '?tab=assistant&org=' . $selectedOrgId
     . ($cveQuery !== '' ? '&cve=' . urlencode($cveQuery) : '');
 $contextCve = $selectedTask !== null ? (string)$selectedTask['cve_id'] : ($cveQuery !== '');
 $defaultProfile = $taskProfileId > 0 ? $taskProfileId : (int)($profiles[0]['id'] ?? 0);
-$quickPrompts = [
-    'Plan de implementación paso a paso, con verificación y rollback.',
-    '¿Cómo compruebo que el parche está realmente aplicado en los equipos?',
-    '¿Qué controles CIS o medidas de hardening reducen la exposición?',
-    '¿Qué evidencia debo adjuntar para cerrar la tarea?',
-    '¿Qué riesgos tiene aplicar el parche y cómo hago el rollback?',
-];
+$quickPrompts = array_values(llm_prompt_group('remediation.quick.'));
+if ($quickPrompts === []) {
+    $quickPrompts = [
+        'Plan de implementación paso a paso, con verificación y rollback.',
+        '¿Cómo compruebo que el parche está realmente aplicado en los equipos?',
+        '¿Qué controles CIS o medidas de hardening reducen la exposición?',
+        '¿Qué evidencia debo adjuntar para cerrar la tarea?',
+        '¿Qué riesgos tiene aplicar el parche y cómo hago el rollback?',
+    ];
+}
 ?>
 <div class="grid grid-cols-1 lg:grid-cols-4 gap-5">
 
