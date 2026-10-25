@@ -1087,8 +1087,25 @@ class Module_ThreatIntelligence extends BaseModule
         }));
     }
 
-    /** Paso de artículos: procesa [cursor, cursor+batch) omitiendo los que no cambiaron. */
-    public function syncStepArticles(GraphClient $client, int $tenantId, int $cursor, int $batch): array
+    /**
+     * Paso de artículos. Con job usa la cola (un listado por job); sin job
+     * (endpoint legacy o modo degradado) mantiene el listado por paso.
+     */
+    public function syncStepArticles(GraphClient $client, int $tenantId, int $cursor, int $batch, ?int $jobId = null): array
+    {
+        if ($jobId !== null) {
+            $state = $this->ensureArticleQueue($client, $tenantId, $jobId);
+            if ($state === 'ready') {
+                return $this->consumeArticleQueue($client, $tenantId, $jobId, $batch);
+            }
+            // 'degraded': no se pudo calcular la cola; se sigue como antes.
+        }
+
+        return $this->syncStepArticlesLegacy($client, $tenantId, $cursor, $batch);
+    }
+
+    /** Camino clásico: lista la colección en cada paso. */
+    private function syncStepArticlesLegacy(GraphClient $client, int $tenantId, int $cursor, int $batch): array
     {
         $recent = $this->fetchRecentArticles($client);
         $total = count($recent);
@@ -1140,6 +1157,381 @@ class Module_ThreatIntelligence extends BaseModule
         }
 
         return ['success' => true, 'phase' => 'articles', 'processed' => $end, 'total' => $total, 'cursor' => $end, 'done' => $end >= $total, 'added' => $added, 'skipped' => $skipped];
+    }
+
+    // ============================================================
+    // Sonda de novedades y cola de artículos del job
+    // ============================================================
+
+    /**
+     * ¿Hay artículos nuevos o modificados desde la última sincronización?
+     * Coste: una sola petición a Graph. Si Graph rechaza `$filter` en este
+     * recurso, se cae a `$orderby` y se compara con lo ya guardado.
+     *
+     * @return array{ok:bool,count:?int,variant:string,error:string}
+     */
+    protected function probeNewArticles(GraphClient $client, int $tenantId): array
+    {
+        $hasArticles = 0;
+        try {
+            $hasArticles = (int)(Database::fetchOne(
+                'SELECT COUNT(*) AS c FROM ti_articles WHERE tenant_id = ?',
+                [$tenantId]
+            )['c'] ?? 0);
+        } catch (Throwable $e) {
+            $hasArticles = 0;
+        }
+        if ($hasArticles === 0) {
+            // Primera carga: no hay referencia con la que comparar.
+            return ['ok' => false, 'count' => null, 'variant' => 'none', 'error' => 'Sin artículos previos'];
+        }
+
+        $since = $this->lastArticleSyncTs($tenantId);
+
+        if ($since > 0) {
+            try {
+                $res = $client->graphGet('security/threatIntelligence/articles', [
+                    '$select' => 'id,lastUpdatedDateTime',
+                    '$top'    => 1,
+                    '$filter' => 'lastUpdatedDateTime gt ' . gmdate('Y-m-d\TH:i:s\Z', $since),
+                ]);
+                if (isset($res['value']) && is_array($res['value'])) {
+                    return [
+                        'ok'      => true,
+                        'count'   => count($res['value']),
+                        'variant' => 'filter',
+                        'error'   => '',
+                    ];
+                }
+            } catch (Throwable $e) {
+                // El recurso puede no admitir $filter: se prueba la variante 2.
+            }
+        }
+
+        try {
+            $res = $client->graphGet('security/threatIntelligence/articles', [
+                '$select'  => 'id,lastUpdatedDateTime',
+                '$top'     => 1,
+                '$orderby' => 'lastUpdatedDateTime desc',
+            ]);
+            $item = $res['value'][0] ?? null;
+            if (!is_array($item)) {
+                return ['ok' => false, 'count' => null, 'variant' => 'orderby', 'error' => 'Respuesta inesperada'];
+            }
+            $remote = strtotime((string)($item['lastUpdatedDateTime'] ?? '')) ?: 0;
+            $local  = $this->maxArticleUpdatedTs($tenantId);
+
+            return [
+                'ok'      => true,
+                'count'   => ($remote > $local ? 1 : 0),
+                'variant' => 'orderby',
+                'error'   => '',
+            ];
+        } catch (Throwable $e) {
+            return ['ok' => false, 'count' => null, 'variant' => 'orderby', 'error' => $e->getMessage()];
+        }
+    }
+
+    /** Marca (epoch) de la última sincronización correcta de artículos del tenant. */
+    private function lastArticleSyncTs(int $tenantId): int
+    {
+        $ts = 0;
+        try {
+            $job = Database::fetchOne(
+                "SELECT MAX(finished_at) AS mx FROM sync_jobs
+                 WHERE tenant_id = ? AND job_type = 'ti_full' AND status = 'done'",
+                [$tenantId]
+            );
+            $fromJob = strtotime((string)($job['mx'] ?? '') . ' UTC');
+            if ($fromJob !== false) {
+                $ts = max($ts, $fromJob);
+            }
+        } catch (Throwable $e) { /* sin jobs previos */ }
+
+        try {
+            $art = Database::fetchOne('SELECT MAX(fetched_at) AS mx FROM ti_articles WHERE tenant_id = ?', [$tenantId]);
+            $fromArt = strtotime((string)($art['mx'] ?? '') . ' UTC');
+            if ($fromArt !== false) {
+                $ts = max($ts, $fromArt);
+            }
+        } catch (Throwable $e) { /* sin artículos */ }
+
+        return $ts;
+    }
+
+    /** `lastUpdatedDateTime` más reciente ya guardado para el tenant (epoch). */
+    private function maxArticleUpdatedTs(int $tenantId): int
+    {
+        try {
+            $row = Database::fetchOne(
+                'SELECT MAX(last_updated) AS mx FROM ti_articles WHERE tenant_id = ?',
+                [$tenantId]
+            );
+            $ts = strtotime((string)($row['mx'] ?? ''));
+            return $ts === false ? 0 : $ts;
+        } catch (Throwable $e) {
+            return 0;
+        }
+    }
+
+    /**
+     * Garantiza que la cola del job está calculada (una sola vez por job).
+     *
+     * @return string 'ready' (cola disponible) | 'degraded' (sin cola)
+     */
+    private function ensureArticleQueue(GraphClient $client, int $tenantId, int $jobId): string
+    {
+        $state = $this->queueState($jobId);
+        if ($state === 'ready') {
+            return 'ready';
+        }
+        if ($state === 'degraded') {
+            return 'degraded';
+        }
+
+        $queued = $this->fillArticleQueue($client, $tenantId, $jobId);
+        if ($queued === null) {
+            $this->setQueueState($jobId, 'degraded');
+            app_log('warning', 'ti_queue', 'No se pudo preparar la cola de artículos; se usa el listado por paso', [
+                'job' => $jobId, 'tenant' => $tenantId,
+            ]);
+            return 'degraded';
+        }
+
+        $this->setQueueState($jobId, 'ready', $queued);
+        return 'ready';
+    }
+
+    /**
+     * Calcula la cola con los artículos nuevos o modificados.
+     *
+     * @return int|null Número de artículos en cola, o null si no se pudo listar.
+     */
+    private function fillArticleQueue(GraphClient $client, int $tenantId, int $jobId): ?int
+    {
+        $articles = $this->fetchChangedArticles($client, $tenantId);
+        if ($articles === null) {
+            return null;
+        }
+
+        // Lo ya guardado, para no encolar lo que no ha cambiado.
+        $known = [];
+        try {
+            foreach (Database::fetchAll('SELECT article_id, last_updated FROM ti_articles WHERE tenant_id = ?', [$tenantId]) as $row) {
+                $known[(string)$row['article_id']] = (string)($row['last_updated'] ?? '');
+            }
+        } catch (Throwable $e) {
+            $known = [];
+        }
+
+        $queued = 0;
+        foreach ($articles as $a) {
+            $aid = (string)($a['id'] ?? '');
+            if ($aid === '') {
+                continue;
+            }
+            $lastUpd = (string)($a['lastUpdatedDateTime'] ?? '');
+            if (isset($known[$aid]) && $lastUpd !== '' && $known[$aid] === $lastUpd) {
+                continue; // sin cambios
+            }
+            try {
+                Database::query(
+                    "INSERT OR IGNORE INTO ti_sync_queue (tenant_id, job_id, article_id, last_updated)
+                     VALUES (?, ?, ?, ?)",
+                    [$tenantId, $jobId, $aid, $lastUpd !== '' ? $lastUpd : null]
+                );
+                $queued++;
+            } catch (Throwable $e) {
+                // Fila duplicada: la cola ya la tenía.
+            }
+        }
+
+        return $queued;
+    }
+
+    /**
+     * Listado de artículos de los últimos 90 días.
+     * Usa `$filter` (solo lo modificado) y, si Graph lo rechaza, lista todo.
+     *
+     * @return array|null null si no se pudo obtener el listado.
+     */
+    private function fetchChangedArticles(GraphClient $client, int $tenantId): ?array
+    {
+        $cutoff = time() - (90 * 86400);
+        $since  = $this->lastArticleSyncTs($tenantId);
+        $since  = $since > 0 ? max($since, $cutoff) : $cutoff;
+
+        try {
+            $list = $client->graphGetAll('security/threatIntelligence/articles', [
+                '$select' => 'id,createdDateTime,lastUpdatedDateTime',
+                '$filter' => 'lastUpdatedDateTime ge ' . gmdate('Y-m-d\TH:i:s\Z', $since),
+            ]);
+            return $this->filterRecentArticles($list, $cutoff);
+        } catch (Throwable $e) {
+            // Recurso sin soporte de $filter: listado completo (comportamiento histórico).
+        }
+
+        try {
+            $list = $client->graphGetAll('security/threatIntelligence/articles', [
+                '$select' => 'id,title,createdDateTime,lastUpdatedDateTime',
+            ]);
+            return $this->filterRecentArticles($list, $cutoff);
+        } catch (Throwable $e) {
+            return null;
+        }
+    }
+
+    /** Filtra al mismo criterio de 90 días que el camino clásico. */
+    private function filterRecentArticles(array $list, int $cutoff): array
+    {
+        return array_values(array_filter($list, function ($a) use ($cutoff) {
+            $date = $a['lastUpdatedDateTime'] ?? $a['createdDateTime'] ?? null;
+            return $date && strtotime((string)$date) >= $cutoff;
+        }));
+    }
+
+    /**
+     * Procesa el siguiente lote de la cola del job (sin volver a listar).
+     */
+    private function consumeArticleQueue(GraphClient $client, int $tenantId, int $jobId, int $batch): array
+    {
+        $batch = max(1, min(50, $batch));
+
+        $counts = Database::fetchOne(
+            "SELECT COUNT(*) AS total,
+                    SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending
+             FROM ti_sync_queue WHERE job_id = ?",
+            [$jobId]
+        );
+        $total = (int)($counts['total'] ?? 0);
+        $pendingTotal = (int)($counts['pending'] ?? 0);
+
+        if ($pendingTotal === 0) {
+            return [
+                'success' => true, 'phase' => 'articles',
+                'processed' => $total, 'total' => $total, 'cursor' => $total,
+                'done' => true, 'added' => 0, 'skipped' => 0, 'errors' => 0,
+            ];
+        }
+
+        $rows = Database::fetchAll(
+            "SELECT id, article_id FROM ti_sync_queue
+             WHERE job_id = ? AND status = 'pending' ORDER BY id LIMIT " . $batch,
+            [$jobId]
+        );
+
+        $added = 0;
+        $errors = 0;
+        foreach ($rows as $row) {
+            $queueId = (int)$row['id'];
+            $aid = (string)$row['article_id'];
+            try {
+                $full = $client->graphGet('security/threatIntelligence/articles/' . $aid);
+                Database::query(
+                    "INSERT INTO ti_articles
+                     (tenant_id, article_id, title, created_date, last_updated, summary, body, tags, is_featured, fetched_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                     ON CONFLICT(tenant_id, article_id) DO UPDATE SET
+                        title = excluded.title,
+                        created_date = excluded.created_date,
+                        last_updated = excluded.last_updated,
+                        summary = excluded.summary,
+                        body = excluded.body,
+                        tags = excluded.tags,
+                        is_featured = excluded.is_featured,
+                        fetched_at = datetime('now')",
+                    [
+                        $tenantId,
+                        $aid,
+                        $full['title'] ?? 'Sin título',
+                        $full['createdDateTime'] ?? null,
+                        $full['lastUpdatedDateTime'] ?? null,
+                        $full['summary']['content'] ?? null,
+                        $full['body']['content'] ?? null,
+                        json_encode($full['tags'] ?? []),
+                        !empty($full['isFeatured']) ? 1 : 0,
+                    ]
+                );
+                $this->syncArticleIocs($client, $tenantId, $aid);
+                Database::query(
+                    "UPDATE ti_sync_queue SET status = 'done', updated_at = datetime('now') WHERE id = ?",
+                    [$queueId]
+                );
+                $added++;
+            } catch (Throwable $e) {
+                $errors++;
+                Database::query(
+                    "UPDATE ti_sync_queue SET status = 'error', error = ?, updated_at = datetime('now') WHERE id = ?",
+                    [substr($e->getMessage(), 0, 400), $queueId]
+                );
+            }
+        }
+
+        $left = max(0, $pendingTotal - count($rows));
+        $processed = $total - $left;
+
+        return [
+            'success'   => true,
+            'phase'     => 'articles',
+            'processed' => $processed,
+            'total'     => $total,
+            'cursor'    => $processed,
+            'done'      => $left === 0,
+            'added'     => $added,
+            'skipped'   => 0,
+            'errors'    => $errors,
+        ];
+    }
+
+    /** Estado de la cola del job: 'pending' | 'ready' | 'degraded'. */
+    private function queueState(int $jobId): string
+    {
+        try {
+            $row = Database::fetchOne('SELECT queue_state FROM sync_jobs WHERE id = ?', [$jobId]);
+            $state = (string)($row['queue_state'] ?? '');
+            return in_array($state, ['ready', 'degraded'], true) ? $state : 'pending';
+        } catch (Throwable $e) {
+            return 'pending';
+        }
+    }
+
+    /** Guarda el estado de la cola (y el total real de trabajo, si se conoce). */
+    private function setQueueState(int $jobId, string $state, ?int $total = null): void
+    {
+        try {
+            if ($total !== null) {
+                Database::query(
+                    "UPDATE sync_jobs SET queue_state = ?, total = ?, updated_at = datetime('now') WHERE id = ?",
+                    [$state, $total, $jobId]
+                );
+            } else {
+                Database::query(
+                    "UPDATE sync_jobs SET queue_state = ?, updated_at = datetime('now') WHERE id = ?",
+                    [$state, $jobId]
+                );
+            }
+        } catch (Throwable $e) {
+            // Best-effort: un fallo aquí no debe abortar el sync.
+        }
+    }
+
+    /** Guarda el resultado de la sonda para diagnóstico. */
+    private function rememberProbe(int $tenantId, int $count, string $variant): void
+    {
+        try {
+            setting_set('ti_probe_last_at', date('c'));
+            setting_set('ti_probe_last_total', (string)$count);
+            setting_set('ti_probe_variant', $variant);
+            setting_set('ti_probe_last_tenant', (string)$tenantId);
+        } catch (Throwable $e) {
+            // Diagnóstico best-effort.
+        }
+    }
+
+    /** ¿Está activada la sonda de novedades? (constante TI_PROBE) */
+    private function probeEnabled(): bool
+    {
+        return defined('TI_PROBE') ? (bool)TI_PROBE : true;
     }
 
     /** Paso de perfiles (threat actors / tools): upsert en una sola llamada. */
@@ -1335,7 +1727,40 @@ class Module_ThreatIntelligence extends BaseModule
         // Limpieza oportunista de jobs antiguos.
         try {
             Database::query("DELETE FROM sync_jobs WHERE finished_at IS NOT NULL AND finished_at < datetime('now', '-7 days')");
+            Database::query("DELETE FROM ti_sync_queue WHERE job_id IN (
+                SELECT id FROM sync_jobs WHERE finished_at IS NOT NULL AND finished_at < datetime('now', '-7 days')
+            )");
         } catch (Throwable $e) { /* noop */ }
+
+        // Sonda de novedades: si no ha cambiado nada desde la última
+        // sincronización correcta, no se crea job (1 petición a Graph).
+        if ($type === 'ti_full' && $this->probeEnabled()) {
+            try {
+                $probe = $this->probeNewArticles($this->getGraphClient($tenantId), $tenantId);
+                if (!empty($probe['ok'])) {
+                    $this->rememberProbe($tenantId, (int)$probe['count'], (string)$probe['variant']);
+                    if ((int)$probe['count'] === 0) {
+                        return [
+                            'success' => true,
+                            'skipped' => true,
+                            'message' => 'No hay artículos nuevos o modificados desde la última sincronización. No se ha descargado nada.',
+                        ];
+                    }
+                } else {
+                    app_log('info', 'ti_probe', 'Sonda de novedades sin concluir; se sincroniza igualmente', [
+                        'tenant' => $tenantId,
+                        'variant' => (string)($probe['variant'] ?? ''),
+                        'error'   => (string)($probe['error'] ?? ''),
+                    ]);
+                }
+            } catch (Throwable $e) {
+                // Fail-open: cualquier fallo de la sonda no impide sincronizar.
+                app_log('info', 'ti_probe', 'Sonda de novedades con error; se sincroniza igualmente', [
+                    'tenant' => $tenantId,
+                    'error'  => $e->getMessage(),
+                ]);
+            }
+        }
 
         $token = bin2hex(random_bytes(32));
         $phase = ($type === 'indicators_full') ? 'indicators_full' : 'articles';
@@ -1509,7 +1934,7 @@ class Module_ThreatIntelligence extends BaseModule
         while (microtime(true) < $deadline) {
             if ($this->jobStatusValue($jobId) !== 'running') { return $this->jobState($jobId); }
             if ($phase === 'articles') {
-                $r = $this->syncStepArticles($client, $tenantId, $cursor, 6);
+                $r = $this->syncStepArticles($client, $tenantId, $cursor, 6, $jobId);
                 $total = (int)($r['total'] ?? 0); $processed = (int)($r['processed'] ?? 0);
                 $totAdded += (int)($r['added'] ?? 0); $totSkipped += (int)($r['skipped'] ?? 0);
                 if (!empty($r['done'])) { $phase = 'profiles'; $cursor = 0; $total = 0; $processed = 0; }
@@ -1553,6 +1978,17 @@ class Module_ThreatIntelligence extends BaseModule
 
         $base = $this->absoluteBaseUrl();
         $res = $this->startSyncJob($tenantId, $type, $base);
+
+        // La sonda no encontró novedades: no hay job que ejecutar.
+        if (!empty($res['skipped'])) {
+            echo json_encode([
+                'success' => true,
+                'skipped' => true,
+                'message' => (string)($res['message'] ?? 'No hay novedades que sincronizar.'),
+            ]);
+            return;
+        }
+
         $jobId = (int)$res['job_id'];
         $token = (string)$res['token'];
 

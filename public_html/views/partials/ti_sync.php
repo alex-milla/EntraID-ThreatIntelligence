@@ -137,6 +137,13 @@ function startTiSync() {
     tiBgFallback = false;
     var cancel = document.getElementById('ti-bg-cancel'); if (cancel) cancel.classList.remove('hidden');
     api('POST', TI_BG_BASE + '/job-start/' + TI_BG_TENANT, { type: 'ti_full' }).then(function (res) {
+        // La sonda no encontró artículos nuevos o modificados: no hay nada
+        // que sincronizar y no se ha descargado nada.
+        if (res && res.skipped) {
+            if (cancel) cancel.classList.add('hidden');
+            toast(res.message || 'No hay artículos nuevos desde la última sincronización.', 'info');
+            return;
+        }
         if (res && res.success) {
             toast('Sincronización iniciada', 'success');
             tiBgRender({ id: res.job_id, phase: '…', added: 0, skipped: 0 });

@@ -64,6 +64,16 @@ class Database
             $db->exec("ALTER TABLE ti_iocs ADD COLUMN profile_id INTEGER");
         }
 
+        // sync_jobs.queue_state: estado de la cola de artículos del job
+        // ('pending' sin rellenar, 'ready' lista, 'degraded' sin cola).
+        $jobCols = [];
+        foreach ($db->query("PRAGMA table_info(sync_jobs)") as $c) {
+            $jobCols[$c['name']] = true;
+        }
+        if (!isset($jobCols['queue_state'])) {
+            $db->exec("ALTER TABLE sync_jobs ADD COLUMN queue_state TEXT");
+        }
+
         // v0.2.5.23: retirada del proveedor OpenCode (sus modelos gratis no se
         // pueden usar desde la web). Limpieza idempotente, una sola vez.
         self::cleanupRemovedProviders($db);
@@ -260,6 +270,21 @@ class Database
             updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         )");
         $db->exec("CREATE INDEX IF NOT EXISTS idx_sync_jobs_tenant ON sync_jobs(tenant_id, status)");
+
+        // Cola de artículos por job: evita volver a listar la colección en cada
+        // paso del sync (un listado por job en vez de uno por paso).
+        $db->exec("CREATE TABLE IF NOT EXISTS ti_sync_queue (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+            job_id INTEGER NOT NULL,
+            article_id TEXT NOT NULL,
+            last_updated TEXT,
+            status TEXT NOT NULL DEFAULT 'pending',
+            error TEXT,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(job_id, article_id)
+        )");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_ti_sync_queue_job ON ti_sync_queue(job_id, status, id)");
 
         // Registro de intentos de acceso (seguridad / detección de fuerza bruta).
         $db->exec("CREATE TABLE IF NOT EXISTS login_attempts (
