@@ -1,9 +1,23 @@
 
+        </div><!-- /page-container -->
     </main>
-</div><!-- /contenido principal -->
+
+    <footer class="page-footer">
+        <div class="page-container">
+            <div class="footer-row">
+                <span class="footer-text"><?= e(APP_NAME) ?></span>
+                <span class="footer-text mono">v<?= e(APP_VERSION) ?></span>
+            </div>
+        </div>
+    </footer>
+</div><!-- /app-body -->
+</div><!-- /app-shell -->
 
 <!-- Scripts globales -->
-<script src="<?= asset_url('js/app.js') ?>?v=<?= filemtime(ASSETS_PATH . '/js/app.js') ?: '1' ?>"></script>
+<script src="<?= asset_url('js/app.js') ?>?v=<?= e(APP_VERSION) ?>"></script>
+<script src="<?= asset_url('js/shell.js') ?>?v=<?= e(APP_VERSION) ?>"></script>
+<script src="<?= asset_url('js/filters.js') ?>?v=<?= e(APP_VERSION) ?>"></script>
+<script src="<?= asset_url('js/ui.js') ?>?v=<?= e(APP_VERSION) ?>"></script>
 <script>
 /* Indicador global de sincronización (badge en el sidebar, todas las pantallas) */
 (function () {

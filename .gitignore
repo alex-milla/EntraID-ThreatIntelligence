@@ -19,3 +19,10 @@ nul
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Build de Tailwind (binario local, no se sube)
+tools/tailwind/tailwindcss.exe
+tools/tailwind/tailwindcss
+
+# Carpeta de trabajo ajena al proyecto (no versionar)
+SploitScan-main/

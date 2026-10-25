@@ -1,0 +1,510 @@
+/* ============================================================
+   app.css — Sistema visual: tokens + base + capa canónica
+   ------------------------------------------------------------
+   Origen: md/ESPECIFICACION-UI.md §2, §3, §6 (tokens y canónico)
+   Orden de capas (normativo): theme, base, components, utilities
+   ============================================================ */
+
+@layer theme, base, components, utilities;
+
+/* ============================================================
+   1. TOKENS — claro
+   ============================================================ */
+:root {
+    /* --- Marca (idéntica en claro y oscuro) --- */
+    --brand-50:  #fff7ed;
+    --brand-100: #ffedd5;
+    --brand-200: #fed7aa;
+    --brand-300: #fdba74;
+    --brand-400: #fb923c;
+    --brand-500: #f97316;
+    --brand-600: #ea580c;
+    --brand-700: #c2410c;
+    --brand-900: #7c2d12;
+    --brand-950: #431407;
+
+    /* --- Superficies, texto y bordes --- */
+    --bg:             #f9fafb;
+    --surface:        #ffffff;
+    --surface-2:      #f1f5f9;
+    --surface-3:      #e5e7eb;
+    --text:           #111827;
+    --text-muted:     #6b7280;
+    --text-soft:      #9ca3af;
+    --border:         #e5e7eb;
+    --border-subtle:  #f3f4f6;
+    --border-strong:  #d1d5db;
+    --input-bg:       #ffffff;
+    --input-border:   #d1d5db;
+
+    /* --- Acción primaria --- */
+    --primary:        #ea580c;
+    --primary-hover:  #c2410c;
+    --primary-soft:   #fff7ed;
+    --primary-border: #fed7aa;
+    --on-primary:     #ffffff;
+    --link:           #c2410c;
+    --focus:          #f97316;
+    --unread-bg:      #fff7ed;
+
+    /* --- Navegación (shell) --- */
+    --nav-bg:     #ffffff;
+    --nav-text:   #111827;
+    --nav-muted:  #6b7280;
+    --nav-active: #fff7ed;
+    --nav-border: #e5e7eb;
+
+    /* --- Semánticos (texto / fondo / borde) --- */
+    --success:        #15803d;
+    --success-bg:     #dcfce7;
+    --success-border: #bbf7d0;
+    --warning:        #b45309;
+    --warning-bg:     #fef3c7;
+    --warning-border: #fde68a;
+    --danger:         #b91c1c;
+    --danger-bg:      #fee2e2;
+    --danger-border:  #fca5a5;
+    --info:           #1d4ed8;
+    --info-bg:        #dbeafe;
+    --info-border:    #bfdbfe;
+    --neutral:        #57534e;
+    --neutral-bg:     #f5f5f4;
+    --neutral-border: #e7e5e4;
+    --danger-solid:       #dc2626;
+    --danger-solid-hover: #b91c1c;
+
+    /* --- Radios --- */
+    --radius-card:    0.75rem;
+    --radius-control: 0.5rem;
+    --radius-tab:     0.375rem;
+
+    /* --- Tipografía --- */
+    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+    /* --- Capas z --- */
+    --z-filter-bar: 19;
+    --z-toolbar: 20;
+    --z-header: 25;
+    --z-filter-overlay: 30;
+    --z-shell-overlay: 40;
+    --z-drawer-overlay: 80;
+    --z-drawer: 81;
+    --z-action-menu: 120;
+    --z-modal: 10040;
+    --z-toast: 10050;
+
+    /* --- Mapeo Materialize (por compatibilidad de tokens) --- */
+    --md-sys-color-primary: var(--primary);
+    --md-sys-color-on-primary: var(--on-primary);
+    --md-sys-color-surface: var(--surface);
+    --md-sys-color-on-surface: var(--text);
+    --md-sys-color-outline: var(--border-strong);
+    --md-sys-color-background: var(--bg);
+
+    color-scheme: light;
+}
+
+/* ============================================================
+   2. TOKENS — oscuro (clase .dark y data-theme, sincronizados)
+   ============================================================ */
+.dark,
+[data-theme="dark"] {
+    --bg:             #111827;
+    --surface:        #0f172a;
+    --surface-2:      #1e293b;
+    --surface-3:      #334155;
+    --text:           #ffffff;
+    --text-muted:     #9ca3af;
+    --text-soft:      #6b7280;
+    --border:         #374151;
+    --border-subtle:  rgba(55, 65, 81, 0.5);
+    --border-strong:  #4b5563;
+    --input-bg:       #1e293b;
+    --input-border:   #4b5563;
+
+    --primary:        #fb923c;
+    --primary-hover:  #fdba74;
+    --primary-soft:   #431407;
+    --primary-border: #7c2d12;
+    --on-primary:     #1c1207;
+    --link:           #fdba74;
+    --focus:          #f97316;
+    --unread-bg:      #431407;
+
+    --nav-bg:     #0f172a;
+    --nav-text:   #ffffff;
+    --nav-muted:  #9ca3af;
+    --nav-active: #431407;
+    --nav-border: #1e293b;
+
+    --success:        #86efac;
+    --success-bg:     rgba(20, 83, 45, 0.3);
+    --success-border: rgba(20, 83, 45, 0.5);
+    --warning:        #fcd34d;
+    --warning-bg:     rgba(120, 53, 15, 0.3);
+    --warning-border: rgba(120, 53, 15, 0.5);
+    --danger:         #fca5a5;
+    --danger-bg:      rgba(127, 29, 29, 0.3);
+    --danger-border:  rgba(127, 29, 29, 0.5);
+    --info:           #93c5fd;
+    --info-bg:        rgba(30, 58, 138, 0.3);
+    --info-border:    rgba(30, 58, 138, 0.5);
+    --neutral:        #d6d3d1;
+    --neutral-bg:     rgba(41, 37, 36, 0.35);
+    --neutral-border: rgba(87, 83, 78, 0.5);
+    --danger-solid:       #ef4444;
+    --danger-solid-hover: #f87171;
+
+    color-scheme: dark;
+}
+
+/* ============================================================
+   3. BASE
+   ============================================================ */
+@layer base {
+    html {
+        -webkit-text-size-adjust: 100%;
+    }
+
+    body {
+        font-family: var(--font-sans);
+        font-size: 0.95rem;
+        line-height: 1.5;
+        background-color: var(--bg);
+        color: var(--text);
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+    }
+
+    /* En v4 el borde por defecto es currentColor; aquí manda el token. */
+    *,
+    ::before,
+    ::after,
+    ::backdrop,
+    ::file-selector-button {
+        border-color: var(--border);
+    }
+
+    ::placeholder {
+        color: var(--text-soft);
+        opacity: 1;
+    }
+
+    a {
+        color: var(--link);
+    }
+
+    /* Identificadores técnicos */
+    .mono,
+    .mono-sm,
+    code,
+    kbd,
+    samp,
+    pre {
+        font-family: var(--font-mono);
+    }
+
+    .mono-sm {
+        font-size: 0.8rem;
+    }
+
+    .muted {
+        color: var(--text-muted);
+    }
+
+    /* --- Transición de tema (se activa tras el primer pintado) --- */
+    html.transition-theme,
+    html.transition-theme body,
+    html.transition-theme main,
+    html.transition-theme .card,
+    html.transition-theme .app-sidebar,
+    html.transition-theme .app-header,
+    html.transition-theme .page-footer,
+    html.transition-theme .btn,
+    html.transition-theme .icon-btn {
+        transition: background-color .2s cubic-bezier(.4, 0, .2, 1),
+                    border-color .2s cubic-bezier(.4, 0, .2, 1),
+                    color .2s cubic-bezier(.4, 0, .2, 1),
+                    fill .2s cubic-bezier(.4, 0, .2, 1),
+                    stroke .2s cubic-bezier(.4, 0, .2, 1);
+    }
+}
+
+/* ============================================================
+   4. CAPA CANÓNICA (sin capa: gana a cualquier utility)
+   ============================================================ */
+
+/* --- 4.1 Radios canónicos --- */
+.card,
+.card-panel,
+.form-panel,
+.modal,
+.tdl-modal {
+    border-radius: var(--radius-card);
+}
+
+.btn,
+.btn-large,
+.btn-small,
+.icon-btn,
+input:not([type="checkbox"]):not([type="radio"]),
+select,
+textarea,
+.alert,
+.notice,
+.hint,
+.browser-default,
+.form-control {
+    border-radius: var(--radius-control);
+}
+
+.chip,
+.view-tab,
+.admin-tabs a,
+.sidebar-link,
+.sidebar-parent {
+    border-radius: var(--radius-tab);
+}
+
+.tag-chip,
+.status-badge,
+.badge-new,
+.count-chip,
+.role-chip,
+.status-pill,
+.pill,
+.badge {
+    border-radius: 999px;
+}
+
+/* --- 4.2 Foco único --- */
+a:focus-visible,
+button:focus-visible,
+.btn:focus-visible,
+select:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible {
+    outline: 2px solid transparent;
+    outline-offset: 2px;
+    box-shadow: 0 0 0 2px var(--focus);
+    border-color: transparent;
+}
+
+/* Los campos mantienen el anillo también en :focus (sin offset) */
+input:focus,
+select:focus,
+textarea:focus,
+button:focus {
+    outline: 2px solid transparent;
+    outline-offset: 0;
+    box-shadow: 0 0 0 2px var(--focus);
+    border-color: transparent;
+}
+
+@media (forced-colors: active) {
+    a:focus-visible,
+    button:focus-visible,
+    input:focus-visible,
+    select:focus-visible,
+    textarea:focus-visible {
+        outline: 2px solid CanvasText;
+        box-shadow: none;
+    }
+}
+
+/* --- 4.3 Escala de iconos por contexto (Material Icons y SVG) --- */
+.icon-12, .icon-12.material-icons { font-size: 12px; width: 12px; height: 12px; }
+.icon-14, .icon-14.material-icons { font-size: 14px; width: 14px; height: 14px; }
+.icon-16, .icon-16.material-icons { font-size: 16px; width: 16px; height: 16px; }
+.icon-18, .icon-18.material-icons { font-size: 18px; width: 18px; height: 18px; }
+.icon-20, .icon-20.material-icons { font-size: 20px; width: 20px; height: 20px; }
+.icon-24, .icon-24.material-icons { font-size: 24px; width: 24px; height: 24px; }
+.icon-32, .icon-32.material-icons { font-size: 32px; width: 32px; height: 32px; }
+
+.btn .material-icons,
+.btn-small .material-icons,
+.btn-large .material-icons,
+button .material-icons {
+    font-size: 16px;
+    width: 16px;
+    height: 16px;
+}
+
+.app-header .material-icons,
+.sidebar-link .material-icons,
+.sidebar-parent .material-icons,
+.stat .material-icons,
+.icon-btn .material-icons {
+    font-size: 18px;
+    width: 18px;
+    height: 18px;
+}
+
+.chip .material-icons,
+.tag-chip .material-icons,
+.status-badge .material-icons,
+.hint .material-icons,
+.count-chip .material-icons,
+.role-chip .material-icons {
+    font-size: 14px;
+    width: 14px;
+    height: 14px;
+}
+
+.muted .material-icons,
+.subtitle .material-icons,
+.card-sub .material-icons {
+    font-size: 12px;
+    width: 12px;
+    height: 12px;
+}
+
+/* Las utilidades de tamaño explícitas ganan a la escala por contexto */
+.icon-12.material-icons { font-size: 12px !important; width: 12px !important; height: 12px !important; }
+.icon-14.material-icons { font-size: 14px !important; width: 14px !important; height: 14px !important; }
+.icon-16.material-icons { font-size: 16px !important; width: 16px !important; height: 16px !important; }
+.icon-18.material-icons { font-size: 18px !important; width: 18px !important; height: 18px !important; }
+.icon-20.material-icons { font-size: 20px !important; width: 20px !important; height: 20px !important; }
+.icon-32.material-icons { font-size: 32px !important; width: 32px !important; height: 32px !important; }
+
+/* ============================================================
+   5. UTILIDADES PROPIAS (compatibilidad con el markup anterior)
+   ============================================================ */
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-soft); }
+
+/* Spinner */
+.spinner {
+    width: 32px;
+    height: 32px;
+    border: 4px solid var(--brand-200);
+    border-top-color: var(--brand-500);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.line-clamp-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.badge-syncing {
+    animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+/* Tabla responsive en móvil (heredado) */
+@media (max-width: 640px) {
+    table.responsive {
+        display: block;
+        overflow-x: auto;
+    }
+}
+
+/* ============================================================
+   6. MARKDOWN (.md-body) — artículos y análisis
+   ============================================================ */
+.md-body {
+    font-size: 0.875rem;
+    line-height: 1.7;
+    color: #334155;
+    word-break: break-word;
+}
+.dark .md-body { color: #cbd5e1; }
+.md-body > *:first-child { margin-top: 0; }
+.md-body h1, .md-body h2, .md-body h3, .md-body h4 {
+    font-weight: 600;
+    color: #0f172a;
+    margin: 1.4em 0 0.5em;
+    line-height: 1.3;
+}
+.dark .md-body h1, .dark .md-body h2, .dark .md-body h3, .dark .md-body h4 { color: #f1f5f9; }
+.md-body h1 { font-size: 1.35rem; }
+.md-body h2 { font-size: 1.15rem; border-bottom: 1px solid #e2e8f0; padding-bottom: 0.25em; }
+.dark .md-body h2 { border-color: #334155; }
+.md-body h3 { font-size: 1rem; }
+.md-body h4 { font-size: 0.9rem; }
+.md-body p { margin: 0.65em 0; }
+.md-body a { color: #ea580c; text-decoration: none; }
+.md-body a:hover { text-decoration: underline; }
+.md-body ul, .md-body ol { margin: 0.65em 0; padding-left: 1.4em; }
+.md-body ul { list-style: disc; }
+.md-body ol { list-style: decimal; }
+.md-body li { margin: 0.25em 0; }
+.md-body blockquote {
+    margin: 0.8em 0;
+    padding: 0.4em 1em;
+    border-left: 3px solid #f97316;
+    background: #fff7ed;
+    color: #7c2d12;
+}
+.dark .md-body blockquote { background: #431407; color: #fed7aa; }
+.md-body code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.82em;
+    background: #f1f5f9;
+    padding: 0.15em 0.35em;
+    border-radius: 4px;
+}
+.dark .md-body code { background: #1e293b; }
+.md-body pre {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 0.8em 1em;
+    overflow-x: auto;
+    margin: 0.8em 0;
+}
+.dark .md-body pre { background: #0b1220; border-color: #334155; }
+.md-body pre code { background: none; padding: 0; }
+.md-body hr { border: 0; border-top: 1px solid #e2e8f0; margin: 1.2em 0; }
+.dark .md-body hr { border-color: #334155; }
+.md-body img { max-width: 100%; height: auto; border-radius: 8px; }
+.md-body table { width: 100%; border-collapse: collapse; margin: 0.8em 0; font-size: 0.85em; }
+.md-body th, .md-body td { border: 1px solid #e2e8f0; padding: 0.4em 0.6em; text-align: left; }
+.dark .md-body th, .dark .md-body td { border-color: #334155; }
+.md-body strong { font-weight: 600; color: #0f172a; }
+.dark .md-body strong { color: #f1f5f9; }
+
+/* ============================================================
+   7. IMPRESIÓN
+   ============================================================ */
+/* Print: ocultar sidebar y header */
+@media print {
+    html, body {
+        height: auto !important;
+        overflow: visible !important;
+        background: #fff !important;
+    }
+    .no-print {
+        display: none !important;
+    }
+    main {
+        padding: 0 !important;
+        overflow: visible !important;
+        height: auto !important;
+    }
+    /* Evitar que los contenedores con scroll recorten la impresión. */
+    .overflow-hidden, .overflow-auto, .overflow-x-auto, .overflow-y-auto {
+        overflow: visible !important;
+    }
+    .shadow-sm, .shadow, .shadow-md, .shadow-lg, .shadow-xl, .shadow-2xl {
+        box-shadow: none !important;
+    }
+}
+
+
