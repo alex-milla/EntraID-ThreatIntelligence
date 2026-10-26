@@ -329,6 +329,21 @@ class CveDatabase
             updated_at TEXT
         ) WITHOUT ROWID");
 
+        // v0.2.8.36: puntos SSVC publicados por CISA Vulnrichment. Solo se
+        // guardan los hechos de CISA (o la marca de "no enriquecido"); la
+        // decisión Act/Attend/Track se calcula con el contexto del inventario.
+        $db->exec("CREATE TABLE IF NOT EXISTS cve_vulnrichment (
+            cve_id TEXT PRIMARY KEY,
+            exploitation TEXT,
+            automatable TEXT,
+            technical_impact TEXT,
+            ssvc_version TEXT,
+            provider_updated_at TEXT,
+            source TEXT NOT NULL DEFAULT 'cisa',
+            fetched_at TEXT NOT NULL DEFAULT (datetime('now'))
+        ) WITHOUT ROWID");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_cve_vulnrichment_fetch ON cve_vulnrichment(source, fetched_at)");
+
         $db->exec("CREATE INDEX IF NOT EXISTS idx_cve_catalog_severity ON cve_catalog(severity)");
         $db->exec("CREATE INDEX IF NOT EXISTS idx_cve_ai_items_report ON cve_ai_report_items(report_id, position)");
         $db->exec("CREATE INDEX IF NOT EXISTS idx_cve_reports_generated ON cve_reports(generated_at DESC)");

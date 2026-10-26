@@ -5,6 +5,21 @@
  */
 
 $severity = (string)($cve['severity'] ?? '');
+$ssvc = $ssvc ?? null;
+$priority = $priority ?? null;
+$decisionClasses = [
+    'act'        => 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',
+    'attend'     => 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300',
+    'track_star' => 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300',
+    'track'      => 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300',
+];
+$priorityClasses = [
+    'A+' => 'bg-red-600 text-white',
+    'A'  => 'bg-red-500 text-white',
+    'B'  => 'bg-amber-500 text-white',
+    'C'  => 'bg-blue-500 text-white',
+    'D'  => 'bg-emerald-500 text-white',
+];
 $severityClasses = [
     'Critical' => 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',
     'High'     => 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300',
@@ -36,6 +51,18 @@ foreach ($products as $product) {
                 </span>
                 <?php if (!empty($kev)): ?>
                     <span class="dark:bg-red-900/30 dark:text-red-300 status-failed">KEV</span>
+                <?php endif; ?>
+                <?php if (!empty($ssvc['decision'])): ?>
+                    <span class="inline-flex px-2 py-0.5 text-[10px] font-semibold rounded-full <?= e($decisionClasses[(string)$ssvc['decision']] ?? 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300') ?>"
+                          title="Decisión SSVC (<?= e(CveVulnrichment::sourceLabel($ssvc['source'] ?? null)) ?>)">
+                        SSVC <?= e(CveVulnrichment::decisionLabel($ssvc['decision'])) ?>
+                    </span>
+                <?php endif; ?>
+                <?php if (!empty($priority)): ?>
+                    <span class="inline-flex px-2 py-0.5 text-[10px] font-semibold rounded <?= e($priorityClasses[$priority] ?? 'bg-gray-200 text-gray-700') ?>"
+                          title="Prioridad de parcheo">
+                        <?= e($priority) ?>
+                    </span>
                 <?php endif; ?>
                 <span class="text-[10px] text-ink-soft">CVSS <?= $cvss !== null ? e(number_format((float)$cvss, 1)) : '—' ?></span>
                 <span class="text-[10px] text-ink-soft">EPSS <?= $epssScore !== null ? e(number_format((float)$epssScore * 100, 1)) . ' %' : '—' ?></span>

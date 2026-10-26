@@ -88,6 +88,17 @@ almacenamiento SQLite y arquitectura modular.
    `--report-period=7d|30d|90d|all`, `--report-severity=Critical`,
    `--report-kev=1` y `--report-epss=0.10`.
 
+9. **Cron Vulnrichment SSVC** (opcional): rellena los puntos SSVC de CISA
+   (`Exploitation`, `Automatable`, `Technical Impact`) de los CVEs asignados a
+   informes y de los que casan con el inventario. Ejecuta una vez al día o cada
+   pocas horas; es incremental y respeta una caché de 30 días:
+   ```
+   php /ruta/public_html/cron/cve-vulnrichment.php --limit=200 >> /ruta/public_html/storage/cve-vulnrichment.log 2>&1
+   ```
+   Sin este cron, la ficha y el análisis de grupo siguen funcionando: usan la
+   caché disponible o una estimación marcada como «estimado». También admite
+   `?token=TU_CRON_TOKEN` y `--force=1`.
+
 ## Arquitectura modular
 
 Cada herramienta es un módulo independiente en `modules/{nombre}/`:
@@ -180,7 +191,8 @@ public_html/
 │   └── exports/           # Archivos exportados
 └── cron/
     ├── sync.php           # Sincronización programada
-    └── cve-sync.php       # Sincronización CVE + KEV/EPSS + informes
+    ├── cve-sync.php       # Sincronización CVE + KEV/EPSS + informes
+    └── cve-vulnrichment.php # Puntos SSVC de CISA Vulnrichment
 ```
 
 ## Licencia

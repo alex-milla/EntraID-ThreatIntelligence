@@ -124,6 +124,13 @@ define('CVE_EXPLOIT_GITHUB_URL', 'https://poc-in-github.motikan2010.net/api/v1/'
 define('CVE_EXPLOIT_NUCLEI_RAW_BASE', 'https://raw.githubusercontent.com/projectdiscovery/nuclei-templates/main');
 define('CVE_EXPLOIT_NUCLEI_BLOB_BASE', 'https://github.com/projectdiscovery/nuclei-templates/blob/main');
 
+// CISA Vulnrichment: puntos SSVC por CVE (Exploitation / Automatable /
+// Technical Impact). Se consulta el registro CVE JSON 5 de CISA-ADP.
+define('CVE_VULNRICHMENT_BASE', 'https://raw.githubusercontent.com/cisagov/vulnrichment/develop');
+define('CVE_VULNRICHMENT_TTL_DAYS', 30);
+define('CVE_VULNRICHMENT_MISSING_TTL_DAYS', 7);
+define('CVE_VULNRICHMENT_TIMEOUT', 5);
+
 // Índices periódicos (Fase 2): se descargan por cron, no al generar informes.
 define('CVE_EXPLOIT_EXPLOITDB_URL', 'https://gitlab.com/exploit-database/exploitdb/-/raw/main/files_exploits.csv?ref_type=heads');
 define('CVE_EXPLOIT_METASPLOIT_URL', 'https://raw.githubusercontent.com/rapid7/metasploit-framework/master/db/modules_metadata_base.json');

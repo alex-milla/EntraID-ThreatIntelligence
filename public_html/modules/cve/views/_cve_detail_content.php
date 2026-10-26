@@ -6,6 +6,21 @@
  */
 
 $isInline = $isInline ?? false;
+$ssvc = $ssvc ?? null;
+$priority = $priority ?? null;
+$priorityClasses = [
+    'A+' => 'bg-red-600 text-white',
+    'A'  => 'bg-red-500 text-white',
+    'B'  => 'bg-amber-500 text-white',
+    'C'  => 'bg-blue-500 text-white',
+    'D'  => 'bg-emerald-500 text-white',
+];
+$decisionClasses = [
+    'act'        => 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',
+    'attend'     => 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300',
+    'track_star' => 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300',
+    'track'      => 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300',
+];
 $severity = (string)($cve['severity'] ?? '');
 $severityClasses = [
     'Critical' => 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',
@@ -162,8 +177,60 @@ try {
                         </dd>
                     </div>
                 <?php endif; ?>
+                <?php if (!empty($priority)): ?>
+                    <div class="flex justify-between items-center gap-3">
+                        <dt class="text-ink-muted">Prioridad de parcheo</dt>
+                        <dd>
+                            <span class="inline-flex px-2 py-0.5 text-[10px] font-semibold rounded <?= e($priorityClasses[$priority] ?? 'bg-gray-200 text-gray-700') ?>">
+                                <?= e($priority) ?>
+                            </span>
+                        </dd>
+                    </div>
+                <?php endif; ?>
             </dl>
         </div>
+
+        <?php if (!empty($ssvc) && !empty($ssvc['points'])): ?>
+            <div class="card p-6">
+                <div class="flex items-start justify-between gap-2 mb-2">
+                    <h2 class="text-sm font-semibold">Decisión SSVC</h2>
+                    <span class="inline-flex px-2 py-0.5 text-[10px] font-semibold rounded-full <?= e($decisionClasses[(string)($ssvc['decision'] ?? '')] ?? 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300') ?>">
+                        <?= e(CveVulnrichment::decisionLabel($ssvc['decision'] ?? null)) ?>
+                    </span>
+                </div>
+                <p class="text-xs text-ink-muted"><?= e(CveVulnrichment::decisionDescription($ssvc['decision'] ?? null)) ?></p>
+                <dl class="mt-4 space-y-3 text-sm">
+                    <div class="flex justify-between gap-3">
+                        <dt class="text-ink-muted">Explotación</dt>
+                        <dd class="font-medium text-right"><?= e(CveVulnrichment::exploitationLabel($ssvc['points']['exploitation'] ?? null)) ?></dd>
+                    </div>
+                    <div class="flex justify-between gap-3">
+                        <dt class="text-ink-muted">Automatizable</dt>
+                        <dd class="font-medium text-right"><?= e(CveVulnrichment::automatableLabel($ssvc['points']['automatable'] ?? null)) ?></dd>
+                    </div>
+                    <div class="flex justify-between gap-3">
+                        <dt class="text-ink-muted">Impacto técnico</dt>
+                        <dd class="font-medium text-right"><?= e(CveVulnrichment::impactLabel($ssvc['points']['technical_impact'] ?? null)) ?></dd>
+                    </div>
+                    <div class="flex justify-between gap-3">
+                        <dt class="text-ink-muted">Contexto (criticidad)</dt>
+                        <dd class="font-medium text-right"><?= e(CveVulnrichment::mwiLabel($ssvc['mwi'] ?? null)) ?></dd>
+                    </div>
+                </dl>
+                <p class="text-[10px] text-ink-soft mt-4">
+                    <?php if (!empty($ssvc['estimated'])): ?>
+                        Estimado a partir de KEV, exploits y CVSS: CISA no ha enriquecido este CVE.
+                    <?php else: ?>
+                        <?= e(CveVulnrichment::sourceLabel($ssvc['source'] ?? null)) ?>
+                        <?php if (!empty($ssvc['points']['ssvc_version'])): ?> · SSVC <?= e((string)$ssvc['points']['ssvc_version']) ?><?php endif; ?>
+                        <?php if (!empty($ssvc['points']['provider_updated_at'])): ?> · <?= e(format_date((string)$ssvc['points']['provider_updated_at'], 'd/m/Y')) ?><?php endif; ?>
+                    <?php endif; ?>
+                </p>
+                <p class="text-[10px] text-ink-soft mt-1">
+                    Tabla CISA 2.0.3. La decisión usa la criticidad de tu inventario; sin contexto no se calcula.
+                </p>
+            </div>
+        <?php endif; ?>
 
         <div class="card p-6">
             <h2 class="text-sm font-semibold mb-3">CWE</h2>

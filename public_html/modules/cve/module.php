@@ -804,6 +804,8 @@ class Module_Cve extends BaseModule
             'cwes'       => [],
             'kev'        => null,
             'epss'       => null,
+            'priority'   => null,
+            'ssvc'       => null,
         ]);
     }
 
@@ -856,6 +858,24 @@ class Module_Cve extends BaseModule
         $cwes = safe_json_decode($cve['cwe_ids'] ?? '[]', []);
         $kev = CveDatabase::fetchOne("SELECT * FROM cve_kev WHERE cve_id = ?", [$cveId]);
         $epss = CveDatabase::fetchOne("SELECT * FROM cve_epss WHERE cve_id = ?", [$cveId]);
+        $exploits = CveExploit::getForCve($cveId);
+
+        $cvssForPriority = $cve['cvss_v3_score'] !== null
+            ? (float)$cve['cvss_v3_score']
+            : ($cve['cvss_v2_score'] !== null ? (float)$cve['cvss_v2_score'] : null);
+        $priority = CveReportAi::calculatePriority(
+            $cvssForPriority,
+            $epss !== null && $epss['epss'] !== null ? (float)$epss['epss'] : null,
+            $kev !== null,
+            (int)($exploits['total'] ?? 0) > 0
+        );
+        // Solo caché: abrir una ficha no debe esperar a GitHub. El cron y el
+        // análisis de grupo son los que rellenan Vulnrichment.
+        $ssvc = CveVulnrichment::forCveWithContext(
+            $cveId,
+            CveVulnrichment::mwiForCve($cveId),
+            false
+        );
 
         $sourceDescription = (string)($cve['description'] ?? '');
         $cachedEs = trim((string)($cve['description_es'] ?? ''));
@@ -875,6 +895,8 @@ class Module_Cve extends BaseModule
             'cwes'       => is_array($cwes) ? $cwes : [],
             'kev'        => $kev,
             'epss'       => $epss,
+            'priority'   => $priority,
+            'ssvc'       => $ssvc,
         ];
     }
 
@@ -906,6 +928,20 @@ class Module_Cve extends BaseModule
         $kev = CveDatabase::fetchOne("SELECT * FROM cve_kev WHERE cve_id = ?", [$cveId]);
         $epss = CveDatabase::fetchOne("SELECT * FROM cve_epss WHERE cve_id = ?", [$cveId]);
         $exploits = CveExploit::getForCve($cveId);
+        $cvssForPriority = $cve['cvss_v3_score'] !== null
+            ? (float)$cve['cvss_v3_score']
+            : ($cve['cvss_v2_score'] !== null ? (float)$cve['cvss_v2_score'] : null);
+        $priority = CveReportAi::calculatePriority(
+            $cvssForPriority,
+            $epss !== null && $epss['epss'] !== null ? (float)$epss['epss'] : null,
+            $kev !== null,
+            (int)($exploits['total'] ?? 0) > 0
+        );
+        $ssvc = CveVulnrichment::forCveWithContext(
+            $cveId,
+            CveVulnrichment::mwiForCve($cveId),
+            false
+        );
 
         $sourceDescription = (string)($cve['description'] ?? '');
         $cachedEs = trim((string)($cve['description_es'] ?? ''));
@@ -1204,6 +1240,12 @@ class Module_Cve extends BaseModule
 
             $totalCves = count($cveIds);
 
+            // Contexto SSVC: criticidad máxima del grupo/empresa. La decisión
+            // se calcula en PHP; el modelo no la reinterpreta. La precarga es
+            // acotada y nunca bloquea el análisis si GitHub no responde.
+            $mwi = CveVulnrichment::mwiForGroup($groupId);
+            CveVulnrichment::prefetch($cveIds, 80, 3, 8);
+
             // Recopila datos de TODOS los CVEs. No se recorta la lista: si el
             // contexto es grande se compactan los detalles; si aun así no cabe,
             // se devuelve un error claro en vez de analizar solo una parte.
@@ -1281,12 +1323,33 @@ class Module_Cve extends BaseModule
                 }
 
                 $cvss = $catalog['cvss_v3_score'] ?? $catalog['cvss_v2_score'] ?? null;
+                $priority = CveReportAi::calculatePriority(
+                    $cvss !== null ? (float)$cvss : null,
+                    ($epss['epss'] ?? null) !== null ? (float)$epss['epss'] : null,
+                    $kev !== null,
+                    (int)($exploits['total'] ?? 0) > 0
+                );
+                $ssvc = CveVulnrichment::forCveWithContext($cveId, $mwi, false);
+                $ssvcFact = 'sin datos';
+                if (($ssvc['points'] ?? null) !== null) {
+                    $points = $ssvc['points'];
+                    $ssvcFact = ($ssvc['decision'] !== null
+                            ? CveVulnrichment::decisionLabel($ssvc['decision'])
+                            : 'sin decisión')
+                        . ' (E=' . (string)($points['exploitation'] ?? '?')
+                        . ', A=' . (string)($points['automatable'] ?? '?')
+                        . ', TI=' . (string)($points['technical_impact'] ?? '?')
+                        . ($ssvc['mwi'] !== null ? ', contexto=' . $ssvc['mwi'] : '')
+                        . '; ' . CveVulnrichment::sourceLabel($ssvc['source'] ?? null) . ')';
+                }
                 $factRows[] = [
                     'cve_id'   => $cveId,
                     'severity' => (string)($catalog['severity'] ?? 'sin datos'),
                     'cvss'     => $cvss !== null ? number_format((float)$cvss, 1) : 'sin datos',
                     'epss'     => ($epss['epss'] ?? null) !== null ? number_format((float)$epss['epss'] * 100, 1) . '%' : 'sin datos',
                     'kev'      => $kev !== null ? 'Sí (' . (string)($kev['date_added'] ?? '') . ')' : 'No',
+                    'priority' => $priority ?? 'sin datos',
+                    'ssvc'     => $ssvcFact,
                     'exploits' => (int)($exploits['total'] ?? 0),
                     'sources'  => $exploitSources,
                     'products' => $productLabels,
@@ -1306,13 +1369,10 @@ class Module_Cve extends BaseModule
                 . "## Clasificación por prioridad\n"
                 . "## Prioridad por software\n"
                 . "## Plan de parcheo\n\n"
-                . "Usa esta escala de prioridad: "
-                . "A+ si está en CISA KEV o tiene exploit público; "
-                . "A si CVSS >= 6 y EPSS >= 0.2; "
-                . "B si CVSS >= 6; "
-                . "C si EPSS >= 0.2; "
-                . "D en el resto. "
-                . "Indica plazos recomendados: A+ inmediato (48 h), A hasta 7 días, B hasta 30 días, C hasta 90 días y D siguiente ciclo. "
+                . "Cada CVE trae ya calculadas la Prioridad (A+ a D) y la decisión SSVC (Act, Attend, Track* o Track). "
+                . "No recalcules ni cambies ninguna de las dos: úsalas tal cual para clasificar y ordenar. "
+                . "Si un CVE no tiene prioridad o SSVC, indícalo como «sin datos» y no lo inventes. "
+                . "Plazos recomendados: A+ inmediato (48 h), A hasta 7 días, B hasta 30 días, C hasta 90 días y D siguiente ciclo. "
                 . "En «Clasificación por prioridad» lista TODOS los " . $totalCves . " CVE de cada categoría, sin omitir ninguno. "
                 . "Sé conciso para que el informe completo quepa en la respuesta. "
                 . "En «Prioridad por software» agrupa por producto/software y ordena por criticidad. "
@@ -1325,6 +1385,8 @@ class Module_Cve extends BaseModule
                     'CVSS: ' . $row['cvss'],
                     'EPSS: ' . $row['epss'],
                     'KEV: ' . $row['kev'],
+                    'Prioridad: ' . $row['priority'],
+                    'SSVC: ' . $row['ssvc'],
                     'Exploits: ' . $row['exploits']
                         . ($row['sources'] !== [] ? ' (' . implode(', ', array_slice($row['sources'], 0, 3)) . ')' : ''),
                     'Productos: ' . ($row['products'] !== []
