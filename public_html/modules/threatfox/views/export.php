@@ -124,7 +124,7 @@ $fmt = static fn(int|float $n): string => number_format((float)$n, 0, ',', '.');
 
     <div class="input-field">
         <label for="tf-confidence">Confianza (1-100)</label>
-        <input type="number" id="tf-confidence" name="confidence" min="0" max="100" step="5"
+        <input type="number" id="tf-confidence" name="confidence" min="0" max="100" step="1"
                value="<?= (int)$config['confidence'] ?>">
         <label class="check-inline mt-2" for="tf-use-ioc-confidence">
             <input type="checkbox" id="tf-use-ioc-confidence" name="use_ioc_confidence" value="1" checked>

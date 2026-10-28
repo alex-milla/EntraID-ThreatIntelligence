@@ -172,7 +172,7 @@ $lastRow = $totalRows > 0 ? min($totalRows, $page * $perPage) : 0;
 
         <div class="input-field">
             <label for="tf-limit">Límite en la API</label>
-            <input type="number" id="tf-limit" name="limit" min="1" max="1000" step="10"
+            <input type="number" id="tf-limit" name="limit" min="1" max="1000" step="1"
                    value="<?= (int)$filters['limit'] ?>">
         </div>
 
@@ -214,7 +214,7 @@ $lastRow = $totalRows > 0 ? min($totalRows, $page * $perPage) : 0;
 
         <div class="input-field">
             <label for="tf-conf">Confianza mínima</label>
-            <input type="number" id="tf-conf" name="f_conf" min="0" max="100" step="5"
+            <input type="number" id="tf-conf" name="f_conf" min="0" max="100" step="1"
                    value="<?= (int)$filters['conf'] ?>">
         </div>
 

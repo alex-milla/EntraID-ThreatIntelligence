@@ -369,6 +369,30 @@ check(
     str_contains($apiSource, 'THREATFOX_AUTH_KEY') && str_contains($apiSource, "setting_get('threatfox_auth_key'")
 );
 
+/* Los <input type="number"> deben aceptar cualquier entero: un step distinto
+   de 1 hace que el navegador rechace el valor por defecto (p. ej. 100 con
+   min=1 step=10) y bloquee el envío del formulario. */
+$numberViews = [
+    'index'  => MODULES_PATH . '/threatfox/views/index.php',
+    'export' => MODULES_PATH . '/threatfox/views/export.php',
+];
+foreach ($numberViews as $viewName => $viewPath) {
+    $source = (string)@file_get_contents($viewPath);
+    $badSteps = [];
+    if (preg_match_all('/type="number"[^>]*>/i', $source, $inputs)) {
+        foreach ($inputs[0] as $input) {
+            if (preg_match('/step="([^"]*)"/i', $input, $step) && $step[1] !== '1') {
+                $badSteps[] = $step[1];
+            }
+        }
+    }
+    check(
+        'Vista ' . $viewName . ': los campos numéricos aceptan cualquier entero (step=1)',
+        $badSteps === [],
+        'steps=' . implode(',', array_unique($badSteps))
+    );
+}
+
 /* ============================================================
  * Resumen
  * ============================================================ */
