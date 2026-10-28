@@ -46,7 +46,6 @@ $routes = @(
     '/index.php/modules/secure_score',
     '/index.php/modules/threat_intelligence',
     '/index.php/modules/threatfox',
-    '/index.php/modules/threatfox/settings',
     '/index.php/modules/threatfox/export',
     '/index.php/modules/threatfox/state',
     '/index.php/modules/threatfox?mode=recent&days=7',

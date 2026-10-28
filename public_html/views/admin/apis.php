@@ -19,6 +19,10 @@ $editId = (int)($editProfile['id'] ?? 0);
 ?>
 <?php
 $flashData = flash();
+/* El controlador consume 'success' y 'error' antes de pintar: se reinyectan
+   para que el panel muestre el resultado de guardar (APIs, CVE, ThreatFox). */
+if (!empty($success)) { $flashData['success'] = $success; }
+if (!empty($error)) { $flashData['error'] = $error; }
 foreach ($flashData as $type => $msg):
     $colors = match($type) {
         'success' => 'text-green-600 bg-green-50 dark:bg-green-900/20',
@@ -325,6 +329,78 @@ $cveScope = (string)($cve['scope'] ?? 'full');
     </p>
 </form>
 
+<!-- ThreatFox (abuse.ch) -->
+<form method="POST" action="<?= base_url('admin/apis/threatfox-save') ?>" class="card p-6 mb-6 space-y-4" id="threatfox">
+    <?= Csrf::field() ?>
+    <div class="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+            <h2 class="text-lg font-semibold">IOCs de abuse.ch (ThreatFox)</h2>
+            <p class="text-xs text-ink-muted mt-1">
+                Base local de indicadores de compromiso del módulo <strong>IOCs ThreatFox</strong>.
+                Solo la consulta en vivo y la ingesta usan la Auth-Key.
+            </p>
+        </div>
+        <a href="https://auth.abuse.ch/" target="_blank" rel="noopener noreferrer"
+           class="text-xs text-primary hover:underline">Solicitar Auth-Key ↗</a>
+    </div>
+
+    <?php if (!empty($threatfox['key_from_env'])): ?>
+        <div class="px-4 py-3 rounded-lg text-sm text-info bg-info-bg">
+            La Auth-Key está definida en <code>THREATFOX_AUTH_KEY</code> (.env) y tiene prioridad
+            sobre este formulario.
+        </div>
+    <?php endif; ?>
+
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+            <label class="block text-sm font-medium text-ink mb-1">Auth-Key de abuse.ch</label>
+            <input type="password" name="threatfox_auth_key" autocomplete="new-password"
+                   placeholder="<?= !empty($threatfox['key_set']) ? '•••••••• (ya configurada — deja vacío para mantenerla)' : 'Pega aquí tu Auth-Key de abuse.ch' ?>"
+                   class="w-full px-3 py-2 rounded-lg border border-line-strong bg-surface text-ink font-mono text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+            <label class="inline-flex items-center gap-2 text-xs text-ink-muted mt-2">
+                <input type="checkbox" name="clear_threatfox_key" value="1" class="rounded border-line-strong text-brand-500 focus:ring-brand-500">
+                Borrar la Auth-Key guardada
+            </label>
+            <p class="text-xs text-ink-soft mt-1">
+                Gratuita en auth.abuse.ch. Se guarda cifrada (AES-256) y nunca se envía al navegador.
+            </p>
+        </div>
+        <div>
+            <label class="block text-sm font-medium text-ink mb-1">Base de datos local</label>
+            <input type="text" value="<?= e((string)$threatfox['db_path']) ?>" readonly
+                   class="w-full px-3 py-2 rounded-lg border border-line-strong bg-surface text-ink font-mono text-sm outline-none">
+            <p class="text-xs text-ink-soft mt-1">
+                <?php if (!empty($threatfox['db_exists'])): ?>
+                    <?= number_format((int)$threatfox['total'], 0, ',', '.') ?> IOCs ·
+                    <?= number_format(((int)$threatfox['size']) / 1048576, 1, ',', '.') ?> MB
+                <?php else: ?>
+                    Todavía no existe: se crea con la primera ingesta.
+                <?php endif; ?>
+            </p>
+        </div>
+        <div>
+            <label class="block text-sm font-medium text-ink mb-1">Última ingesta</label>
+            <input type="text" readonly
+                   value="<?= e((string)($threatfox['last_full'] !== '' ? $threatfox['last_full'] : ($threatfox['last_daily'] !== '' ? $threatfox['last_daily'] : 'Sin ingestas registradas'))) ?>"
+                   class="w-full px-3 py-2 rounded-lg border border-line-strong bg-surface text-ink text-sm outline-none">
+            <p class="text-xs text-ink-soft mt-1">La ingesta se lanza desde el propio módulo o por cron.</p>
+        </div>
+        <div>
+            <label class="block text-sm font-medium text-ink mb-1">Cron diario</label>
+            <input type="text" readonly
+                   value="php <?= e(ROOT_PATH) ?>/cron/threatfox-ingest.php --days=1"
+                   class="w-full px-3 py-2 rounded-lg border border-line-strong bg-surface text-ink font-mono text-sm outline-none">
+            <p class="text-xs text-ink-soft mt-1">Idempotente: reingestar nunca duplica.</p>
+        </div>
+    </div>
+
+    <div class="flex items-center gap-3 pt-2 border-t border-line-subtle flex-wrap">
+        <button type="submit" class="btn">Guardar</button>
+        <button type="button" onclick="testThreatfox()" class="btn-outline btn">Probar conexión</button>
+    </div>
+    <div id="threatfox-test-result" class="text-xs text-ink-muted"></div>
+</form>
+
 <form method="POST" action="<?= base_url('admin/apis/cve-defender-report-save') ?>" class="card p-6 mb-6 space-y-4">
     <?= Csrf::field() ?>
     <div class="flex items-start justify-between gap-4 flex-wrap">
@@ -601,6 +677,24 @@ function escHtml(s) {
     var d = document.createElement('div');
     d.textContent = s || '';
     return d.innerHTML;
+}
+function testThreatfox() {
+    var box = document.getElementById('threatfox-test-result');
+    if (box) { box.textContent = 'Probando la Auth-Key…'; }
+    api('POST', '<?= base_url('admin/apis/threatfox-test') ?>', {})
+        .then(function(res) {
+            if (res && res.success) {
+                if (box) { box.textContent = (res.message || 'Conexión correcta.') + (res.types ? ' Tipos: ' + res.types + '.' : ''); }
+                toast(res.message || 'Conexión correcta', 'success');
+                return;
+            }
+            if (box) { box.textContent = (res && res.error) ? res.error : 'Error al probar la conexión.'; }
+            toast((res && res.error) ? res.error : 'Error al probar la conexión', 'error');
+        })
+        .catch(function() {
+            if (box) { box.textContent = 'Error de conexión.'; }
+            toast('Error de conexión', 'error');
+        });
 }
 function testProfile(id) {
     api('POST', '<?= base_url('admin/apis/test') ?>', { profile_id: id })

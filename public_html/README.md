@@ -101,8 +101,8 @@ almacenamiento SQLite y arquitectura modular.
 
 10. **Cron ThreatFox** (opcional): ingesta diaria de IOCs de abuse.ch en la base
     local del módulo **IOCs ThreatFox**. Requiere una Auth-Key gratuita de
-    <https://auth.abuse.ch/> (`THREATFOX_AUTH_KEY` en `.env` o desde la propia
-    interfaz del módulo, que la guarda cifrada):
+    <https://auth.abuse.ch/>: se configura en **Administración → APIs** (se
+    guarda cifrada) o con `THREATFOX_AUTH_KEY` en el `.env`, que tiene prioridad:
     ```
     php /ruta/public_html/cron/threatfox-ingest.php --days=1 >> /ruta/public_html/storage/threatfox-cron.log 2>&1
     ```

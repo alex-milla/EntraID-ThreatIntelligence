@@ -657,6 +657,32 @@ class AdminController
             // El panel sigue funcionando aunque el log no esté disponible.
         }
 
+        // ThreatFox (abuse.ch): base local de IOCs del módulo de Inteligencia.
+        // No se instancia el almacén si la base no existe: así una visita al
+        // panel no crea el fichero SQLite.
+        $threatfox = [
+            'key_set'      => setting_get('threatfox_auth_key', '') !== '',
+            'key_from_env' => ThreatfoxApi::authKeyFromEnv(),
+            'db_path'      => (string)THREATFOX_DB_PATH,
+            'db_exists'    => is_file((string)THREATFOX_DB_PATH),
+            'total'        => 0,
+            'size'         => 0,
+            'last_daily'   => '',
+            'last_full'    => '',
+        ];
+        if ($threatfox['db_exists']) {
+            try {
+                $threatfoxStore = new ThreatfoxStore();
+                $threatfoxIngests = $threatfoxStore->lastIngests();
+                $threatfox['total'] = $threatfoxStore->count();
+                $threatfox['size'] = (int)@filesize((string)THREATFOX_DB_PATH);
+                $threatfox['last_daily'] = (string)($threatfoxIngests['daily']['finished_at'] ?? '');
+                $threatfox['last_full'] = (string)($threatfoxIngests['full']['finished_at'] ?? '');
+            } catch (Throwable $e) {
+                // El panel sigue funcionando aunque la base local no responda.
+            }
+        }
+
         // Informe automático desde Defender (Fase C).
         $defReport = [
             'enabled'   => setting_get('cve_def_report_enabled', '0') === '1',
@@ -850,6 +876,84 @@ class AdminController
         ]);
         flash('success', 'Configuración de fuentes de CVEs guardada.');
         redirect(base_url('admin/apis'));
+    }
+
+    /**
+     * Guarda la Auth-Key de abuse.ch (ThreatFox). Se almacena cifrada y solo
+     * se actualiza si se envía una nueva. La variable de entorno
+     * THREATFOX_AUTH_KEY tiene prioridad sobre este ajuste.
+     */
+    public static function threatfoxSave(): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        $key = trim((string)($_POST['threatfox_auth_key'] ?? ''));
+        $clearKey = !empty($_POST['clear_threatfox_key']);
+
+        if ($key !== '' && ENCRYPTION_KEY === '') {
+            flash('error', 'No se puede guardar la Auth-Key de abuse.ch: falta ENCRYPTION_KEY en el .env.');
+            redirect(base_url('admin/apis'));
+        }
+        if ($key !== '' && (strlen($key) < 16 || preg_match('/\s/', $key))) {
+            flash('error', 'La Auth-Key de abuse.ch no parece válida (mínimo 16 caracteres y sin espacios).');
+            redirect(base_url('admin/apis'));
+        }
+
+        if ($clearKey) {
+            setting_set('threatfox_auth_key', '');
+        } elseif ($key !== '') {
+            try {
+                setting_set('threatfox_auth_key', $key, true);
+            } catch (Throwable $e) {
+                flash('error', 'No se pudo cifrar/guardar la Auth-Key de abuse.ch: ' . $e->getMessage());
+                redirect(base_url('admin/apis'));
+            }
+        }
+
+        /* El catálogo de tipos de la API se refresca en la próxima consulta. */
+        @unlink(STORAGE_PATH . '/threatfox-types.json');
+
+        log_activity('threatfox.settings_saved', [
+            'key_set' => $clearKey ? false : ($key !== '' || setting_get('threatfox_auth_key', '') !== ''),
+        ]);
+        flash('success', 'Configuración de ThreatFox guardada.');
+        redirect(base_url('admin/apis'));
+    }
+
+    /**
+     * Prueba la Auth-Key de abuse.ch con una sola petición (query=types).
+     */
+    public static function threatfoxTest(): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        if (!ThreatfoxApi::hasAuthKey()) {
+            json_response(['success' => false, 'error' => 'No hay Auth-Key de abuse.ch configurada.'], 400);
+        }
+
+        try {
+            $api = new ThreatfoxApi(ThreatfoxApi::resolveAuthKey());
+            $response = $api->types();
+        } catch (Throwable $e) {
+            json_response(['success' => false, 'error' => $e->getMessage()], 200);
+        }
+
+        $status = (string)($response['query_status'] ?? 'unknown');
+        if ($status !== ThreatfoxApi::STATUS_OK) {
+            $detail = (string)($response['error'] ?? '');
+            json_response([
+                'success' => false,
+                'error'   => 'La API respondió «' . $status . '»' . ($detail !== '' ? ': ' . $detail : '.'),
+            ], 200);
+        }
+
+        json_response([
+            'success' => true,
+            'message' => 'Conexión correcta: la Auth-Key es válida.',
+            'types'   => count((array)($response['data'] ?? [])),
+        ]);
     }
 
     /**
@@ -1692,6 +1796,8 @@ $adminRoutes = [
         'apis/tasks'       => 'apisTasks',
         'apis/cve-save'    => 'cveSave',
         'apis/cve-test'    => 'cveTest',
+        'apis/threatfox-save' => 'threatfoxSave',
+        'apis/threatfox-test' => 'threatfoxTest',
         'apis/cve-defender-report-save' => 'cveDefenderReportSave',
         'logs/clear'       => 'logsClear',
         'updates'          => 'updates',

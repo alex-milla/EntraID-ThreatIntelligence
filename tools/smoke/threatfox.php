@@ -338,9 +338,36 @@ check('Módulo: sin permisos de Graph', $module !== null && $module->requiredPer
 check('Módulo: grupo de navegación Inteligencia', ($module?->getNavItem()['group'] ?? '') === 'Inteligencia');
 
 $routePatterns = array_map(static fn($r) => $r['pattern'], $module?->routes() ?? []);
-foreach (['', 'settings', 'ingest', 'backfill/start', 'backfill/chunk', 'export', 'state'] as $pattern) {
+foreach (['', 'ingest', 'backfill/start', 'backfill/chunk', 'export', 'state'] as $pattern) {
     check('Ruta registrada: /' . $pattern, in_array($pattern, $routePatterns, true));
 }
+check(
+    'El módulo no expone ajustes propios (la clave va en Administración > APIs)',
+    !in_array('settings', $routePatterns, true)
+);
+check('No queda la vista de ajustes del módulo', !is_file(MODULES_PATH . '/threatfox/views/settings.php'));
+
+/* Las acciones de administración son estáticas en el mapa de rutas de admin. */
+$adminSource = (string)@file_get_contents(ROOT_PATH . '/admin/index.php');
+check(
+    'Admin: ruta apis/threatfox-save registrada',
+    str_contains($adminSource, "'apis/threatfox-save' => 'threatfoxSave'")
+);
+check(
+    'Admin: ruta apis/threatfox-test registrada',
+    str_contains($adminSource, "'apis/threatfox-test' => 'threatfoxTest'")
+);
+check(
+    'Admin: la card de ThreatFox existe en la vista de APIs',
+    str_contains((string)@file_get_contents(VIEWS_PATH . '/admin/apis.php'), 'id="threatfox"')
+);
+
+/* La resolución de la clave: entorno primero y ajuste cifrado después. */
+$apiSource = (string)@file_get_contents(INCLUDES_PATH . '/threatfox_api.php');
+check(
+    'Auth-Key: resolveAuthKey lee THREATFOX_AUTH_KEY y el ajuste threatfox_auth_key',
+    str_contains($apiSource, 'THREATFOX_AUTH_KEY') && str_contains($apiSource, "setting_get('threatfox_auth_key'")
+);
 
 /* ============================================================
  * Resumen

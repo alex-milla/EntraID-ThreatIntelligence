@@ -65,7 +65,7 @@ $lastRow = $totalRows > 0 ? min($totalRows, $page * $perPage) : 0;
     <div class="alert alert-warning" role="status">
         No hay Auth-Key de abuse.ch configurada: solo puedes consultar la base local.
         <?php if ($isAdmin): ?>
-            <a href="<?= e($base) ?>/settings">Configúrala en Ajustes</a>.
+            <a href="<?= e(base_url('admin/apis')) ?>#threatfox">Configúrala en Administración → APIs</a>.
         <?php endif; ?>
     </div>
 <?php endif; ?>
@@ -80,7 +80,7 @@ $lastRow = $totalRows > 0 ? min($totalRows, $page * $perPage) : 0;
         Configurar exportación
     </a>
     <?php if ($isAdmin): ?>
-        <a class="btn-flat btn" href="<?= e($base) ?>/settings">
+        <a class="btn-flat btn" href="<?= e(base_url('admin/apis')) ?>#threatfox">
             <?= icon('settings', 18) ?>
             Ajustes
         </a>

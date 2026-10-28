@@ -8,14 +8,15 @@
  *
  * Rutas:
  *   GET  /modules/threatfox                  consulta + filtros + tabla
- *   GET  /modules/threatfox/settings         ajustes (Auth-Key) — solo admin
- *   POST /modules/threatfox/settings         guarda la Auth-Key — solo admin
  *   POST /modules/threatfox/ingest           ingesta diaria — solo admin
  *   POST /modules/threatfox/backfill/start   descarga del histórico — solo admin
  *   GET  /modules/threatfox/backfill/chunk   siguiente bloque (progreso)
  *   GET  /modules/threatfox/export           panel de exportación
  *   POST /modules/threatfox/export           genera los ficheros
  *   GET  /modules/threatfox/state            estado en JSON
+ *
+ * La Auth-Key de abuse.ch se configura en Administración > APIs (o con
+ * THREATFOX_AUTH_KEY en el .env, que tiene prioridad).
  */
 
 declare(strict_types=1);
@@ -74,8 +75,6 @@ class Module_Threatfox extends BaseModule
     {
         return [
             ['method' => 'GET',  'pattern' => '',               'handler' => [$this, 'index']],
-            ['method' => 'GET',  'pattern' => 'settings',       'handler' => [$this, 'settingsPage']],
-            ['method' => 'POST', 'pattern' => 'settings',       'handler' => [$this, 'saveSettings']],
             ['method' => 'POST', 'pattern' => 'ingest',         'handler' => [$this, 'ingestNow']],
             ['method' => 'POST', 'pattern' => 'backfill/start', 'handler' => [$this, 'backfillStart']],
             ['method' => 'GET',  'pattern' => 'backfill/chunk', 'handler' => [$this, 'backfillChunk']],
@@ -110,86 +109,6 @@ class Module_Threatfox extends BaseModule
             'notice'   => flash('threatfox'),
             'isAdmin'  => Auth::isAdmin(),
         ]);
-    }
-
-    /* =====================================================================
-     * Ajustes (Auth-Key)
-     * ================================================================== */
-
-    public function settingsPage(array $params = []): void
-    {
-        Auth::requireAdmin();
-
-        echo $this->page('settings', [
-            'module'   => $this,
-            'hasKey'   => ThreatfoxApi::hasAuthKey(),
-            'keyEnv'   => ThreatfoxApi::authKeyFromEnv(),
-            'keyMasked' => $this->maskKey(ThreatfoxApi::resolveAuthKey()),
-            'dbPath'   => (string)THREATFOX_DB_PATH,
-            'dbExists' => is_file((string)THREATFOX_DB_PATH),
-            'notice'   => flash('threatfox_settings'),
-            'cronCmd'  => 'php ' . ROOT_PATH . '/cron/threatfox-ingest.php --days=1',
-        ]);
-    }
-
-    public function saveSettings(array $params = []): void
-    {
-        Auth::requireAdmin();
-
-        if (ThreatfoxApi::authKeyFromEnv()) {
-            flash('threatfox_settings', [
-                'type' => 'warning',
-                'text' => 'La Auth-Key viene de THREATFOX_AUTH_KEY (.env): cámbiala allí para que tenga efecto.',
-            ]);
-            redirect(base_url('modules/threatfox/settings'));
-        }
-
-        if (!empty($_POST['clear_key'])) {
-            setting_set('threatfox_auth_key', null, true);
-            flash('threatfox_settings', ['type' => 'success', 'text' => 'Auth-Key eliminada.']);
-            redirect(base_url('modules/threatfox/settings'));
-        }
-
-        $key = trim((string)($_POST['auth_key'] ?? ''));
-        if ($key === '') {
-            flash('threatfox_settings', ['type' => 'warning', 'text' => 'Escribe una Auth-Key válida.']);
-            redirect(base_url('modules/threatfox/settings'));
-        }
-        if (strlen($key) < 16 || preg_match('/\s/', $key)) {
-            flash('threatfox_settings', [
-                'type' => 'error',
-                'text' => 'La Auth-Key no parece válida (mínimo 16 caracteres y sin espacios).',
-            ]);
-            redirect(base_url('modules/threatfox/settings'));
-        }
-
-        try {
-            setting_set('threatfox_auth_key', $key, true);
-        } catch (Throwable $e) {
-            flash('threatfox_settings', [
-                'type' => 'error',
-                'text' => 'No se pudo cifrar la clave: ' . $e->getMessage()
-                    . ' Define ENCRYPTION_KEY en el .env o usa THREATFOX_AUTH_KEY.',
-            ]);
-            redirect(base_url('modules/threatfox/settings'));
-        }
-
-        /* El catálogo de tipos se refresca la próxima vez que se pida. */
-        @unlink(STORAGE_PATH . '/threatfox-types.json');
-
-        flash('threatfox_settings', ['type' => 'success', 'text' => 'Auth-Key guardada (cifrada).']);
-        redirect(base_url('modules/threatfox/settings'));
-    }
-
-    private function maskKey(string $key): string
-    {
-        if ($key === '') {
-            return '';
-        }
-        if (strlen($key) <= 8) {
-            return str_repeat('•', strlen($key));
-        }
-        return substr($key, 0, 4) . str_repeat('•', 10) . substr($key, -4);
     }
 
     /* =====================================================================
