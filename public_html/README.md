@@ -99,6 +99,21 @@ almacenamiento SQLite y arquitectura modular.
    caché disponible o una estimación marcada como «estimado». También admite
    `?token=TU_CRON_TOKEN` y `--force=1`.
 
+10. **Cron ThreatFox** (opcional): ingesta diaria de IOCs de abuse.ch en la base
+    local del módulo **IOCs ThreatFox**. Requiere una Auth-Key gratuita de
+    <https://auth.abuse.ch/> (`THREATFOX_AUTH_KEY` en `.env` o desde la propia
+    interfaz del módulo, que la guarda cifrada):
+    ```
+    php /ruta/public_html/cron/threatfox-ingest.php --days=1 >> /ruta/public_html/storage/threatfox-cron.log 2>&1
+    ```
+    Es idempotente: reingestar nunca duplica. Añade `--purge` para borrar los
+    IOCs con más de 6 meses (la fuente los expira) y `--backfill` para forzar el
+    histórico completo desde CLI. También admite `?token=TU_CRON_TOKEN`.
+    El módulo arranca con datos si copias una base ya poblada en
+    `storage/threatfox.sqlite`; si no existe, se crea vacía con la primera
+    ingesta. Desde la interfaz también se puede lanzar la ingesta y la descarga
+    completa (~6 meses) por bloques.
+
 ## Arquitectura modular
 
 Cada herramienta es un módulo independiente en `modules/{nombre}/`:
@@ -112,6 +127,7 @@ Cada herramienta es un módulo independiente en `modules/{nombre}/`:
 | `cve` | Catálogo público de CVEs e inventario de software (NVD/KEV/EPSS) | — |
 | `secure_score` | Evolución del Secure Score | `SecurityEvents.Read.All` |
 | `hunting` | Consultas KQL (Advanced Hunting) | `ThreatHunting.Read.All` |
+| `threatfox` | IOCs de abuse.ch (ThreatFox): consulta, ingesta y export STIX/MISP | — |
 | `reports` | Generación de reportes periódicos | — (usa datos almacenados) |
 | `llm` | Análisis con modelos de lenguaje | — (usa API del proveedor) |
 | `export` | Exportación STIX 2.1, MISP, CSV, TXT | — |

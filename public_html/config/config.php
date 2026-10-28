@@ -152,6 +152,24 @@ define('CVE_PAGE_SIZE_MEMORY_GUARD', 268435456); // <256M => página de 1000
 define('CVE_STEP_SECONDS', 45);
 define('CVE_STEP_SECONDS_MAX', 90);
 
+// ============================================================
+// ThreatFox (abuse.ch) — IOCs
+// Base independiente (storage/threatfox.sqlite) para no engordar la
+// principal. La Auth-Key se resuelve: .env -> ajuste cifrado de la UI.
+// ============================================================
+define('THREATFOX_DB_PATH', ROOT_PATH . '/' . ($env['THREATFOX_DB_PATH'] ?? 'storage/threatfox.sqlite'));
+define('THREATFOX_API_URL', $env['THREATFOX_API_URL'] ?? 'https://threatfox-api.abuse.ch/api/v1/');
+define('THREATFOX_AUTH_KEY', $env['THREATFOX_AUTH_KEY'] ?? '');
+define('THREATFOX_EXPORT_URL', $env['THREATFOX_EXPORT_URL'] ?? '');
+define('THREATFOX_TIMEOUT', 30);
+define('THREATFOX_EXPORT_TIMEOUT', 600);
+define('THREATFOX_TYPES_TTL_HOURS', 24);
+define('THREATFOX_PAGE_SIZE', 50);
+define('THREATFOX_EXPORT_MAX_ROWS', 5000);
+define('THREATFOX_BACKFILL_CHUNK', 3000);
+define('THREATFOX_DAYS_MAX', 7);
+define('THREATFOX_DEFAULT_DAYS', 1);
+
 // LLM
 define('LLM_PROVIDER', $env['LLM_PROVIDER'] ?? '');
 define('LLM_API_KEY', $env['LLM_API_KEY'] ?? '');

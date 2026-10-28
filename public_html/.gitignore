@@ -24,6 +24,13 @@ storage/exports/*
 storage/cve-import/*
 !storage/cve-import/.gitkeep
 
+# ThreatFox (v0.2.8.37): base de IOCs y temporales de la descarga completa
+storage/threatfox.sqlite
+storage/threatfox.sqlite-*
+storage/threatfox-types.json
+storage/threatfox-backfill.json
+storage/threatfox-export.csv
+
 # Archivos del sistema
 *.log
 *.bak
