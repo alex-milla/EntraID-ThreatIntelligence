@@ -133,8 +133,104 @@ $lastRow = $totalRows > 0 ? min($totalRows, $page * $perPage) : 0;
     <?php endforeach; ?>
 </div>
 
+<!-- Base local: ingesta y estado -->
+<div class="card mt-4">
+    <div class="card-head">
+        <h2>Base local</h2>
+        <span class="card-sub">
+            <?= $fmt((int)($stats['total'] ?? 0)) ?> IOCs ·
+            <?= e((string)(($stats['oldest'] ?? '') !== '' ? $stats['oldest'] : 'sin datos')) ?>
+            →
+            <?= e((string)(($stats['newest'] ?? '') !== '' ? $stats['newest'] : 'sin datos')) ?>
+        </span>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div>
+            <h3 class="text-sm font-semibold mb-2">Actualizar</h3>
+            <p class="text-sm text-ink-muted mt-0 mb-3">
+                La ingesta diaria pide a la API los IOCs de los últimos días y los guarda
+                sin duplicar. Es la única llamada recurrente (fair use de abuse.ch).
+            </p>
+            <?php if ($isAdmin): ?>
+                <form method="POST" action="<?= e($base) ?>/ingest" class="flex flex-wrap items-end gap-3">
+                    <?= Csrf::field() ?>
+                    <div class="input-field mb-0">
+                        <label for="tf-ingest-days">Días a descargar</label>
+                        <select id="tf-ingest-days" name="days">
+                            <?php for ($d = 1; $d <= THREATFOX_DAYS_MAX; $d++): ?>
+                                <option value="<?= $d ?>" <?= $d === THREATFOX_DEFAULT_DAYS ? 'selected' : '' ?>>
+                                    <?= $d ?> día<?= $d === 1 ? '' : 's' ?>
+                                </option>
+                            <?php endfor; ?>
+                        </select>
+                    </div>
+                    <button type="submit" class="btn mb-3"><?= icon('sync', 18) ?> Actualizar base local</button>
+                </form>
+
+                <form method="POST" action="<?= e($base) ?>/backfill/start" class="mt-3"
+                      data-confirm="Se descargará el histórico completo (~6 meses) y se importará por bloques. ¿Continuar?">
+                    <?= Csrf::field() ?>
+                    <button type="submit" class="btn-outline btn">
+                        <?= icon('cloud_download', 18) ?> Descargar histórico completo
+                    </button>
+                </form>
+            <?php else: ?>
+                <p class="text-sm text-ink-muted">Solo un administrador puede lanzar la ingesta.</p>
+            <?php endif; ?>
+        </div>
+
+        <div>
+            <h3 class="text-sm font-semibold mb-2">Últimas ingestas</h3>
+            <table class="data-table w-full text-sm">
+                <thead>
+                    <tr>
+                        <th>Tipo</th>
+                        <th>Filas</th>
+                        <th>Total</th>
+                        <th>Terminada</th>
+                    </tr>
+                </thead>
+                <tbody>
+                <?php if (empty($ingests)): ?>
+                    <tr><td colspan="4" class="text-ink-muted">Sin ingestas registradas.</td></tr>
+                <?php else: ?>
+                    <?php foreach ($ingests as $type => $row): ?>
+                        <tr>
+                            <td><?= e($type === 'full' ? 'Histórico completo' : 'Diaria') ?></td>
+                            <td><?= $fmt((int)($row['rows'] ?? 0)) ?></td>
+                            <td><?= $fmt((int)($row['total'] ?? 0)) ?></td>
+                            <td class="whitespace-nowrap text-xs"><?= e((string)($row['finished_at'] ?? '')) ?></td>
+                        </tr>
+                    <?php endforeach; ?>
+                <?php endif; ?>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <?php if (!empty($backfill)): ?>
+        <div class="alert alert-info mt-4" id="tf-backfill">
+            <p class="m-0 mb-2">
+                Importando el histórico completo:
+                <strong id="tf-backfill-done"><?= $fmt((int)($backfill['rows_done'] ?? 0)) ?></strong>
+                de <strong id="tf-backfill-total"><?= $fmt((int)($backfill['rows_total'] ?? 0)) ?></strong> filas.
+            </p>
+            <div class="progress">
+                <?php $pct = ((int)($backfill['rows_total'] ?? 0) > 0)
+                    ? min(100, (int)round(((int)$backfill['rows_done'] / (int)$backfill['rows_total']) * 100))
+                    : 0; ?>
+                <div class="determinate" id="tf-backfill-bar" style="width: <?= $pct ?>%"></div>
+            </div>
+            <p class="text-xs text-ink-muted m-0">
+                La importación continúa sola; puedes cerrar la página y volver más tarde.
+            </p>
+        </div>
+    <?php endif; ?>
+</div>
+
 <!-- Filtros -->
-<form method="GET" action="<?= e($base) ?>" class="card p-5">
+<form method="GET" action="<?= e($base) ?>" class="card p-5 mt-6">
     <input type="hidden" name="source" value="<?= e($filters['source']) ?>">
 
     <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-x-4">
@@ -386,102 +482,6 @@ $lastRow = $totalRows > 0 ? min($totalRows, $page * $perPage) : 0;
         </div>
     </div>
 <?php endif; ?>
-
-<!-- Base local: ingesta y estado -->
-<div class="card mt-6">
-    <div class="card-head">
-        <h2>Base local</h2>
-        <span class="card-sub">
-            <?= $fmt((int)($stats['total'] ?? 0)) ?> IOCs ·
-            <?= e((string)(($stats['oldest'] ?? '') !== '' ? $stats['oldest'] : 'sin datos')) ?>
-            →
-            <?= e((string)(($stats['newest'] ?? '') !== '' ? $stats['newest'] : 'sin datos')) ?>
-        </span>
-    </div>
-
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div>
-            <h3 class="text-sm font-semibold mb-2">Actualizar</h3>
-            <p class="text-sm text-ink-muted mt-0 mb-3">
-                La ingesta diaria pide a la API los IOCs de los últimos días y los guarda
-                sin duplicar. Es la única llamada recurrente (fair use de abuse.ch).
-            </p>
-            <?php if ($isAdmin): ?>
-                <form method="POST" action="<?= e($base) ?>/ingest" class="flex flex-wrap items-end gap-3">
-                    <?= Csrf::field() ?>
-                    <div class="input-field mb-0">
-                        <label for="tf-ingest-days">Días a descargar</label>
-                        <select id="tf-ingest-days" name="days">
-                            <?php for ($d = 1; $d <= THREATFOX_DAYS_MAX; $d++): ?>
-                                <option value="<?= $d ?>" <?= $d === THREATFOX_DEFAULT_DAYS ? 'selected' : '' ?>>
-                                    <?= $d ?> día<?= $d === 1 ? '' : 's' ?>
-                                </option>
-                            <?php endfor; ?>
-                        </select>
-                    </div>
-                    <button type="submit" class="btn mb-3"><?= icon('sync', 18) ?> Actualizar base local</button>
-                </form>
-
-                <form method="POST" action="<?= e($base) ?>/backfill/start" class="mt-3"
-                      data-confirm="Se descargará el histórico completo (~6 meses) y se importará por bloques. ¿Continuar?">
-                    <?= Csrf::field() ?>
-                    <button type="submit" class="btn-outline btn">
-                        <?= icon('cloud_download', 18) ?> Descargar histórico completo
-                    </button>
-                </form>
-            <?php else: ?>
-                <p class="text-sm text-ink-muted">Solo un administrador puede lanzar la ingesta.</p>
-            <?php endif; ?>
-        </div>
-
-        <div>
-            <h3 class="text-sm font-semibold mb-2">Últimas ingestas</h3>
-            <table class="data-table w-full text-sm">
-                <thead>
-                    <tr>
-                        <th>Tipo</th>
-                        <th>Filas</th>
-                        <th>Total</th>
-                        <th>Terminada</th>
-                    </tr>
-                </thead>
-                <tbody>
-                <?php if (empty($ingests)): ?>
-                    <tr><td colspan="4" class="text-ink-muted">Sin ingestas registradas.</td></tr>
-                <?php else: ?>
-                    <?php foreach ($ingests as $type => $row): ?>
-                        <tr>
-                            <td><?= e($type === 'full' ? 'Histórico completo' : 'Diaria') ?></td>
-                            <td><?= $fmt((int)($row['rows'] ?? 0)) ?></td>
-                            <td><?= $fmt((int)($row['total'] ?? 0)) ?></td>
-                            <td class="whitespace-nowrap text-xs"><?= e((string)($row['finished_at'] ?? '')) ?></td>
-                        </tr>
-                    <?php endforeach; ?>
-                <?php endif; ?>
-                </tbody>
-            </table>
-        </div>
-    </div>
-
-    <?php if (!empty($backfill)): ?>
-        <div class="alert alert-info mt-4" id="tf-backfill">
-            <p class="m-0 mb-2">
-                Importando el histórico completo:
-                <strong id="tf-backfill-done"><?= $fmt((int)($backfill['rows_done'] ?? 0)) ?></strong>
-                de <strong id="tf-backfill-total"><?= $fmt((int)($backfill['rows_total'] ?? 0)) ?></strong> filas.
-            </p>
-            <div class="progress">
-                <?php $pct = ((int)($backfill['rows_total'] ?? 0) > 0)
-                    ? min(100, (int)round(((int)$backfill['rows_done'] / (int)$backfill['rows_total']) * 100))
-                    : 0; ?>
-                <div class="determinate" id="tf-backfill-bar" style="width: <?= $pct ?>%"></div>
-            </div>
-            <p class="text-xs text-ink-muted m-0">
-                La importación continúa sola; puedes cerrar la página y volver más tarde.
-            </p>
-        </div>
-    <?php endif; ?>
-</div>
 
 <!-- Modal de detalle (se rellena con el bloque que ya pintó el servidor) -->
 <div class="tdl-modal-overlay" id="tf-detail-overlay" hidden>
