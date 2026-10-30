@@ -110,6 +110,8 @@ foreach ($companyGroups as $companyRow) {
             La ruta configurada es <code class="font-mono"><?= e(CVE_DB_PATH) ?></code>.
         </p>
     </div>
+<?php elseif ($tab === 'import'): ?>
+    <?php require __DIR__ . '/import.php'; ?>
 <?php elseif ($tab === 'catalog'): ?>
     <?php
     $syncStatus = (string)($syncState['status'] ?? 'idle');

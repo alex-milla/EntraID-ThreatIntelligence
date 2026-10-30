@@ -79,6 +79,10 @@ class Module_Cve extends BaseModule
             ['method' => 'POST', 'pattern' => 'software/import', 'handler' => [$this, 'importSoftwareList']],
             ['method' => 'POST', 'pattern' => 'software/backfill','handler' => [$this, 'backfillSoftware']],
             ['method' => 'POST', 'pattern' => 'software/delete', 'handler' => [$this, 'deleteSoftware']],
+            ['method' => 'POST', 'pattern' => 'import/tvm',     'handler' => [$this, 'importTvmCsv']],
+            ['method' => 'POST', 'pattern' => 'import/report',  'handler' => [$this, 'importGenerateReports']],
+            ['method' => 'POST', 'pattern' => 'import/nvd',     'handler' => [$this, 'importFetchNvd']],
+            ['method' => 'POST', 'pattern' => 'import/delete',  'handler' => [$this, 'importDelete']],
         ];
     }
 
@@ -92,7 +96,7 @@ class Module_Cve extends BaseModule
 
         $isAdmin = Auth::isAdmin();
         $tabParam = (string)($_GET['tab'] ?? 'catalog');
-        $tab = in_array($tabParam, ['software', 'reports'], true) ? $tabParam : 'catalog';
+        $tab = in_array($tabParam, ['software', 'reports', 'import'], true) ? $tabParam : 'catalog';
         $showImportForm = $isAdmin && $tab === 'software' && isset($_GET['import']);
         $selectedGroup = (int)($_GET['group'] ?? 0);
         $q = trim((string)($_GET['q'] ?? ''));
@@ -123,6 +127,9 @@ class Module_Cve extends BaseModule
         $syncState = null;
         $newCves = '';
         $assignmentFilter = 'unassigned';
+        $tvmImports = [];
+        $tvmImport = null;
+        $tvmRows = [];
 
         try {
             $groups = $this->groupTree();
@@ -160,6 +167,17 @@ class Module_Cve extends BaseModule
                     $selectedAiData = $this->aiReportPayload($selectedAiId);
                     if ($selectedAiData === null) {
                         $selectedAiId = 0;
+                    }
+                }
+            } elseif ($tab === 'import') {
+                if ($isAdmin) {
+                    $tvmImports = $this->listTvmImports(50);
+                    $requestedImport = max(0, (int)($_GET['import'] ?? 0));
+                    $tvmImport = $requestedImport > 0
+                        ? $this->getTvmImport($requestedImport)
+                        : ($tvmImports[0] ?? null);
+                    if ($tvmImport !== null) {
+                        $tvmRows = $this->listTvmImportRows((int)$tvmImport['id']);
                     }
                 }
             } else {
@@ -244,6 +262,9 @@ class Module_Cve extends BaseModule
             'newCves'       => $newCves,
             'softwareOptions'=> $softwareOptions,
             'syncState'     => $syncState,
+            'tvmImports'    => $tvmImports,
+            'tvmImport'     => $tvmImport,
+            'tvmRows'       => $tvmRows,
         ]);
     }
 
@@ -579,6 +600,657 @@ class Module_Cve extends BaseModule
             }
         }
         redirect(base_url('modules/cve?tab=software'));
+    }
+
+    /**
+     * Importa un CSV exportado por Defender TVM (Vulnerabilidades → Exportar)
+     * dentro de un cliente/empresa ya creado.
+     *
+     * - Normaliza y valida cada CVE.
+     * - Enlaza los datos de exposición (máquinas, exploit, estado).
+     * - Completa el catálogo local con los CVEs que falten.
+     * - Cruza «Related Software» con el inventario del cliente.
+     */
+    public function importTvmCsv(array $params = []): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        $companyId = (int)($_POST['company_id'] ?? 0);
+        $company = $companyId > 0 ? $this->getGroup($companyId) : null;
+        if ($company === null || (string)($company['kind'] ?? '') !== 'company') {
+            flash('error', 'Selecciona una empresa (cliente) válida.');
+            redirect(base_url('modules/cve?tab=import'));
+        }
+
+        $file = $_FILES['csv'] ?? null;
+        $uploadError = is_array($file) ? (int)($file['error'] ?? UPLOAD_ERR_NO_FILE) : UPLOAD_ERR_NO_FILE;
+        if (!is_array($file) || $uploadError !== UPLOAD_ERR_OK) {
+            flash('error', $this->tvmUploadError($uploadError));
+            redirect(base_url('modules/cve?tab=import'));
+        }
+
+        $size = (int)($file['size'] ?? 0);
+        if ($size <= 0) {
+            flash('error', 'El fichero está vacío.');
+            redirect(base_url('modules/cve?tab=import'));
+        }
+        if ($size > CveTvmImport::MAX_BYTES) {
+            flash('error', 'El CSV supera el límite de 5 MB.');
+            redirect(base_url('modules/cve?tab=import'));
+        }
+
+        $tmpName = (string)($file['tmp_name'] ?? '');
+        if ($tmpName === '' || !is_uploaded_file($tmpName)) {
+            flash('error', 'No se pudo leer el fichero subido.');
+            redirect(base_url('modules/cve?tab=import'));
+        }
+
+        $filename = trim((string)($file['name'] ?? 'export-tvm.csv'));
+        $ext = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
+        if ($ext !== '' && !in_array($ext, ['csv', 'txt'], true)) {
+            flash('error', 'El fichero debe ser un CSV de Defender TVM.');
+            redirect(base_url('modules/cve?tab=import&company=' . $companyId));
+        }
+
+        $content = file_get_contents($tmpName);
+        if ($content === false || trim($content) === '') {
+            flash('error', 'No se pudo leer el contenido del CSV.');
+            redirect(base_url('modules/cve?tab=import&company=' . $companyId));
+        }
+
+        $parsed = CveTvmImport::parseCsv($content);
+        if ($parsed['rows'] === []) {
+            flash('error', 'No se ha encontrado ningún CVE válido. Comprueba que es el export de Defender TVM.');
+            redirect(base_url('modules/cve?tab=import&company=' . $companyId));
+        }
+
+        $watchlist = $this->tvmCompanyWatchlist($companyId);
+        $aliases = $this->tvmCompanyAliases($companyId);
+        $existingCount = 0;
+        $createdCount = 0;
+        $matchedCount = 0;
+        $importId = 0;
+
+        try {
+            $db = CveDatabase::getInstance();
+            $db->beginTransaction();
+
+            $importId = CveDatabase::insert(
+                "INSERT INTO cve_tvm_imports
+                 (company_id, filename, export_date, bytes, rows_total, rows_skipped, status, generated_by)
+                 VALUES (?, ?, ?, ?, ?, ?, 'processing', ?)",
+                [
+                    $companyId,
+                    $filename !== '' ? $filename : 'export-tvm.csv',
+                    $parsed['export_date'] !== '' ? $parsed['export_date'] : null,
+                    $size,
+                    count($parsed['rows']),
+                    (int)$parsed['skipped'],
+                    Auth::id(),
+                ]
+            );
+
+            $insertRow = $db->prepare(
+                "INSERT INTO cve_tvm_import_rows
+                 (import_id, cve_id, severity, cvss, epss, age_days, published_at, first_detected_at,
+                  updated_at, has_exploit, has_known_threats, has_alerts, related_software, software_labels,
+                  exposed_machines, tvm_status, description, catalog_source, matched_watchlist, report_id)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)"
+            );
+
+            foreach ($parsed['rows'] as $row) {
+                $cveId = (string)$row['cve_id'];
+                $catalog = CveDatabase::fetchOne(
+                    "SELECT cve_id FROM cve_catalog WHERE cve_id = ?",
+                    [$cveId]
+                );
+                $source = 'catalog';
+                if ($catalog === null) {
+                    $source = 'csv';
+                    $createdCount++;
+                    $products = CveTvmImport::softwareLabels($row['software_pairs'], 50);
+                    CveDatabase::query(
+                        "INSERT OR IGNORE INTO cve_catalog
+                         (cve_id, description, published_at, last_modified_at, vuln_status, source_identifier,
+                          severity, cvss_v3_score, products_json, nvd_url)
+                         VALUES (?, ?, ?, ?, 'Analyzed', 'defender-tvm', ?, ?, ?, ?)",
+                        [
+                            $cveId,
+                            (string)$row['description'],
+                            $row['published_at'] !== '' ? $row['published_at'] : null,
+                            $row['updated_at'] !== '' ? $row['updated_at'] : null,
+                            $row['severity'] !== '' ? $row['severity'] : null,
+                            $row['cvss'],
+                            $products === [] ? null : json_encode($products, JSON_UNESCAPED_SLASHES),
+                            'https://nvd.nist.gov/vuln/detail/' . $cveId,
+                        ]
+                    );
+                } else {
+                    $existingCount++;
+                }
+
+                // Productos: alimentan el matching del catálogo.
+                foreach ($row['software_pairs'] as $pair) {
+                    CveDatabase::query(
+                        "INSERT OR IGNORE INTO cve_product (cve_id, vendor, product) VALUES (?, ?, ?)",
+                        [$cveId, (string)$pair['vendor'], (string)$pair['product']]
+                    );
+                }
+
+                // EPSS del CSV si el feed todavía no lo tiene.
+                if ($row['epss'] !== null) {
+                    CveDatabase::query(
+                        "INSERT OR IGNORE INTO cve_epss (cve_id, epss, percentile, score_date)
+                         VALUES (?, ?, NULL, date('now'))",
+                        [$cveId, (float)$row['epss']]
+                    );
+                }
+
+                $matched = CveTvmImport::matchWatchlist($row['software_pairs'], $watchlist, $aliases);
+                foreach ($matched as $watchlistId) {
+                    CveDatabase::query(
+                        "INSERT OR IGNORE INTO cve_watchlist_match
+                         (watchlist_id, cve_id, matched_cpe, matched_by, version_match)
+                         VALUES (?, ?, ?, 'tvm_csv', '')",
+                        [(int)$watchlistId, $cveId, 'defender-tvm']
+                    );
+                }
+                if ($matched !== []) {
+                    $matchedCount++;
+                }
+
+                $insertRow->execute([
+                    $importId,
+                    $cveId,
+                    $row['severity'] !== '' ? $row['severity'] : null,
+                    $row['cvss'],
+                    $row['epss'],
+                    (int)$row['age_days'],
+                    $row['published_at'] !== '' ? $row['published_at'] : null,
+                    $row['first_detected_at'] !== '' ? $row['first_detected_at'] : null,
+                    $row['updated_at'] !== '' ? $row['updated_at'] : null,
+                    (int)$row['has_exploit'],
+                    (int)$row['has_known_threats'],
+                    (int)$row['has_alerts'],
+                    (string)$row['related_software'],
+                    $row['software_pairs'] === []
+                        ? null
+                        : json_encode(CveTvmImport::softwareLabels($row['software_pairs'], 50), JSON_UNESCAPED_UNICODE),
+                    (int)$row['exposed_machines'],
+                    (string)$row['tvm_status'],
+                    (string)$row['description'],
+                    $source,
+                    $matched === [] ? null : json_encode(array_values($matched)),
+                ]);
+            }
+
+            CveDatabase::update(
+                "UPDATE cve_tvm_imports
+                 SET rows_imported = ?, rows_existing = ?, rows_created = ?, rows_matched = ?,
+                     status = 'done', updated_at = datetime('now')
+                 WHERE id = ?",
+                [count($parsed['rows']), $existingCount, $createdCount, $matchedCount, $importId]
+            );
+
+            $db->commit();
+
+            app_log('info', 'cve_tvm', 'CSV de Defender TVM importado', [
+                'import_id'  => $importId,
+                'company_id' => $companyId,
+                'rows'       => count($parsed['rows']),
+                'created'    => $createdCount,
+                'matched'    => $matchedCount,
+            ]);
+            log_activity('cve.tvm_imported', [
+                'import_id'  => $importId,
+                'company_id' => $companyId,
+                'rows'       => count($parsed['rows']),
+            ]);
+
+            $message = 'Importación completada: ' . count($parsed['rows']) . ' CVEs';
+            if ($createdCount > 0) {
+                $message .= ', ' . $createdCount . ' añadidos al catálogo';
+            }
+            if ($matchedCount > 0) {
+                $message .= ', ' . $matchedCount . ' cruzados con el inventario';
+            }
+            $message .= '.';
+            flash('success', $message);
+        } catch (Throwable $e) {
+            if (isset($db) && $db->inTransaction()) {
+                $db->rollBack();
+            }
+            if ($importId > 0) {
+                try {
+                    CveDatabase::query("DELETE FROM cve_tvm_imports WHERE id = ?", [$importId]);
+                } catch (Throwable $ignored) {
+                }
+            }
+            app_log('error', 'cve_tvm', 'Error importando CSV TVM', ['error' => $e->getMessage()]);
+            flash('error', 'No se pudo importar el CSV: ' . $e->getMessage());
+            redirect(base_url('modules/cve?tab=import&company=' . $companyId));
+        }
+
+        redirect(base_url('modules/cve?tab=import&import=' . $importId));
+    }
+
+    /**
+     * Crea un informe IA por cada CVE seleccionado de una importación.
+     * Los informes quedan pendientes: se generan desde «Informes» con el
+     * botón «Generar pendientes» para no bloquear la petición.
+     */
+    public function importGenerateReports(array $params = []): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        $importId = (int)($_POST['import_id'] ?? 0);
+        $import = $importId > 0 ? $this->getTvmImport($importId) : null;
+        if ($import === null) {
+            flash('error', 'La importación no existe.');
+            redirect(base_url('modules/cve?tab=import'));
+        }
+
+        $companyId = (int)($import['company_id'] ?? 0);
+        $company = $companyId > 0 ? $this->getGroup($companyId) : null;
+        if ($company === null || (string)($company['kind'] ?? '') !== 'company') {
+            flash('error', 'La importación no tiene un cliente válido asociado.');
+            redirect(base_url('modules/cve?tab=import&import=' . $importId));
+        }
+        $companyName = (string)($company['name'] ?? 'Cliente');
+
+        $rows = $this->listTvmImportRows($importId);
+        $byId = [];
+        foreach ($rows as $row) {
+            $byId[(string)$row['cve_id']] = $row;
+        }
+
+        $requested = CveReportAi::normalizeCveIds($_POST['cve_ids'] ?? []);
+        if ($requested === []) {
+            $requested = array_keys($byId);
+        }
+        $selected = array_values(array_filter($requested, static fn(string $id): bool => isset($byId[$id])));
+        if ($selected === []) {
+            flash('error', 'Selecciona al menos un CVE de la importación.');
+            redirect(base_url('modules/cve?tab=import&import=' . $importId));
+        }
+
+        $noAi = !empty($_POST['no_ai']);
+        $mode = ((string)($_POST['mode'] ?? 'extended')) === 'summary' ? 'summary' : 'extended';
+        $profileId = (int)(llm_task_profile('cve_report') ?? 0);
+        if (!$noAi) {
+            $llm = class_exists('Module_Llm') ? new Module_Llm() : null;
+            if ($llm === null || !$llm->isConfigured($profileId > 0 ? $profileId : null)) {
+                flash('error', 'La IA no está configurada. Añade un perfil en Admin → APIs o marca «Solo datos locales».');
+                redirect(base_url('modules/cve?tab=import&import=' . $importId));
+            }
+        }
+
+        $created = 0;
+        $skipped = 0;
+        $firstReportId = 0;
+
+        try {
+            foreach ($selected as $cveId) {
+                $row = $byId[$cveId];
+                if ((int)($row['report_id'] ?? 0) > 0) {
+                    $exists = CveDatabase::fetchOne(
+                        "SELECT id FROM cve_ai_reports WHERE id = ?",
+                        [(int)$row['report_id']]
+                    );
+                    if ($exists !== null) {
+                        $skipped++;
+                        if ($firstReportId === 0) {
+                            $firstReportId = (int)$exists['id'];
+                        }
+                        continue;
+                    }
+                }
+
+                $defender = $this->tvmDefenderContext($import, $companyName, $row);
+                $token = bin2hex(random_bytes(24));
+                $title = 'Informe CVE · ' . $companyName . ' · ' . $cveId
+                    . ($mode === 'summary' ? ' · Resumen' : '') . ' · Import TVM ' . date('d/m/Y');
+
+                $reportId = CveDatabase::insert(
+                    "INSERT INTO cve_ai_reports
+                     (cve_ids, title, status, token, ai_profile_id, generated_by, no_ai, defender_json,
+                      mode, total_items, group_id)
+                     VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, 1, ?)",
+                    [
+                        $this->encodeJson([$cveId]),
+                        $title,
+                        $token,
+                        $profileId > 0 ? $profileId : null,
+                        Auth::id(),
+                        $noAi ? 1 : 0,
+                        $this->encodeJson($defender),
+                        $mode,
+                        $companyId,
+                    ]
+                );
+                CveReportAi::ensureReportItems($reportId);
+                CveDatabase::query(
+                    "UPDATE cve_tvm_import_rows SET report_id = ? WHERE import_id = ? AND cve_id = ?",
+                    [$reportId, $importId, $cveId]
+                );
+                $created++;
+                if ($firstReportId === 0) {
+                    $firstReportId = $reportId;
+                }
+            }
+
+            CveDatabase::update(
+                "UPDATE cve_tvm_imports
+                 SET reports_created = reports_created + ?, updated_at = datetime('now')
+                 WHERE id = ?",
+                [$created, $importId]
+            );
+
+            app_log('info', 'cve_tvm', 'Informes creados desde importación TVM', [
+                'import_id'  => $importId,
+                'company_id' => $companyId,
+                'created'    => $created,
+                'skipped'    => $skipped,
+            ]);
+            log_activity('cve.tvm_reports_created', [
+                'import_id'  => $importId,
+                'company_id' => $companyId,
+                'created'    => $created,
+            ]);
+        } catch (Throwable $e) {
+            app_log('error', 'cve_tvm', 'Error creando informes desde TVM', ['error' => $e->getMessage()]);
+            flash('error', 'No se pudieron crear los informes: ' . $e->getMessage());
+            redirect(base_url('modules/cve?tab=import&import=' . $importId));
+        }
+
+        $message = $created > 0
+            ? 'Se han creado ' . $created . ' informes en cola.'
+            : 'No se han creado informes nuevos.';
+        if ($skipped > 0) {
+            $message .= ' ' . $skipped . ' CVEs ya tenían informe.';
+        }
+        $message .= ' Pulsa «Generar pendientes» en Informes para ejecutar la IA.';
+        flash($created > 0 ? 'success' : 'warning', $message);
+
+        $target = 'modules/cve?tab=reports&assignment=assigned';
+        if ($firstReportId > 0) {
+            $target .= '&report=' . $firstReportId;
+        }
+        redirect(base_url($target));
+    }
+
+    /**
+     * Descarga de NVD los CVEs que se dieron de alta desde el CSV.
+     * Se limita a 10 por petición para respetar el límite de la API pública.
+     */
+    public function importFetchNvd(array $params = []): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        $importId = (int)($_POST['import_id'] ?? 0);
+        $import = $importId > 0 ? $this->getTvmImport($importId) : null;
+        if ($import === null) {
+            flash('error', 'La importación no existe.');
+            redirect(base_url('modules/cve?tab=import'));
+        }
+
+        $pending = CveDatabase::fetchAll(
+            "SELECT cve_id FROM cve_tvm_import_rows
+             WHERE import_id = ? AND catalog_source = 'csv'
+             ORDER BY cve_id ASC
+             LIMIT 10",
+            [$importId]
+        );
+        if ($pending === []) {
+            flash('info', 'No hay CVEs pendientes de completar desde NVD.');
+            redirect(base_url('modules/cve?tab=import&import=' . $importId));
+        }
+
+        @set_time_limit(0);
+        if (function_exists('release_session_lock')) {
+            release_session_lock();
+        }
+
+        $sync = new CveSync();
+        $done = 0;
+        $failed = [];
+        foreach ($pending as $row) {
+            $cveId = (string)$row['cve_id'];
+            try {
+                $sync->fetchAndStoreCve($cveId);
+                CveDatabase::query(
+                    "UPDATE cve_tvm_import_rows SET catalog_source = 'nvd'
+                     WHERE import_id = ? AND cve_id = ?",
+                    [$importId, $cveId]
+                );
+                $done++;
+            } catch (Throwable $e) {
+                $failed[] = $cveId;
+                app_log('warning', 'cve_tvm', 'NVD no devolvió el CVE', [
+                    'cve'   => $cveId,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        CveDatabase::update(
+            "UPDATE cve_tvm_imports SET updated_at = datetime('now') WHERE id = ?",
+            [$importId]
+        );
+        log_activity('cve.tvm_nvd_fetch', [
+            'import_id' => $importId,
+            'done'      => $done,
+            'failed'    => count($failed),
+        ]);
+
+        if ($done > 0) {
+            flash('success', $done . ' CVEs completados desde NVD.');
+        }
+        if ($failed !== []) {
+            flash('warning', 'NVD no devolvió: ' . implode(', ', array_slice($failed, 0, 8))
+                . (count($failed) > 8 ? '…' : '') . '. Se conservan los datos del CSV.');
+        }
+        redirect(base_url('modules/cve?tab=import&import=' . $importId));
+    }
+
+    /**
+     * Elimina una importación. Los informes se conservan salvo que se pida
+     * expresamente borrarlos.
+     */
+    public function importDelete(array $params = []): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        $importId = (int)($_POST['import_id'] ?? 0);
+        $import = $importId > 0 ? $this->getTvmImport($importId) : null;
+        if ($import === null) {
+            flash('error', 'La importación no existe.');
+            redirect(base_url('modules/cve?tab=import'));
+        }
+
+        $deleteReports = !empty($_POST['delete_reports']);
+        try {
+            if ($deleteReports) {
+                $reportIds = CveDatabase::fetchAll(
+                    "SELECT DISTINCT report_id FROM cve_tvm_import_rows
+                     WHERE import_id = ? AND report_id IS NOT NULL",
+                    [$importId]
+                );
+                foreach ($reportIds as $reportRow) {
+                    CveDatabase::query(
+                        "DELETE FROM cve_ai_reports WHERE id = ?",
+                        [(int)$reportRow['report_id']]
+                    );
+                }
+            }
+            CveDatabase::query("DELETE FROM cve_tvm_imports WHERE id = ?", [$importId]);
+            log_activity('cve.tvm_import_deleted', [
+                'import_id'      => $importId,
+                'delete_reports' => $deleteReports,
+            ]);
+            flash('success', 'Importación eliminada.');
+        } catch (Throwable $e) {
+            flash('error', 'No se pudo eliminar la importación: ' . $e->getMessage());
+        }
+
+        redirect(base_url('modules/cve?tab=import'));
+    }
+
+    // ============================================================
+    // Importación TVM: consultas y utilidades
+    // ============================================================
+
+    private function listTvmImports(int $limit = 50): array
+    {
+        $limit = max(1, min(200, $limit));
+        return CveDatabase::fetchAll(
+            "SELECT i.*, g.name AS company_name, g.kind AS company_kind
+             FROM cve_tvm_imports i
+             LEFT JOIN software_groups g ON g.id = i.company_id
+             ORDER BY i.created_at DESC, i.id DESC
+             LIMIT ?",
+            [$limit]
+        );
+    }
+
+    private function getTvmImport(int $id): ?array
+    {
+        if ($id <= 0) {
+            return null;
+        }
+        return CveDatabase::fetchOne(
+            "SELECT i.*, g.name AS company_name, g.kind AS company_kind
+             FROM cve_tvm_imports i
+             LEFT JOIN software_groups g ON g.id = i.company_id
+             WHERE i.id = ?",
+            [$id]
+        );
+    }
+
+    private function listTvmImportRows(int $importId): array
+    {
+        if ($importId <= 0) {
+            return [];
+        }
+        return CveDatabase::fetchAll(
+            "SELECT r.*,
+                    c.severity AS catalog_severity, c.cvss_v3_score AS catalog_cvss,
+                    c.published_at AS catalog_published,
+                    e.epss AS catalog_epss, k.cve_id AS kev_id,
+                    rep.id AS report_exists, rep.status AS report_status
+             FROM cve_tvm_import_rows r
+             LEFT JOIN cve_catalog c ON c.cve_id = r.cve_id
+             LEFT JOIN cve_epss e ON e.cve_id = r.cve_id
+             LEFT JOIN cve_kev k ON k.cve_id = r.cve_id
+             LEFT JOIN cve_ai_reports rep ON rep.id = r.report_id
+             WHERE r.import_id = ?
+             ORDER BY CASE r.severity
+                        WHEN 'critical' THEN 0
+                        WHEN 'high' THEN 1
+                        WHEN 'medium' THEN 2
+                        WHEN 'low' THEN 3
+                        ELSE 4
+                      END ASC,
+                      COALESCE(r.cvss, 0) DESC,
+                      r.cve_id ASC",
+            [$importId]
+        );
+    }
+
+    /**
+     * Inventario de software del cliente: el propio grupo empresa y los
+     * grupos de aplicaciones vinculados a esa empresa.
+     */
+    private function tvmCompanyWatchlist(int $companyId): array
+    {
+        if ($companyId <= 0) {
+            return [];
+        }
+        return CveDatabase::fetchAll(
+            "SELECT w.id, w.name, w.vendor, w.product
+             FROM software_watchlist w
+             LEFT JOIN software_groups g ON g.id = w.group_id
+             WHERE COALESCE(w.is_active, 1) = 1
+               AND (g.id = ? OR g.company_id = ?)",
+            [$companyId, $companyId]
+        );
+    }
+
+    private function tvmCompanyAliases(int $companyId): array
+    {
+        if ($companyId <= 0) {
+            return [];
+        }
+        $rows = CveDatabase::fetchAll(
+            "SELECT a.watchlist_id, a.alias
+             FROM software_alias a
+             JOIN software_watchlist w ON w.id = a.watchlist_id
+             LEFT JOIN software_groups g ON g.id = w.group_id
+             WHERE g.id = ? OR g.company_id = ?",
+            [$companyId, $companyId]
+        );
+        $out = [];
+        foreach ($rows as $row) {
+            $out[(int)$row['watchlist_id']][] = (string)$row['alias'];
+        }
+        return $out;
+    }
+
+    /**
+     * Contexto de exposición para el prompt del informe, a partir de la fila
+     * del CSV (misma forma que buildDefenderContext).
+     */
+    private function tvmDefenderContext(array $import, string $companyName, array $row): array
+    {
+        $cveId = (string)($row['cve_id'] ?? '');
+        $labels = [];
+        $decoded = safe_json_decode((string)($row['software_labels'] ?? ''), []);
+        if (is_array($decoded)) {
+            foreach ($decoded as $label) {
+                if (is_scalar($label) && trim((string)$label) !== '') {
+                    $labels[] = (string)$label;
+                }
+            }
+        }
+
+        return [
+            'generated_at' => date('c'),
+            'source'       => 'defender-tvm-csv',
+            'company_id'   => (int)($import['company_id'] ?? 0),
+            'company_name' => $companyName,
+            'cves'         => [
+                $cveId => [
+                    'machine_total'    => (int)($row['exposed_machines'] ?? 0),
+                    'exposed_machines' => (int)($row['exposed_machines'] ?? 0),
+                    'public_exploit'   => !empty($row['has_exploit']),
+                    'exploit_verified' => false,
+                    'products'         => $labels,
+                    'machines'         => [],
+                    'tenants'          => [$companyName],
+                    'tvm_status'       => (string)($row['tvm_status'] ?? ''),
+                    'severity'         => (string)($row['severity'] ?? ''),
+                    'cvss'             => $row['cvss'] !== null ? (float)$row['cvss'] : null,
+                    'epss'             => $row['epss'] !== null ? (float)$row['epss'] : null,
+                    'first_detected'   => (string)($row['first_detected_at'] ?? ''),
+                ],
+            ],
+        ];
+    }
+
+    private function tvmUploadError(int $code): string
+    {
+        return match ($code) {
+            UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE => 'El CSV supera el tamaño permitido por el servidor.',
+            UPLOAD_ERR_PARTIAL                         => 'La subida se interrumpió. Inténtalo de nuevo.',
+            UPLOAD_ERR_NO_FILE                         => 'Selecciona un fichero CSV.',
+            UPLOAD_ERR_NO_TMP_DIR                      => 'El servidor no tiene directorio temporal.',
+            UPLOAD_ERR_CANT_WRITE                      => 'No se pudo escribir el fichero en el servidor.',
+            default                                    => 'Error al subir el fichero (código ' . $code . ').',
+        };
     }
 
     /**

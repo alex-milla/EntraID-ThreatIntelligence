@@ -205,6 +205,55 @@ class CveDatabase
             updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         )");
 
+        // v0.2.8.41: importaciones del CSV de vulnerabilidades de Defender TVM.
+        // Se clasifican en una empresa (software_groups.kind = 'company') y se
+        // cruzan con el catálogo CVE y con el inventario de software del cliente.
+        $db->exec("CREATE TABLE IF NOT EXISTS cve_tvm_imports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            company_id INTEGER REFERENCES software_groups(id) ON DELETE SET NULL,
+            filename TEXT NOT NULL,
+            export_date TEXT,
+            bytes INTEGER NOT NULL DEFAULT 0,
+            rows_total INTEGER NOT NULL DEFAULT 0,
+            rows_imported INTEGER NOT NULL DEFAULT 0,
+            rows_existing INTEGER NOT NULL DEFAULT 0,
+            rows_created INTEGER NOT NULL DEFAULT 0,
+            rows_matched INTEGER NOT NULL DEFAULT 0,
+            rows_skipped INTEGER NOT NULL DEFAULT 0,
+            reports_created INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'done',
+            error TEXT,
+            generated_by INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )");
+
+        $db->exec("CREATE TABLE IF NOT EXISTS cve_tvm_import_rows (
+            import_id INTEGER NOT NULL REFERENCES cve_tvm_imports(id) ON DELETE CASCADE,
+            cve_id TEXT NOT NULL,
+            severity TEXT,
+            cvss REAL,
+            epss REAL,
+            age_days INTEGER,
+            published_at TEXT,
+            first_detected_at TEXT,
+            updated_at TEXT,
+            has_exploit INTEGER NOT NULL DEFAULT 0,
+            has_known_threats INTEGER NOT NULL DEFAULT 0,
+            has_alerts INTEGER NOT NULL DEFAULT 0,
+            related_software TEXT,
+            software_labels TEXT,
+            exposed_machines INTEGER NOT NULL DEFAULT 0,
+            tvm_status TEXT,
+            description TEXT,
+            catalog_source TEXT NOT NULL DEFAULT 'missing',
+            matched_watchlist TEXT,
+            report_id INTEGER,
+            PRIMARY KEY (import_id, cve_id)
+        ) WITHOUT ROWID");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_cve_tvm_imports_company ON cve_tvm_imports(company_id, created_at DESC)");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_cve_tvm_rows_source ON cve_tvm_import_rows(import_id, catalog_source)");
+
         $db->exec("CREATE TABLE IF NOT EXISTS cve_reports (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL,

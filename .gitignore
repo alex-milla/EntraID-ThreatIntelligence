@@ -26,3 +26,6 @@ tools/tailwind/tailwindcss
 
 # Carpeta de trabajo ajena al proyecto (no versionar)
 SploitScan-main/
+
+# Exportaciones de vulnerabilidades de clientes (datos sensibles)
+Vulnerabilidades/

@@ -8,6 +8,7 @@ $cveTabs = [
     'catalog'  => 'Catálogo',
     'software' => 'Mis CVE',
     'reports'  => 'Informes',
+    'import'   => 'Import Organización',
 ];
 $currentTab = (isset($tab) && isset($cveTabs[$tab])) ? $tab : 'catalog';
 ?>
