@@ -250,6 +250,14 @@ foreach ($tvmRows as $row) {
                     <div class="flex items-center gap-2">
                         <span id="tvm-selected-count" class="text-[11px] text-ink-soft"><?= count($tvmRows) ?> seleccionados</span>
                         <button type="submit"
+                                formaction="<?= base_url('modules/cve/vm/create') ?>"
+                                formnovalidate
+                                title="Crea un caso de seguimiento por CVE seleccionado (no cierra casos ni duplica ámbitos)"
+                                class="inline-flex items-center gap-2 px-3 py-2 border border-line-strong text-ink text-sm font-medium rounded-lg hover:bg-muted transition-colors">
+                            <i class="material-icons icon-16" aria-hidden="true">assignment_turned_in</i>
+                            Crear casos de seguimiento
+                        </button>
+                        <button type="submit"
                                 class="inline-flex items-center gap-2 px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-semibold rounded-lg transition-colors">
                             <i class="material-icons icon-16" aria-hidden="true">auto_awesome</i>
                             Generar informes por CVE

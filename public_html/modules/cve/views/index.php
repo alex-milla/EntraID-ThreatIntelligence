@@ -112,6 +112,8 @@ foreach ($companyGroups as $companyRow) {
     </div>
 <?php elseif ($tab === 'import'): ?>
     <?php require __DIR__ . '/import.php'; ?>
+<?php elseif ($tab === 'vm'): ?>
+    <?php require __DIR__ . '/vm.php'; ?>
 <?php elseif ($tab === 'catalog'): ?>
     <?php
     $syncStatus = (string)($syncState['status'] ?? 'idle');

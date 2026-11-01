@@ -60,6 +60,8 @@ $routes = @(
     '/index.php/modules/cve?tab=software',
     '/index.php/modules/cve?tab=reports',
     '/index.php/modules/cve?tab=import',
+    '/index.php/modules/cve?tab=vm',
+    '/index.php/modules/cve/vm/report',
     '/index.php/modules/threat_intelligence?tab=news',
     '/index.php/modules/threat_intelligence?tab=profiles',
     '/index.php/modules/remediation?tab=tasks',

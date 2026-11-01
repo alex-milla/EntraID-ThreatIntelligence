@@ -83,6 +83,11 @@ class Module_Cve extends BaseModule
             ['method' => 'POST', 'pattern' => 'import/report',  'handler' => [$this, 'importGenerateReports']],
             ['method' => 'POST', 'pattern' => 'import/nvd',     'handler' => [$this, 'importFetchNvd']],
             ['method' => 'POST', 'pattern' => 'import/delete',  'handler' => [$this, 'importDelete']],
+            ['method' => 'POST', 'pattern' => 'vm/create',      'handler' => [$this, 'vmCreateCases']],
+            ['method' => 'POST', 'pattern' => 'vm/update',      'handler' => [$this, 'vmUpdateCase']],
+            ['method' => 'POST', 'pattern' => 'vm/evidence',    'handler' => [$this, 'vmAddEvidence']],
+            ['method' => 'POST', 'pattern' => 'vm/reopen',      'handler' => [$this, 'vmReopenCase']],
+            ['method' => 'GET',  'pattern' => 'vm/report',      'handler' => [$this, 'vmReport']],
         ];
     }
 
@@ -96,7 +101,7 @@ class Module_Cve extends BaseModule
 
         $isAdmin = Auth::isAdmin();
         $tabParam = (string)($_GET['tab'] ?? 'catalog');
-        $tab = in_array($tabParam, ['software', 'reports', 'import'], true) ? $tabParam : 'catalog';
+        $tab = in_array($tabParam, ['software', 'reports', 'import', 'vm'], true) ? $tabParam : 'catalog';
         $showImportForm = $isAdmin && $tab === 'software' && isset($_GET['import']);
         $selectedGroup = (int)($_GET['group'] ?? 0);
         $q = trim((string)($_GET['q'] ?? ''));
@@ -130,6 +135,20 @@ class Module_Cve extends BaseModule
         $tvmImports = [];
         $tvmImport = null;
         $tvmRows = [];
+        $vmCases = [];
+        $vmKpis = [];
+        $vmCase = null;
+        $vmEvents = [];
+        $vmEvidence = [];
+        $vmFilters = [
+            'company'  => 0,
+            'status'   => '',
+            'priority' => '',
+            'due'      => '',
+            'q'        => '',
+            'sort'     => 'due',
+        ];
+        $vmLastImport = null;
 
         try {
             $groups = $this->groupTree();
@@ -178,6 +197,30 @@ class Module_Cve extends BaseModule
                         : ($tvmImports[0] ?? null);
                     if ($tvmImport !== null) {
                         $tvmRows = $this->listTvmImportRows((int)$tvmImport['id']);
+                    }
+                }
+            } elseif ($tab === 'vm') {
+                // Seguimiento de vulnerabilidades: los casos se crean a mano
+                // desde una importación concreta; aquí solo se consultan.
+                $vmFilters = [
+                    'company'  => max(0, (int)($_GET['company'] ?? 0)),
+                    'status'   => trim((string)($_GET['vm_status'] ?? '')),
+                    'priority' => trim((string)($_GET['vm_priority'] ?? '')),
+                    'due'      => trim((string)($_GET['vm_due'] ?? '')),
+                    'q'        => trim((string)($_GET['vm_q'] ?? '')),
+                    'sort'     => trim((string)($_GET['vm_sort'] ?? 'due')),
+                ];
+                // Los KPI se calculan sobre TODOS los casos de la empresa
+                // seleccionada; la cola aplica además los filtros de la UI.
+                $vmKpis = VmCases::kpis($this->listVmCases(['company' => $vmFilters['company']]));
+                $vmCases = $this->listVmCases($vmFilters);
+                $vmLastImport = $this->latestTvmImport($vmFilters['company']);
+                $vmCaseId = max(0, (int)($_GET['case'] ?? 0));
+                if ($vmCaseId > 0) {
+                    $vmCase = $this->getVmCase($vmCaseId);
+                    if ($vmCase !== null) {
+                        $vmEvents = $this->listVmCaseEvents($vmCaseId);
+                        $vmEvidence = $this->listVmCaseEvidence($vmCaseId);
                     }
                 }
             } else {
@@ -265,6 +308,13 @@ class Module_Cve extends BaseModule
             'tvmImports'    => $tvmImports,
             'tvmImport'     => $tvmImport,
             'tvmRows'       => $tvmRows,
+            'vmCases'       => $vmCases,
+            'vmKpis'        => $vmKpis,
+            'vmCase'        => $vmCase,
+            'vmEvents'      => $vmEvents,
+            'vmEvidence'    => $vmEvidence,
+            'vmFilters'     => $vmFilters,
+            'vmLastImport'  => $vmLastImport,
         ]);
     }
 
@@ -1098,6 +1148,743 @@ class Module_Cve extends BaseModule
         }
 
         redirect(base_url('modules/cve?tab=import'));
+    }
+
+    // ============================================================
+    // Seguimiento de vulnerabilidades (v0.3.0)
+    // ============================================================
+
+    /**
+     * Crea casos de seguimiento a partir de las filas seleccionadas de una
+     * importación. Es una acción MANUAL: no se dispara al importar.
+     *
+     * Reglas: un caso por (empresa, CVE); reimportar no duplica; una
+     * importación no cierra casos aunque el CVE desaparezca.
+     */
+    public function vmCreateCases(array $params = []): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        $importId = (int)($_POST['import_id'] ?? 0);
+        $import = $importId > 0 ? $this->getTvmImport($importId) : null;
+        if ($import === null) {
+            flash('error', 'La importación no existe.');
+            redirect(base_url('modules/cve?tab=import'));
+        }
+        $companyId = (int)($import['company_id'] ?? 0);
+        if ($companyId <= 0 || (string)($import['company_kind'] ?? '') !== 'company') {
+            flash('error', 'La importación no tiene un cliente válido asociado.');
+            redirect(base_url('modules/cve?tab=import&import=' . $importId));
+        }
+        if ((string)($import['status'] ?? '') !== 'done') {
+            flash('error', 'Solo se pueden crear casos desde una importación completada.');
+            redirect(base_url('modules/cve?tab=import&import=' . $importId));
+        }
+
+        $selected = [];
+        foreach ((array)($_POST['cve_ids'] ?? []) as $cveId) {
+            $cveId = strtoupper(trim((string)$cveId));
+            if (preg_match('/^CVE-\d{4}-\d{4,7}$/', $cveId)) {
+                $selected[$cveId] = true;
+            }
+        }
+
+        $rows = $this->listTvmImportRows($importId);
+        if ($selected !== []) {
+            $rows = array_values(array_filter(
+                $rows,
+                static fn(array $row): bool => isset($selected[(string)$row['cve_id']])
+            ));
+        }
+        if ($rows === []) {
+            flash('error', 'Selecciona al menos un CVE de la importación.');
+            redirect(base_url('modules/cve?tab=import&import=' . $importId));
+        }
+
+        $created = 0;
+        $observed = 0;
+        $reobserved = 0;
+        $skipped = 0;
+
+        try {
+            $db = CveDatabase::getInstance();
+            $db->beginTransaction();
+
+            foreach ($rows as $row) {
+                $cveId = (string)$row['cve_id'];
+                $existing = CveDatabase::fetchOne(
+                    "SELECT * FROM vm_cases WHERE group_id = ? AND cve_id = ?",
+                    [$companyId, $cveId]
+                );
+                $plan = VmCases::reconcile(
+                    'done',
+                    $existing,
+                    $row,
+                    (string)($import['created_at'] ?? '')
+                );
+
+                if ($plan['action'] === 'create') {
+                    $factors = VmCases::priorityFactors($this->vmFactorSource($row));
+                    $priority = (string)$factors['priority'];
+                    $observedAt = $plan['observed_at'];
+                    CveDatabase::query(
+                        "INSERT INTO vm_cases
+                         (group_id, cve_id, status, priority, priority_factors,
+                          related_software, matched_watchlist, source,
+                          first_seen_import_id, first_seen_at,
+                          last_seen_import_id, last_seen_at, due_date)
+                         VALUES (?, ?, 'detected', ?, ?, ?, ?, 'defender-tvm', ?, ?, ?, ?, ?)",
+                        [
+                            $companyId,
+                            $cveId,
+                            $priority,
+                            json_encode($factors, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
+                            (string)($row['related_software'] ?? ''),
+                            (string)($row['matched_watchlist'] ?? ''),
+                            $importId,
+                            $observedAt,
+                            $importId,
+                            $observedAt,
+                            VmCases::dueDate($priority, $observedAt),
+                        ]
+                    );
+                    $caseId = (int)$db->lastInsertId();
+                    $this->vmLogEvent(
+                        $caseId,
+                        'created',
+                        null,
+                        VmCases::statusLabel('detected'),
+                        'Caso creado desde la importación #' . $importId . '.'
+                    );
+                    $created++;
+                    continue;
+                }
+
+                if ($plan['action'] === 'observe' && $existing !== null) {
+                    $caseId = (int)$existing['id'];
+                    CveDatabase::query(
+                        "UPDATE vm_cases
+                         SET last_seen_import_id = ?, last_seen_at = ?,
+                             related_software = ?, matched_watchlist = ?,
+                             updated_at = datetime('now')
+                         WHERE id = ?",
+                        [
+                            $importId,
+                            $plan['observed_at'],
+                            (string)($row['related_software'] ?? ''),
+                            (string)($row['matched_watchlist'] ?? ''),
+                            $caseId,
+                        ]
+                    );
+                    $this->vmLogEvent(
+                        $caseId,
+                        (string)$plan['event'],
+                        (string)($existing['last_seen_at'] ?? ''),
+                        $plan['observed_at'],
+                        'Observado en la importación #' . $importId . '. '
+                            . ($plan['event'] === 'reobserved'
+                                ? 'El caso sigue cerrado: revisa si procede reabrirlo.'
+                                : '')
+                    );
+                    if ($plan['event'] === 'reobserved') {
+                        $reobserved++;
+                    } else {
+                        $observed++;
+                    }
+                    continue;
+                }
+
+                $skipped++;
+            }
+
+            $db->commit();
+
+            log_activity('cve.vm_cases_created', [
+                'import_id' => $importId,
+                'company_id' => $companyId,
+                'created' => $created,
+                'observed' => $observed,
+                'reobserved' => $reobserved,
+            ]);
+
+            $parts = [];
+            if ($created > 0) {
+                $parts[] = $created . ' caso(s) nuevo(s)';
+            }
+            if ($observed > 0) {
+                $parts[] = $observed . ' actualizado(s)';
+            }
+            if ($reobserved > 0) {
+                $parts[] = $reobserved . ' reobservado(s) tras cierre';
+            }
+            if ($parts === []) {
+                $parts[] = 'Sin cambios en el seguimiento';
+            }
+            flash($created > 0 ? 'success' : 'info', implode(' · ', $parts) . '.');
+        } catch (Throwable $e) {
+            if (isset($db) && $db->inTransaction()) {
+                $db->rollBack();
+            }
+            flash('error', 'No se pudieron crear los casos: ' . $e->getMessage());
+        }
+
+        redirect(base_url('modules/cve?tab=vm&company=' . $companyId));
+    }
+
+    /**
+     * Actualiza estado, prioridad, responsable, fecha objetivo y riesgo
+     * aceptado. Cada cambio deja un evento de auditoría con valor anterior
+     * y nuevo. El cierre «Corregida y verificada» exige verificación manual.
+     */
+    public function vmUpdateCase(array $params = []): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        $caseId = (int)($_POST['case_id'] ?? 0);
+        $case = $caseId > 0 ? $this->getVmCase($caseId) : null;
+        if ($case === null) {
+            flash('error', 'El caso no existe.');
+            redirect(base_url('modules/cve?tab=vm'));
+        }
+        $back = base_url('modules/cve?tab=vm&company=' . (int)$case['group_id'] . '&case=' . $caseId);
+
+        $input = [
+            'status'          => (string)($_POST['status'] ?? $case['status']),
+            'priority'        => trim((string)($_POST['priority'] ?? '')),
+            'due_date'        => trim((string)($_POST['due_date'] ?? '')),
+            'accepted_reason' => trim((string)($_POST['accepted_reason'] ?? '')),
+            'accepted_until'  => trim((string)($_POST['accepted_until'] ?? '')),
+        ];
+        if (!VmCases::isStatus($input['status'])) {
+            $input['status'] = (string)$case['status'];
+        }
+
+        $comment = trim((string)($_POST['comment'] ?? ''));
+        $verificationComment = trim((string)($_POST['verification_comment'] ?? ''));
+        $verificationReference = trim((string)($_POST['verification_reference'] ?? ''));
+        $ticket = trim((string)($_POST['external_ticket'] ?? ''));
+        $assignee = trim((string)($_POST['assignee_name'] ?? ''));
+
+        $verificationRow = CveDatabase::fetchOne(
+            "SELECT COUNT(*) AS n FROM vm_case_evidence WHERE case_id = ? AND kind = 'verification'",
+            [$caseId]
+        );
+        $hasVerification = (int)($verificationRow['n'] ?? 0) > 0 || $verificationComment !== '';
+
+        $error = VmCases::validateUpdate($case, $input, $hasVerification);
+        if ($error !== null) {
+            flash('error', $error);
+            redirect($back);
+        }
+
+        $oldStatus = (string)$case['status'];
+        $oldPriority = (string)($case['priority'] ?? '');
+        $oldDue = (string)($case['due_date'] ?? '');
+        $oldAssignee = (string)($case['assignee_name'] ?? '');
+        $oldTicket = (string)($case['external_ticket'] ?? '');
+
+        $newDue = $input['due_date'];
+        if ($newDue !== '' && $oldDue !== ''
+            && strtotime($newDue) !== false && strtotime($oldDue) !== false
+            && strtotime($newDue) > strtotime($oldDue)
+            && $comment === '') {
+            flash('error', 'Para ampliar la fecha objetivo indica el motivo de la prórroga.');
+            redirect($back);
+        }
+
+        // Ningún cambio real y sin comentario: no se escribe nada.
+        $noChanges = $input['status'] === $oldStatus
+            && ($input['priority'] === '' || $input['priority'] === $oldPriority)
+            && ($newDue === '' || $newDue === $oldDue)
+            && $assignee === $oldAssignee
+            && $ticket === $oldTicket
+            && $comment === ''
+            && $verificationComment === ''
+            && $input['status'] !== 'risk_accepted';
+        if ($noChanges) {
+            flash('info', 'No hay cambios que guardar.');
+            redirect($back);
+        }
+
+        try {
+            $db = CveDatabase::getInstance();
+            $db->beginTransaction();
+
+            $set = ["updated_at = datetime('now')"];
+            $params = [];
+
+            if ($input['status'] !== $oldStatus) {
+                $set[] = 'status = ?';
+                $params[] = $input['status'];
+                $resolved = in_array($input['status'], ['resolved_verified', 'false_positive'], true);
+                $set[] = 'resolved_at = ?';
+                $params[] = $resolved ? date('Y-m-d H:i:s') : null;
+                $set[] = 'verification_kind = ?';
+                $params[] = $input['status'] === 'resolved_verified' ? 'manual' : null;
+                $this->vmLogEvent(
+                    $caseId,
+                    'status',
+                    VmCases::statusLabel($oldStatus),
+                    VmCases::statusLabel($input['status']),
+                    $comment
+                );
+            }
+
+            if ($input['status'] === 'risk_accepted') {
+                $set[] = 'accepted_reason = ?';
+                $params[] = $input['accepted_reason'];
+                $set[] = 'accepted_until = ?';
+                $params[] = $input['accepted_until'];
+                if ($input['accepted_reason'] !== (string)($case['accepted_reason'] ?? '')
+                    || $input['accepted_until'] !== (string)($case['accepted_until'] ?? '')) {
+                    $this->vmLogEvent(
+                        $caseId,
+                        'risk_accepted',
+                        (string)($case['accepted_until'] ?? ''),
+                        $input['accepted_until'],
+                        $input['accepted_reason'] . ($comment !== '' ? ' · ' . $comment : '')
+                    );
+                }
+            } elseif (!empty($case['accepted_reason']) || !empty($case['accepted_until'])) {
+                $set[] = 'accepted_reason = NULL';
+                $set[] = 'accepted_until = NULL';
+            }
+
+            if ($input['priority'] !== '' && $input['priority'] !== $oldPriority) {
+                $set[] = 'priority = ?';
+                $params[] = $input['priority'];
+                $this->vmLogEvent(
+                    $caseId,
+                    'priority',
+                    VmCases::priorityLabel($oldPriority),
+                    VmCases::priorityLabel($input['priority']),
+                    $comment
+                );
+            }
+
+            if ($newDue !== '' && $newDue !== $oldDue) {
+                $set[] = 'due_date = ?';
+                $params[] = $newDue;
+                $extend = $oldDue !== '' && strtotime($newDue) !== false
+                    && strtotime($oldDue) !== false && strtotime($newDue) > strtotime($oldDue);
+                $this->vmLogEvent(
+                    $caseId,
+                    $extend ? 'due_date_extend' : 'due_date',
+                    $oldDue !== '' ? $oldDue : null,
+                    $newDue,
+                    $comment
+                );
+            }
+
+            if ($assignee !== $oldAssignee) {
+                $set[] = 'assignee_name = ?';
+                $params[] = $assignee !== '' ? $assignee : null;
+                $set[] = 'assignee_user_id = ?';
+                $params[] = $assignee !== '' ? Auth::id() : null;
+                $this->vmLogEvent(
+                    $caseId,
+                    'assignee',
+                    $oldAssignee !== '' ? $oldAssignee : null,
+                    $assignee !== '' ? $assignee : null,
+                    $comment
+                );
+            }
+
+            if ($ticket !== $oldTicket) {
+                $set[] = 'external_ticket = ?';
+                $params[] = $ticket !== '' ? $ticket : null;
+                $this->vmLogEvent(
+                    $caseId,
+                    'ticket',
+                    $oldTicket !== '' ? $oldTicket : null,
+                    $ticket !== '' ? $ticket : null,
+                    $comment
+                );
+            }
+
+            $params[] = $caseId;
+            CveDatabase::query(
+                'UPDATE vm_cases SET ' . implode(', ', $set) . ' WHERE id = ?',
+                $params
+            );
+
+            if ($verificationComment !== '') {
+                $this->vmAddEvidenceRow(
+                    $caseId,
+                    'verification',
+                    $verificationComment,
+                    $verificationReference,
+                    $input['status'] === 'resolved_verified' ? date('Y-m-d') : ''
+                );
+            } elseif ($comment !== '') {
+                $this->vmLogEvent($caseId, 'note', null, null, $comment);
+            }
+
+            $db->commit();
+            log_activity('cve.vm_case_updated', [
+                'case_id' => $caseId,
+                'status' => $input['status'],
+                'priority' => $input['priority'],
+            ]);
+            flash('success', 'Caso actualizado.');
+        } catch (Throwable $e) {
+            if (isset($db) && $db->inTransaction()) {
+                $db->rollBack();
+            }
+            flash('error', 'No se pudo actualizar el caso: ' . $e->getMessage());
+        }
+
+        redirect($back);
+    }
+
+    /** Registra una evidencia (plan, verificación manual o nota). */
+    public function vmAddEvidence(array $params = []): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        $caseId = (int)($_POST['case_id'] ?? 0);
+        $case = $caseId > 0 ? $this->getVmCase($caseId) : null;
+        if ($case === null) {
+            flash('error', 'El caso no existe.');
+            redirect(base_url('modules/cve?tab=vm'));
+        }
+        $back = base_url('modules/cve?tab=vm&company=' . (int)$case['group_id'] . '&case=' . $caseId);
+
+        $kind = (string)($_POST['kind'] ?? 'note');
+        if (!in_array($kind, ['plan', 'verification', 'note'], true)) {
+            $kind = 'note';
+        }
+        $comment = trim((string)($_POST['comment'] ?? ''));
+        $reference = trim((string)($_POST['reference'] ?? ''));
+        if ($comment === '') {
+            flash('error', 'La evidencia necesita un comentario.');
+            redirect($back);
+        }
+
+        try {
+            $this->vmAddEvidenceRow($caseId, $kind, $comment, $reference);
+            log_activity('cve.vm_case_evidence', ['case_id' => $caseId, 'kind' => $kind]);
+            flash('success', 'Evidencia registrada.');
+        } catch (Throwable $e) {
+            flash('error', 'No se pudo registrar la evidencia: ' . $e->getMessage());
+        }
+
+        redirect($back);
+    }
+
+    /**
+     * Reabre un caso cerrado o una excepción. Conserva todo el historial:
+     * no se borran eventos ni evidencias.
+     */
+    public function vmReopenCase(array $params = []): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        $caseId = (int)($_POST['case_id'] ?? 0);
+        $case = $caseId > 0 ? $this->getVmCase($caseId) : null;
+        if ($case === null) {
+            flash('error', 'El caso no existe.');
+            redirect(base_url('modules/cve?tab=vm'));
+        }
+        $back = base_url('modules/cve?tab=vm&company=' . (int)$case['group_id'] . '&case=' . $caseId);
+
+        $oldStatus = (string)$case['status'];
+        if (!in_array($oldStatus, ['resolved_verified', 'false_positive', 'risk_accepted'], true)) {
+            flash('warning', 'Solo se pueden reabrir casos cerrados o con riesgo aceptado.');
+            redirect($back);
+        }
+
+        $comment = trim((string)($_POST['comment'] ?? ''));
+        try {
+            CveDatabase::query(
+                "UPDATE vm_cases
+                 SET status = 'in_review', resolved_at = NULL, verification_kind = NULL,
+                     accepted_reason = NULL, accepted_until = NULL,
+                     updated_at = datetime('now')
+                 WHERE id = ?",
+                [$caseId]
+            );
+            $this->vmLogEvent(
+                $caseId,
+                'reopened',
+                VmCases::statusLabel($oldStatus),
+                VmCases::statusLabel('in_review'),
+                $comment !== '' ? $comment : 'Reapertura manual.'
+            );
+            log_activity('cve.vm_case_reopened', ['case_id' => $caseId]);
+            flash('success', 'Caso reabierto; el historial se conserva.');
+        } catch (Throwable $e) {
+            flash('error', 'No se pudo reabrir el caso: ' . $e->getMessage());
+        }
+
+        redirect($back);
+    }
+
+    /**
+     * Informe ejecutivo del seguimiento. Todos los números se calculan en
+     * backend sobre los casos guardados; no se envía nada a la IA.
+     */
+    public function vmReport(array $params = []): void
+    {
+        Auth::require();
+
+        $company = max(0, (int)($_GET['company'] ?? 0));
+        $days = max(1, min(365, (int)($_GET['days'] ?? 30)));
+        $cases = $this->listVmCases(['company' => $company, 'sort' => 'priority']);
+        $kpi = VmCases::kpis($cases);
+
+        $groups = $this->groupTree();
+        $companyName = '';
+        foreach ($groups as $group) {
+            if ((int)$group['id'] === $company) {
+                $companyName = (string)$group['name'];
+                break;
+            }
+        }
+
+        $since = date('Y-m-d H:i:s', strtotime('-' . $days . ' days'));
+        $events = CveDatabase::fetchAll(
+            "SELECT e.*, c.cve_id, c.group_id
+             FROM vm_case_events e
+             JOIN vm_cases c ON c.id = e.case_id
+             WHERE (? = 0 OR c.group_id = ?) AND e.created_at >= ?
+             ORDER BY e.created_at DESC
+             LIMIT 500",
+            [$company, $company, $since]
+        );
+
+        $imports = CveDatabase::fetchAll(
+            "SELECT i.*, g.name AS company_name
+             FROM cve_tvm_imports i
+             LEFT JOIN software_groups g ON g.id = i.company_id
+             WHERE (? = 0 OR i.company_id = ?)
+             ORDER BY i.created_at DESC, i.id DESC
+             LIMIT 10",
+            [$company, $company]
+        );
+
+        echo $this->page('vm_report', [
+            'vmCompany'     => $company,
+            'vmCompanyName' => $companyName,
+            'vmDays'        => $days,
+            'vmCases'       => $cases,
+            'vmKpis'        => $kpi,
+            'vmEvents'      => $events,
+            'tvmImports'    => $imports,
+        ]);
+    }
+
+    /** Fuente de factores de prioridad: CSV primero, catálogo como respaldo. */
+    private function vmFactorSource(array $row): array
+    {
+        $cvss = $row['cvss'] ?? null;
+        if ($cvss === null || $cvss === '') {
+            $cvss = $row['catalog_cvss'] ?? null;
+        }
+        $epss = $row['epss'] ?? null;
+        if ($epss === null || $epss === '') {
+            $epss = $row['catalog_epss'] ?? null;
+        }
+        return [
+            'severity'         => (string)($row['severity'] ?? ($row['catalog_severity'] ?? '')),
+            'cvss'             => $cvss,
+            'epss'             => $epss,
+            'kev'              => !empty($row['kev_id']),
+            'has_exploit'      => !empty($row['has_exploit']),
+            'has_alerts'       => !empty($row['has_alerts']),
+            'has_known_threats'=> !empty($row['has_known_threats']),
+            'exposed_machines' => (int)($row['exposed_machines'] ?? 0),
+        ];
+    }
+
+    /** Inserta un evento de auditoría con el usuario actual. */
+    private function vmLogEvent(int $caseId, string $type, ?string $oldValue, ?string $newValue, string $comment = ''): void
+    {
+        $user = Auth::user();
+        $username = '';
+        if (is_array($user)) {
+            $username = trim((string)($user['display_name'] ?? $user['username'] ?? ''));
+        }
+        CveDatabase::query(
+            "INSERT INTO vm_case_events (case_id, user_id, username, event_type, old_value, new_value, comment)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [$caseId, Auth::id(), $username !== '' ? $username : null, $type, $oldValue, $newValue, $comment !== '' ? $comment : null]
+        );
+    }
+
+    /** Inserta una evidencia y su evento asociado. */
+    private function vmAddEvidenceRow(int $caseId, string $kind, string $comment, string $reference = '', string $occurredAt = ''): void
+    {
+        $user = Auth::user();
+        $username = '';
+        if (is_array($user)) {
+            $username = trim((string)($user['display_name'] ?? $user['username'] ?? ''));
+        }
+        CveDatabase::query(
+            "INSERT INTO vm_case_evidence
+             (case_id, kind, source, user_id, username, comment, reference, occurred_at)
+             VALUES (?, ?, 'manual', ?, ?, ?, ?, ?)",
+            [
+                $caseId,
+                $kind,
+                Auth::id(),
+                $username !== '' ? $username : null,
+                $comment,
+                $reference !== '' ? $reference : null,
+                $occurredAt !== '' ? $occurredAt : date('Y-m-d'),
+            ]
+        );
+        $this->vmLogEvent(
+            $caseId,
+            $kind === 'verification' ? 'verification' : 'evidence',
+            null,
+            null,
+            $comment . ($reference !== '' ? ' · Ref: ' . $reference : '')
+        );
+    }
+
+    // ============================================================
+    // Seguimiento VM: consultas
+    // ============================================================
+
+    /**
+     * Cola de casos con filtros. Los KPI se calculan aparte sobre el conjunto
+     * completo de la empresa (no sobre la cola filtrada).
+     */
+    private function listVmCases(array $filters = []): array
+    {
+        $filters = array_merge([
+            'company'  => 0,
+            'status'   => '',
+            'priority' => '',
+            'due'      => '',
+            'q'        => '',
+            'sort'     => 'due',
+        ], $filters);
+
+        $where = ['1 = 1'];
+        $params = [];
+
+        $company = (int)$filters['company'];
+        if ($company > 0) {
+            $where[] = 'vm.group_id = ?';
+            $params[] = $company;
+        }
+
+        $status = (string)$filters['status'];
+        if (VmCases::isStatus($status)) {
+            $where[] = 'vm.status = ?';
+            $params[] = $status;
+        }
+
+        $priority = (string)$filters['priority'];
+        if (VmCases::isPriority($priority)) {
+            $where[] = 'vm.priority = ?';
+            $params[] = $priority;
+        }
+
+        $q = trim((string)$filters['q']);
+        if ($q !== '') {
+            $where[] = '(vm.cve_id LIKE ? OR vm.related_software LIKE ? OR vm.assignee_name LIKE ?)';
+            $like = '%' . $q . '%';
+            $params[] = $like;
+            $params[] = $like;
+            $params[] = $like;
+        }
+
+        $due = (string)$filters['due'];
+        if ($due === 'overdue') {
+            $where[] = "vm.status NOT IN ('resolved_verified', 'false_positive')";
+            $where[] = "((vm.status = 'risk_accepted' AND vm.accepted_until IS NOT NULL AND vm.accepted_until < date('now'))
+                        OR ((vm.status <> 'risk_accepted' OR vm.accepted_until IS NULL)
+                            AND vm.due_date IS NOT NULL AND vm.due_date < date('now')))";
+        } elseif ($due === 'due_soon') {
+            $where[] = "vm.status NOT IN ('resolved_verified', 'false_positive')";
+            $where[] = "vm.due_date IS NOT NULL AND vm.due_date >= date('now') AND vm.due_date <= date('now', '+7 days')";
+        } elseif ($due === 'exception') {
+            $where[] = "vm.status = 'risk_accepted' AND vm.accepted_until IS NOT NULL AND vm.accepted_until < date('now')";
+        }
+
+        $sort = (string)$filters['sort'];
+        $order = match ($sort) {
+            'priority'  => "CASE vm.priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END ASC,
+                            CASE WHEN vm.due_date IS NULL THEN 1 ELSE 0 END ASC, vm.due_date ASC",
+            'last_seen' => 'vm.last_seen_at DESC, vm.updated_at DESC',
+            'created'   => 'vm.created_at DESC',
+            default     => "CASE WHEN vm.due_date IS NULL THEN 1 ELSE 0 END ASC, vm.due_date ASC,
+                            CASE vm.priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END ASC",
+        };
+
+        return CveDatabase::fetchAll(
+            "SELECT vm.*, g.name AS company_name,
+                    c.severity AS catalog_severity, c.cvss_v3_score AS catalog_cvss,
+                    e.epss AS catalog_epss, k.cve_id AS kev_id,
+                    i.filename AS import_filename, i.export_date AS import_export_date
+             FROM vm_cases vm
+             LEFT JOIN software_groups g ON g.id = vm.group_id
+             LEFT JOIN cve_catalog c ON c.cve_id = vm.cve_id
+             LEFT JOIN cve_epss e ON e.cve_id = vm.cve_id
+             LEFT JOIN cve_kev k ON k.cve_id = vm.cve_id
+             LEFT JOIN cve_tvm_imports i ON i.id = vm.last_seen_import_id
+             WHERE " . implode(' AND ', $where) . "
+             ORDER BY " . $order . "
+             LIMIT 500",
+            $params
+        );
+    }
+
+    private function getVmCase(int $id): ?array
+    {
+        if ($id <= 0) {
+            return null;
+        }
+        return CveDatabase::fetchOne(
+            "SELECT vm.*, g.name AS company_name,
+                    c.severity AS catalog_severity, c.cvss_v3_score AS catalog_cvss,
+                    e.epss AS catalog_epss, k.cve_id AS kev_id,
+                    i.filename AS import_filename, i.export_date AS import_export_date
+             FROM vm_cases vm
+             LEFT JOIN software_groups g ON g.id = vm.group_id
+             LEFT JOIN cve_catalog c ON c.cve_id = vm.cve_id
+             LEFT JOIN cve_epss e ON e.cve_id = vm.cve_id
+             LEFT JOIN cve_kev k ON k.cve_id = vm.cve_id
+             LEFT JOIN cve_tvm_imports i ON i.id = vm.last_seen_import_id
+             WHERE vm.id = ?",
+            [$id]
+        );
+    }
+
+    private function listVmCaseEvents(int $caseId): array
+    {
+        return CveDatabase::fetchAll(
+            "SELECT * FROM vm_case_events WHERE case_id = ? ORDER BY created_at DESC, id DESC",
+            [$caseId]
+        );
+    }
+
+    private function listVmCaseEvidence(int $caseId): array
+    {
+        return CveDatabase::fetchAll(
+            "SELECT * FROM vm_case_evidence WHERE case_id = ? ORDER BY created_at DESC, id DESC",
+            [$caseId]
+        );
+    }
+
+    private function latestTvmImport(int $companyId = 0): ?array
+    {
+        return CveDatabase::fetchOne(
+            "SELECT i.*, g.name AS company_name
+             FROM cve_tvm_imports i
+             LEFT JOIN software_groups g ON g.id = i.company_id
+             WHERE (? = 0 OR i.company_id = ?)
+             ORDER BY i.created_at DESC, i.id DESC
+             LIMIT 1",
+            [$companyId, $companyId]
+        );
     }
 
     // ============================================================

@@ -254,6 +254,68 @@ class CveDatabase
         $db->exec("CREATE INDEX IF NOT EXISTS idx_cve_tvm_imports_company ON cve_tvm_imports(company_id, created_at DESC)");
         $db->exec("CREATE INDEX IF NOT EXISTS idx_cve_tvm_rows_source ON cve_tvm_import_rows(import_id, catalog_source)");
 
+        // v0.3.0: seguimiento operativo de las vulnerabilidades importadas.
+        // Un caso por (empresa, CVE) — el CSV de TVM es agregado por CVE y no
+        // incluye identificadores de equipo. Se guarda la observación de origen
+        // y jamás se cierra un caso por desaparecer de una importación.
+        $db->exec("CREATE TABLE IF NOT EXISTS vm_cases (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            group_id INTEGER NOT NULL,
+            cve_id TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'detected',
+            priority TEXT,
+            priority_factors TEXT,
+            related_software TEXT,
+            matched_watchlist TEXT,
+            assignee_user_id INTEGER,
+            assignee_name TEXT,
+            due_date TEXT,
+            external_ticket TEXT,
+            accepted_reason TEXT,
+            accepted_until TEXT,
+            verification_kind TEXT,
+            source TEXT NOT NULL DEFAULT 'defender-tvm',
+            first_seen_import_id INTEGER,
+            first_seen_at TEXT,
+            last_seen_import_id INTEGER,
+            last_seen_at TEXT,
+            resolved_at TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE (group_id, cve_id)
+        )");
+
+        $db->exec("CREATE TABLE IF NOT EXISTS vm_case_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            case_id INTEGER NOT NULL REFERENCES vm_cases(id) ON DELETE CASCADE,
+            user_id INTEGER,
+            username TEXT,
+            event_type TEXT NOT NULL,
+            old_value TEXT,
+            new_value TEXT,
+            comment TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )");
+
+        $db->exec("CREATE TABLE IF NOT EXISTS vm_case_evidence (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            case_id INTEGER NOT NULL REFERENCES vm_cases(id) ON DELETE CASCADE,
+            kind TEXT NOT NULL DEFAULT 'note',
+            source TEXT NOT NULL DEFAULT 'manual',
+            user_id INTEGER,
+            username TEXT,
+            comment TEXT,
+            reference TEXT,
+            occurred_at TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )");
+
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_vm_cases_company_status ON vm_cases(group_id, status)");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_vm_cases_company_priority ON vm_cases(group_id, priority)");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_vm_cases_due ON vm_cases(due_date)");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_vm_case_events_case ON vm_case_events(case_id, created_at DESC)");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_vm_case_evidence_case ON vm_case_evidence(case_id, created_at DESC)");
+
         $db->exec("CREATE TABLE IF NOT EXISTS cve_reports (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL,
