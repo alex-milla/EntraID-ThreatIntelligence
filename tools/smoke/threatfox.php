@@ -151,6 +151,35 @@ $sortedCopy = $confidences;
 rsort($sortedCopy);
 check('DB orden: confianza descendente', $confidences === $sortedCopy);
 
+$ingested = $store->query([], 50, 0);
+check(
+    'DB: las filas traen fecha de ingesta',
+    $ingested !== [] && array_reduce(
+        $ingested,
+        static fn($ok, $r) => $ok && trim((string)($r['ingested_at'] ?? '')) !== '',
+        true
+    )
+);
+
+$stamped = ThreatfoxQuery::stampIngestedAt([
+    ['ioc' => 'a.example', 'ingested_at' => ''],
+    ['ioc' => 'b.example', 'ingested_at' => '2026-01-01 00:00:00 UTC'],
+]);
+check('API: se sella la ingesta cuando falta', trim((string)($stamped[0]['ingested_at'] ?? '')) !== '');
+check(
+    'API: no se pisa la ingesta existente',
+    ($stamped[1]['ingested_at'] ?? '') === '2026-01-01 00:00:00 UTC'
+);
+check(
+    'normalizeRow: conserva la fecha de ingesta',
+    ThreatfoxQuery::normalizeRow(['ioc' => 'x', 'ingested_at' => '2026-01-01 00:00:00 UTC'])['ingested_at']
+        === '2026-01-01 00:00:00 UTC'
+);
+
+$viewSource = (string)@file_get_contents(MODULES_PATH . '/threatfox/views/index.php');
+check('Vista: columna Ingesta en los resultados', str_contains($viewSource, '>Ingesta<'));
+check('Vista: el detalle conserva el campo Ingestado', str_contains($viewSource, "'Ingestado'"));
+
 $clamped = ThreatfoxQuery::run(['source' => 'db', 'mode' => 'recent', 'days' => 0] + ThreatfoxQuery::normalize([]), 9999);
 check(
     'DB paginación: la página se recorta al rango válido',

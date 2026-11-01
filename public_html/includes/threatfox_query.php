@@ -309,7 +309,7 @@ final class ThreatfoxQuery
             ];
         }
 
-        $rows = array_map([self::class, 'normalizeRow'], (array)($response['data'] ?? []));
+        $rows = self::stampIngestedAt(array_map([self::class, 'normalizeRow'], (array)($response['data'] ?? [])));
         $apiCount = count($rows);
 
         /* El primer término ya alimentó la query; el resto filtra en cliente.
@@ -414,6 +414,26 @@ final class ThreatfoxQuery
     /* =====================================================================
      * Presentación
      * ================================================================== */
+
+    /**
+     * Sella la fecha de ingesta en las filas de la API en vivo: ThreatFox solo
+     * publica primera/última vez, así que se usa el momento de la consulta.
+     * Nunca pisa un valor existente (relé desde la base local).
+     *
+     * @param array<int,array> $rows
+     * @return array<int,array>
+     */
+    public static function stampIngestedAt(array $rows): array
+    {
+        $now = gmdate('Y-m-d H:i:s') . ' UTC';
+        foreach ($rows as $index => $row) {
+            if (trim((string)($row['ingested_at'] ?? '')) === '') {
+                $rows[$index]['ingested_at'] = $now;
+            }
+        }
+
+        return $rows;
+    }
 
     /** Normaliza una fila (API o SQLite) a la forma que usa la vista. */
     public static function normalizeRow(array $row): array
