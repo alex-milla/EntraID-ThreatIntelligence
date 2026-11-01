@@ -202,7 +202,9 @@ try {
 $module = ModuleManager::get('ti_tracker');
 check('Módulo: cargado en ModuleManager', $module !== null);
 check('Módulo: clave correcta', $module !== null && $module->key() === 'ti_tracker');
-check('Módulo: nombre visible', $module !== null && $module->name() === 'Seguimiento TI');
+check('Módulo: nombre visible', $module !== null && $module->name() === 'Seguimiento TI TF');
+$dbName = (string)(Database::fetchOne("SELECT name FROM modules WHERE module_key = 'ti_tracker'")['name'] ?? '');
+check('Módulo: nombre sincronizado en la BD', $dbName === 'Seguimiento TI TF', 'bd=' . $dbName);
 check('Módulo: no sincroniza por tenant', $module !== null && $module->isSyncable() === false);
 check('Módulo: sin permisos de Graph', $module !== null && $module->requiredPermissions() === []);
 check('Módulo: grupo de navegación Inteligencia', ($module?->getNavItem()['group'] ?? '') === 'Inteligencia');
@@ -248,6 +250,22 @@ check('Panel: formulario CSRF', str_contains($indexSource, 'Csrf::field'));
 $editSource = (string)@file_get_contents(MODULES_PATH . '/ti_tracker/views/edit.php');
 check('Formulario: formatos STIX/MISP/TXT', str_contains($editSource, 'formats[]'));
 check('Formulario: ventana de días acotada', str_contains($editSource, 'TI_TRACKER_DAYS_DB_MAX'));
+
+$runSource = (string)@file_get_contents(MODULES_PATH . '/ti_tracker/views/run.php');
+check('Resultados: Primera vez visible en la tabla', str_contains($runSource, '<th>Primera vez</th>'));
+check('Resultados: columna Estado (Nuevo/Ya visto)', str_contains($runSource, '>Estado<'));
+check(
+    'Resultados: ficha de detalle (JSON + botón Ver)',
+    str_contains($runSource, 'tt-detail-data') && str_contains($runSource, 'data-tt-detail')
+);
+
+$moduleSource = (string)@file_get_contents(MODULES_PATH . '/ti_tracker/module.php');
+check(
+    'Resultados: ficha con los campos de IOCs ThreatFox',
+    str_contains($moduleSource, "'Ingestado'")
+        && str_contains($moduleSource, "'Tipo de amenaza'")
+        && str_contains($moduleSource, "'Última vez'")
+);
 
 check('Cron: refresco del seguimiento', is_file(ROOT_PATH . '/cron/ti-tracker-run.php'));
 check(

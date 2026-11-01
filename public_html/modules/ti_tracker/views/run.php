@@ -6,6 +6,7 @@
  * @var array $search
  * @var array $exec
  * @var array $rows
+ * @var array $details
  * @var int $displayLimit
  * @var array $history
  * @var array $formats
@@ -139,28 +140,60 @@ $formatsForSearch = array_values(array_intersect(array_keys($formats), (array)$s
                 <tr>
                     <th>IOC</th>
                     <th>Tipo</th>
+                    <th class="col-secondary">Amenaza</th>
+                    <th class="col-secondary">Malware</th>
                     <th>Conf.</th>
-                    <th class="col-secondary">Primera vez</th>
+                    <th>Primera vez</th>
+                    <th class="col-secondary">Tags</th>
+                    <th class="col-secondary">Referencia</th>
+                    <th class="text-right">Detalle</th>
                     <th class="text-right">Estado</th>
                 </tr>
             </thead>
             <tbody>
             <?php if ($rows === []): ?>
                 <tr>
-                    <td colspan="5" class="text-sm text-ink-muted">
+                    <td colspan="10" class="text-sm text-ink-muted">
                         La búsqueda no devuelve IOCs ahora mismo. Revisa los filtros o espera a la próxima ingesta.
                     </td>
                 </tr>
             <?php else: ?>
-                <?php foreach ($rows as $row):
+                <?php foreach ($rows as $index => $row):
                     $ioc = (string)($row['ioc'] ?? '');
+                    $conf = (int)($row['confidence_level'] ?? 0);
+                    $confClass = $conf >= 75 ? 'good' : ($conf >= 50 ? 'observing' : 'excluded');
+                    $reference = (string)($row['reference'] ?? '');
+                    $detailId = 'tt-detail-' . $index;
                     $isNew = isset($newKeys[$ioc]);
                     ?>
                     <tr>
                         <td class="font-mono break-all"><?= e($ioc) ?></td>
                         <td><?= e((string)($row['ioc_type'] ?? '')) ?></td>
-                        <td><?= (int)($row['confidence_level'] ?? 0) ?></td>
-                        <td class="col-secondary whitespace-nowrap text-xs"><?= e((string)($row['first_seen'] ?? '')) ?></td>
+                        <td class="col-secondary"><?= e((string)($row['threat_type'] ?? '')) ?></td>
+                        <td class="col-secondary"><?= e((string)($row['malware_printable'] ?? $row['malware'] ?? '')) ?></td>
+                        <td><span class="tag-chip <?= $confClass ?>"><?= $conf ?></span></td>
+                        <td class="whitespace-nowrap text-xs"><?= e((string)($row['first_seen'] ?? '')) ?></td>
+                        <td class="col-secondary">
+                            <?php foreach (array_slice((array)($row['tags_list'] ?? []), 0, 3) as $tag): ?>
+                                <span class="tag-chip excluded"><?= e((string)$tag) ?></span>
+                            <?php endforeach; ?>
+                        </td>
+                        <td class="col-secondary text-xs">
+                            <?php if ($reference !== '' && filter_var($reference, FILTER_VALIDATE_URL)): ?>
+                                <a href="<?= e($reference) ?>" target="_blank" rel="noopener noreferrer"
+                                   title="<?= e($reference) ?>">abrir</a>
+                            <?php else: ?>
+                                —
+                            <?php endif; ?>
+                        </td>
+                        <td class="text-right whitespace-nowrap">
+                            <button type="button" class="btn-tiny btn-outline btn"
+                                    data-tt-detail="<?= e($detailId) ?>"
+                                    data-tt-title="<?= e(truncate($ioc, 60)) ?>"
+                                    title="Ver la ficha completa del IOC">
+                                Ver
+                            </button>
+                        </td>
                         <td class="text-right whitespace-nowrap">
                             <?php if ($isNew): ?>
                                 <span class="tag-chip good">Nuevo</span>
@@ -175,6 +208,14 @@ $formatsForSearch = array_values(array_intersect(array_keys($formats), (array)$s
         </table>
     </div>
 </div>
+
+<!-- Datos de la ficha de detalle (una sola serialización, igual que ThreatFox) -->
+<?php if (!empty($details)): ?>
+    <script type="application/json" id="tt-detail-data"><?= json_encode(
+        $details,
+        JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT
+    ) ?></script>
+<?php endif; ?>
 
 <?php if ($total > $displayLimit): ?>
     <p class="text-sm text-ink-muted mt-2">
@@ -230,6 +271,126 @@ $formatsForSearch = array_values(array_intersect(array_keys($formats), (array)$s
         </table>
     </div>
 </div>
+
+<!-- Modal de detalle (misma ficha que IOCs ThreatFox) -->
+<div class="tdl-modal-overlay" id="tt-detail-overlay" hidden>
+    <div class="tdl-modal" role="dialog" aria-modal="true" aria-labelledby="tt-detail-title">
+        <div class="tdl-modal-head">
+            <?= icon('fingerprint', 20) ?>
+            <span id="tt-detail-title">Detalle del IOC</span>
+        </div>
+        <div class="tdl-modal-body" id="tt-detail-body"></div>
+        <div class="tdl-modal-actions">
+            <button type="button" class="btn-outline btn btn-small" data-tt-close>Volver</button>
+        </div>
+    </div>
+</div>
+
+<script>
+(function () {
+    'use strict';
+
+    var overlay = document.getElementById('tt-detail-overlay');
+    if (!overlay) { return; }
+
+    var body = document.getElementById('tt-detail-body');
+    var title = document.getElementById('tt-detail-title');
+    var dataEl = document.getElementById('tt-detail-data');
+    var details = {};
+    try {
+        details = dataEl ? JSON.parse(dataEl.textContent) : {};
+    } catch (e) {
+        details = {};
+    }
+
+    function closeDetail() {
+        overlay.hidden = true;
+        body.innerHTML = '';
+    }
+
+    /* Misma ficha que ThreatFox: DOM con textContent, nunca HTML del JSON. */
+    function renderDetail(key) {
+        var fields = details[key] || {};
+        body.innerHTML = '';
+
+        var list = document.createElement('dl');
+        list.className = 'grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-sm';
+
+        Object.keys(fields).forEach(function (label) {
+            var value = fields[label];
+            if (!value) { return; }
+
+            var wrap = document.createElement('div');
+            var term = document.createElement('dt');
+            term.className = 'text-xs text-ink-muted';
+            term.textContent = label;
+
+            var desc = document.createElement('dd');
+            desc.className = 'm-0 break-all' + (label === 'IOC' ? ' font-mono' : '');
+
+            if (label === 'Referencia' && /^https?:\/\//i.test(value)) {
+                var link = document.createElement('a');
+                link.href = value;
+                link.target = '_blank';
+                link.rel = 'noopener noreferrer';
+                link.textContent = value;
+                desc.appendChild(link);
+            } else {
+                desc.textContent = value;
+            }
+
+            wrap.appendChild(term);
+            wrap.appendChild(desc);
+            list.appendChild(wrap);
+        });
+
+        body.appendChild(list);
+
+        var actions = document.createElement('div');
+        actions.className = 'mt-3';
+        var copy = document.createElement('button');
+        copy.type = 'button';
+        copy.className = 'btn-outline btn btn-small';
+        copy.setAttribute('data-tt-copy', fields['IOC'] || '');
+        copy.textContent = 'Copiar IOC';
+        actions.appendChild(copy);
+        body.appendChild(actions);
+    }
+
+    document.addEventListener('click', function (event) {
+        var trigger = event.target.closest('[data-tt-detail]');
+        if (trigger) {
+            renderDetail(trigger.getAttribute('data-tt-detail'));
+            title.textContent = trigger.getAttribute('data-tt-title') || 'Detalle del IOC';
+            overlay.hidden = false;
+            return;
+        }
+
+        if (event.target.closest('[data-tt-close]') || event.target === overlay) {
+            closeDetail();
+            return;
+        }
+
+        var copy = event.target.closest('[data-tt-copy]');
+        if (copy) {
+            var value = copy.getAttribute('data-tt-copy') || '';
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(value).then(function () {
+                    toast('IOC copiado al portapapeles', 'success');
+                }).catch(function () {
+                    toast('No se pudo copiar el IOC', 'error');
+                });
+            } else {
+                toast('El portapapeles no está disponible en este navegador', 'warning');
+            }
+        }
+    });
+
+    document.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape') { closeDetail(); }
+    });
+})();
+</script>
 
 <script>
 (function () {

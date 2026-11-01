@@ -85,6 +85,13 @@ class Database
             $db->exec("ALTER TABLE remediation_orgs ADD COLUMN software_group_id INTEGER");
         }
 
+        // v0.3.16: nombre del módulo de seguimiento (ahora «Seguimiento TI TF»,
+        // subapartado de ThreatFox). Idempotente y no toca su estado.
+        $db->prepare("UPDATE modules SET name = ? WHERE module_key = 'ti_tracker' AND name = ?")
+           ->execute(['Seguimiento TI TF', 'Seguimiento TI']);
+        $db->prepare("UPDATE modules SET description = ? WHERE module_key = 'ti_tracker'")
+           ->execute(['Seguimiento de Threat Intelligence de ThreatFox: búsquedas guardadas, novedades y export STIX/MISP/TXT']);
+
         // v0.2.5.23: retirada del proveedor OpenCode (sus modelos gratis no se
         // pueden usar desde la web). Limpieza idempotente, una sola vez.
         self::cleanupRemovedProviders($db);
@@ -621,7 +628,7 @@ class Database
             ['secure_score',       'Secure Score',                  'Evolución de la postura de seguridad',             '1.0.0'],
             ['hunting',            'Advanced Hunting (KQL)',        'Consultas programáticas KQL',                      '1.0.0'],
             ['threatfox',          'IOCs ThreatFox',                'Indicadores de compromiso de abuse.ch (ThreatFox)', '1.0.0'],
-            ['ti_tracker',         'Seguimiento TI',                'Búsquedas guardadas de IOCs con novedades y export STIX/MISP/TXT', '1.0.0'],
+            ['ti_tracker',         'Seguimiento TI TF',           'Seguimiento de Threat Intelligence de ThreatFox: búsquedas guardadas, novedades y export STIX/MISP/TXT', '1.0.0'],
             ['entra_users',        'Usuarios Entra ID',             'Investigación de usuarios: MFA, logins y riesgo',  '1.0.0'],
             ['reports',            'Reportes',                      'Generación de reportes periódicos',                '1.0.0'],
             ['llm',                'Integración LLM',               'Análisis de datos con modelos de lenguaje',        '1.0.0'],

@@ -31,12 +31,12 @@ class Module_TiTracker extends BaseModule
 
     public function name(): string
     {
-        return 'Seguimiento TI';
+        return 'Seguimiento TI TF';
     }
 
     public function description(): string
     {
-        return 'Búsquedas guardadas de IOCs con novedades y exportación STIX/MISP/TXT';
+        return 'Seguimiento de Threat Intelligence de ThreatFox: búsquedas guardadas, novedades y export STIX/MISP/TXT';
     }
 
     public function version(): string
@@ -258,12 +258,34 @@ class Module_TiTracker extends BaseModule
         }
 
         $displayLimit = 500;
+        $displayRows = array_slice($exec['rows'], 0, $displayLimit);
+
+        /* Ficha completa de cada fila (mismos campos que IOCs ThreatFox). */
+        $details = [];
+        foreach ($displayRows as $index => $row) {
+            $details['tt-detail-' . $index] = array_filter([
+                'IOC'               => (string)($row['ioc'] ?? ''),
+                'Tipo de IOC'       => (string)($row['ioc_type'] ?? ''),
+                'Tipo de amenaza'   => (string)($row['threat_type'] ?? ''),
+                'Malware'           => (string)($row['malware'] ?? ''),
+                'Malware (legible)' => (string)($row['malware_printable'] ?? ''),
+                'Alias'             => (string)($row['malware_alias'] ?? ''),
+                'Confianza'         => (string)(int)($row['confidence_level'] ?? 0),
+                'Primera vez'       => (string)($row['first_seen'] ?? ''),
+                'Última vez'        => (string)($row['last_seen'] ?? ''),
+                'Reporter'          => (string)($row['reporter'] ?? ''),
+                'Tags'              => implode(', ', (array)($row['tags_list'] ?? [])),
+                'Referencia'        => (string)($row['reference'] ?? ''),
+                'Ingestado'         => (string)($row['ingested_at'] ?? ''),
+            ], static fn($value) => trim((string)$value) !== '');
+        }
 
         echo $this->page('run', [
             'module'       => $this,
             'search'       => $search,
             'exec'         => $exec,
-            'rows'         => array_slice($exec['rows'], 0, $displayLimit),
+            'rows'         => $displayRows,
+            'details'      => $details,
             'displayLimit' => $displayLimit,
             'history'      => $store->history((int)$search['id'], 10),
             'formats'      => TiTrackerStore::FORMATS,

@@ -139,7 +139,7 @@ Cada herramienta es un módulo independiente en `modules/{nombre}/`:
 | `secure_score` | Evolución del Secure Score | `SecurityEvents.Read.All` |
 | `hunting` | Consultas KQL (Advanced Hunting) | `ThreatHunting.Read.All` |
 | `threatfox` | IOCs de abuse.ch (ThreatFox): consulta, ingesta y export STIX/MISP | — |
-| `ti_tracker` | Seguimiento TI: búsquedas guardadas, novedades y export STIX/MISP/TXT | — |
+| `ti_tracker` | Seguimiento TI TF: búsquedas guardadas de ThreatFox, novedades y export STIX/MISP/TXT | — |
 | `reports` | Generación de reportes periódicos | — (usa datos almacenados) |
 | `llm` | Análisis con modelos de lenguaje | — (usa API del proveedor) |
 | `export` | Exportación STIX 2.1, MISP, CSV, TXT | — |
