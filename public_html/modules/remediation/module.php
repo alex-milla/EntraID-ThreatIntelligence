@@ -646,13 +646,76 @@ class Module_Remediation extends BaseModule
                 $input = $_POST;
             }
             $taskId = (int)($input['task_id'] ?? 0);
+            $chatId = (int)($input['chat_id'] ?? 0);
+            $inputCve = strtoupper(trim((string)($input['cve_id'] ?? '')));
+            $inputOrg = (int)($input['org_id'] ?? 0);
             $content = trim((string)($input['content'] ?? ''));
-            $task = $taskId > 0 ? $this->getTask($taskId) : null;
-            if ($task === null) {
-                json_response(['success' => false, 'error' => 'Tarea no encontrada.'], 404);
-            }
             if ($content === '') {
                 json_response(['success' => false, 'error' => 'No hay contenido para guardar.'], 400);
+            }
+
+            $task = $taskId > 0 ? $this->getTask($taskId) : null;
+            if ($taskId > 0 && $task === null) {
+                json_response(['success' => false, 'error' => 'Tarea no encontrada.'], 404);
+            }
+
+            // Sin tarea: se resuelve organización + CVE desde la conversación
+            // (o desde el contexto enviado) y se crea la tarea si no existe.
+            if ($task === null) {
+                $orgId = 0;
+                $cveId = '';
+                $chat = $chatId > 0 ? $this->getChat($chatId) : null;
+                if ($chat !== null) {
+                    $orgId = (int)($chat['org_id'] ?? 0);
+                    if ((string)($chat['context_type'] ?? '') === 'cve') {
+                        $cveId = strtoupper(trim((string)($chat['context_ref'] ?? '')));
+                    }
+                }
+                if ($cveId === '') {
+                    $cveId = $inputCve;
+                }
+                if ($orgId <= 0) {
+                    $orgId = $inputOrg;
+                }
+                if ($orgId <= 0 || $this->getOrg($orgId) === null) {
+                    json_response(['success' => false, 'error' => 'Este mensaje no está asociado a una organización.'], 400);
+                }
+                if (!preg_match('/^CVE-\d{4}-\d{4,7}$/', $cveId)) {
+                    json_response([
+                        'success' => false,
+                        'error'   => 'Abre una tarea o una conversación asociada a un CVE para guardar el plan.',
+                    ], 400);
+                }
+
+                $task = Database::fetchOne(
+                    "SELECT * FROM remediation_tasks WHERE org_id = ? AND cve_id = ?",
+                    [$orgId, $cveId]
+                );
+                if ($task === null) {
+                    $cve = $this->cveData($cveId);
+                    $catalog = is_array($cve['catalog'] ?? null) ? $cve['catalog'] : [];
+                    $epssRow = is_array($cve['epss'] ?? null) ? $cve['epss'] : null;
+                    $newTaskId = Database::insert(
+                        "INSERT INTO remediation_tasks
+                         (org_id, cve_id, title, severity, cvss, epss, kev, status, source, created_by)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, 'open', 'assistant', ?)",
+                        [
+                            $orgId,
+                            $cveId,
+                            'Remediación ' . $cveId,
+                            $catalog['severity'] ?? null,
+                            $catalog['cvss_v3_score'] ?? null,
+                            $epssRow !== null && $epssRow['epss'] !== null ? (float)$epssRow['epss'] : null,
+                            !empty($cve['kev']) ? 1 : 0,
+                            Auth::id(),
+                        ]
+                    );
+                    $task = $this->getTask($newTaskId);
+                }
+            }
+
+            if ($task === null) {
+                json_response(['success' => false, 'error' => 'No se pudo preparar la tarea de remediación.'], 500);
             }
 
             $plan = trim((string)($task['plan'] ?? ''));
@@ -660,11 +723,19 @@ class Module_Remediation extends BaseModule
 
             Database::update(
                 "UPDATE remediation_tasks SET plan = ?, updated_at = datetime('now') WHERE id = ?",
-                [truncate($plan, 20000), $taskId]
+                [truncate($plan, 20000), (int)$task['id']]
             );
-            log_activity('remediation.plan_saved', ['id' => $taskId]);
+            log_activity('remediation.plan_saved', [
+                'id'   => (int)$task['id'],
+                'cve'  => (string)($task['cve_id'] ?? ''),
+                'auto' => $taskId === 0,
+            ]);
 
-            json_response(['success' => true]);
+            json_response([
+                'success' => true,
+                'task_id' => (int)$task['id'],
+                'cve_id'  => (string)($task['cve_id'] ?? ''),
+            ]);
         } catch (Throwable $e) {
             json_response(['success' => false, 'error' => $e->getMessage()], 500);
         }

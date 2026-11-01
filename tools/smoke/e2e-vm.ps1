@@ -278,6 +278,30 @@ try {
     Check 'E2E plan: enlaza con la tarea' ($planResp.Content -match 'Abrir tarea') 'sin enlace a la tarea'
     $vmPage = Invoke-WebRequest -Uri "$base/index.php/modules/cve?tab=vm&company=$companyId" -WebSession $ws -UseBasicParsing -TimeoutSec 30
     Check 'E2E plan: etiqueta Plan en la cola' ($vmPage.Content -match 'data-vm-plan-badge') 'sin etiqueta en la cola'
+
+    # --- guardar plan desde una conversación de CVE (sin tarea) ---
+    $seedChat = Probe @('seed-remediation-chat', "$companyId", 'CVE-2030-4242')
+    Check 'E2E plan: chat de CVE sembrado' ([int]$seedChat.chat_id -gt 0) "chat=$($seedChat.chat_id)"
+    $saveFromChat = Invoke-WebRequest -Uri "$base/index.php/modules/remediation/tasks/plan" -Method POST -WebSession $ws `
+        -Body @{
+            chat_id = [int]$seedChat.chat_id; org_id = $companyId; cve_id = 'CVE-2030-4242';
+            content = "# Plan desde chat`n`nPaso CHAT: aplicar mitigación."; csrf_token = $token
+        } -UseBasicParsing -TimeoutSec 30
+    $saveJson = $saveFromChat.Content | ConvertFrom-Json
+    Check 'E2E plan: guardar desde chat crea la tarea' ($saveJson.success -eq $true -and [int]$saveJson.task_id -gt 0) $saveFromChat.Content
+    $planFromChat = Invoke-WebRequest -Uri "$base/index.php/modules/cve/vm/$catalogCaseId/remediation-plan" -WebSession $ws -UseBasicParsing -TimeoutSec 30
+    Check 'E2E plan: visible tras guardar desde chat' ($planFromChat.Content -match 'Paso CHAT') 'no aparece en el caso'
+
+    # --- guardar de nuevo sobre la tarea existente: anexa, no machaca ---
+    $saveAgain = Invoke-WebRequest -Uri "$base/index.php/modules/remediation/tasks/plan" -Method POST -WebSession $ws `
+        -Body @{
+            task_id = [int]$saveJson.task_id;
+            content = "Anexo TASK: segunda parte."; csrf_token = $token
+        } -UseBasicParsing -TimeoutSec 30
+    $saveAgainJson = $saveAgain.Content | ConvertFrom-Json
+    Check 'E2E plan: guardar en tarea existente' ($saveAgainJson.success -eq $true) $saveAgain.Content
+    $planAfter = Invoke-WebRequest -Uri "$base/index.php/modules/cve/vm/$catalogCaseId/remediation-plan" -WebSession $ws -UseBasicParsing -TimeoutSec 30
+    Check 'E2E plan: anexa sin machacar el plan previo' ($planAfter.Content -match 'Paso CHAT' -and $planAfter.Content -match 'Anexo TASK') 'contenido no concatenado'
 }
 finally {
     if ($server -and -not $server.HasExited) { Stop-Process -Id $server.Id -Force }

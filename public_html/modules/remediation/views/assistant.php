@@ -22,6 +22,14 @@ if ($quickPrompts === []) {
         '¿Qué riesgos tiene aplicar el parche y cómo hago el rollback?',
     ];
 }
+
+// Guardar plan: vale tanto con tarea seleccionada como en conversaciones
+// de CVE (el servidor crea la tarea de Remediation si falta).
+$chatCve = ($chat !== null && (string)($chat['context_type'] ?? '') === 'cve')
+    ? strtoupper(trim((string)($chat['context_ref'] ?? '')))
+    : '';
+$planCve = $chatCve !== '' ? $chatCve : $cveQuery;
+$canSavePlan = $selectedTask !== null || $planCve !== '';
 ?>
 <div class="grid grid-cols-1 lg:grid-cols-4 gap-5">
 
@@ -155,7 +163,7 @@ if ($quickPrompts === []) {
                             <?php else: ?>
                                 <div class="md-body text-xs leading-relaxed break-words"><?= render_ai_markdown((string)$message['content']) ?></div>
                                 <div class="mt-2 flex items-center gap-3">
-                                    <?php if ($selectedTask !== null): ?>
+                                    <?php if ($canSavePlan): ?>
                                         <button type="button" class="save-plan text-[10px] underline opacity-70 hover:opacity-100"
                                                 data-content="<?= e((string)$message['content']) ?>">Guardar como plan</button>
                                     <?php endif; ?>
@@ -229,6 +237,8 @@ if ($quickPrompts === []) {
     var TASK_ID = <?= $selectedTask !== null ? (int)$selectedTask['id'] : 0 ?>;
     var ORG_ID = <?= (int)$selectedOrgId ?>;
     var CHAT_ID = <?= $chat !== null ? (int)$chat['id'] : 0 ?>;
+    var CAN_SAVE_PLAN = <?= $canSavePlan ? 'true' : 'false' ?>;
+    var PLAN_CVE = <?= json_encode($planCve) ?>;
     var CHAT_URL = <?= json_encode($assistantUrl) ?>;
     var messagesEl = document.getElementById('chat-messages');
     var inputEl = document.getElementById('assistant-input');
@@ -300,7 +310,7 @@ if ($quickPrompts === []) {
                 thinking.body.classList.add('whitespace-pre-wrap');
                 thinking.body.textContent = res.content || '';
             }
-            if (TASK_ID > 0) {
+            if (CAN_SAVE_PLAN) {
                 var save = document.createElement('button');
                 save.type = 'button';
                 save.className = 'save-plan mt-2 text-[10px] underline opacity-70 hover:opacity-100';
@@ -327,8 +337,14 @@ if ($quickPrompts === []) {
 
     function savePlan(btn) {
         var content = btn.getAttribute('data-content') || '';
-        if (!content || TASK_ID <= 0) return;
-        api('POST', PLAN_URL, { task_id: TASK_ID, content: content }).then(function (res) {
+        if (!content || !CAN_SAVE_PLAN) return;
+        api('POST', PLAN_URL, {
+            task_id: TASK_ID,
+            chat_id: CHAT_ID,
+            org_id: ORG_ID,
+            cve_id: PLAN_CVE,
+            content: content
+        }).then(function (res) {
             if (res && res.success) {
                 btn.textContent = 'Plan guardado ✓';
                 btn.disabled = true;
