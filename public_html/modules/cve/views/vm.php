@@ -398,6 +398,16 @@ $caseUrl = static function (int $caseId) use ($queryBase): string {
     </div>
 <?php endif; ?>
 
+<!-- Panel inline: la información del CVE va siempre en una columna -->
+<style>
+    [data-vm-cve-panel] [class*="grid-cols"] {
+        grid-template-columns: minmax(0, 1fr) !important;
+    }
+    [data-vm-cve-panel] [class*="divide-x"] > * + * {
+        border-left-width: 0 !important;
+    }
+</style>
+
 <!-- Panel inline (ficha del CVE y detalle del caso) -->
 <div id="vm-drawer" class="fixed inset-0 z-50 hidden no-print" aria-hidden="true">
     <div class="absolute inset-0" style="background:rgba(0,0,0,.45)" data-vm-close></div>
