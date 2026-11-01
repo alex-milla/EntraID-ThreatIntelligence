@@ -65,6 +65,7 @@ $routes = @(
     '/index.php/modules/threat_intelligence?tab=news',
     '/index.php/modules/threat_intelligence?tab=profiles',
     '/index.php/modules/remediation?tab=tasks',
+    '/index.php/modules/remediation?tab=assistant',
     '/index.php/modules/remediation?tab=metrics',
     '/index.php/modules/remediation?tab=settings'
 )

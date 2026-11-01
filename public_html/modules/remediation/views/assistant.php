@@ -150,10 +150,18 @@ if ($quickPrompts === []) {
                             <div class="text-[10px] uppercase tracking-wide <?= $isUser ? 'text-white/70' : 'text-gray-400' ?> mb-1">
                                 <?= $isUser ? 'Tú' : 'Asistente' ?><?= !$isUser && !empty($message['model']) ? ' · ' . e((string)$message['model']) : '' ?>
                             </div>
-                            <div class="text-xs leading-relaxed whitespace-pre-wrap break-words"><?= e((string)$message['content']) ?></div>
-                            <?php if (!$isUser && $selectedTask !== null): ?>
-                                <button type="button" class="save-plan mt-2 text-[10px] underline opacity-70 hover:opacity-100"
-                                        data-content="<?= e((string)$message['content']) ?>">Guardar como plan</button>
+                            <?php if ($isUser): ?>
+                                <div class="text-xs leading-relaxed whitespace-pre-wrap break-words"><?= e((string)$message['content']) ?></div>
+                            <?php else: ?>
+                                <div class="md-body text-xs leading-relaxed break-words"><?= render_ai_markdown((string)$message['content']) ?></div>
+                                <div class="mt-2 flex items-center gap-3">
+                                    <?php if ($selectedTask !== null): ?>
+                                        <button type="button" class="save-plan text-[10px] underline opacity-70 hover:opacity-100"
+                                                data-content="<?= e((string)$message['content']) ?>">Guardar como plan</button>
+                                    <?php endif; ?>
+                                    <button type="button" class="copy-md text-[10px] underline opacity-70 hover:opacity-100"
+                                            data-content="<?= e((string)$message['content']) ?>">Copiar</button>
+                                </div>
                             <?php endif; ?>
                         </div>
                     </div>
@@ -178,6 +186,41 @@ if ($quickPrompts === []) {
         </div>
     </section>
 </div>
+
+<style>
+    .md-body h1, .md-body h2, .md-body h3, .md-body h4, .md-body h5, .md-body h6 {
+        font-weight: 600; line-height: 1.3; margin: 0.85rem 0 0.35rem;
+    }
+    .md-body h1 { font-size: 1.05rem; }
+    .md-body h2 { font-size: 1rem; }
+    .md-body h3 { font-size: 0.95rem; }
+    .md-body h4, .md-body h5, .md-body h6 { font-size: 0.9rem; }
+    .md-body p { margin: 0.4rem 0; }
+    .md-body ul, .md-body ol { margin: 0.4rem 0 0.4rem 1.1rem; }
+    .md-body ul { list-style: disc; }
+    .md-body ol { list-style: decimal; }
+    .md-body li { margin: 0.15rem 0; }
+    .md-body li > ul, .md-body li > ol { margin: 0.2rem 0 0.2rem 1rem; }
+    .md-body code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        background: rgba(127, 127, 127, 0.16); padding: 0.1rem 0.3rem; border-radius: 0.25rem;
+        font-size: 0.9em;
+    }
+    .md-body pre {
+        background: rgba(127, 127, 127, 0.12); padding: 0.6rem 0.75rem; border-radius: 0.5rem;
+        overflow-x: auto; margin: 0.5rem 0;
+    }
+    .md-body pre code { background: none; padding: 0; }
+    .md-body hr { border: 0; border-top: 1px solid rgba(127, 127, 127, 0.3); margin: 0.8rem 0; }
+    .md-body strong { font-weight: 600; }
+    .md-body blockquote {
+        border-left: 3px solid rgba(127, 127, 127, 0.4); padding-left: 0.6rem;
+        margin: 0.5rem 0; opacity: 0.9;
+    }
+    .md-body a { text-decoration: underline; }
+    .md-body table { border-collapse: collapse; margin: 0.5rem 0; width: 100%; }
+    .md-body th, .md-body td { border: 1px solid rgba(127, 127, 127, 0.3); padding: 0.25rem 0.4rem; text-align: left; }
+</style>
 
 <script>
 (function () {
@@ -205,7 +248,7 @@ if ($quickPrompts === []) {
         meta.className = 'text-[10px] uppercase tracking-wide mb-1 ' + (role === 'user' ? 'text-white/70' : 'text-gray-400');
         meta.textContent = role === 'user' ? 'Tú' : 'Asistente';
         var body = document.createElement('div');
-        body.className = 'text-xs leading-relaxed whitespace-pre-wrap break-words';
+        body.className = 'text-xs leading-relaxed break-words' + (role === 'user' ? ' whitespace-pre-wrap' : '');
         body.textContent = text;
         box.appendChild(meta);
         box.appendChild(body);
@@ -251,8 +294,10 @@ if ($quickPrompts === []) {
                 return;
             }
             if (res.content_html) {
+                thinking.body.classList.add('md-body');
                 thinking.body.innerHTML = res.content_html;
             } else {
+                thinking.body.classList.add('whitespace-pre-wrap');
                 thinking.body.textContent = res.content || '';
             }
             if (TASK_ID > 0) {
@@ -264,6 +309,12 @@ if ($quickPrompts === []) {
                 save.onclick = function () { savePlan(save); };
                 thinking.box.appendChild(save);
             }
+            var copy = document.createElement('button');
+            copy.type = 'button';
+            copy.className = 'copy-md mt-2 ml-3 text-[10px] underline opacity-70 hover:opacity-100';
+            copy.textContent = 'Copiar';
+            copy.setAttribute('data-content', res.content || '');
+            thinking.box.appendChild(copy);
             messagesEl.scrollTop = messagesEl.scrollHeight;
         }).catch(function (err) {
             thinking.body.textContent = 'Error: ' + err.message;
@@ -288,6 +339,36 @@ if ($quickPrompts === []) {
             appAlert('No se pudo guardar el plan: ' + err.message);
         });
     }
+
+    function copyFallback(text, btn) {
+        var area = document.createElement('textarea');
+        area.value = text;
+        area.style.position = 'fixed';
+        area.style.opacity = '0';
+        document.body.appendChild(area);
+        area.select();
+        var ok = false;
+        try { ok = document.execCommand('copy'); } catch (err) { ok = false; }
+        document.body.removeChild(area);
+        btn.textContent = ok ? 'Copiado ✓' : 'No se pudo copiar';
+        setTimeout(function () { btn.textContent = 'Copiar'; }, 1600);
+    }
+
+    document.addEventListener('click', function (event) {
+        var btn = event.target.closest('.copy-md');
+        if (!btn) { return; }
+        var text = btn.getAttribute('data-content') || '';
+        if (navigator.clipboard && window.isSecureContext) {
+            navigator.clipboard.writeText(text).then(function () {
+                btn.textContent = 'Copiado ✓';
+                setTimeout(function () { btn.textContent = 'Copiar'; }, 1600);
+            }, function () {
+                copyFallback(text, btn);
+            });
+            return;
+        }
+        copyFallback(text, btn);
+    });
 
     sendEl.addEventListener('click', send);
     inputEl.addEventListener('keydown', function (e) {

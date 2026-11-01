@@ -597,7 +597,7 @@ class Module_Remediation extends BaseModule
                 'success'      => true,
                 'chat_id'      => $chatId,
                 'content'      => $content,
-                'content_html' => (string)($result['content_html'] ?? ''),
+                'content_html' => render_ai_markdown($content),
                 'model'        => (string)($result['model'] ?? ''),
             ]);
         } catch (Throwable $e) {
