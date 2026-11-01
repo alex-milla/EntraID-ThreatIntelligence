@@ -237,6 +237,38 @@ try {
     Start-Sleep -Milliseconds 300
     $casesFinal = (Probe @('cases', "$companyId")).cases
     Check 'E2E Mis CVE: repetir no duplica' ($casesFinal.Count -eq 4) "n=$($casesFinal.Count)"
+
+    # --- información del CVE debajo del caso (ficha + fallback IA) ---
+    $catalogCaseId = [int]$catalogCase.id
+    $catalogInfo = Invoke-WebRequest -Uri "$base/index.php/modules/cve/vm/$catalogCaseId/cve-info" -WebSession $ws -UseBasicParsing -TimeoutSec 30
+    Check 'E2E info CVE: ficha del catálogo incrustada' ($catalogInfo.StatusCode -eq 200 -and $catalogInfo.Content -match 'CVE-2030-4242') "status=$($catalogInfo.StatusCode)"
+
+    $null = Probe @('seed-assignment-raw', "$companyId", 'CVE-2030-7777')
+    $null = Invoke-WebRequest -Uri "$base/index.php/modules/cve/vm/create-from-group" -Method POST -WebSession $ws `
+        -Body @{ company_id = $companyId; csrf_token = $token } `
+        -UseBasicParsing -TimeoutSec 30 -MaximumRedirection 5
+    Start-Sleep -Milliseconds 300
+    $rawCase = (Probe @('cases', "$companyId")).cases | Where-Object { $_.cve_id -eq 'CVE-2030-7777' }
+    Check 'E2E info CVE: caso sin catálogo creado' ($null -ne $rawCase) 'no existe'
+    $rawCaseId = [int]$rawCase.id
+
+    $fallbackInfo = Invoke-WebRequest -Uri "$base/index.php/modules/cve/vm/$rawCaseId/cve-info" -WebSession $ws -UseBasicParsing -TimeoutSec 30
+    Check 'E2E info CVE: fallback sin datos de catálogo' ($fallbackInfo.StatusCode -eq 200 -and $fallbackInfo.Content -match 'No hay datos de catálogo') "status=$($fallbackInfo.StatusCode)"
+
+    $reportResp = Invoke-WebRequest -Uri "$base/index.php/modules/cve/vm/$rawCaseId/ai-report" -Method POST -WebSession $ws `
+        -Body @{ no_ai = 1; csrf_token = $token } `
+        -UseBasicParsing -TimeoutSec 60
+    $reportId1 = [regex]::Match($reportResp.Content, 'Informe #(\d+)').Groups[1].Value
+    Check 'E2E info CVE: informe local generado' ($reportResp.StatusCode -eq 200 -and $reportId1 -ne '' -and $reportResp.Content -match 'CVE-2030-7777') "status=$($reportResp.StatusCode) id=$reportId1"
+
+    $reportResp2 = Invoke-WebRequest -Uri "$base/index.php/modules/cve/vm/$rawCaseId/ai-report" -Method POST -WebSession $ws `
+        -Body @{ no_ai = 1; csrf_token = $token } `
+        -UseBasicParsing -TimeoutSec 60
+    $reportId2 = [regex]::Match($reportResp2.Content, 'Informe #(\d+)').Groups[1].Value
+    Check 'E2E info CVE: reutiliza el informe existente' ($reportId1 -ne '' -and $reportId1 -eq $reportId2) "primero=$reportId1 segundo=$reportId2"
+
+    $fallbackAfter = Invoke-WebRequest -Uri "$base/index.php/modules/cve/vm/$rawCaseId/cve-info" -WebSession $ws -UseBasicParsing -TimeoutSec 30
+    Check 'E2E info CVE: ofrece ver el informe existente' ($fallbackAfter.Content -match 'Ver informe del CVE') 'sin botón de informe'
 }
 finally {
     if ($server -and -not $server.HasExited) { Stop-Process -Id $server.Id -Force }

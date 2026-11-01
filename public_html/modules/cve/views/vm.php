@@ -440,6 +440,35 @@ $caseUrl = static function (int $caseId) use ($queryBase): string {
         });
     }
 
+    function loadFragment(url, target, loadingText) {
+        target.innerHTML = '<p class="text-[11px] text-ink-soft">' + (loadingText || 'Cargando…') + '</p>';
+        return fetch(url, {
+            credentials: 'same-origin',
+            headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        }).then(function (response) {
+            if (!response.ok) { throw new Error('HTTP ' + response.status); }
+            return response.text();
+        }).then(function (html) {
+            target.innerHTML = html;
+            syncConditions(target);
+            hydrateCvePanels(target);
+            return true;
+        });
+    }
+
+    function hydrateCvePanels(root) {
+        if (!root || !root.querySelectorAll) { return; }
+        Array.prototype.forEach.call(root.querySelectorAll('[data-vm-cve-panel]'), function (box) {
+            if (box.getAttribute('data-vm-loaded') === '1') { return; }
+            var url = box.getAttribute('data-vm-cve-url');
+            if (!url) { return; }
+            box.setAttribute('data-vm-loaded', '1');
+            loadFragment(url, box, 'Cargando información del CVE…').catch(function () {
+                box.innerHTML = '<p class="text-[11px] text-danger">No se pudo cargar la información del CVE.</p>';
+            });
+        });
+    }
+
     function closeDrawer() {
         drawer.classList.add('hidden');
         drawer.setAttribute('aria-hidden', 'true');
@@ -454,6 +483,28 @@ $caseUrl = static function (int $caseId) use ($queryBase): string {
             return;
         }
 
+        var scroller = event.target.closest('[data-vm-cve-scroll]');
+        if (scroller) {
+            event.preventDefault();
+            var scope = event.target.closest('#vm-case-inline, #vm-drawer-body') || document;
+            var section = scope.querySelector('[data-vm-cve-panel]');
+            if (section) {
+                section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+            return;
+        }
+
+        var reportButton = event.target.closest('[data-vm-report-url]');
+        if (reportButton) {
+            event.preventDefault();
+            var container = reportButton.closest('[data-vm-cve-panel]') || reportButton.parentElement;
+            loadFragment(reportButton.getAttribute('data-vm-report-url'), container, 'Cargando informe…')
+                .catch(function () {
+                    container.innerHTML = '<p class="text-[11px] text-danger">No se pudo cargar el informe.</p>';
+                });
+            return;
+        }
+
         var link = event.target.closest('[data-vm-panel]');
         if (!link) { return; }
         event.preventDefault();
@@ -464,17 +515,35 @@ $caseUrl = static function (int $caseId) use ($queryBase): string {
         drawer.classList.remove('hidden');
         drawer.setAttribute('aria-hidden', 'false');
 
-        fetch(url, {
+        loadFragment(url, body, 'Cargando…').catch(function () {
+            body.innerHTML = '<p class="text-xs text-danger">No se pudo cargar el detalle. Recarga la página e inténtalo de nuevo.</p>';
+        });
+    });
+
+    // El formulario de informe IA vive dentro de contenido inyectado: delegado.
+    document.addEventListener('submit', function (event) {
+        var form = event.target.closest('form[data-vm-ai-form]');
+        if (!form) { return; }
+        event.preventDefault();
+
+        var container = form.closest('[data-vm-cve-panel]') || form.parentElement;
+        var data = new FormData(form);
+        if (event.submitter && event.submitter.name) {
+            data.append(event.submitter.name, event.submitter.value);
+        }
+
+        container.innerHTML = '<p class="text-[11px] text-ink-soft">Generando informe… esto puede tardar un poco.</p>';
+        fetch(form.getAttribute('action'), {
+            method: 'POST',
+            body: data,
             credentials: 'same-origin',
             headers: { 'X-Requested-With': 'XMLHttpRequest' }
         }).then(function (response) {
-            if (!response.ok) { throw new Error('HTTP ' + response.status); }
             return response.text();
         }).then(function (html) {
-            body.innerHTML = html;
-            syncConditions(body);
+            container.innerHTML = html;
         }).catch(function () {
-            body.innerHTML = '<p class="text-xs text-danger">No se pudo cargar el detalle. Recarga la página e inténtalo de nuevo.</p>';
+            container.innerHTML = '<p class="text-[11px] text-danger">No se pudo generar el informe.</p>';
         });
     });
 
@@ -483,6 +552,7 @@ $caseUrl = static function (int $caseId) use ($queryBase): string {
     });
 
     syncConditions(document);
+    hydrateCvePanels(document);
 })();
 </script>
 

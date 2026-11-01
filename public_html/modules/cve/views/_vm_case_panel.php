@@ -103,10 +103,10 @@ foreach (preg_split('/[;,]+/', (string)($case['related_software'] ?? '')) ?: [] 
     <div>
         <div class="flex items-center gap-2 flex-wrap">
             <h3 class="text-base font-bold font-mono"><?= e((string)$case['cve_id']) ?></h3>
-            <a href="<?= base_url('modules/cve/detail/' . urlencode((string)$case['cve_id']) . '/panel') ?>"
-               data-vm-panel data-vm-title="<?= e((string)$case['cve_id']) ?>"
+            <a href="#vm-cve-info"
+               data-vm-cve-scroll
                class="text-[11px] text-brand-600 dark:text-brand-300 hover:underline">
-                Ficha del CVE
+                Ficha del CVE ↓
             </a>
             <span class="inline-flex px-1.5 py-0.5 rounded text-[10px] font-semibold <?= $priorityClasses[$priority] ?? 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300' ?>">
                 <?= e(VmCases::priorityLabel($priority)) ?>
@@ -338,6 +338,18 @@ foreach (preg_split('/[;,]+/', (string)($case['related_software'] ?? '')) ?: [] 
                     <?php endforeach; ?>
                 </ol>
             <?php endif; ?>
+        </div>
+    </div>
+
+    <!-- Información del CVE: se carga aquí sin salir del caso -->
+    <div class="border-t border-line pt-4" id="vm-cve-info" data-vm-cve-section>
+        <div class="flex items-center justify-between gap-2 mb-2">
+            <h4 class="text-xs font-semibold">Información del CVE</h4>
+            <span class="text-[10px] text-ink-soft">Catálogo local · KEV · EPSS · exploits</span>
+        </div>
+        <div data-vm-cve-panel
+             data-vm-cve-url="<?= base_url('modules/cve/vm/' . $caseId . '/cve-info') ?>">
+            <p class="text-[11px] text-ink-soft">Cargando información del CVE…</p>
         </div>
     </div>
 </div>

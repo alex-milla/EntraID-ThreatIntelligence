@@ -91,6 +91,31 @@ switch ($cmd) {
         $out = ['seeded' => $seeded];
         break;
 
+    case 'seed-assignment-raw':
+        // Igual que seed-assignment pero SIN fila en el catálogo (CVE sin datos).
+        $companyId = (int)($argv[2] ?? 0);
+        $cveIds = array_slice($argv, 3);
+        $seeded = [];
+        foreach ($cveIds as $cveId) {
+            $cveId = strtoupper(trim((string)$cveId));
+            if (!preg_match('/^CVE-\d{4}-\d{4,7}$/', $cveId) || $companyId <= 0) {
+                continue;
+            }
+            $reportId = CveDatabase::insert(
+                "INSERT INTO cve_ai_reports (cve_ids, title, status, no_ai, group_id, total_items)
+                 VALUES (?, 'Fixture E2E sin catálogo', 'done', 1, ?, 1)",
+                [$cveId, $companyId]
+            );
+            CveDatabase::query(
+                "INSERT INTO cve_ai_report_items (report_id, cve_id, position, group_id, status)
+                 VALUES (?, ?, 0, ?, 'done')",
+                [$reportId, $cveId, $companyId]
+            );
+            $seeded[] = $cveId;
+        }
+        $out = ['seeded' => $seeded];
+        break;
+
     default:
         fwrite(STDERR, "Comando desconocido.\n");
         exit(1);

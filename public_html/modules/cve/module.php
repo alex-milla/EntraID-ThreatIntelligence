@@ -90,6 +90,8 @@ class Module_Cve extends BaseModule
             ['method' => 'POST', 'pattern' => 'vm/reopen',      'handler' => [$this, 'vmReopenCase']],
             ['method' => 'GET',  'pattern' => 'vm/report',      'handler' => [$this, 'vmReport']],
             ['method' => 'GET',  'pattern' => 'vm/{caseId}/panel', 'handler' => [$this, 'vmCasePanel']],
+            ['method' => 'GET',  'pattern' => 'vm/{caseId}/cve-info', 'handler' => [$this, 'vmCveInfo']],
+            ['method' => 'POST', 'pattern' => 'vm/{caseId}/ai-report', 'handler' => [$this, 'vmGenerateCveReport']],
         ];
     }
 
@@ -1828,6 +1830,199 @@ class Module_Cve extends BaseModule
         require __DIR__ . '/views/_vm_case_panel.php';
     }
 
+    /**
+     * Información del CVE para el caso: ficha del catálogo o fallback con la
+     * opción de generar un informe. Se carga debajo del caso sin navegar.
+     */
+    public function vmCveInfo(array $params = []): void
+    {
+        Auth::require();
+        if (!Auth::isAdmin()) {
+            http_response_code(403);
+            echo '<div class="p-4 text-sm text-ink-muted">Solo un administrador puede ver esta información.</div>';
+            return;
+        }
+
+        $case = $this->getVmCase((int)($params['caseId'] ?? 0));
+        if ($case === null) {
+            http_response_code(404);
+            echo '<div class="p-4 text-sm text-ink-muted">Caso de seguimiento no encontrado.</div>';
+            return;
+        }
+
+        $cveId = strtoupper((string)$case['cve_id']);
+        if ($this->renderCatalogPanel($cveId)) {
+            return;
+        }
+
+        $report = $this->findVmCveReport((int)$case['group_id'], $cveId);
+        require __DIR__ . '/views/_vm_cve_fallback.php';
+    }
+
+    /**
+     * Genera (o muestra) el informe del CVE asociado al caso, bajo demanda.
+     * Reutiliza el pipeline de informes IA existente; nunca se ejecuta solo.
+     */
+    public function vmGenerateCveReport(array $params = []): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        $case = $this->getVmCase((int)($params['caseId'] ?? 0));
+        if ($case === null) {
+            http_response_code(404);
+            echo '<div class="p-3 text-xs text-danger">Caso de seguimiento no encontrado.</div>';
+            return;
+        }
+
+        $companyId = (int)$case['group_id'];
+        $company = $companyId > 0 ? $this->getGroup($companyId) : null;
+        if ($company === null || (string)($company['kind'] ?? '') !== 'company') {
+            echo '<div class="p-3 text-xs text-danger">El caso no tiene una empresa válida.</div>';
+            return;
+        }
+
+        $cveId = strtoupper((string)$case['cve_id']);
+        $existing = $this->findVmCveReport($companyId, $cveId);
+        if ($existing !== null && trim((string)($existing['data_json'] ?? '')) !== '') {
+            $this->renderAiReportPanel((int)$existing['id']);
+            return;
+        }
+
+        $noAi = !empty($_POST['no_ai']);
+        $profileId = (int)(llm_task_profile('cve_report') ?? 0);
+        if (!$noAi) {
+            $llm = class_exists('Module_Llm') ? new Module_Llm() : null;
+            if ($llm === null || !$llm->isConfigured($profileId > 0 ? $profileId : null)) {
+                echo '<div class="p-3 rounded-lg text-[11px] text-amber-700 bg-amber-50 dark:bg-amber-900/20 dark:text-amber-300">'
+                    . 'La IA no está configurada. Añade un perfil en <strong>Admin → APIs</strong> o usa «Solo datos locales».'
+                    . '</div>';
+                return;
+            }
+        }
+
+        try {
+            $companyName = (string)($company['name'] ?? 'Cliente');
+            $title = 'Informe CVE · ' . $companyName . ' · ' . $cveId . ' · Seguimiento ' . date('d/m/Y');
+
+            if ($existing !== null) {
+                $reportId = (int)$existing['id'];
+                CveDatabase::query(
+                    "UPDATE cve_ai_reports
+                     SET status = 'pending', no_ai = ?, ai_profile_id = ?, generated_by = ?,
+                         title = ?, updated_at = datetime('now')
+                     WHERE id = ?",
+                    [
+                        $noAi ? 1 : 0,
+                        $profileId > 0 ? $profileId : null,
+                        Auth::id(),
+                        $title,
+                        $reportId,
+                    ]
+                );
+            } else {
+                $reportId = CveDatabase::insert(
+                    "INSERT INTO cve_ai_reports
+                     (cve_ids, title, status, token, ai_profile_id, generated_by, no_ai,
+                      mode, total_items, group_id)
+                     VALUES (?, ?, 'pending', ?, ?, ?, ?, 'extended', 1, ?)",
+                    [
+                        $this->encodeJson([$cveId]),
+                        $title,
+                        bin2hex(random_bytes(24)),
+                        $profileId > 0 ? $profileId : null,
+                        Auth::id(),
+                        $noAi ? 1 : 0,
+                        $companyId,
+                    ]
+                );
+            }
+            CveReportAi::ensureReportItems($reportId);
+
+            // La ejecución puede tardar: no mantener bloqueada la sesión.
+            if (function_exists('release_session_lock')) {
+                release_session_lock();
+            }
+            @set_time_limit(0);
+            @ignore_user_abort(true);
+
+            CveReportAi::runById($reportId);
+
+            // Si el CVE no está en el catálogo, runById deja data_json vacío.
+            // Se rellena con el contexto real del caso para que el informe
+            // muestre el CVE sin inventar datos técnicos.
+            if (CveReportAi::buildData([$cveId]) === []) {
+                $factors = safe_json_decode((string)($case['priority_factors'] ?? ''), []);
+                $eventCase = is_array($factors) ? $factors : [];
+                $severity = strtolower((string)($eventCase['severity'] ?? ''));
+                $data = [[
+                    'cve_id'           => $cveId,
+                    'description'      => 'Sin datos de catálogo local. Informe generado desde el caso de seguimiento; '
+                        . 'completa el CVE desde NVD para enriquecer el análisis.',
+                    'description_es'   => '',
+                    'description_lang' => 'es',
+                    'published_at'     => '',
+                    'severity'         => $severity !== '' ? ucfirst($severity) : '',
+                    'cvss'             => $eventCase['cvss'] ?? null,
+                    'vector'           => '',
+                    'nvd_url'          => '',
+                    'epss'             => $eventCase['epss'] ?? null,
+                    'epss_percentile'  => null,
+                    'epss_date'        => '',
+                    'kev'              => !empty($eventCase['kev']),
+                    'kev_added'        => '',
+                    'kev_due'          => '',
+                    'kev_ransomware'   => '',
+                    'kev_action'       => '',
+                    'kev_action_es'    => '',
+                    'kev_name'         => '',
+                    'github'           => [],
+                    'exploits'         => ['total' => 0],
+                    'references'       => [],
+                    'priority'         => null,
+                ]];
+                CveDatabase::query(
+                    "UPDATE cve_ai_reports SET data_json = ? WHERE id = ?",
+                    [$this->encodeJson($data), $reportId]
+                );
+            }
+
+            log_activity('cve.vm_case_report', [
+                'case_id'    => (int)$case['id'],
+                'report_id'  => $reportId,
+                'no_ai'      => $noAi,
+            ]);
+
+            $this->renderAiReportPanel($reportId);
+        } catch (Throwable $e) {
+            app_log('error', 'cve_vm', 'Error generando informe desde seguimiento', [
+                'case_id' => (int)$case['id'],
+                'error'   => $e->getMessage(),
+            ]);
+            echo '<div class="p-3 rounded-lg text-[11px] text-danger bg-danger-bg">'
+                . 'No se pudo generar el informe: ' . e($e->getMessage()) . '</div>';
+        }
+    }
+
+    /** Informe IA existente para un CVE dentro de una empresa. */
+    private function findVmCveReport(int $companyId, string $cveId): ?array
+    {
+        if ($companyId <= 0 || $cveId === '') {
+            return null;
+        }
+        return CveDatabase::fetchOne(
+            "SELECT r.id, r.status, r.no_ai, r.data_json, r.created_at
+             FROM cve_ai_reports r
+             WHERE r.group_id = ? AND r.archived = 0
+               AND (r.cve_ids LIKE ?
+                    OR EXISTS (SELECT 1 FROM cve_ai_report_items i
+                               WHERE i.report_id = r.id AND i.cve_id = ?))
+             ORDER BY r.id DESC
+             LIMIT 1",
+            [$companyId, '%' . $cveId . '%', $cveId]
+        );
+    }
+
     /** Fuente de factores de prioridad: CSV primero, catálogo como respaldo. */
     private function vmFactorSource(array $row): array
     {
@@ -2587,13 +2782,24 @@ class Module_Cve extends BaseModule
         Auth::require();
 
         $cveId = strtoupper(rawurldecode((string)($params['cveId'] ?? '')));
+        if (!$this->renderCatalogPanel($cveId)) {
+            http_response_code(404);
+            echo '<div class="p-4 text-sm text-ink-muted">No hay datos para este CVE en el catálogo local.</div>';
+        }
+    }
+
+    /**
+     * Renderiza la ficha del catálogo como fragmento (sin layout).
+     * Reutilizado por el panel del catálogo y por el seguimiento.
+     * Devuelve false si el CVE no existe en el catálogo local.
+     */
+    private function renderCatalogPanel(string $cveId): bool
+    {
         $valid = (bool)preg_match('/^CVE-\d{4}-\d{4,}$/', $cveId);
         $cve = $valid ? $this->getCatalogCve($cveId) : null;
 
         if ($cve === null) {
-            http_response_code(404);
-            echo '<div class="p-4 text-sm text-ink-muted">No hay datos para este CVE en el catálogo local.</div>';
-            return;
+            return false;
         }
 
         $products = CveDatabase::fetchAll(
@@ -2634,6 +2840,7 @@ class Module_Cve extends BaseModule
 
         $isAdmin = Auth::isAdmin();
         require __DIR__ . '/views/_cve_inline_panel.php';
+        return true;
     }
 
     /**
@@ -3211,11 +3418,21 @@ class Module_Cve extends BaseModule
         Auth::require();
 
         $id = (int)($params['id'] ?? 0);
-        $payload = $id > 0 ? $this->aiReportPayload($id) : null;
-        if ($payload === null) {
+        if (!$this->renderAiReportPanel($id)) {
             http_response_code(404);
             echo '<div class="p-4 text-sm text-ink-muted">Informe no encontrado o sin acceso.</div>';
-            return;
+        }
+    }
+
+    /**
+     * Renderiza el cuerpo de un informe IA como fragmento (sin layout).
+     * Devuelve false si no existe o no hay acceso.
+     */
+    private function renderAiReportPanel(int $id): bool
+    {
+        $payload = $id > 0 ? $this->aiReportPayload($id) : null;
+        if ($payload === null) {
+            return false;
         }
 
         $report = $payload['report'];
@@ -3232,6 +3449,7 @@ class Module_Cve extends BaseModule
             . '<a href="' . e(base_url('modules/cve/report-ai/' . (int)$id)) . '" class="text-xs text-primary hover:underline">Abrir informe completo</a>'
             . '</div>';
         require __DIR__ . '/views/_ai_report_body.php';
+        return true;
     }
 
     // ============================================================
