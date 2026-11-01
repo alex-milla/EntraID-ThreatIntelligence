@@ -381,8 +381,8 @@ $lastRow = $totalRows > 0 ? min($totalRows, $page * $perPage) : 0;
                     <th class="col-secondary">Amenaza</th>
                     <th class="col-secondary">Malware</th>
                     <th>Conf.</th>
-                    <th class="col-secondary">Primera vez</th>
-                    <th class="col-secondary" title="Base local: fecha de ingesta · API en vivo: momento de la consulta">Ingesta</th>
+                    <th>Primera vez</th>
+                    <th title="Base local: fecha de ingesta · API en vivo: momento de la consulta">Ingesta</th>
                     <th class="col-secondary">Tags</th>
                     <th class="col-secondary">Referencia</th>
                     <th class="text-right">Detalle</th>
@@ -428,8 +428,8 @@ $lastRow = $totalRows > 0 ? min($totalRows, $page * $perPage) : 0;
                         <td class="col-secondary"><?= e((string)($row['threat_type'] ?? '')) ?></td>
                         <td class="col-secondary"><?= e((string)($row['malware_printable'] ?? $row['malware'] ?? '')) ?></td>
                         <td><span class="tag-chip <?= $confClass ?>"><?= $conf ?></span></td>
-                        <td class="col-secondary whitespace-nowrap text-xs"><?= e((string)($row['first_seen'] ?? '')) ?></td>
-                        <td class="col-secondary whitespace-nowrap text-xs"><?= e(trim((string)($row['ingested_at'] ?? '')) ?: '—') ?></td>
+                        <td class="whitespace-nowrap text-xs"><?= e((string)($row['first_seen'] ?? '')) ?></td>
+                        <td class="whitespace-nowrap text-xs"><?= e(trim((string)($row['ingested_at'] ?? '')) ?: '—') ?></td>
                         <td class="col-secondary">
                             <?php foreach (array_slice((array)($row['tags_list'] ?? []), 0, 3) as $tag): ?>
                                 <span class="tag-chip excluded"><?= e((string)$tag) ?></span>

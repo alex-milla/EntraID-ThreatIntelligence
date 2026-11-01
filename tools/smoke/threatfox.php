@@ -179,6 +179,12 @@ check(
 $viewSource = (string)@file_get_contents(MODULES_PATH . '/threatfox/views/index.php');
 check('Vista: columna Ingesta en los resultados', str_contains($viewSource, '>Ingesta<'));
 check('Vista: el detalle conserva el campo Ingestado', str_contains($viewSource, "'Ingestado'"));
+check(
+    'Vista: Primera vez e Ingesta son columnas visibles (sin col-secondary)',
+    str_contains($viewSource, '<th>Primera vez</th>')
+        && !str_contains($viewSource, 'col-secondary">Primera vez</th>')
+        && !str_contains($viewSource, 'col-secondary" title="Base local: fecha de ingesta')
+);
 
 $clamped = ThreatfoxQuery::run(['source' => 'db', 'mode' => 'recent', 'days' => 0] + ThreatfoxQuery::normalize([]), 9999);
 check(
