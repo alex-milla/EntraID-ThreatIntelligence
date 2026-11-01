@@ -170,6 +170,16 @@ define('THREATFOX_BACKFILL_CHUNK', 3000);
 define('THREATFOX_DAYS_MAX', 7);
 define('THREATFOX_DEFAULT_DAYS', 1);
 
+// ============================================================
+// Seguimiento TI (ti_tracker)
+// Búsquedas guardadas sobre la base local de ThreatFox, con la BBDD de IOCs
+// ya vistos por búsqueda (novedades) y exportación STIX/MISP/TXT.
+// ============================================================
+define('TI_TRACKER_DB_PATH', ROOT_PATH . '/' . ($env['TI_TRACKER_DB_PATH'] ?? 'storage/ti_tracker.sqlite'));
+define('TI_TRACKER_MAX_ROWS', 5000);       // tope de IOCs por búsqueda/export
+define('TI_TRACKER_MAX_SEARCHES', 100);    // tope de búsquedas guardadas
+define('TI_TRACKER_DAYS_DB_MAX', 190);     // retención de la base local ThreatFox
+
 // LLM
 define('LLM_PROVIDER', $env['LLM_PROVIDER'] ?? '');
 define('LLM_API_KEY', $env['LLM_API_KEY'] ?? '');

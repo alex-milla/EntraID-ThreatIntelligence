@@ -621,6 +621,7 @@ class Database
             ['secure_score',       'Secure Score',                  'Evolución de la postura de seguridad',             '1.0.0'],
             ['hunting',            'Advanced Hunting (KQL)',        'Consultas programáticas KQL',                      '1.0.0'],
             ['threatfox',          'IOCs ThreatFox',                'Indicadores de compromiso de abuse.ch (ThreatFox)', '1.0.0'],
+            ['ti_tracker',         'Seguimiento TI',                'Búsquedas guardadas de IOCs con novedades y export STIX/MISP/TXT', '1.0.0'],
             ['entra_users',        'Usuarios Entra ID',             'Investigación de usuarios: MFA, logins y riesgo',  '1.0.0'],
             ['reports',            'Reportes',                      'Generación de reportes periódicos',                '1.0.0'],
             ['llm',                'Integración LLM',               'Análisis de datos con modelos de lenguaje',        '1.0.0'],

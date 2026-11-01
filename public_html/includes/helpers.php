@@ -548,6 +548,7 @@ if (!function_exists('getModuleIcon')) {
             'file-text'      => 'description',
             'alert-triangle' => 'warning',
             'bug'            => 'bug_report',
+            'radar'          => 'radar',
             'gauge'          => 'speed',
             'search'         => 'search',
             'bar-chart-3'    => 'bar_chart',

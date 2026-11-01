@@ -47,6 +47,22 @@ $urlWith = static function (array $overrides = [], string $path = '') use ($filt
 
 $statusOk = ($result['status'] ?? '') === 'ok';
 $fmt = static fn(int|float $n): string => number_format((float)$n, 0, ',', '.');
+
+/* Pre-rellena el formulario del Seguimiento TI con los filtros activos. */
+$trackerUrl = base_url('modules/ti_tracker/new') . '?' . http_build_query([
+    'source'      => $filters['source'],
+    'mode'        => $filters['mode'],
+    'search_term' => $filters['term'],
+    'days'        => $filters['days'],
+    'exact'       => $filters['exact'] ? 1 : 0,
+    'limit'       => $filters['limit'],
+    'f_malware'   => $filters['malware'],
+    'f_ioc_type'  => $filters['ioc_type'],
+    'f_threat'    => $filters['threat_type'],
+    'f_tag'       => $filters['tag'],
+    'f_conf'      => $filters['conf'],
+    'f_ref'       => $filters['ref_only'] ? 1 : 0,
+]);
 $perPage = max(1, (int)($result['perPage'] ?? 50));
 $page = max(1, (int)($result['page'] ?? 1));
 $totalPages = max(1, (int)($result['totalPages'] ?? 1));
@@ -78,6 +94,11 @@ $lastRow = $totalRows > 0 ? min($totalRows, $page * $perPage) : 0;
     <a class="btn-outline btn" href="<?= e($urlWith([], '/export')) ?>">
         <?= icon('download', 18) ?>
         Configurar exportación
+    </a>
+    <a class="btn-outline btn" href="<?= e($trackerUrl) ?>"
+       title="Guardar estos filtros en Seguimiento TI para vigilar novedades">
+        <?= icon('radar', 18) ?>
+        Guardar búsqueda
     </a>
     <?php if ($isAdmin): ?>
         <a class="btn-flat btn" href="<?= e(base_url('admin/apis')) ?>#threatfox">

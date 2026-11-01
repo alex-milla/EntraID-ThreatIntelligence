@@ -114,6 +114,17 @@ almacenamiento SQLite y arquitectura modular.
     ingesta. Desde la interfaz también se puede lanzar la ingesta y la descarga
     completa (~6 meses) por bloques.
 
+11. **Cron Seguimiento TI** (opcional): ejecuta las búsquedas guardadas del
+    módulo **Seguimiento TI** contra la base local de ThreatFox y actualiza las
+    novedades de cada una. Sin red y sin coste de API; conviene lanzarlo justo
+    después de la ingesta diaria:
+    ```
+    php /ruta/public_html/cron/ti-tracker-run.php >> /ruta/public_html/storage/ti-tracker-cron.log 2>&1
+    ```
+    No duplica IOCs: solo recuerda qué ha visto cada búsqueda. Las búsquedas
+    configuradas contra la API en vivo se omiten. También admite
+    `?token=TU_CRON_TOKEN`.
+
 ## Arquitectura modular
 
 Cada herramienta es un módulo independiente en `modules/{nombre}/`:
@@ -128,6 +139,7 @@ Cada herramienta es un módulo independiente en `modules/{nombre}/`:
 | `secure_score` | Evolución del Secure Score | `SecurityEvents.Read.All` |
 | `hunting` | Consultas KQL (Advanced Hunting) | `ThreatHunting.Read.All` |
 | `threatfox` | IOCs de abuse.ch (ThreatFox): consulta, ingesta y export STIX/MISP | — |
+| `ti_tracker` | Seguimiento TI: búsquedas guardadas, novedades y export STIX/MISP/TXT | — |
 | `reports` | Generación de reportes periódicos | — (usa datos almacenados) |
 | `llm` | Análisis con modelos de lenguaje | — (usa API del proveedor) |
 | `export` | Exportación STIX 2.1, MISP, CSV, TXT | — |
