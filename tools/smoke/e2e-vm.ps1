@@ -302,6 +302,16 @@ try {
     Check 'E2E plan: guardar en tarea existente' ($saveAgainJson.success -eq $true) $saveAgain.Content
     $planAfter = Invoke-WebRequest -Uri "$base/index.php/modules/cve/vm/$catalogCaseId/remediation-plan" -WebSession $ws -UseBasicParsing -TimeoutSec 30
     Check 'E2E plan: anexa sin machacar el plan previo' ($planAfter.Content -match 'Paso CHAT' -and $planAfter.Content -match 'Anexo TASK') 'contenido no concatenado'
+
+    # --- guardar una respuesta del chat directamente desde el caso ---
+    $null = Probe @('seed-remediation-chat', "$companyId", 'CVE-2030-7777')
+    $preUnsaved = Invoke-WebRequest -Uri "$base/index.php/modules/cve/vm/$rawCaseId/remediation-plan" -WebSession $ws -UseBasicParsing -TimeoutSec 30
+    Check 'E2E plan: detecta respuestas sin guardar' ($preUnsaved.Content -match 'aún no se han guardado' -and $preUnsaved.Content -match 'data-vm-plan-save') 'no se detecta el aviso'
+    $saveUnsaved = Invoke-WebRequest -Uri "$base/index.php/modules/cve/vm/$rawCaseId/remediation-save" -Method POST -WebSession $ws `
+        -Body @{ csrf_token = $token } -UseBasicParsing -TimeoutSec 60
+    Check 'E2E plan: guardado desde el propio caso' ($saveUnsaved.Content -match 'Paso AUTO') 'no aparece el contenido guardado'
+    $postUnsaved = Invoke-WebRequest -Uri "$base/index.php/modules/cve/vm/$rawCaseId/remediation-plan" -WebSession $ws -UseBasicParsing -TimeoutSec 30
+    Check 'E2E plan: respuesta guardada visible y sin aviso' ($postUnsaved.Content -match 'Paso AUTO' -and $postUnsaved.Content -notmatch 'aún no se han guardado') 'aviso persistente o plan ausente'
 }
 finally {
     if ($server -and -not $server.HasExited) { Stop-Process -Id $server.Id -Force }

@@ -169,6 +169,11 @@ switch ($cmd) {
              VALUES (?, 0, 'cve', ?, 'Fixture chat E2E')",
             [$orgId, $cveId]
         );
+        Database::insert(
+            "INSERT INTO remediation_messages (chat_id, role, content, model)
+             VALUES (?, 'assistant', ?, 'e2e')",
+            [$chatId, "# Respuesta E2E\n\nPaso AUTO: contenido sin guardar como plan."]
+        );
         $out = ['org_id' => $orgId, 'chat_id' => $chatId, 'cve_id' => $cveId];
         break;
 

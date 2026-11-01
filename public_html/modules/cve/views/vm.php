@@ -608,6 +608,28 @@ $caseUrl = static function (int $caseId) use ($queryBase): string {
         });
     });
 
+    // Guardar el último plan del CVE directamente desde el caso.
+    document.addEventListener('submit', function (event) {
+        var form = event.target.closest('form[data-vm-plan-save]');
+        if (!form) { return; }
+        event.preventDefault();
+
+        var container = form.closest('[data-vm-plan-panel]') || form.parentElement;
+        container.innerHTML = '<p class="text-[11px] text-ink-soft">Guardando plan…</p>';
+        fetch(form.getAttribute('action'), {
+            method: 'POST',
+            body: new FormData(form),
+            credentials: 'same-origin',
+            headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        }).then(function (response) {
+            return response.text();
+        }).then(function (html) {
+            container.innerHTML = html;
+        }).catch(function () {
+            container.innerHTML = '<p class="text-[11px] text-danger">No se pudo guardar el plan.</p>';
+        });
+    });
+
     document.addEventListener('keydown', function (event) {
         if (event.key === 'Escape') { closeDrawer(); }
     });

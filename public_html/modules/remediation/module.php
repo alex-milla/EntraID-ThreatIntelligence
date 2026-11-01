@@ -687,44 +687,15 @@ class Module_Remediation extends BaseModule
                     ], 400);
                 }
 
-                $task = Database::fetchOne(
-                    "SELECT * FROM remediation_tasks WHERE org_id = ? AND cve_id = ?",
-                    [$orgId, $cveId]
-                );
-                if ($task === null) {
-                    $cve = $this->cveData($cveId);
-                    $catalog = is_array($cve['catalog'] ?? null) ? $cve['catalog'] : [];
-                    $epssRow = is_array($cve['epss'] ?? null) ? $cve['epss'] : null;
-                    $newTaskId = Database::insert(
-                        "INSERT INTO remediation_tasks
-                         (org_id, cve_id, title, severity, cvss, epss, kev, status, source, created_by)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, 'open', 'assistant', ?)",
-                        [
-                            $orgId,
-                            $cveId,
-                            'Remediación ' . $cveId,
-                            $catalog['severity'] ?? null,
-                            $catalog['cvss_v3_score'] ?? null,
-                            $epssRow !== null && $epssRow['epss'] !== null ? (float)$epssRow['epss'] : null,
-                            !empty($cve['kev']) ? 1 : 0,
-                            Auth::id(),
-                        ]
-                    );
-                    $task = $this->getTask($newTaskId);
-                }
+                $resolvedId = RemediationPlan::ensureTask($orgId, $cveId, (int)Auth::id());
+                $task = $resolvedId > 0 ? $this->getTask($resolvedId) : null;
             }
 
             if ($task === null) {
                 json_response(['success' => false, 'error' => 'No se pudo preparar la tarea de remediación.'], 500);
             }
 
-            $plan = trim((string)($task['plan'] ?? ''));
-            $plan = $plan !== '' ? $plan . "\n\n---\n\n" . $content : $content;
-
-            Database::update(
-                "UPDATE remediation_tasks SET plan = ?, updated_at = datetime('now') WHERE id = ?",
-                [truncate($plan, 20000), (int)$task['id']]
-            );
+            RemediationPlan::append((int)$task['id'], $content);
             log_activity('remediation.plan_saved', [
                 'id'   => (int)$task['id'],
                 'cve'  => (string)($task['cve_id'] ?? ''),

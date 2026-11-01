@@ -93,6 +93,7 @@ class Module_Cve extends BaseModule
             ['method' => 'GET',  'pattern' => 'vm/{caseId}/cve-info', 'handler' => [$this, 'vmCveInfo']],
             ['method' => 'POST', 'pattern' => 'vm/{caseId}/ai-report', 'handler' => [$this, 'vmGenerateCveReport']],
             ['method' => 'GET',  'pattern' => 'vm/{caseId}/remediation-plan', 'handler' => [$this, 'vmRemediationPlan']],
+            ['method' => 'POST', 'pattern' => 'vm/{caseId}/remediation-save', 'handler' => [$this, 'vmRemediationSavePlan']],
         ];
     }
 
@@ -2054,19 +2055,89 @@ class Module_Cve extends BaseModule
         $vmRemediationTasks = $data['tasks'];
         $vmRemediationFallback = $data['fallback'];
         $vmRemediationError = $data['error'];
+        $vmRemediationUnsavedCount = $data['unsaved_count'];
+        $vmRemediationLastUnsaved = $data['last_unsaved'];
+        $vmRemediationCaseId = (int)$case['id'];
         $vmRemediationCve = strtoupper((string)$case['cve_id']);
         require __DIR__ . '/views/_vm_remediation_plan.php';
     }
 
     /**
-     * @return array{orgs: array<int, array<string, mixed>>, tasks: array<int, array<string, mixed>>, fallback: bool, error: string}
+     * Guarda en el plan la última respuesta de IA del CVE que aún no estaba
+     * guardada. Permite cerrar el círculo desde el propio caso, sin tener que
+     * volver al asistente (útil para conversaciones anteriores a v0.3.7).
+     */
+    public function vmRemediationSavePlan(array $params = []): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        $case = $this->getVmCase((int)($params['caseId'] ?? 0));
+        if ($case === null) {
+            http_response_code(404);
+            echo '<div class="p-3 text-xs text-danger">Caso de seguimiento no encontrado.</div>';
+            return;
+        }
+
+        $data = $this->vmRemediationForCase($case);
+        $last = $data['last_unsaved'];
+        if ($last === null || trim((string)($last['content'] ?? '')) === '') {
+            echo '<div class="p-3 rounded-lg text-[11px] text-ink-muted bg-muted">'
+                . 'No hay respuestas nuevas del asistente que guardar para este CVE.</div>';
+            return;
+        }
+
+        $orgId = (int)($last['org_id'] ?? 0);
+        if ($orgId <= 0 && !empty($data['orgs'][0]['id'])) {
+            $orgId = (int)$data['orgs'][0]['id'];
+        }
+        $cveId = strtoupper((string)$case['cve_id']);
+
+        try {
+            if ($orgId <= 0) {
+                echo '<div class="p-3 rounded-lg text-[11px] text-danger bg-danger-bg">'
+                    . 'No hay una organización de Remediation vinculada a esta empresa.</div>';
+                return;
+            }
+            $taskId = RemediationPlan::appendForCve($orgId, $cveId, (string)$last['content'], (int)Auth::id());
+            log_activity('cve.vm_plan_saved', [
+                'case_id' => (int)$case['id'],
+                'task_id' => $taskId,
+                'org_id'  => $orgId,
+            ]);
+        } catch (Throwable $e) {
+            echo '<div class="p-3 rounded-lg text-[11px] text-danger bg-danger-bg">'
+                . 'No se pudo guardar el plan: ' . e($e->getMessage()) . '</div>';
+            return;
+        }
+
+        $data = $this->vmRemediationForCase($case);
+        $vmRemediationOrgs = $data['orgs'];
+        $vmRemediationTasks = $data['tasks'];
+        $vmRemediationFallback = $data['fallback'];
+        $vmRemediationError = $data['error'];
+        $vmRemediationUnsavedCount = $data['unsaved_count'];
+        $vmRemediationLastUnsaved = $data['last_unsaved'];
+        $vmRemediationCaseId = (int)$case['id'];
+        $vmRemediationCve = $cveId;
+        require __DIR__ . '/views/_vm_remediation_plan.php';
+    }
+
+    /**
+     * @return array{orgs: array<int, array<string, mixed>>, tasks: array<int, array<string, mixed>>, fallback: bool, error: string, unsaved_count: int, last_unsaved: array<string, mixed>|null}
      */
     private function vmRemediationForCase(array $case): array
     {
+        $empty = [
+            'orgs' => [], 'tasks' => [], 'fallback' => false, 'error' => '',
+            'unsaved_count' => 0, 'last_unsaved' => null,
+        ];
+
         $companyId = (int)($case['group_id'] ?? 0);
         $cveId = strtoupper((string)($case['cve_id'] ?? ''));
         if ($companyId <= 0 || $cveId === '') {
-            return ['orgs' => [], 'tasks' => [], 'fallback' => false, 'error' => 'El caso no tiene empresa o CVE válidos.'];
+            $empty['error'] = 'El caso no tiene empresa o CVE válidos.';
+            return $empty;
         }
 
         try {
@@ -2087,7 +2158,7 @@ class Module_Cve extends BaseModule
                 }
             }
             if ($orgs === []) {
-                return ['orgs' => [], 'tasks' => [], 'fallback' => false, 'error' => ''];
+                return $empty;
             }
 
             $ids = array_map(static fn(array $org): int => (int)$org['id'], $orgs);
@@ -2102,9 +2173,70 @@ class Module_Cve extends BaseModule
                 array_merge([$cveId], $ids)
             );
 
-            return ['orgs' => $orgs, 'tasks' => $tasks, 'fallback' => $fallback, 'error' => ''];
+            // Respuestas del asistente sobre este CVE que no están en el plan.
+            $chats = Database::fetchAll(
+                "SELECT id, org_id, title, updated_at
+                 FROM remediation_chats
+                 WHERE context_type = 'cve' AND context_ref = ?
+                   AND org_id IN (" . $placeholders . ")
+                 ORDER BY updated_at DESC, id DESC",
+                array_merge([$cveId], $ids)
+            );
+
+            $unsavedCount = 0;
+            $lastUnsaved = null;
+            if ($chats !== []) {
+                $chatIds = array_map(static fn(array $chat): int => (int)$chat['id'], $chats);
+                $chatOrg = [];
+                foreach ($chats as $chat) {
+                    $chatOrg[(int)$chat['id']] = (int)$chat['org_id'];
+                }
+                $chatPlaceholders = implode(',', array_fill(0, count($chatIds), '?'));
+                $messages = Database::fetchAll(
+                    "SELECT id, chat_id, content, created_at
+                     FROM remediation_messages
+                     WHERE chat_id IN (" . $chatPlaceholders . ") AND role = 'assistant'
+                     ORDER BY created_at DESC, id DESC
+                     LIMIT 30",
+                    $chatIds
+                );
+
+                $planText = implode("\n---\n", array_map(
+                    static fn(array $task): string => (string)($task['plan'] ?? ''),
+                    $tasks
+                ));
+                foreach ($messages as $message) {
+                    $content = trim((string)($message['content'] ?? ''));
+                    if ($content === '') {
+                        continue;
+                    }
+                    $needle = substr($content, 0, 120);
+                    if (strpos($planText, $needle) !== false) {
+                        continue;
+                    }
+                    $unsavedCount++;
+                    if ($lastUnsaved === null) {
+                        $lastUnsaved = [
+                            'chat_id'    => (int)$message['chat_id'],
+                            'org_id'     => $chatOrg[(int)$message['chat_id']] ?? 0,
+                            'content'    => $content,
+                            'created_at' => (string)($message['created_at'] ?? ''),
+                        ];
+                    }
+                }
+            }
+
+            return [
+                'orgs'          => $orgs,
+                'tasks'         => $tasks,
+                'fallback'      => $fallback,
+                'error'         => '',
+                'unsaved_count' => $unsavedCount,
+                'last_unsaved'  => $lastUnsaved,
+            ];
         } catch (Throwable $e) {
-            return ['orgs' => [], 'tasks' => [], 'fallback' => false, 'error' => $e->getMessage()];
+            $empty['error'] = $e->getMessage();
+            return $empty;
         }
     }
 
