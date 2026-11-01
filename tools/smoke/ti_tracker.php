@@ -212,6 +212,25 @@ foreach (['', 'new', 'edit/{id}', 'save', 'delete/{id}', 'run/{id}', 'export/{id
     check('Ruta registrada: /' . $pattern, in_array($pattern, $patterns, true));
 }
 
+/* Orden de navegación: Seguimiento TI debe quedar justo debajo de su módulo. */
+$navKeys = array_map(
+    static fn(array $item): string => basename((string)(parse_url((string)($item['url'] ?? ''), PHP_URL_PATH) ?? '')),
+    ModuleManager::getNavigation()
+);
+$tiAt = array_search('threat_intelligence', $navKeys, true);
+$tfAt = array_search('threatfox', $navKeys, true);
+$ttAt = array_search('ti_tracker', $navKeys, true);
+check(
+    'Navegación: IOCs ThreatFox tras Threat Intel',
+    is_int($tiAt) && is_int($tfAt) && $tfAt === $tiAt + 1,
+    'indices=' . var_export([$tiAt, $tfAt], true)
+);
+check(
+    'Navegación: Seguimiento TI justo debajo de IOCs ThreatFox',
+    is_int($tfAt) && is_int($ttAt) && $ttAt === $tfAt + 1,
+    'indices=' . var_export([$tfAt, $ttAt], true)
+);
+
 /* ============================================================
  * 8. Vistas y cron
  * ============================================================ */

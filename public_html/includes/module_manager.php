@@ -161,21 +161,40 @@ class ModuleManager
             }
         }
 
-        foreach ($deferred as $navItem) {
-            $after = (string)$navItem['after'];
-            $insertAt = null;
-            foreach ($nav as $index => $existing) {
-                $url = (string)($existing['url'] ?? '');
-                if ($url !== '' && str_contains($url, '/modules/' . $after)) {
-                    $insertAt = $index + 1;
-                    break;
+        /* Varias pasadas: un elemento puede depender de otro que también está
+           diferido (p. ej. ti_tracker → threatfox → threat_intelligence). */
+        $pending = $deferred;
+        while ($pending !== []) {
+            $remaining = [];
+            $progress = false;
+
+            foreach ($pending as $navItem) {
+                $after = (string)$navItem['after'];
+                $insertAt = null;
+                foreach ($nav as $index => $existing) {
+                    $url = (string)($existing['url'] ?? '');
+                    if ($url !== '' && str_contains($url, '/modules/' . $after)) {
+                        $insertAt = $index + 1;
+                        break;
+                    }
                 }
-            }
-            if ($insertAt === null) {
-                $nav[] = $navItem;
-            } else {
+                if ($insertAt === null) {
+                    $remaining[] = $navItem;
+                    continue;
+                }
                 array_splice($nav, $insertAt, 0, [$navItem]);
+                $progress = true;
             }
+
+            if (!$progress) {
+                /* Ancla inexistente: se quedan al final, como antes. */
+                foreach ($remaining as $navItem) {
+                    $nav[] = $navItem;
+                }
+                break;
+            }
+
+            $pending = $remaining;
         }
 
         return $nav;
