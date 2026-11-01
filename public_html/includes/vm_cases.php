@@ -263,6 +263,37 @@ final class VmCases
     }
 
     /**
+     * Factores para un CVE asignado en «Mis CVE» (origen catálogo, sin TVM).
+     * No inventa exposición, alertas ni amenazas: esos campos no existen fuera
+     * de la importación del CSV.
+     *
+     * @param array<string, mixed> $cve severity, cvss/cvss_v3_score, epss,
+     *                                kev/kev_id, has_exploit/exploit_total
+     * @return array<string, mixed>
+     */
+    public static function factorsFromCatalog(array $cve): array
+    {
+        $cvss = $cve['cvss'] ?? null;
+        if ($cvss === null || $cvss === '') {
+            $cvss = $cve['cvss_v3_score'] ?? null;
+        }
+        if ($cvss === null || $cvss === '') {
+            $cvss = $cve['cvss_v2_score'] ?? null;
+        }
+
+        return self::priorityFactors([
+            'severity'          => (string)($cve['severity'] ?? ''),
+            'cvss'              => $cvss,
+            'epss'              => $cve['epss'] ?? null,
+            'kev'               => !empty($cve['kev']) || !empty($cve['kev_id']),
+            'has_exploit'       => !empty($cve['has_exploit']) || (int)($cve['exploit_total'] ?? 0) > 0,
+            'has_alerts'        => false,
+            'has_known_threats' => false,
+            'exposed_machines'  => 0,
+        ]);
+    }
+
+    /**
      * Decide qué hacer al importar un CVE respecto a un caso existente.
      *
      * REGLA CLAVE: una importación selecciona un subconjunto de CVEs. La

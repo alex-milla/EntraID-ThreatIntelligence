@@ -84,6 +84,7 @@ class Module_Cve extends BaseModule
             ['method' => 'POST', 'pattern' => 'import/nvd',     'handler' => [$this, 'importFetchNvd']],
             ['method' => 'POST', 'pattern' => 'import/delete',  'handler' => [$this, 'importDelete']],
             ['method' => 'POST', 'pattern' => 'vm/create',      'handler' => [$this, 'vmCreateCases']],
+            ['method' => 'POST', 'pattern' => 'vm/create-from-group', 'handler' => [$this, 'vmCreateCasesFromGroup']],
             ['method' => 'POST', 'pattern' => 'vm/update',      'handler' => [$this, 'vmUpdateCase']],
             ['method' => 'POST', 'pattern' => 'vm/evidence',    'handler' => [$this, 'vmAddEvidence']],
             ['method' => 'POST', 'pattern' => 'vm/reopen',      'handler' => [$this, 'vmReopenCase']],
@@ -1333,6 +1334,124 @@ class Module_Cve extends BaseModule
     }
 
     /**
+     * Crea casos a partir de los CVEs ya asignados a la empresa en «Mis CVE».
+     * No requiere volver a importar el CSV: la prioridad sale del catálogo
+     * (CVSS/EPSS/KEV/exploits) y el origen queda marcado como 'catalog'.
+     * No modifica casos existentes ni inventa datos de exposición de TVM.
+     */
+    public function vmCreateCasesFromGroup(array $params = []): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        $companyId = (int)($_POST['company_id'] ?? 0);
+        $company = $companyId > 0 ? $this->getGroup($companyId) : null;
+        $back = base_url('modules/cve?tab=vm' . ($companyId > 0 ? '&company=' . $companyId : ''));
+        if ($company === null || (string)($company['kind'] ?? '') !== 'company') {
+            flash('error', 'Selecciona una empresa válida.');
+            redirect(base_url('modules/cve?tab=vm'));
+        }
+
+        $rows = $this->listCompanyAssignedCves($companyId);
+        if ($rows === []) {
+            flash('warning', 'La empresa no tiene CVEs asignados en Mis CVE.');
+            redirect($back);
+        }
+
+        $exploitCounts = CveExploit::countsByCve(array_map(
+            static fn(array $row): string => (string)$row['cve_id'],
+            $rows
+        ));
+        $created = 0;
+        $skipped = 0;
+        $today = date('Y-m-d');
+
+        try {
+            $db = CveDatabase::getInstance();
+            $db->beginTransaction();
+
+            foreach ($rows as $row) {
+                $cveId = (string)$row['cve_id'];
+                $existing = CveDatabase::fetchOne(
+                    "SELECT id FROM vm_cases WHERE group_id = ? AND cve_id = ?",
+                    [$companyId, $cveId]
+                );
+                if ($existing !== null) {
+                    $skipped++;
+                    continue;
+                }
+
+                $factors = VmCases::factorsFromCatalog($row + [
+                    'exploit_total' => (int)($exploitCounts[$cveId]['total'] ?? 0),
+                ]);
+                $priority = (string)$factors['priority'];
+                $watchlist = $this->vmCompanyCveWatchlist($companyId, $cveId);
+                $labels = [];
+                $ids = [];
+                foreach ($watchlist as $item) {
+                    $ids[] = (int)$item['id'];
+                    $vendor = trim((string)($item['vendor'] ?? ''));
+                    $product = trim((string)($item['product'] ?? ($item['name'] ?? '')));
+                    if ($product !== '') {
+                        $labels[] = $vendor !== '' ? $vendor . ':' . $product : $product;
+                    }
+                }
+                $labels = array_values(array_unique($labels));
+
+                CveDatabase::query(
+                    "INSERT INTO vm_cases
+                     (group_id, cve_id, status, priority, priority_factors,
+                      related_software, matched_watchlist, source,
+                      first_seen_import_id, first_seen_at,
+                      last_seen_import_id, last_seen_at, due_date)
+                     VALUES (?, ?, 'detected', ?, ?, ?, ?, 'catalog', NULL, ?, NULL, ?, ?)",
+                    [
+                        $companyId,
+                        $cveId,
+                        $priority,
+                        json_encode($factors, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
+                        implode(';', $labels),
+                        $ids !== [] ? json_encode($ids) : null,
+                        $today,
+                        $today,
+                        VmCases::dueDate($priority, $today),
+                    ]
+                );
+                $caseId = (int)$db->lastInsertId();
+                $this->vmLogEvent(
+                    $caseId,
+                    'created',
+                    null,
+                    VmCases::statusLabel('detected'),
+                    'Caso creado desde los CVEs asignados en Mis CVE (sin observación de TVM).'
+                );
+                $created++;
+            }
+
+            $db->commit();
+            log_activity('cve.vm_cases_from_group', [
+                'company_id' => $companyId,
+                'created' => $created,
+                'skipped' => $skipped,
+            ]);
+
+            if ($created === 0) {
+                flash('info', 'Todos los CVEs asignados ya tienen caso de seguimiento.');
+            } else {
+                flash('success', $created . ' caso(s) creado(s) desde Mis CVE'
+                    . ($skipped > 0 ? ' · ' . $skipped . ' ya existían' : '') . '.');
+            }
+        } catch (Throwable $e) {
+            if (isset($db) && $db->inTransaction()) {
+                $db->rollBack();
+            }
+            flash('error', 'No se pudieron crear los casos: ' . $e->getMessage());
+        }
+
+        redirect($back);
+    }
+
+    /**
      * Actualiza estado, prioridad, responsable, fecha objetivo y riesgo
      * aceptado. Cada cambio deja un evento de auditoría con valor anterior
      * y nuevo. El cierre «Corregida y verificada» exige verificación manual.
@@ -1750,6 +1869,47 @@ class Module_Cve extends BaseModule
     // ============================================================
     // Seguimiento VM: consultas
     // ============================================================
+
+    /**
+     * CVEs asignados a la empresa en «Mis CVE»: al propio grupo empresa y a
+     * los grupos de aplicaciones vinculados (company_id = empresa).
+     */
+    private function listCompanyAssignedCves(int $companyId): array
+    {
+        if ($companyId <= 0) {
+            return [];
+        }
+        return CveDatabase::fetchAll(
+            "SELECT i.cve_id, MAX(i.updated_at) AS assigned_at,
+                    c.severity, c.cvss_v3_score, c.cvss_v2_score,
+                    k.cve_id AS kev_id, e.epss
+             FROM cve_ai_report_items i
+             LEFT JOIN cve_catalog c ON c.cve_id = i.cve_id
+             LEFT JOIN cve_kev k ON k.cve_id = i.cve_id
+             LEFT JOIN cve_epss e ON e.cve_id = i.cve_id
+             LEFT JOIN software_groups g ON g.id = i.group_id
+             WHERE g.id = ? OR g.company_id = ?
+             GROUP BY i.cve_id
+             ORDER BY COALESCE(c.cvss_v3_score, c.cvss_v2_score) DESC, i.cve_id ASC",
+            [$companyId, $companyId]
+        );
+    }
+
+    /** Software del inventario de la empresa que coincide con un CVE. */
+    private function vmCompanyCveWatchlist(int $companyId, string $cveId): array
+    {
+        if ($companyId <= 0 || $cveId === '') {
+            return [];
+        }
+        return CveDatabase::fetchAll(
+            "SELECT DISTINCT w.id, w.name, w.vendor, w.product
+             FROM cve_watchlist_match m
+             JOIN software_watchlist w ON w.id = m.watchlist_id
+             LEFT JOIN software_groups g ON g.id = w.group_id
+             WHERE m.cve_id = ? AND (g.id = ? OR g.company_id = ?)",
+            [$cveId, $companyId, $companyId]
+        );
+    }
 
     /**
      * Cola de casos con filtros. Los KPI se calculan aparte sobre el conjunto

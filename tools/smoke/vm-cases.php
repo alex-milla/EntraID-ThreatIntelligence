@@ -101,6 +101,21 @@ check('Prioridad: sin datos no inventa EPSS ni exploits', $noCvss['epss'] === nu
 $low = VmCases::priorityFactors(['severity' => 'low', 'cvss' => 3.1]);
 check('Prioridad: CVSS 3.1 → baja', $low['priority'] === 'low', $low['priority']);
 
+$catalogCritical = VmCases::factorsFromCatalog([
+    'severity' => 'Critical',
+    'cvss_v3_score' => 9.8,
+    'kev_id' => 'CVE-2026-1111',
+    'exploit_total' => 2,
+]);
+check('Catálogo: severidad con mayúscula → crítica', $catalogCritical['priority'] === 'critical', $catalogCritical['priority']);
+check('Catálogo: exploit del índice cuenta', in_array('Exploit público conocido', $catalogCritical['reasons'], true));
+check('Catálogo: sin exposición inventada', (int)$catalogCritical['exposed_machines'] === 0);
+check('Catálogo: sin alertas inventadas', $catalogCritical['alerts'] === false && $catalogCritical['threats'] === false);
+
+$catalogHigh = VmCases::factorsFromCatalog(['severity' => 'High']);
+check('Catálogo: sin CVSS usa la severidad', $catalogHigh['priority'] === 'high', $catalogHigh['priority']);
+check('Catálogo: no inventa CVSS ni EPSS', $catalogHigh['cvss'] === null && $catalogHigh['epss'] === null);
+
 // ============================================================
 // 4. Plazos
 // ============================================================

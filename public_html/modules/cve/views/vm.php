@@ -55,6 +55,14 @@ $deadlineClasses = [
     'ok'                => 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300',
     'none'              => 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400',
 ];
+$sourceLabels = [
+    'defender-tvm' => 'CSV Defender TVM',
+    'catalog'      => 'Mis CVE (catálogo)',
+];
+$sourceClasses = [
+    'defender-tvm' => 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300',
+    'catalog'      => 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300',
+];
 
 $fmtDate = static function (?string $value): string {
     $value = trim((string)$value);
@@ -123,6 +131,37 @@ $importUrl = base_url('modules/cve?tab=import' . ($selectedCompany > 0 ? '&compa
         </p>
     </div>
 <?php else: ?>
+
+<?php if ($isAdmin): ?>
+<form method="post" action="<?= base_url('modules/cve/vm/create-from-group') ?>" class="card p-4 mb-4 no-print">
+    <?= Csrf::field() ?>
+    <div class="flex items-end gap-3 flex-wrap">
+        <div class="min-w-[220px]">
+            <label for="vm-create-company" class="block text-[11px] font-medium text-ink-muted mb-1">
+                Crear casos desde CVEs asignados en Mis CVE
+            </label>
+            <select id="vm-create-company" name="company_id" required
+                    class="w-full px-2.5 py-2 rounded-lg border border-line-strong bg-input text-ink text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                <option value="">Selecciona una empresa…</option>
+                <?php foreach ($companyGroups as $companyRow): ?>
+                    <option value="<?= (int)$companyRow['id'] ?>" <?= $selectedCompany === (int)$companyRow['id'] ? 'selected' : '' ?>>
+                        <?= e((string)$companyRow['name']) ?>
+                    </option>
+                <?php endforeach; ?>
+            </select>
+        </div>
+        <button type="submit"
+                class="inline-flex items-center gap-2 px-3 py-2 bg-brand-500 hover:bg-brand-600 text-white text-xs font-semibold rounded-lg transition-colors">
+            <i class="material-icons icon-14" aria-hidden="true">assignment_turned_in</i>
+            Crear casos pendientes
+        </button>
+        <p class="text-[10px] text-ink-soft max-w-md">
+            Usa los CVEs ya asignados a la empresa en <strong>Mis CVE</strong> (incluidos sus grupos de aplicaciones).
+            Prioridad desde el catálogo; sin observación de TVM. No modifica casos existentes.
+        </p>
+    </div>
+</form>
+<?php endif; ?>
 
 <!-- ============================================================
      Filtros de la cola
@@ -293,6 +332,7 @@ $importUrl = base_url('modules/cve?tab=import' . ($selectedCompany > 0 ? '&compa
                         <th class="px-3 py-2 text-left">Empresa</th>
                         <th class="px-3 py-2 text-left">Prioridad</th>
                         <th class="px-3 py-2 text-left">Estado</th>
+                        <th class="px-3 py-2 text-left">Origen</th>
                         <th class="px-3 py-2 text-left">Responsable</th>
                         <th class="px-3 py-2 text-left">Vencimiento</th>
                         <th class="px-3 py-2 text-left">Última observación</th>
@@ -333,6 +373,12 @@ $importUrl = base_url('modules/cve?tab=import' . ($selectedCompany > 0 ? '&compa
                             <td class="px-3 py-2">
                                 <span class="inline-flex px-1.5 py-0.5 rounded text-[10px] font-medium <?= $statusClasses[$status] ?? '' ?>">
                                     <?= e($statusLabels[$status] ?? $status) ?>
+                                </span>
+                            </td>
+                            <td class="px-3 py-2">
+                                <?php $rowSource = (string)($caseRow['source'] ?? 'defender-tvm'); ?>
+                                <span class="inline-flex px-1.5 py-0.5 rounded text-[10px] font-medium <?= $sourceClasses[$rowSource] ?? 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300' ?>">
+                                    <?= e($sourceLabels[$rowSource] ?? $rowSource) ?>
                                 </span>
                             </td>
                             <td class="px-3 py-2"><?= e((string)($caseRow['assignee_name'] ?? '—')) ?></td>
@@ -411,6 +457,7 @@ $importUrl = base_url('modules/cve?tab=import' . ($selectedCompany > 0 ? '&compa
                     </div>
                     <p class="text-[11px] text-ink-soft mt-1">
                         Caso #<?= $caseId ?> · <?= e((string)($case['company_name'] ?? 'Empresa')) ?>
+                        · Origen: <?= e($sourceLabels[(string)($case['source'] ?? 'defender-tvm')] ?? '—') ?>
                         · Ámbito: empresa + CVE (el CSV no identifica equipos)
                     </p>
                 </div>
@@ -430,13 +477,23 @@ $importUrl = base_url('modules/cve?tab=import' . ($selectedCompany > 0 ? '&compa
                 <div class="rounded-lg bg-muted px-3 py-2">
                     <p class="text-[10px] uppercase tracking-wide text-ink-soft">Primera observación</p>
                     <p class="text-sm font-medium"><?= e($fmtDate((string)($case['first_seen_at'] ?? ''))) ?></p>
-                    <p class="text-[10px] text-ink-soft">Importación #<?= (int)($case['first_seen_import_id'] ?? 0) ?></p>
+                    <p class="text-[10px] text-ink-soft">
+                        <?= (int)($case['first_seen_import_id'] ?? 0) > 0
+                            ? 'Importación #' . (int)$case['first_seen_import_id']
+                            : 'Alta manual desde Mis CVE' ?>
+                    </p>
                 </div>
                 <div class="rounded-lg bg-muted px-3 py-2">
                     <p class="text-[10px] uppercase tracking-wide text-ink-soft">Última observación</p>
                     <p class="text-sm font-medium"><?= e($fmtDate((string)($case['last_seen_at'] ?? ''))) ?></p>
                     <p class="text-[10px] text-ink-soft">
-                        <?= e((string)($case['import_filename'] ?? ('Importación #' . (int)($case['last_seen_import_id'] ?? 0)))) ?>
+                        <?php if ((string)($case['import_filename'] ?? '') !== ''): ?>
+                            <?= e((string)$case['import_filename']) ?>
+                        <?php elseif ((int)($case['last_seen_import_id'] ?? 0) > 0): ?>
+                            Importación #<?= (int)$case['last_seen_import_id'] ?>
+                        <?php else: ?>
+                            Sin observación de TVM
+                        <?php endif; ?>
                     </p>
                 </div>
                 <div class="rounded-lg bg-muted px-3 py-2">

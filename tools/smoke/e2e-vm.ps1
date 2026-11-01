@@ -198,6 +198,37 @@ try {
     Check 'E2E: evento de reobservación' (($reappeared.events | Where-Object { $_.event_type -eq 'reobserved' }).Count -ge 1)
     $totalCases = (Probe @('cases', "$companyId")).cases.Count
     Check 'E2E: sin casos duplicados al final' ($totalCases -eq 3) "n=$totalCases"
+
+    # --- casos desde CVEs asignados en Mis CVE (sin importar CSV) ---
+    $seed = Probe @('seed-assignment', "$companyId", 'CVE-2030-4242', 'CVE-2026-00001')
+    Check 'E2E Mis CVE: asignaciones de prueba sembradas' ($seed.seeded.Count -eq 2) "$($seed.seeded.Count)"
+
+    $lowBefore = (Probe @('cases', "$companyId")).cases | Where-Object { $_.cve_id -eq 'CVE-2026-00001' }
+    $null = Invoke-WebRequest -Uri "$base/index.php/modules/cve/vm/create-from-group" -Method POST -WebSession $ws `
+        -Body @{ company_id = $companyId; csrf_token = $token } `
+        -UseBasicParsing -TimeoutSec 30 -MaximumRedirection 5
+    Start-Sleep -Milliseconds 300
+    $casesFromGroup = (Probe @('cases', "$companyId")).cases
+    $catalogCase = $casesFromGroup | Where-Object { $_.cve_id -eq 'CVE-2030-4242' }
+    Check 'E2E Mis CVE: caso creado desde el catálogo' ($null -ne $catalogCase) 'no existe'
+    Check 'E2E Mis CVE: origen catalog' ($catalogCase.source -eq 'catalog') $catalogCase.source
+    Check 'E2E Mis CVE: prioridad crítica del catálogo' ($catalogCase.priority -eq 'critical') $catalogCase.priority
+    Check 'E2E Mis CVE: fecha objetivo guardada' (-not [string]::IsNullOrWhiteSpace([string]$catalogCase.due_date)) "$($catalogCase.due_date)"
+    Check 'E2E Mis CVE: solo crea los que faltan' ($casesFromGroup.Count -eq 4) "n=$($casesFromGroup.Count)"
+
+    $lowAfter = $casesFromGroup | Where-Object { $_.cve_id -eq 'CVE-2026-00001' }
+    Check 'E2E Mis CVE: no altera un caso de TVM' (
+        $lowAfter.status -eq $lowBefore.status -and
+        $lowAfter.priority -eq $lowBefore.priority -and
+        [int]$lowAfter.last_seen_import_id -eq [int]$lowBefore.last_seen_import_id
+    ) "antes=$($lowBefore.status)/$($lowBefore.priority) ahora=$($lowAfter.status)/$($lowAfter.priority)"
+
+    $null = Invoke-WebRequest -Uri "$base/index.php/modules/cve/vm/create-from-group" -Method POST -WebSession $ws `
+        -Body @{ company_id = $companyId; csrf_token = $token } `
+        -UseBasicParsing -TimeoutSec 30 -MaximumRedirection 5
+    Start-Sleep -Milliseconds 300
+    $casesFinal = (Probe @('cases', "$companyId")).cases
+    Check 'E2E Mis CVE: repetir no duplica' ($casesFinal.Count -eq 4) "n=$($casesFinal.Count)"
 }
 finally {
     if ($server -and -not $server.HasExited) { Stop-Process -Id $server.Id -Force }

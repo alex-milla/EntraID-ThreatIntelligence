@@ -38,7 +38,7 @@ switch ($cmd) {
         $out = [
             'cases' => CveDatabase::fetchAll(
                 "SELECT id, cve_id, status, priority, due_date, first_seen_at, last_seen_at,
-                        last_seen_import_id, assignee_name, verification_kind
+                        last_seen_import_id, assignee_name, verification_kind, source
                  FROM vm_cases WHERE group_id = ? ORDER BY id",
                 [$companyId]
             ),
@@ -58,6 +58,37 @@ switch ($cmd) {
                 [$caseId]
             ),
         ];
+        break;
+
+    case 'seed-assignment':
+        // Solo para el E2E, que trabaja sobre copias temporales de la BD.
+        $companyId = (int)($argv[2] ?? 0);
+        $cveIds = array_slice($argv, 3);
+        $seeded = [];
+        foreach ($cveIds as $cveId) {
+            $cveId = strtoupper(trim((string)$cveId));
+            if (!preg_match('/^CVE-\d{4}-\d{4,7}$/', $cveId) || $companyId <= 0) {
+                continue;
+            }
+            CveDatabase::query(
+                "INSERT OR IGNORE INTO cve_catalog
+                 (cve_id, description, published_at, severity, cvss_v3_score, source_identifier)
+                 VALUES (?, 'Fixture E2E de asignación', '2026-10-01', 'Critical', 9.8, 'e2e')",
+                [$cveId]
+            );
+            $reportId = CveDatabase::insert(
+                "INSERT INTO cve_ai_reports (cve_ids, title, status, no_ai, group_id, total_items)
+                 VALUES (?, 'Fixture E2E', 'done', 1, ?, 1)",
+                [$cveId, $companyId]
+            );
+            CveDatabase::query(
+                "INSERT INTO cve_ai_report_items (report_id, cve_id, position, group_id, status)
+                 VALUES (?, ?, 0, ?, 'done')",
+                [$reportId, $cveId, $companyId]
+            );
+            $seeded[] = $cveId;
+        }
+        $out = ['seeded' => $seeded];
         break;
 
     default:
