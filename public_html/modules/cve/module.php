@@ -2691,11 +2691,19 @@ class Module_Cve extends BaseModule
 
         $q = trim((string)$filters['q']);
         if ($q !== '') {
-            $where[] = '(vm.cve_id LIKE ? OR vm.related_software LIKE ? OR vm.assignee_name LIKE ?)';
+            $where[] = '(vm.cve_id LIKE ?
+                         OR vm.related_software LIKE ?
+                         OR vm.assignee_name LIKE ?
+                         OR EXISTS (SELECT 1 FROM cve_product p
+                                    WHERE p.cve_id = vm.cve_id
+                                      AND (p.vendor LIKE ? OR p.product LIKE ?))
+                         OR EXISTS (SELECT 1 FROM vm_findings f
+                                    WHERE f.case_id = vm.id
+                                      AND (f.product LIKE ? OR f.asset_or_service LIKE ?)))';
             $like = '%' . $q . '%';
-            $params[] = $like;
-            $params[] = $like;
-            $params[] = $like;
+            for ($i = 0; $i < 7; $i++) {
+                $params[] = $like;
+            }
         }
 
         $due = (string)$filters['due'];
@@ -2723,6 +2731,11 @@ class Module_Cve extends BaseModule
 
         return CveDatabase::fetchAll(
             "SELECT vm.*, g.name AS company_name,
+                    (SELECT GROUP_CONCAT(p.vendor || ':' || p.product, '; ')
+                     FROM cve_product p WHERE p.cve_id = vm.cve_id) AS catalog_products,
+                    (SELECT GROUP_CONCAT(f.product, '; ')
+                     FROM vm_findings f
+                     WHERE f.case_id = vm.id AND TRIM(COALESCE(f.product, '')) <> '') AS finding_products,
                     c.severity AS catalog_severity, c.cvss_v3_score AS catalog_cvss,
                     e.epss AS catalog_epss, k.cve_id AS kev_id,
                     i.filename AS import_filename, i.export_date AS import_export_date

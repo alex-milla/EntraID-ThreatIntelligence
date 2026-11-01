@@ -319,6 +319,7 @@ $caseUrl = static function (int $caseId) use ($queryBase): string {
                 <thead class="bg-muted text-ink-muted">
                     <tr>
                         <th class="px-3 py-2 text-left">CVE</th>
+                        <th class="px-3 py-2 text-left">Producto</th>
                         <th class="px-3 py-2 text-left">Empresa</th>
                         <th class="px-3 py-2 text-left">Prioridad</th>
                         <th class="px-3 py-2 text-left">Estado</th>
@@ -360,6 +361,36 @@ $caseUrl = static function (int $caseId) use ($queryBase): string {
                                 <?php if (isset($vmPlanKeys[(int)$caseRow['group_id'] . '|' . strtoupper((string)$caseRow['cve_id'])])): ?>
                                     <span class="ml-1 inline-flex px-1 py-0.5 rounded text-[9px] bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300"
                                           data-vm-plan-badge title="Tiene plan de remediación guardado">Plan</span>
+                                <?php endif; ?>
+                            </td>
+                            <td class="px-3 py-2 max-w-[220px]">
+                                <?php
+                                $productSource = (string)($caseRow['related_software'] ?? '');
+                                if (trim($productSource) === '') {
+                                    $productSource = (string)($caseRow['catalog_products'] ?? '');
+                                }
+                                if (trim($productSource) === '') {
+                                    $productSource = (string)($caseRow['finding_products'] ?? '');
+                                }
+                                $productLabels = [];
+                                foreach (preg_split('/[;,]+/', $productSource) ?: [] as $pair) {
+                                    $pair = trim($pair);
+                                    if ($pair !== '' && !in_array($pair, $productLabels, true)) {
+                                        $productLabels[] = $pair;
+                                    }
+                                }
+                                ?>
+                                <?php if ($productLabels === []): ?>
+                                    <span class="text-ink-soft">—</span>
+                                <?php else: ?>
+                                    <div class="flex flex-wrap gap-1" title="<?= e(implode(' · ', $productLabels)) ?>">
+                                        <?php foreach (array_slice($productLabels, 0, 2) as $label): ?>
+                                            <span class="inline-flex px-1.5 py-0.5 rounded bg-muted text-[10px] text-ink-muted font-mono"><?= e($label) ?></span>
+                                        <?php endforeach; ?>
+                                        <?php if (count($productLabels) > 2): ?>
+                                            <span class="inline-flex px-1.5 py-0.5 rounded bg-muted text-[10px] text-ink-soft">+<?= count($productLabels) - 2 ?></span>
+                                        <?php endif; ?>
+                                    </div>
                                 <?php endif; ?>
                             </td>
                             <td class="px-3 py-2 max-w-[150px] truncate" title="<?= e((string)($caseRow['company_name'] ?? '')) ?>">

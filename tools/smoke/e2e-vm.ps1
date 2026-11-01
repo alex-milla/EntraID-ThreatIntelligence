@@ -278,6 +278,10 @@ try {
     Check 'E2E plan: enlaza con la tarea' ($planResp.Content -match 'Abrir tarea') 'sin enlace a la tarea'
     $vmPage = Invoke-WebRequest -Uri "$base/index.php/modules/cve?tab=vm&company=$companyId" -WebSession $ws -UseBasicParsing -TimeoutSec 30
     Check 'E2E plan: etiqueta Plan en la cola' ($vmPage.Content -match 'data-vm-plan-badge') 'sin etiqueta en la cola'
+    Check 'E2E productos: columna Producto en la cola' ($vmPage.Content -match '>Producto<') 'sin columna Producto'
+    Check 'E2E productos: pares del CSV visibles' ($vmPage.Content -match 'nginx:nginx' -and $vmPage.Content -match 'atlassian:jira') 'no se muestran productos importados'
+    $searchPage = Invoke-WebRequest -Uri "$base/index.php/modules/cve?tab=vm&company=$companyId&vm_q=nginx" -WebSession $ws -UseBasicParsing -TimeoutSec 30
+    Check 'E2E productos: búsqueda por producto' ($searchPage.Content -match 'CVE-2026-00001') 'la búsqueda no encuentra por producto'
 
     # --- guardar plan desde una conversación de CVE (sin tarea) ---
     $seedChat = Probe @('seed-remediation-chat', "$companyId", 'CVE-2030-4242')
