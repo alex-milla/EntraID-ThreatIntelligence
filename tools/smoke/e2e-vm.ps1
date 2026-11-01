@@ -155,6 +155,14 @@ try {
     Check 'E2E: evento de cambio de estado' (($closed.events | Where-Object { $_.event_type -eq 'status' }).Count -ge 1)
     Check 'E2E: responsable guardado' ($closed.case.assignee_name -eq 'Alex') $closed.case.assignee_name
 
+    # --- paneles inline (sin recargar) ---
+    $casePanel = Invoke-WebRequest -Uri "$base/index.php/modules/cve/vm/$criticalId/panel" -WebSession $ws -UseBasicParsing -TimeoutSec 30
+    Check 'E2E panel: fragmento del caso' ($casePanel.StatusCode -eq 200 -and $casePanel.Content -match 'Guardar cambios') "status=$($casePanel.StatusCode)"
+    $cvePanel = Invoke-WebRequest -Uri "$base/index.php/modules/cve/detail/CVE-2026-21589/panel" -WebSession $ws -UseBasicParsing -TimeoutSec 30
+    Check 'E2E panel: ficha del CVE' ($cvePanel.StatusCode -eq 200) "status=$($cvePanel.StatusCode)"
+    $casePage = Invoke-WebRequest -Uri "$base/index.php/modules/cve?tab=vm&company=$companyId&case=$criticalId" -WebSession $ws -UseBasicParsing -TimeoutSec 30
+    Check 'E2E panel: detalle embebido sin errores' ($casePage.StatusCode -eq 200 -and $casePage.Content -match 'Historial') "status=$($casePage.StatusCode)"
+
     # --- segunda importación SIN el CVE cerrado ---
     $csv2 = Join-Path $tmp 'tvm-2.csv'
     @(
@@ -239,7 +247,16 @@ finally {
         $backup = Join-Path $tmp $name
         if (Test-Path $backup) { Copy-Item $backup $dst -Force }
     }
-    if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
+    if (Test-Path $tmp) {
+        for ($i = 0; $i -lt 10 -and (Test-Path $tmp); $i++) {
+            Start-Sleep -Milliseconds 300
+            try {
+                Remove-Item $tmp -Recurse -Force -ErrorAction Stop
+            } catch {
+                # El servidor o el indexador pueden tardar en soltar el CSV.
+            }
+        }
+    }
 }
 
 Write-Host ''

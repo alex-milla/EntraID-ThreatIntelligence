@@ -89,6 +89,7 @@ class Module_Cve extends BaseModule
             ['method' => 'POST', 'pattern' => 'vm/evidence',    'handler' => [$this, 'vmAddEvidence']],
             ['method' => 'POST', 'pattern' => 'vm/reopen',      'handler' => [$this, 'vmReopenCase']],
             ['method' => 'GET',  'pattern' => 'vm/report',      'handler' => [$this, 'vmReport']],
+            ['method' => 'GET',  'pattern' => 'vm/{caseId}/panel', 'handler' => [$this, 'vmCasePanel']],
         ];
     }
 
@@ -150,6 +151,7 @@ class Module_Cve extends BaseModule
             'sort'     => 'due',
         ];
         $vmLastImport = null;
+        $vmPending = null;
 
         try {
             $groups = $this->groupTree();
@@ -216,6 +218,9 @@ class Module_Cve extends BaseModule
                 $vmKpis = VmCases::kpis($this->listVmCases(['company' => $vmFilters['company']]));
                 $vmCases = $this->listVmCases($vmFilters);
                 $vmLastImport = $this->latestTvmImport($vmFilters['company']);
+                if ($vmFilters['company'] > 0) {
+                    $vmPending = $this->countVmPendingCases($vmFilters['company']);
+                }
                 $vmCaseId = max(0, (int)($_GET['case'] ?? 0));
                 if ($vmCaseId > 0) {
                     $vmCase = $this->getVmCase($vmCaseId);
@@ -316,6 +321,7 @@ class Module_Cve extends BaseModule
             'vmEvidence'    => $vmEvidence,
             'vmFilters'     => $vmFilters,
             'vmLastImport'  => $vmLastImport,
+            'vmPending'     => $vmPending,
         ]);
     }
 
@@ -1797,6 +1803,31 @@ class Module_Cve extends BaseModule
         ]);
     }
 
+    /**
+     * Fragmento HTML del caso para el panel inline (sin recargar la página).
+     */
+    public function vmCasePanel(array $params = []): void
+    {
+        Auth::require();
+        if (!Auth::isAdmin()) {
+            http_response_code(403);
+            echo '<div class="p-4 text-sm text-ink-muted">Solo un administrador puede ver el seguimiento.</div>';
+            return;
+        }
+
+        $caseId = max(0, (int)($params['caseId'] ?? 0));
+        $vmCase = $caseId > 0 ? $this->getVmCase($caseId) : null;
+        if ($vmCase === null) {
+            http_response_code(404);
+            echo '<div class="p-4 text-sm text-ink-muted">Caso de seguimiento no encontrado.</div>';
+            return;
+        }
+
+        $vmEvents = $this->listVmCaseEvents($caseId);
+        $vmEvidence = $this->listVmCaseEvidence($caseId);
+        require __DIR__ . '/views/_vm_case_panel.php';
+    }
+
     /** Fuente de factores de prioridad: CSV primero, catálogo como respaldo. */
     private function vmFactorSource(array $row): array
     {
@@ -1909,6 +1940,35 @@ class Module_Cve extends BaseModule
              WHERE m.cve_id = ? AND (g.id = ? OR g.company_id = ?)",
             [$cveId, $companyId, $companyId]
         );
+    }
+
+    /**
+     * Cuántos CVEs asignados a la empresa aún no tienen caso de seguimiento.
+     */
+    private function countVmPendingCases(int $companyId): int
+    {
+        if ($companyId <= 0) {
+            return 0;
+        }
+        $assigned = $this->listCompanyAssignedCves($companyId);
+        if ($assigned === []) {
+            return 0;
+        }
+        $existing = CveDatabase::fetchAll(
+            "SELECT cve_id FROM vm_cases WHERE group_id = ?",
+            [$companyId]
+        );
+        $set = [];
+        foreach ($existing as $row) {
+            $set[(string)$row['cve_id']] = true;
+        }
+        $pending = 0;
+        foreach ($assigned as $row) {
+            if (!isset($set[(string)$row['cve_id']])) {
+                $pending++;
+            }
+        }
+        return $pending;
     }
 
     /**
