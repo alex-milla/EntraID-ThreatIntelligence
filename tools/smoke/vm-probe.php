@@ -177,6 +177,18 @@ switch ($cmd) {
         $out = ['org_id' => $orgId, 'chat_id' => $chatId, 'cve_id' => $cveId];
         break;
 
+    case 'findings':
+        $caseId = (int)($argv[2] ?? 0);
+        $out = [
+            'findings' => CveDatabase::fetchAll(
+                "SELECT id, asset_or_service, environment, product, product_version,
+                        owner_name, source, status, first_detected_at, last_detected_at
+                 FROM vm_findings WHERE case_id = ? ORDER BY id",
+                [$caseId]
+            ),
+        ];
+        break;
+
     default:
         fwrite(STDERR, "Comando desconocido.\n");
         exit(1);

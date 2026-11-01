@@ -37,7 +37,7 @@ $minus = static fn(int $days): string => date('Y-m-d', strtotime('-' . $days . '
 // ============================================================
 // 1. Estados
 // ============================================================
-check('Estados: 8 definidos', count(VmCases::STATUSES) === 8, (string)count(VmCases::STATUSES));
+check('Estados: 10 definidos', count(VmCases::STATUSES) === 10, (string)count(VmCases::STATUSES));
 check('Estados: detectada', VmCases::statusLabel('detected') === 'Detectada');
 check('Estados: corregida y verificada', VmCases::statusLabel('resolved_verified') === 'Corregida y verificada');
 check('Estados: riesgo aceptado', VmCases::statusLabel('risk_accepted') === 'Riesgo aceptado temporalmente');

@@ -19,11 +19,21 @@ final class VmCases
         'detected'             => 'Detectada',
         'in_review'            => 'En evaluación',
         'planned'              => 'Planificada',
+        'assigned'             => 'Asignada',
         'in_progress'          => 'En curso',
+        'mitigated'            => 'Mitigada (control compensatorio)',
         'pending_verification' => 'Pendiente de verificación',
         'resolved_verified'    => 'Corregida y verificada',
         'risk_accepted'        => 'Riesgo aceptado temporalmente',
         'false_positive'       => 'Falso positivo',
+    ];
+
+    /** Fuentes admitidas para un hallazgo local. */
+    public const FINDING_SOURCES = [
+        'manual'         => 'Registro manual',
+        'defender-tvm'   => 'Defender TVM (CSV)',
+        'reconocimiento' => 'Reconocimiento / inventario',
+        'otro'           => 'Otra fuente',
     ];
 
     /** Estados que retiran el caso de la cola abierta. */
@@ -376,6 +386,9 @@ final class VmCases
         if ($due !== '' && self::parseDate($due) === null) {
             return 'La fecha objetivo no es válida.';
         }
+        if ($due !== '' && !self::isSensibleDate($due)) {
+            return 'La fecha objetivo está fuera de un rango razonable (revisa el año).';
+        }
 
         if ($status === 'resolved_verified' && !$hasVerification) {
             return 'Para marcar «Corregida y verificada» hay que registrar comentario y referencia de verificación manual.';
@@ -384,12 +397,16 @@ final class VmCases
         if ($status === 'risk_accepted') {
             $reason = trim((string)($input['accepted_reason'] ?? ''));
             $until = trim((string)($input['accepted_until'] ?? ''));
+            $approvedAt = trim((string)($input['accepted_approved_at'] ?? ''));
             if ($reason === '') {
                 return 'El riesgo aceptado exige un motivo.';
             }
             $untilDate = self::parseDate($until);
             if ($untilDate === null) {
                 return 'El riesgo aceptado exige una fecha de caducidad válida.';
+            }
+            if ($approvedAt !== '' && (self::parseDate($approvedAt) === null || !self::isSensibleDate($approvedAt))) {
+                return 'La fecha de aprobación de la excepción no es válida.';
             }
             $today = new DateTimeImmutable('today');
             if ($untilDate < $today) {
@@ -464,8 +481,67 @@ final class VmCases
         return $kpi;
     }
 
-    public static function eventLabel(string $event): string
+    /**
+     * Valida un hallazgo local. Devuelve null o el mensaje de error.
+     * Los campos de activo/entorno/versión son opcionales: vacío = «sin datos».
+     */
+    public static function validateFinding(array $input): ?string
     {
+        $status = (string)($input['status'] ?? 'detected');
+        if (!self::isStatus($status)) {
+            return 'Estado del hallazgo no reconocido.';
+        }
+        $source = (string)($input['source'] ?? 'manual');
+        if (!isset(self::FINDING_SOURCES[$source])) {
+            return 'Fuente del hallazgo no reconocida.';
+        }
+
+        $limits = [
+            'asset_or_service' => 200,
+            'environment'      => 120,
+            'product'          => 200,
+            'product_version'  => 120,
+            'owner_name'       => 120,
+            'notes'            => 4000,
+        ];
+        foreach ($limits as $field => $max) {
+            $value = trim((string)($input[$field] ?? ''));
+            $length = function_exists('mb_strlen') ? mb_strlen($value) : strlen($value);
+            if ($length > $max) {
+                return 'El campo «' . $field . '» supera el máximo de ' . $max . ' caracteres.';
+            }
+        }
+
+        $first = trim((string)($input['first_detected_at'] ?? ''));
+        $last = trim((string)($input['last_detected_at'] ?? ''));
+        foreach (['primera detección' => $first, 'última detección' => $last] as $label => $value) {
+            if ($value !== '' && (self::parseDate($value) === null || !self::isSensibleDate($value))) {
+                return 'La fecha de ' . $label . ' no es válida.';
+            }
+        }
+        if ($first !== '' && $last !== '') {
+            $firstDate = self::parseDate($first);
+            $lastDate = self::parseDate($last);
+            if ($firstDate !== null && $lastDate !== null && $firstDate > $lastDate) {
+                return 'La última detección no puede ser anterior a la primera.';
+            }
+        }
+
+        return null;
+    }
+
+    /** Rango razonable de fechas (evita años absurdos tipo 1900/9999). */
+    public static function isSensibleDate(?string $value): bool
+    {
+        $date = self::parseDate($value);
+        if ($date === null) {
+            return false;
+        }
+        $year = (int)$date->format('Y');
+        return $year >= 2000 && $year <= ((int)date('Y') + 10);
+    }
+
+    public static function eventLabel(string $event): string    {
         return match ($event) {
             'created'         => 'Caso creado',
             'observed'        => 'Observado de nuevo',
@@ -480,6 +556,8 @@ final class VmCases
             'verification'    => 'Verificación manual',
             'reopened'        => 'Caso reabierto',
             'note'            => 'Nota',
+            'finding_created' => 'Hallazgo añadido',
+            'finding_updated' => 'Hallazgo actualizado',
             default           => $event,
         };
     }

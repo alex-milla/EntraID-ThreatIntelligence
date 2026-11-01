@@ -63,7 +63,13 @@ $deadlineClasses = [
     'ok' => 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300',
     'none' => 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400',
 ];
-$evidenceKinds = ['plan' => 'Plan de remediación', 'verification' => 'Verificación manual', 'note' => 'Nota'];
+$evidenceKinds = [
+    'plan' => 'Plan de remediación',
+    'detection' => 'Detección',
+    'mitigation' => 'Mitigación / control compensatorio',
+    'verification' => 'Verificación manual',
+    'note' => 'Nota',
+];
 
 $fmtDate = static function (?string $value): string {
     $value = trim((string)$value);
@@ -121,6 +127,7 @@ foreach (preg_split('/[;,]+/', (string)($case['related_software'] ?? '')) ?: [] 
         <p class="text-[11px] text-ink-soft mt-1">
             Caso #<?= $caseId ?> · <?= e((string)($case['company_name'] ?? 'Empresa')) ?>
             · Origen: <?= e($sourceLabels[(string)($case['source'] ?? 'defender-tvm')] ?? '—') ?>
+            · <?= (int)($case['findings_count'] ?? 0) ?> activo(s)
         </p>
     </div>
 
@@ -154,7 +161,15 @@ foreach (preg_split('/[;,]+/', (string)($case['related_software'] ?? '')) ?: [] 
         <div class="rounded-lg bg-muted px-3 py-2">
             <p class="text-[10px] uppercase tracking-wide text-ink-soft">Fecha objetivo</p>
             <p class="text-sm font-medium"><?= e($fmtDate((string)($case['due_date'] ?? ''))) ?></p>
-            <p class="text-[10px] text-ink-soft">Se guarda; no se recalcula sola</p>
+            <?php
+            $daysLeft = VmCases::daysUntil((string)($case['due_date'] ?? ''), $today);
+            $dueHint = $daysLeft === null
+                ? 'Sin fecha objetivo'
+                : ($daysLeft < 0
+                    ? abs($daysLeft) . ' día(s) de retraso'
+                    : ($daysLeft === 0 ? 'Vence hoy' : $daysLeft . ' día(s) restantes'));
+            ?>
+            <p class="text-[10px] <?= $daysLeft !== null && $daysLeft < 0 ? 'text-danger' : 'text-ink-soft' ?>"><?= e($dueHint) ?></p>
         </div>
         <div class="rounded-lg bg-muted px-3 py-2">
             <p class="text-[10px] uppercase tracking-wide text-ink-soft">Responsable</p>
@@ -174,6 +189,50 @@ foreach (preg_split('/[;,]+/', (string)($case['related_software'] ?? '')) ?: [] 
         </div>
     <?php endif; ?>
 
+    <?php
+    $riskSeverity = (string)($factors['severity'] ?? '');
+    $riskCvss = $factors['cvss'] ?? ($case['catalog_cvss'] ?? null);
+    $riskEpss = $factors['epss'] ?? ($case['catalog_epss'] ?? null);
+    $riskKev = !empty($case['kev_id']);
+    $riskKevDate = trim((string)($case['kev_date'] ?? ''));
+    $riskEpssDate = trim((string)($case['catalog_epss_date'] ?? ''));
+    ?>
+    <div class="rounded-lg bg-muted px-3 py-2">
+        <p class="text-[10px] uppercase tracking-wide text-ink-soft mb-1">
+            Riesgo del CVE (datos públicos) · Prioridad local
+        </p>
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
+            <div>
+                <span class="block text-[10px] text-ink-soft">Severidad NVD</span>
+                <span class="font-medium"><?= $riskSeverity !== '' ? e(ucfirst($riskSeverity)) : 'sin datos' ?></span>
+            </div>
+            <div>
+                <span class="block text-[10px] text-ink-soft">CVSS</span>
+                <span class="font-mono"><?= $riskCvss !== null ? number_format((float)$riskCvss, 1) : 'sin datos' ?></span>
+            </div>
+            <div>
+                <span class="block text-[10px] text-ink-soft">EPSS</span>
+                <span class="font-mono">
+                    <?= $riskEpss !== null ? number_format((float)$riskEpss, 4) : 'sin datos' ?>
+                    <?php if ($riskEpss !== null): ?>
+                        <span class="block text-[9px] font-sans text-ink-soft"><?= e($fmtDate($riskEpssDate) !== '—' ? $fmtDate($riskEpssDate) : 'fecha sin datos') ?></span>
+                    <?php endif; ?>
+                </span>
+            </div>
+            <div>
+                <span class="block text-[10px] text-ink-soft">CISA KEV</span>
+                <span class="font-medium"><?= $riskKev ? 'Sí' : 'No' ?></span>
+                <?php if ($riskKev): ?>
+                    <span class="block text-[9px] text-ink-soft"><?= $riskKevDate !== '' ? 'Añadido ' . e($fmtDate($riskKevDate)) : 'fecha sin datos' ?></span>
+                <?php endif; ?>
+            </div>
+        </div>
+        <p class="text-[10px] text-ink-soft mt-1">
+            Prioridad local: <strong><?= e(VmCases::priorityLabel($priority)) ?></strong>.
+            Calculada con los factores anteriores y los datos locales; no es el riesgo total del parque.
+        </p>
+    </div>
+
     <?php if ($softwareLabels !== []): ?>
         <div class="text-[11px] text-ink-soft">
             Software: <?php foreach (array_slice($softwareLabels, 0, 6) as $label): ?><span class="inline-flex px-1.5 py-0.5 rounded bg-muted text-[10px] mr-1"><?= e($label) ?></span><?php endforeach; ?>
@@ -184,7 +243,7 @@ foreach (preg_split('/[;,]+/', (string)($case['related_software'] ?? '')) ?: [] 
         <?= Csrf::field() ?>
         <input type="hidden" name="case_id" value="<?= $caseId ?>">
 
-        <div class="grid grid-cols-2 gap-3">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
                 <label class="block text-[11px] font-medium text-ink-muted mb-1">Estado</label>
                 <select name="status" data-vm-status
@@ -222,7 +281,7 @@ foreach (preg_split('/[;,]+/', (string)($case['related_software'] ?? '')) ?: [] 
                    class="w-full px-2.5 py-2 rounded-lg border border-line-strong bg-input text-ink text-xs focus:ring-2 focus:ring-brand-500 outline-none">
         </div>
 
-        <div class="grid grid-cols-2 gap-3" data-vm-risk>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3" data-vm-risk>
             <div>
                 <label class="block text-[11px] font-medium text-ink-muted mb-1">Motivo del riesgo aceptado</label>
                 <input type="text" name="accepted_reason" maxlength="500" value="<?= e((string)($case['accepted_reason'] ?? '')) ?>"
@@ -232,6 +291,21 @@ foreach (preg_split('/[;,]+/', (string)($case['related_software'] ?? '')) ?: [] 
                 <label class="block text-[11px] font-medium text-ink-muted mb-1">Caducidad del riesgo</label>
                 <input type="date" name="accepted_until" value="<?= e((string)($case['accepted_until'] ?? '')) ?>"
                        class="w-full px-2.5 py-2 rounded-lg border border-line-strong bg-input text-ink text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+            </div>
+            <div>
+                <label class="block text-[11px] font-medium text-ink-muted mb-1">Aprobador de la excepción</label>
+                <input type="text" name="accepted_by" maxlength="120" value="<?= e((string)($case['accepted_by'] ?? '')) ?>"
+                       class="w-full px-2.5 py-2 rounded-lg border border-line-strong bg-input text-ink text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+            </div>
+            <div>
+                <label class="block text-[11px] font-medium text-ink-muted mb-1">Fecha de aprobación</label>
+                <input type="date" name="accepted_approved_at" value="<?= e(substr((string)($case['accepted_approved_at'] ?? ''), 0, 10)) ?>"
+                       class="w-full px-2.5 py-2 rounded-lg border border-line-strong bg-input text-ink text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+            </div>
+            <div class="sm:col-span-2">
+                <label class="block text-[11px] font-medium text-ink-muted mb-1">Controles compensatorios</label>
+                <textarea name="accepted_controls" rows="2" maxlength="2000"
+                          class="w-full px-2.5 py-2 rounded-lg border border-line-strong bg-input text-ink text-xs focus:ring-2 focus:ring-brand-500 outline-none"><?= e((string)($case['accepted_controls'] ?? '')) ?></textarea>
             </div>
         </div>
 
@@ -261,7 +335,7 @@ foreach (preg_split('/[;,]+/', (string)($case['related_software'] ?? '')) ?: [] 
         </button>
     </form>
 
-    <form method="post" action="<?= base_url('modules/cve/vm/evidence') ?>" class="grid grid-cols-4 gap-2 border-t border-line pt-4">
+    <form method="post" action="<?= base_url('modules/cve/vm/evidence') ?>" class="grid grid-cols-1 sm:grid-cols-4 gap-2 border-t border-line pt-4">
         <?= Csrf::field() ?>
         <input type="hidden" name="case_id" value="<?= $caseId ?>">
         <select name="kind" class="px-2 py-2 rounded-lg border border-line-strong bg-input text-ink text-xs">
@@ -270,11 +344,11 @@ foreach (preg_split('/[;,]+/', (string)($case['related_software'] ?? '')) ?: [] 
             <?php endforeach; ?>
         </select>
         <input type="text" name="comment" maxlength="2000" required placeholder="Comentario de la evidencia"
-               class="col-span-2 px-2.5 py-2 rounded-lg border border-line-strong bg-input text-ink text-xs">
+               class="sm:col-span-2 px-2.5 py-2 rounded-lg border border-line-strong bg-input text-ink text-xs">
         <input type="text" name="reference" maxlength="500" placeholder="Referencia"
                class="px-2.5 py-2 rounded-lg border border-line-strong bg-input text-ink text-xs">
         <button type="submit"
-                class="col-span-4 px-3 py-2 border border-line-strong text-ink text-xs font-medium rounded-lg hover:bg-muted transition-colors">
+                class="sm:col-span-4 px-3 py-2 border border-line-strong text-ink text-xs font-medium rounded-lg hover:bg-muted transition-colors">
             Añadir evidencia
         </button>
     </form>
@@ -350,6 +424,18 @@ foreach (preg_split('/[;,]+/', (string)($case['related_software'] ?? '')) ?: [] 
         <div data-vm-cve-panel
              data-vm-cve-url="<?= base_url('modules/cve/vm/' . $caseId . '/cve-info') ?>">
             <p class="text-[11px] text-ink-soft">Cargando información del CVE…</p>
+        </div>
+    </div>
+
+    <!-- Hallazgos: activos o servicios afectados por este CVE -->
+    <div class="border-t border-line pt-4" data-vm-findings-section>
+        <div class="flex items-center justify-between gap-2 mb-2">
+            <h4 class="text-xs font-semibold">Hallazgos (activos o servicios)</h4>
+            <span class="text-[10px] text-ink-soft">Un estado por activo</span>
+        </div>
+        <div data-vm-findings-panel
+             data-vm-findings-url="<?= base_url('modules/cve/vm/' . $caseId . '/findings') ?>">
+            <p class="text-[11px] text-ink-soft">Cargando hallazgos…</p>
         </div>
     </div>
 

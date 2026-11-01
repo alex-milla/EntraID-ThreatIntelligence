@@ -312,6 +312,87 @@ try {
     Check 'E2E plan: guardado desde el propio caso' ($saveUnsaved.Content -match 'Paso AUTO') 'no aparece el contenido guardado'
     $postUnsaved = Invoke-WebRequest -Uri "$base/index.php/modules/cve/vm/$rawCaseId/remediation-plan" -WebSession $ws -UseBasicParsing -TimeoutSec 30
     Check 'E2E plan: respuesta guardada visible y sin aviso' ($postUnsaved.Content -match 'Paso AUTO' -and $postUnsaved.Content -notmatch 'aún no se han guardado') 'aviso persistente o plan ausente'
+
+    # --- hallazgos por activo ---
+    $findBase = @{
+        source = 'manual'; status = 'detected'; environment = 'Producción';
+        first_detected_at = '2026-10-01'; last_detected_at = '2026-10-30';
+        notes = ''; csrf_token = $token
+    }
+    $f1Body = $findBase.Clone()
+    $f1Body['finding_id'] = 0
+    $f1Body['asset_or_service'] = 'srv-01'
+    $f1Body['product'] = 'Apache HTTP Server'
+    $f1Body['product_version'] = '2.4.58'
+    $f1Body['owner_name'] = 'Sistemas'
+    $f1 = Invoke-WebRequest -Uri "$base/index.php/modules/cve/vm/$criticalId/findings/save" -Method POST -WebSession $ws `
+        -Body $f1Body -UseBasicParsing -TimeoutSec 30
+    Check 'E2E hallazgos: primer activo guardado' ($f1.Content -match 'srv-01') 'no aparece srv-01'
+    $f2Body = $findBase.Clone()
+    $f2Body['finding_id'] = 0
+    $f2Body['asset_or_service'] = 'api-clientes'
+    $f2Body['product'] = 'PHP'
+    $f2Body['product_version'] = ''
+    $f2Body['owner_name'] = 'Aplicaciones'
+    $f2Body['status'] = 'mitigated'
+    $f2 = Invoke-WebRequest -Uri "$base/index.php/modules/cve/vm/$criticalId/findings/save" -Method POST -WebSession $ws `
+        -Body $f2Body -UseBasicParsing -TimeoutSec 30
+    Check 'E2E hallazgos: segundo activo guardado' ($f2.Content -match 'api-clientes') 'no aparece api-clientes'
+    $findingsList = (Probe @('findings', "$criticalId")).findings
+    Check 'E2E hallazgos: varios activos por CVE' ($findingsList.Count -eq 3) "n=$($findingsList.Count)"
+    $mitigatedFinding = $findingsList | Where-Object { $_.asset_or_service -eq 'api-clientes' }
+    Check 'E2E hallazgos: estado propio por activo' ($mitigatedFinding.status -eq 'mitigated') $mitigatedFinding.status
+
+    $badBody = $findBase.Clone()
+    $badBody['finding_id'] = 0
+    $badBody['asset_or_service'] = 'fecha-mala'
+    $badBody['first_detected_at'] = '1900-01-01'
+    $badBody['product'] = 'x'
+    $badBody['product_version'] = ''
+    $badBody['owner_name'] = ''
+    $badFinding = Invoke-WebRequest -Uri "$base/index.php/modules/cve/vm/$criticalId/findings/save" -Method POST -WebSession $ws `
+        -Body $badBody -UseBasicParsing -TimeoutSec 30
+    Check 'E2E hallazgos: fecha inválida rechazada' ($badFinding.Content -match 'no es válida') 'no se rechazó'
+    $afterBad = (Probe @('findings', "$criticalId")).findings
+    Check 'E2E hallazgos: el rechazo no crea registros' ($afterBad.Count -eq 3) "n=$($afterBad.Count)"
+
+    # --- excepción completa (aprobador + controles + caducidad) ---
+    $future = (Get-Date).AddDays(30).ToString('yyyy-MM-dd')
+    $todayIso = (Get-Date).ToString('yyyy-MM-dd')
+    $null = Invoke-WebRequest -Uri "$base/index.php/modules/cve/vm/update" -Method POST -WebSession $ws `
+        -Body @{
+            case_id = [int]$riskCase.id; status = 'risk_accepted'; priority = '';
+            due_date = [string]$riskCase.due_date; assignee_name = 'Alex'; external_ticket = '';
+            accepted_reason = 'Cambio planificado'; accepted_until = $future;
+            accepted_by = 'Alex (CISO)'; accepted_approved_at = $todayIso;
+            accepted_controls = 'WAF y segmentación de red'; comment = 'Excepción E2E';
+            verification_comment = ''; verification_reference = ''; csrf_token = $token
+        } -UseBasicParsing -TimeoutSec 30 -MaximumRedirection 5
+    $excCase = (Probe @('case', [string]$riskCase.id)).case
+    Check 'E2E excepción: estado aceptado' ($excCase.status -eq 'risk_accepted') $excCase.status
+    Check 'E2E excepción: aprobador y controles guardados' (
+        -not [string]::IsNullOrWhiteSpace([string]$excCase.accepted_by) -and
+        -not [string]::IsNullOrWhiteSpace([string]$excCase.accepted_controls) -and
+        ([string]$excCase.accepted_approved_at) -like "$todayIso*"
+    ) "by=$($excCase.accepted_by) controls=$($excCase.accepted_controls) aprobado=$($excCase.accepted_approved_at) esperado=$todayIso"
+
+    # --- estado ampliado del flujo ---
+    $assignedOk = $false
+    try {
+        $assignResp = Invoke-WebRequest -Uri "$base/index.php/modules/cve/vm/update" -Method POST -WebSession $ws `
+            -Body @{
+                case_id = [int]$riskCase.id; status = 'assigned'; priority = '';
+                due_date = [string]$riskCase.due_date; assignee_name = 'Alex'; external_ticket = '';
+                accepted_reason = ''; accepted_until = ''; accepted_by = '';
+                accepted_approved_at = ''; accepted_controls = ''; comment = 'Asignada E2E';
+                verification_comment = ''; verification_reference = ''; csrf_token = $token
+            } -UseBasicParsing -TimeoutSec 30 -MaximumRedirection 5
+        $assignedCase = (Probe @('case', [string]$riskCase.id)).case
+        $assignedOk = ($assignedCase.status -eq 'assigned')
+    } catch {
+        $assignedOk = $false
+    }
+    Check 'E2E estados: Asignada aceptada' $assignedOk 'no se guardó el estado assigned'
 }
 finally {
     if ($server -and -not $server.HasExited) { Stop-Process -Id $server.Id -Force }

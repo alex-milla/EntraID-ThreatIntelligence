@@ -316,6 +316,35 @@ class CveDatabase
         $db->exec("CREATE INDEX IF NOT EXISTS idx_vm_case_events_case ON vm_case_events(case_id, created_at DESC)");
         $db->exec("CREATE INDEX IF NOT EXISTS idx_vm_case_evidence_case ON vm_case_evidence(case_id, created_at DESC)");
 
+        // v0.3.9: hallazgos locales por caso (activo/servicio, entorno,
+        // producto y versión). Un CVE puede tener varios hallazgos y cada uno
+        // su propio estado. La fuente manual no inventa valores: campos vacíos
+        // se muestran como «sin datos».
+        $db->exec("CREATE TABLE IF NOT EXISTS vm_findings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            case_id INTEGER NOT NULL REFERENCES vm_cases(id) ON DELETE CASCADE,
+            asset_or_service TEXT,
+            environment TEXT,
+            product TEXT,
+            product_version TEXT,
+            owner_name TEXT,
+            source TEXT NOT NULL DEFAULT 'manual',
+            status TEXT NOT NULL DEFAULT 'detected',
+            first_detected_at TEXT,
+            last_detected_at TEXT,
+            last_seen_import_id INTEGER,
+            notes TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_vm_findings_case ON vm_findings(case_id, id)");
+
+        // Marcador de migraciones de datos del seguimiento (idempotencia).
+        $db->exec("CREATE TABLE IF NOT EXISTS vm_migrations (
+            key TEXT PRIMARY KEY,
+            applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )");
+
         $db->exec("CREATE TABLE IF NOT EXISTS cve_reports (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL,
@@ -754,6 +783,77 @@ class CveDatabase
         }
         if (!isset($kevCols['required_action_es_hash'])) {
             $db->exec("ALTER TABLE cve_kev ADD COLUMN required_action_es_hash TEXT");
+        }
+
+        // v0.3.9: aprobación y controles del riesgo aceptado + hallazgos.
+        $vmCols = [];
+        foreach ($db->query("PRAGMA table_info(vm_cases)") as $col) {
+            $vmCols[$col['name']] = true;
+        }
+        if (!isset($vmCols['accepted_by'])) {
+            $db->exec("ALTER TABLE vm_cases ADD COLUMN accepted_by TEXT");
+        }
+        if (!isset($vmCols['accepted_approved_at'])) {
+            $db->exec("ALTER TABLE vm_cases ADD COLUMN accepted_approved_at TEXT");
+        }
+        if (!isset($vmCols['accepted_controls'])) {
+            $db->exec("ALTER TABLE vm_cases ADD COLUMN accepted_controls TEXT");
+        }
+
+        self::seedVmFindings($db);
+    }
+
+    /**
+     * Crea un hallazgo inicial por cada caso existente (una sola vez).
+     * Toma el contexto ya importado del caso; no inventa activo ni versión.
+     */
+    private static function seedVmFindings(PDO $db): void
+    {
+        try {
+            $done = $db->prepare("SELECT 1 FROM vm_migrations WHERE key = 'findings_seed_v1'");
+            $done->execute();
+            if ($done->fetchColumn() !== false) {
+                return;
+            }
+
+            $cases = $db->query("SELECT * FROM vm_cases")->fetchAll();
+            $findStmt = $db->prepare("SELECT COUNT(*) FROM vm_findings WHERE case_id = ?");
+            $insert = $db->prepare(
+                "INSERT INTO vm_findings
+                 (case_id, product, owner_name, source, status,
+                  first_detected_at, last_detected_at, last_seen_import_id)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+            );
+            foreach ($cases as $case) {
+                $caseId = (int)($case['id'] ?? 0);
+                if ($caseId <= 0) {
+                    continue;
+                }
+                $findStmt->execute([$caseId]);
+                if ((int)$findStmt->fetchColumn() > 0) {
+                    continue;
+                }
+                $raw = trim((string)($case['related_software'] ?? ''));
+                $product = '';
+                if ($raw !== '') {
+                    $parts = preg_split('/[;,]+/', $raw) ?: [];
+                    $product = trim((string)($parts[0] ?? ''));
+                }
+                $insert->execute([
+                    $caseId,
+                    $product !== '' ? $product : null,
+                    trim((string)($case['assignee_name'] ?? '')) !== '' ? (string)$case['assignee_name'] : null,
+                    (string)($case['source'] ?? 'defender-tvm'),
+                    (string)($case['status'] ?? 'detected'),
+                    $case['first_seen_at'] ?? null,
+                    $case['last_seen_at'] ?? null,
+                    $case['last_seen_import_id'] ?? null,
+                ]);
+            }
+
+            $db->exec("INSERT OR REPLACE INTO vm_migrations (key) VALUES ('findings_seed_v1')");
+        } catch (Throwable $e) {
+            // No bloquear el arranque si la BD viene de una versión rara.
         }
     }
 

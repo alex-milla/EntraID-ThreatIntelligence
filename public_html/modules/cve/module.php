@@ -94,6 +94,8 @@ class Module_Cve extends BaseModule
             ['method' => 'POST', 'pattern' => 'vm/{caseId}/ai-report', 'handler' => [$this, 'vmGenerateCveReport']],
             ['method' => 'GET',  'pattern' => 'vm/{caseId}/remediation-plan', 'handler' => [$this, 'vmRemediationPlan']],
             ['method' => 'POST', 'pattern' => 'vm/{caseId}/remediation-save', 'handler' => [$this, 'vmRemediationSavePlan']],
+            ['method' => 'GET',  'pattern' => 'vm/{caseId}/findings', 'handler' => [$this, 'vmFindingsPanel']],
+            ['method' => 'POST', 'pattern' => 'vm/{caseId}/findings/save', 'handler' => [$this, 'vmSaveFinding']],
         ];
     }
 
@@ -1264,6 +1266,19 @@ class Module_Cve extends BaseModule
                         ]
                     );
                     $caseId = (int)$db->lastInsertId();
+                    $labels = CveTvmImport::softwareLabels(
+                        CveTvmImport::splitSoftware((string)($row['related_software'] ?? '')),
+                        1
+                    );
+                    $this->addInitialFinding(
+                        $caseId,
+                        (string)($labels[0] ?? ''),
+                        'defender-tvm',
+                        'detected',
+                        $observedAt,
+                        $observedAt,
+                        $importId
+                    );
                     $this->vmLogEvent(
                         $caseId,
                         'created',
@@ -1431,6 +1446,15 @@ class Module_Cve extends BaseModule
                     ]
                 );
                 $caseId = (int)$db->lastInsertId();
+                $this->addInitialFinding(
+                    $caseId,
+                    (string)($labels[0] ?? ''),
+                    'catalog',
+                    'detected',
+                    $today,
+                    $today,
+                    null
+                );
                 $this->vmLogEvent(
                     $caseId,
                     'created',
@@ -1488,6 +1512,9 @@ class Module_Cve extends BaseModule
             'due_date'        => trim((string)($_POST['due_date'] ?? '')),
             'accepted_reason' => trim((string)($_POST['accepted_reason'] ?? '')),
             'accepted_until'  => trim((string)($_POST['accepted_until'] ?? '')),
+            'accepted_by'     => trim((string)($_POST['accepted_by'] ?? '')),
+            'accepted_approved_at' => trim((string)($_POST['accepted_approved_at'] ?? '')),
+            'accepted_controls'    => trim((string)($_POST['accepted_controls'] ?? '')),
         ];
         if (!VmCases::isStatus($input['status'])) {
             $input['status'] = (string)$case['status'];
@@ -1569,6 +1596,12 @@ class Module_Cve extends BaseModule
                 $params[] = $input['accepted_reason'];
                 $set[] = 'accepted_until = ?';
                 $params[] = $input['accepted_until'];
+                $set[] = 'accepted_by = ?';
+                $params[] = $input['accepted_by'] !== '' ? $input['accepted_by'] : null;
+                $set[] = 'accepted_approved_at = ?';
+                $params[] = $input['accepted_approved_at'] !== '' ? $input['accepted_approved_at'] : null;
+                $set[] = 'accepted_controls = ?';
+                $params[] = $input['accepted_controls'] !== '' ? $input['accepted_controls'] : null;
                 if ($input['accepted_reason'] !== (string)($case['accepted_reason'] ?? '')
                     || $input['accepted_until'] !== (string)($case['accepted_until'] ?? '')) {
                     $this->vmLogEvent(
@@ -1582,6 +1615,9 @@ class Module_Cve extends BaseModule
             } elseif (!empty($case['accepted_reason']) || !empty($case['accepted_until'])) {
                 $set[] = 'accepted_reason = NULL';
                 $set[] = 'accepted_until = NULL';
+                $set[] = 'accepted_by = NULL';
+                $set[] = 'accepted_approved_at = NULL';
+                $set[] = 'accepted_controls = NULL';
             }
 
             if ($input['priority'] !== '' && $input['priority'] !== $oldPriority) {
@@ -1686,7 +1722,7 @@ class Module_Cve extends BaseModule
         $back = base_url('modules/cve?tab=vm&company=' . (int)$case['group_id'] . '&case=' . $caseId);
 
         $kind = (string)($_POST['kind'] ?? 'note');
-        if (!in_array($kind, ['plan', 'verification', 'note'], true)) {
+        if (!in_array($kind, ['plan', 'verification', 'note', 'detection', 'mitigation'], true)) {
             $kind = 'note';
         }
         $comment = trim((string)($_POST['comment'] ?? ''));
@@ -2025,6 +2061,194 @@ class Module_Cve extends BaseModule
              ORDER BY r.id DESC
              LIMIT 1",
             [$companyId, '%' . $cveId . '%', $cveId]
+        );
+    }
+
+    /**
+     * Lista editable de hallazgos del caso (fragmento para el drawer).
+     */
+    public function vmFindingsPanel(array $params = []): void
+    {
+        Auth::require();
+        if (!Auth::isAdmin()) {
+            http_response_code(403);
+            echo '<div class="p-4 text-sm text-ink-muted">Solo un administrador puede ver los hallazgos.</div>';
+            return;
+        }
+
+        $case = $this->getVmCase((int)($params['caseId'] ?? 0));
+        if ($case === null) {
+            http_response_code(404);
+            echo '<div class="p-4 text-sm text-ink-muted">Caso de seguimiento no encontrado.</div>';
+            return;
+        }
+
+        $vmFindingCaseId = (int)$case['id'];
+        $vmFindingCve = strtoupper((string)$case['cve_id']);
+        $vmFindings = $this->listVmFindings($vmFindingCaseId);
+        require __DIR__ . '/views/_vm_findings.php';
+    }
+
+    /**
+     * Crea o actualiza un hallazgo local. No borra ni sobrescribe el caso.
+     */
+    public function vmSaveFinding(array $params = []): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        $case = $this->getVmCase((int)($params['caseId'] ?? 0));
+        if ($case === null) {
+            http_response_code(404);
+            echo '<div class="p-3 text-xs text-danger">Caso de seguimiento no encontrado.</div>';
+            return;
+        }
+        $caseId = (int)$case['id'];
+
+        $findingId = (int)($_POST['finding_id'] ?? 0);
+        $input = [
+            'asset_or_service'  => trim((string)($_POST['asset_or_service'] ?? '')),
+            'environment'       => trim((string)($_POST['environment'] ?? '')),
+            'product'           => trim((string)($_POST['product'] ?? '')),
+            'product_version'   => trim((string)($_POST['product_version'] ?? '')),
+            'owner_name'        => trim((string)($_POST['owner_name'] ?? '')),
+            'source'            => (string)($_POST['source'] ?? 'manual'),
+            'status'            => (string)($_POST['status'] ?? 'detected'),
+            'first_detected_at' => trim((string)($_POST['first_detected_at'] ?? '')),
+            'last_detected_at'  => trim((string)($_POST['last_detected_at'] ?? '')),
+            'notes'             => trim((string)($_POST['notes'] ?? '')),
+        ];
+
+        $error = VmCases::validateFinding($input);
+        if ($error !== null) {
+            echo '<div class="p-3 rounded-lg text-[11px] text-danger bg-danger-bg">' . e($error) . '</div>';
+            return;
+        }
+
+        try {
+            if ($findingId > 0) {
+                $existing = CveDatabase::fetchOne(
+                    "SELECT * FROM vm_findings WHERE id = ? AND case_id = ?",
+                    [$findingId, $caseId]
+                );
+                if ($existing === null) {
+                    echo '<div class="p-3 rounded-lg text-[11px] text-danger bg-danger-bg">Hallazgo no encontrado.</div>';
+                    return;
+                }
+                CveDatabase::query(
+                    "UPDATE vm_findings
+                     SET asset_or_service = ?, environment = ?, product = ?, product_version = ?,
+                         owner_name = ?, source = ?, status = ?, first_detected_at = ?,
+                         last_detected_at = ?, notes = ?, updated_at = datetime('now')
+                     WHERE id = ? AND case_id = ?",
+                    [
+                        $input['asset_or_service'] !== '' ? $input['asset_or_service'] : null,
+                        $input['environment'] !== '' ? $input['environment'] : null,
+                        $input['product'] !== '' ? $input['product'] : null,
+                        $input['product_version'] !== '' ? $input['product_version'] : null,
+                        $input['owner_name'] !== '' ? $input['owner_name'] : null,
+                        $input['source'],
+                        $input['status'],
+                        $input['first_detected_at'] !== '' ? $input['first_detected_at'] : null,
+                        $input['last_detected_at'] !== '' ? $input['last_detected_at'] : null,
+                        $input['notes'] !== '' ? $input['notes'] : null,
+                        $findingId,
+                        $caseId,
+                    ]
+                );
+                $this->vmLogEvent(
+                    $caseId,
+                    'finding_updated',
+                    VmCases::statusLabel((string)($existing['status'] ?? 'detected')),
+                    VmCases::statusLabel($input['status']),
+                    'Hallazgo #' . $findingId
+                        . ($input['asset_or_service'] !== '' ? ' · ' . $input['asset_or_service'] : '')
+                );
+            } else {
+                CveDatabase::query(
+                    "INSERT INTO vm_findings
+                     (case_id, asset_or_service, environment, product, product_version,
+                      owner_name, source, status, first_detected_at, last_detected_at, notes)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    [
+                        $caseId,
+                        $input['asset_or_service'] !== '' ? $input['asset_or_service'] : null,
+                        $input['environment'] !== '' ? $input['environment'] : null,
+                        $input['product'] !== '' ? $input['product'] : null,
+                        $input['product_version'] !== '' ? $input['product_version'] : null,
+                        $input['owner_name'] !== '' ? $input['owner_name'] : null,
+                        $input['source'],
+                        $input['status'],
+                        $input['first_detected_at'] !== '' ? $input['first_detected_at'] : null,
+                        $input['last_detected_at'] !== '' ? $input['last_detected_at'] : null,
+                        $input['notes'] !== '' ? $input['notes'] : null,
+                    ]
+                );
+                $findingId = (int)CveDatabase::getInstance()->lastInsertId();
+                $this->vmLogEvent(
+                    $caseId,
+                    'finding_created',
+                    null,
+                    VmCases::statusLabel($input['status']),
+                    'Hallazgo #' . $findingId
+                        . ($input['asset_or_service'] !== '' ? ' · ' . $input['asset_or_service'] : '')
+                );
+            }
+
+            log_activity('cve.vm_finding_saved', [
+                'case_id'    => $caseId,
+                'finding_id' => $findingId,
+                'status'     => $input['status'],
+            ]);
+        } catch (Throwable $e) {
+            echo '<div class="p-3 rounded-lg text-[11px] text-danger bg-danger-bg">'
+                . 'No se pudo guardar el hallazgo: ' . e($e->getMessage()) . '</div>';
+            return;
+        }
+
+        $vmFindingCaseId = $caseId;
+        $vmFindingCve = strtoupper((string)$case['cve_id']);
+        $vmFindings = $this->listVmFindings($caseId);
+        require __DIR__ . '/views/_vm_findings.php';
+    }
+
+    /** Hallazgos de un caso, en orden de creación. */
+    private function listVmFindings(int $caseId): array    {
+        if ($caseId <= 0) {
+            return [];
+        }
+        return CveDatabase::fetchAll(
+            "SELECT * FROM vm_findings WHERE case_id = ? ORDER BY id",
+            [$caseId]
+        );
+    }
+
+    /** Crea el hallazgo inicial de un caso recién creado (fuente del origen). */
+    private function addInitialFinding(
+        int $caseId,
+        string $product,
+        string $source,
+        string $status,
+        ?string $firstSeen,
+        ?string $lastSeen,
+        ?int $importId
+    ): void {
+        if ($caseId <= 0) {
+            return;
+        }
+        CveDatabase::query(
+            "INSERT INTO vm_findings
+             (case_id, product, source, status, first_detected_at, last_detected_at, last_seen_import_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [
+                $caseId,
+                trim($product) !== '' ? trim($product) : null,
+                $source,
+                VmCases::isStatus($status) ? $status : 'detected',
+                $firstSeen,
+                $lastSeen,
+                $importId,
+            ]
         );
     }
 
@@ -2522,8 +2746,12 @@ class Module_Cve extends BaseModule
         }
         return CveDatabase::fetchOne(
             "SELECT vm.*, g.name AS company_name,
+                    (SELECT COUNT(*) FROM vm_findings f WHERE f.case_id = vm.id) AS findings_count,
                     c.severity AS catalog_severity, c.cvss_v3_score AS catalog_cvss,
-                    e.epss AS catalog_epss, k.cve_id AS kev_id,
+                    c.cvss_v3_vector AS catalog_vector,
+                    e.epss AS catalog_epss, e.percentile AS catalog_epss_percentile,
+                    e.score_date AS catalog_epss_date,
+                    k.cve_id AS kev_id, k.date_added AS kev_date,
                     i.filename AS import_filename, i.export_date AS import_export_date
              FROM vm_cases vm
              LEFT JOIN software_groups g ON g.id = vm.group_id

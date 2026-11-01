@@ -500,7 +500,21 @@ $caseUrl = static function (int $caseId) use ($queryBase): string {
             syncConditions(target);
             hydrateCvePanels(target);
             hydratePlanPanels(target);
+            hydrateFindingsPanels(target);
             return true;
+        });
+    }
+
+    function hydrateFindingsPanels(root) {
+        if (!root || !root.querySelectorAll) { return; }
+        Array.prototype.forEach.call(root.querySelectorAll('[data-vm-findings-panel]'), function (box) {
+            if (box.getAttribute('data-vm-loaded') === '1') { return; }
+            var url = box.getAttribute('data-vm-findings-url');
+            if (!url) { return; }
+            box.setAttribute('data-vm-loaded', '1');
+            loadFragment(url, box, 'Cargando hallazgos…').catch(function () {
+                box.innerHTML = '<p class="text-[11px] text-danger">No se pudieron cargar los hallazgos.</p>';
+            });
         });
     }
 
@@ -630,6 +644,28 @@ $caseUrl = static function (int $caseId) use ($queryBase): string {
         });
     });
 
+    // Guardar/actualizar un hallazgo sin recargar el caso.
+    document.addEventListener('submit', function (event) {
+        var form = event.target.closest('form[data-vm-finding-form]');
+        if (!form) { return; }
+        event.preventDefault();
+
+        var container = form.closest('[data-vm-findings-panel]') || form.parentElement;
+        container.innerHTML = '<p class="text-[11px] text-ink-soft">Guardando hallazgo…</p>';
+        fetch(form.getAttribute('action'), {
+            method: 'POST',
+            body: new FormData(form),
+            credentials: 'same-origin',
+            headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        }).then(function (response) {
+            return response.text();
+        }).then(function (html) {
+            container.innerHTML = html;
+        }).catch(function () {
+            container.innerHTML = '<p class="text-[11px] text-danger">No se pudo guardar el hallazgo.</p>';
+        });
+    });
+
     document.addEventListener('keydown', function (event) {
         if (event.key === 'Escape') { closeDrawer(); }
     });
@@ -637,6 +673,7 @@ $caseUrl = static function (int $caseId) use ($queryBase): string {
     syncConditions(document);
     hydrateCvePanels(document);
     hydratePlanPanels(document);
+    hydrateFindingsPanels(document);
 })();
 </script>
 
