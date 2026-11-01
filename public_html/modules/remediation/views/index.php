@@ -89,6 +89,7 @@ $flashData = flash();
                 'name' => (string)$org['name'],
                 'kind' => (string)$org['kind'],
                 'tenant_id' => (int)($org['tenant_id'] ?? 0),
+                'software_group_id' => (int)($org['software_group_id'] ?? 0),
                 'notes' => (string)($org['notes'] ?? ''),
             ], JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_TAG | JSON_UNESCAPED_UNICODE) ?>)'
                     class="px-3 py-2 border border-line-strong text-ink text-xs font-medium rounded-lg hover:bg-muted">
@@ -177,6 +178,19 @@ $flashData = flash();
                 </label>
             </div>
             <label class="block">
+                <span class="block text-xs font-medium text-ink-muted mb-1">Empresa del CVE (seguimiento)</span>
+                <select name="software_group_id" id="org-software-group"
+                        class="w-full px-3 py-2 rounded-lg border border-line-strong bg-input text-ink text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+                    <option value="0">— Sin vincular —</option>
+                    <?php foreach (($cveCompanies ?? []) as $company): ?>
+                        <option value="<?= (int)$company['id'] ?>"><?= e((string)$company['name']) ?></option>
+                    <?php endforeach; ?>
+                </select>
+                <span class="block text-[10px] text-ink-soft mt-1">
+                    Los planes guardados de esta organización aparecerán en el caso de seguimiento de esa empresa.
+                </span>
+            </label>
+            <label class="block">
                 <span class="block text-xs font-medium text-ink-muted mb-1">Notas</span>
                 <textarea name="notes" id="org-notes" rows="3"
                           class="w-full px-3 py-2 rounded-lg border border-line-strong bg-input text-ink text-sm focus:ring-2 focus:ring-brand-500 outline-none"></textarea>
@@ -214,6 +228,7 @@ function openOrgModal(org) {
     document.getElementById('org-name').value = org ? org.name : '';
     document.getElementById('org-kind').value = org ? org.kind : 'manual';
     document.getElementById('org-tenant').value = org ? String(org.tenant_id || 0) : '0';
+    document.getElementById('org-software-group').value = org ? String(org.software_group_id || 0) : '0';
     document.getElementById('org-notes').value = org ? (org.notes || '') : '';
     syncOrgKind();
     modal.classList.remove('hidden');

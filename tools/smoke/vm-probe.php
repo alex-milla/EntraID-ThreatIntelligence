@@ -116,6 +116,35 @@ switch ($cmd) {
         $out = ['seeded' => $seeded];
         break;
 
+    case 'seed-remediation-plan':
+        // Solo para el E2E: crea organización vinculada + tarea con plan.
+        $companyId = (int)($argv[2] ?? 0);
+        $cveId = strtoupper(trim((string)($argv[3] ?? '')));
+        if ($companyId <= 0 || !preg_match('/^CVE-\d{4}-\d{4,7}$/', $cveId)) {
+            fwrite(STDERR, "Parámetros inválidos.\n");
+            exit(1);
+        }
+        Database::query(
+            "INSERT OR IGNORE INTO remediation_orgs (name, kind, software_group_id, created_by)
+             VALUES ('E2E Remediation', 'manual', ?, 0)",
+            [$companyId]
+        );
+        Database::query(
+            "UPDATE remediation_orgs SET software_group_id = ? WHERE name = 'E2E Remediation'",
+            [$companyId]
+        );
+        $org = Database::fetchOne("SELECT id FROM remediation_orgs WHERE name = 'E2E Remediation'");
+        $orgId = (int)($org['id'] ?? 0);
+        Database::query(
+            "INSERT INTO remediation_tasks (org_id, cve_id, title, status, plan, source)
+             VALUES (?, ?, 'Fixture plan E2E', 'open', ?, 'manual')
+             ON CONFLICT(org_id, cve_id) DO UPDATE SET
+                 plan = excluded.plan, status = 'open', updated_at = datetime('now')",
+            [$orgId, $cveId, "# Plan de remediación E2E\n\n1. Paso 1: aplicar parche.\n2. Verificar versión."]
+        );
+        $out = ['org_id' => $orgId, 'cve_id' => $cveId];
+        break;
+
     default:
         fwrite(STDERR, "Comando desconocido.\n");
         exit(1);

@@ -352,4 +352,16 @@ foreach (preg_split('/[;,]+/', (string)($case['related_software'] ?? '')) ?: [] 
             <p class="text-[11px] text-ink-soft">Cargando información del CVE…</p>
         </div>
     </div>
+
+    <!-- Plan de remediación guardado en el módulo Remediation -->
+    <div class="border-t border-line pt-4" data-vm-plan-section>
+        <div class="flex items-center justify-between gap-2 mb-2">
+            <h4 class="text-xs font-semibold">Plan de remediación</h4>
+            <span class="text-[10px] text-ink-soft">Guardado en Remediation · Markdown</span>
+        </div>
+        <div data-vm-plan-panel
+             data-vm-plan-url="<?= base_url('modules/cve/vm/' . $caseId . '/remediation-plan') ?>">
+            <p class="text-[11px] text-ink-soft">Cargando plan de remediación…</p>
+        </div>
+    </div>
 </div>

@@ -74,6 +74,17 @@ class Database
             $db->exec("ALTER TABLE sync_jobs ADD COLUMN queue_state TEXT");
         }
 
+        // v0.3.6: vínculo opcional organización de Remediation ↔ empresa del
+        // módulo CVE (software_groups.kind='company' en cve.sqlite). Permite
+        // mostrar los planes guardados dentro del seguimiento.
+        $orgCols = [];
+        foreach ($db->query("PRAGMA table_info(remediation_orgs)") as $c) {
+            $orgCols[$c['name']] = true;
+        }
+        if (!isset($orgCols['software_group_id'])) {
+            $db->exec("ALTER TABLE remediation_orgs ADD COLUMN software_group_id INTEGER");
+        }
+
         // v0.2.5.23: retirada del proveedor OpenCode (sus modelos gratis no se
         // pueden usar desde la web). Limpieza idempotente, una sola vez.
         self::cleanupRemovedProviders($db);
@@ -547,6 +558,7 @@ class Database
             machine_count INTEGER NOT NULL DEFAULT 0,
             machines_json TEXT,
             source TEXT NOT NULL DEFAULT 'manual',
+            software_group_id INTEGER,
             created_by INTEGER,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             updated_at TEXT NOT NULL DEFAULT (datetime('now')),

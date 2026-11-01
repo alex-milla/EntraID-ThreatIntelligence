@@ -269,6 +269,15 @@ try {
 
     $fallbackAfter = Invoke-WebRequest -Uri "$base/index.php/modules/cve/vm/$rawCaseId/cve-info" -WebSession $ws -UseBasicParsing -TimeoutSec 30
     Check 'E2E info CVE: ofrece ver el informe existente' ($fallbackAfter.Content -match 'Ver informe del CVE') 'sin botón de informe'
+
+    # --- plan de Remediation vinculado a la empresa ---
+    $seedPlan = Probe @('seed-remediation-plan', "$companyId", 'CVE-2026-21589')
+    Check 'E2E plan: organización y tarea sembradas' ([int]$seedPlan.org_id -gt 0) "org=$($seedPlan.org_id)"
+    $planResp = Invoke-WebRequest -Uri "$base/index.php/modules/cve/vm/$criticalId/remediation-plan" -WebSession $ws -UseBasicParsing -TimeoutSec 30
+    Check 'E2E plan: visible en el caso' ($planResp.StatusCode -eq 200 -and $planResp.Content -match 'Paso 1: aplicar parche') "status=$($planResp.StatusCode)"
+    Check 'E2E plan: enlaza con la tarea' ($planResp.Content -match 'Abrir tarea') 'sin enlace a la tarea'
+    $vmPage = Invoke-WebRequest -Uri "$base/index.php/modules/cve?tab=vm&company=$companyId" -WebSession $ws -UseBasicParsing -TimeoutSec 30
+    Check 'E2E plan: etiqueta Plan en la cola' ($vmPage.Content -match 'data-vm-plan-badge') 'sin etiqueta en la cola'
 }
 finally {
     if ($server -and -not $server.HasExited) { Stop-Process -Id $server.Id -Force }

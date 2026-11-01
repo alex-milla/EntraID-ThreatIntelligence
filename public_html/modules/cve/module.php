@@ -92,6 +92,7 @@ class Module_Cve extends BaseModule
             ['method' => 'GET',  'pattern' => 'vm/{caseId}/panel', 'handler' => [$this, 'vmCasePanel']],
             ['method' => 'GET',  'pattern' => 'vm/{caseId}/cve-info', 'handler' => [$this, 'vmCveInfo']],
             ['method' => 'POST', 'pattern' => 'vm/{caseId}/ai-report', 'handler' => [$this, 'vmGenerateCveReport']],
+            ['method' => 'GET',  'pattern' => 'vm/{caseId}/remediation-plan', 'handler' => [$this, 'vmRemediationPlan']],
         ];
     }
 
@@ -154,6 +155,7 @@ class Module_Cve extends BaseModule
         ];
         $vmLastImport = null;
         $vmPending = null;
+        $vmPlanKeys = [];
 
         try {
             $groups = $this->groupTree();
@@ -223,6 +225,7 @@ class Module_Cve extends BaseModule
                 if ($vmFilters['company'] > 0) {
                     $vmPending = $this->countVmPendingCases($vmFilters['company']);
                 }
+                $vmPlanKeys = $this->vmPlanKeyMap($vmFilters['company']);
                 $vmCaseId = max(0, (int)($_GET['case'] ?? 0));
                 if ($vmCaseId > 0) {
                     $vmCase = $this->getVmCase($vmCaseId);
@@ -324,6 +327,7 @@ class Module_Cve extends BaseModule
             'vmFilters'     => $vmFilters,
             'vmLastImport'  => $vmLastImport,
             'vmPending'     => $vmPending,
+            'vmPlanKeys'    => $vmPlanKeys,
         ]);
     }
 
@@ -2021,6 +2025,133 @@ class Module_Cve extends BaseModule
              LIMIT 1",
             [$companyId, '%' . $cveId . '%', $cveId]
         );
+    }
+
+    /**
+     * Planes de remediación asociados al caso, para mostrarlos debajo.
+     * Cruza database.sqlite (Remediation) con la empresa del caso sin FK
+     * entre bases: primero por vínculo explícito y, si no hay, por la única
+     * organización existente (respaldo para instalaciones de un solo usuario).
+     */
+    public function vmRemediationPlan(array $params = []): void
+    {
+        Auth::require();
+        if (!Auth::isAdmin()) {
+            http_response_code(403);
+            echo '<div class="p-4 text-sm text-ink-muted">Solo un administrador puede ver esta información.</div>';
+            return;
+        }
+
+        $case = $this->getVmCase((int)($params['caseId'] ?? 0));
+        if ($case === null) {
+            http_response_code(404);
+            echo '<div class="p-4 text-sm text-ink-muted">Caso de seguimiento no encontrado.</div>';
+            return;
+        }
+
+        $data = $this->vmRemediationForCase($case);
+        $vmRemediationOrgs = $data['orgs'];
+        $vmRemediationTasks = $data['tasks'];
+        $vmRemediationFallback = $data['fallback'];
+        $vmRemediationError = $data['error'];
+        $vmRemediationCve = strtoupper((string)$case['cve_id']);
+        require __DIR__ . '/views/_vm_remediation_plan.php';
+    }
+
+    /**
+     * @return array{orgs: array<int, array<string, mixed>>, tasks: array<int, array<string, mixed>>, fallback: bool, error: string}
+     */
+    private function vmRemediationForCase(array $case): array
+    {
+        $companyId = (int)($case['group_id'] ?? 0);
+        $cveId = strtoupper((string)($case['cve_id'] ?? ''));
+        if ($companyId <= 0 || $cveId === '') {
+            return ['orgs' => [], 'tasks' => [], 'fallback' => false, 'error' => 'El caso no tiene empresa o CVE válidos.'];
+        }
+
+        try {
+            $orgs = Database::fetchAll(
+                "SELECT id, name FROM remediation_orgs
+                 WHERE software_group_id = ?
+                 ORDER BY name",
+                [$companyId]
+            );
+            $fallback = false;
+            if ($orgs === []) {
+                $all = Database::fetchAll(
+                    "SELECT id, name, software_group_id FROM remediation_orgs ORDER BY id"
+                );
+                if (count($all) === 1 && (int)($all[0]['software_group_id'] ?? 0) === 0) {
+                    $orgs = [['id' => (int)$all[0]['id'], 'name' => (string)$all[0]['name']]];
+                    $fallback = true;
+                }
+            }
+            if ($orgs === []) {
+                return ['orgs' => [], 'tasks' => [], 'fallback' => false, 'error' => ''];
+            }
+
+            $ids = array_map(static fn(array $org): int => (int)$org['id'], $orgs);
+            $placeholders = implode(',', array_fill(0, count($ids), '?'));
+            $tasks = Database::fetchAll(
+                "SELECT id, org_id, title, status, plan, due_at, updated_at
+                 FROM remediation_tasks
+                 WHERE cve_id = ?
+                   AND org_id IN (" . $placeholders . ")
+                   AND plan IS NOT NULL AND TRIM(plan) <> ''
+                 ORDER BY updated_at DESC, id DESC",
+                array_merge([$cveId], $ids)
+            );
+
+            return ['orgs' => $orgs, 'tasks' => $tasks, 'fallback' => $fallback, 'error' => ''];
+        } catch (Throwable $e) {
+            return ['orgs' => [], 'tasks' => [], 'fallback' => false, 'error' => $e->getMessage()];
+        }
+    }
+
+    /**
+     * Claves "empresa|CVE" con plan de remediación, para la etiqueta de la cola.
+     * Sin empresa seleccionada solo se marcan los vínculos explícitos.
+     *
+     * @return array<string, bool>
+     */
+    private function vmPlanKeyMap(int $companyId = 0): array
+    {
+        try {
+            $orgs = Database::fetchAll("SELECT id, software_group_id FROM remediation_orgs");
+            if ($orgs === []) {
+                return [];
+            }
+
+            $orgToCompany = [];
+            $singleFallbackOrg = 0;
+            if (count($orgs) === 1 && (int)($orgs[0]['software_group_id'] ?? 0) === 0) {
+                $singleFallbackOrg = (int)$orgs[0]['id'];
+            }
+            foreach ($orgs as $org) {
+                $linked = (int)($org['software_group_id'] ?? 0);
+                if ($linked > 0) {
+                    $orgToCompany[(int)$org['id']] = $linked;
+                }
+            }
+
+            $rows = Database::fetchAll(
+                "SELECT cve_id, org_id FROM remediation_tasks
+                 WHERE plan IS NOT NULL AND TRIM(plan) <> ''"
+            );
+            $keys = [];
+            foreach ($rows as $row) {
+                $orgId = (int)$row['org_id'];
+                $cve = strtoupper((string)$row['cve_id']);
+                if (isset($orgToCompany[$orgId])) {
+                    $keys[$orgToCompany[$orgId] . '|' . $cve] = true;
+                } elseif ($singleFallbackOrg > 0 && $orgId === $singleFallbackOrg && $companyId > 0) {
+                    $keys[$companyId . '|' . $cve] = true;
+                }
+            }
+            return $keys;
+        } catch (Throwable $e) {
+            return [];
+        }
     }
 
     /** Fuente de factores de prioridad: CSV primero, catálogo como respaldo. */

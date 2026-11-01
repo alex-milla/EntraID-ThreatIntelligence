@@ -116,6 +116,18 @@ class Module_Remediation extends BaseModule
             $cveData = $cveContext;
         }
 
+        // Empresas del módulo CVE para vincular la organización (opcional).
+        $cveCompanies = [];
+        try {
+            if (class_exists('CveDatabase')) {
+                $cveCompanies = CveDatabase::fetchAll(
+                    "SELECT id, name FROM software_groups WHERE kind = 'company' ORDER BY name"
+                );
+            }
+        } catch (Throwable $e) {
+            $cveCompanies = [];
+        }
+
         echo $this->page('index', [
             'isAdmin'        => $isAdmin,
             'tab'            => $tab,
@@ -123,6 +135,7 @@ class Module_Remediation extends BaseModule
             'org'            => $org,
             'selectedOrgId'  => $selectedOrgId,
             'tenants'        => Database::fetchAll("SELECT id, name FROM tenants ORDER BY name"),
+            'cveCompanies'   => $cveCompanies,
             'tasks'          => $tasks,
             'filters'        => $filters,
             'selectedTask'   => $selectedTask,
@@ -154,6 +167,7 @@ class Module_Remediation extends BaseModule
         $kind = (string)($_POST['kind'] ?? 'manual');
         $tenantId = (int)($_POST['tenant_id'] ?? 0);
         $notes = trim((string)($_POST['notes'] ?? ''));
+        $softwareGroupId = max(0, (int)($_POST['software_group_id'] ?? 0));
 
         if ($name === '') {
             flash('error', 'El nombre de la organización es obligatorio.');
@@ -161,6 +175,21 @@ class Module_Remediation extends BaseModule
         }
         if (!in_array($kind, ['manual', 'tenant'], true)) {
             $kind = 'manual';
+        }
+        if ($softwareGroupId > 0) {
+            $group = null;
+            try {
+                $group = CveDatabase::fetchOne(
+                    "SELECT id, kind FROM software_groups WHERE id = ?",
+                    [$softwareGroupId]
+                );
+            } catch (Throwable $e) {
+                $group = null;
+            }
+            if ($group === null || (string)($group['kind'] ?? '') !== 'company') {
+                flash('error', 'La empresa del CVE seleccionada no existe.');
+                redirect(base_url('modules/remediation'));
+            }
         }
         if ($kind === 'tenant') {
             $tenant = $tenantId > 0 ? Database::fetchOne("SELECT id FROM tenants WHERE id = ?", [$tenantId]) : null;
@@ -176,16 +205,16 @@ class Module_Remediation extends BaseModule
             if ($id > 0) {
                 Database::update(
                     "UPDATE remediation_orgs
-                     SET name = ?, kind = ?, tenant_id = ?, notes = ?, updated_at = datetime('now')
+                     SET name = ?, kind = ?, tenant_id = ?, notes = ?, software_group_id = ?, updated_at = datetime('now')
                      WHERE id = ?",
-                    [$name, $kind, $tenantId > 0 ? $tenantId : null, $notes !== '' ? $notes : null, $id]
+                    [$name, $kind, $tenantId > 0 ? $tenantId : null, $notes !== '' ? $notes : null, $softwareGroupId > 0 ? $softwareGroupId : null, $id]
                 );
                 flash('success', 'Organización actualizada.');
             } else {
                 $id = Database::insert(
-                    "INSERT INTO remediation_orgs (name, kind, tenant_id, notes, created_by)
-                     VALUES (?, ?, ?, ?, ?)",
-                    [$name, $kind, $tenantId > 0 ? $tenantId : null, $notes !== '' ? $notes : null, Auth::id()]
+                    "INSERT INTO remediation_orgs (name, kind, tenant_id, notes, software_group_id, created_by)
+                     VALUES (?, ?, ?, ?, ?, ?)",
+                    [$name, $kind, $tenantId > 0 ? $tenantId : null, $notes !== '' ? $notes : null, $softwareGroupId > 0 ? $softwareGroupId : null, Auth::id()]
                 );
                 flash('success', 'Organización creada.');
             }

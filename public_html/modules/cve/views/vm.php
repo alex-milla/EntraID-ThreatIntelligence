@@ -21,6 +21,7 @@ $vmFilters = array_merge(
 $vmLastImport = is_array($vmLastImport ?? null) ? $vmLastImport : null;
 $companyGroups = is_array($companyGroups ?? null) ? $companyGroups : [];
 $vmPending = ($vmPending === null || $vmPending === false) ? null : (int)$vmPending;
+$vmPlanKeys = is_array($vmPlanKeys ?? null) ? $vmPlanKeys : [];
 
 $statusLabels = VmCases::STATUSES;
 $priorityLabels = VmCases::PRIORITIES;
@@ -356,6 +357,10 @@ $caseUrl = static function (int $caseId) use ($queryBase): string {
                                       title="<?= e($sourceLabels[$rowSource] ?? $rowSource) ?>">
                                     <?= $rowSource === 'catalog' ? 'Mis CVE' : 'TVM' ?>
                                 </span>
+                                <?php if (isset($vmPlanKeys[(int)$caseRow['group_id'] . '|' . strtoupper((string)$caseRow['cve_id'])])): ?>
+                                    <span class="ml-1 inline-flex px-1 py-0.5 rounded text-[9px] bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300"
+                                          data-vm-plan-badge title="Tiene plan de remediación guardado">Plan</span>
+                                <?php endif; ?>
                             </td>
                             <td class="px-3 py-2 max-w-[150px] truncate" title="<?= e((string)($caseRow['company_name'] ?? '')) ?>">
                                 <?= e((string)($caseRow['company_name'] ?? '—')) ?>
@@ -406,6 +411,38 @@ $caseUrl = static function (int $caseId) use ($queryBase): string {
     [data-vm-cve-panel] [class*="divide-x"] > * + * {
         border-left-width: 0 !important;
     }
+    .md-body h1, .md-body h2, .md-body h3, .md-body h4, .md-body h5, .md-body h6 {
+        font-weight: 600; line-height: 1.3; margin: 0.85rem 0 0.35rem;
+    }
+    .md-body h1 { font-size: 1.05rem; }
+    .md-body h2 { font-size: 1rem; }
+    .md-body h3 { font-size: 0.95rem; }
+    .md-body h4, .md-body h5, .md-body h6 { font-size: 0.9rem; }
+    .md-body p { margin: 0.4rem 0; }
+    .md-body ul, .md-body ol { margin: 0.4rem 0 0.4rem 1.1rem; }
+    .md-body ul { list-style: disc; }
+    .md-body ol { list-style: decimal; }
+    .md-body li { margin: 0.15rem 0; }
+    .md-body li > ul, .md-body li > ol { margin: 0.2rem 0 0.2rem 1rem; }
+    .md-body code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        background: rgba(127, 127, 127, 0.16); padding: 0.1rem 0.3rem; border-radius: 0.25rem;
+        font-size: 0.9em;
+    }
+    .md-body pre {
+        background: rgba(127, 127, 127, 0.12); padding: 0.6rem 0.75rem; border-radius: 0.5rem;
+        overflow-x: auto; margin: 0.5rem 0;
+    }
+    .md-body pre code { background: none; padding: 0; }
+    .md-body hr { border: 0; border-top: 1px solid rgba(127, 127, 127, 0.3); margin: 0.8rem 0; }
+    .md-body strong { font-weight: 600; }
+    .md-body blockquote {
+        border-left: 3px solid rgba(127, 127, 127, 0.4); padding-left: 0.6rem;
+        margin: 0.5rem 0; opacity: 0.9;
+    }
+    .md-body a { text-decoration: underline; }
+    .md-body table { border-collapse: collapse; margin: 0.5rem 0; width: 100%; }
+    .md-body th, .md-body td { border: 1px solid rgba(127, 127, 127, 0.3); padding: 0.25rem 0.4rem; text-align: left; }
 </style>
 
 <!-- Panel inline (ficha del CVE y detalle del caso) -->
@@ -462,7 +499,21 @@ $caseUrl = static function (int $caseId) use ($queryBase): string {
             target.innerHTML = html;
             syncConditions(target);
             hydrateCvePanels(target);
+            hydratePlanPanels(target);
             return true;
+        });
+    }
+
+    function hydratePlanPanels(root) {
+        if (!root || !root.querySelectorAll) { return; }
+        Array.prototype.forEach.call(root.querySelectorAll('[data-vm-plan-panel]'), function (box) {
+            if (box.getAttribute('data-vm-loaded') === '1') { return; }
+            var url = box.getAttribute('data-vm-plan-url');
+            if (!url) { return; }
+            box.setAttribute('data-vm-loaded', '1');
+            loadFragment(url, box, 'Cargando plan de remediación…').catch(function () {
+                box.innerHTML = '<p class="text-[11px] text-danger">No se pudo cargar el plan de remediación.</p>';
+            });
         });
     }
 
@@ -563,6 +614,7 @@ $caseUrl = static function (int $caseId) use ($queryBase): string {
 
     syncConditions(document);
     hydrateCvePanels(document);
+    hydratePlanPanels(document);
 })();
 </script>
 
