@@ -28,6 +28,7 @@ final class IncidentStoryAnonymizer
         'system', 'local service', 'network service', 'nt authority',
         'anonymous logon', 'everyone', 'authenticated users', 'network',
         'creator owner', 'trustedinstaller', 'defaultaccount', 'wdagutilityaccount',
+        'public', 'default', 'default user', 'all users',
     ];
 
     /** Dominios públicos de terceros que no deben pseudonimizarse. */
@@ -201,8 +202,8 @@ final class IncidentStoryAnonymizer
             }
         }
 
-        /* C:\Users\<nombre> */
-        if (preg_match_all('/[A-Za-z]:\x5cUsers\x5c([^\x5c\/\s"\']+)/u', $text, $m, PREG_SET_ORDER)) {
+        /* C:\Users\<nombre> y cualquier \Users\<nombre>\ (unidad, UNC, \\ dobles) */
+        if (preg_match_all('/(?:[A-Za-z]:)?\x5c{1,2}Users\x5c{1,2}([^\x5c\/\s"\']+)/iu', $text, $m, PREG_SET_ORDER)) {
             foreach ($m as $match) {
                 $this->registerUser($match[1]);
             }
@@ -411,9 +412,9 @@ final class IncidentStoryAnonymizer
             $text
         ) ?? $text;
 
-        /* 3. C:\Users\<nombre>. */
+        /* 3. Cualquier \Users\<nombre>\ (unidad, UNC, barras dobles). */
         $text = preg_replace_callback(
-            '/([A-Za-z]:\x5cUsers\x5c)([^\x5c\/\s"\']+)/u',
+            '/((?:[A-Za-z]:)?\x5c{1,2}Users\x5c{1,2})([^\x5c\/\s"\']+)/iu',
             function (array $m): string {
                 $pseudo = $this->registerUser($m[2]);
                 return $m[1] . ($pseudo ?? $m[2]);

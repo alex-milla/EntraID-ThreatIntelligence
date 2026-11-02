@@ -163,6 +163,10 @@ $decisionLabel = static fn(?string $classification): string => match ((string)$c
                             <a class="btn-tiny btn-outline btn" href="<?= e($base . '/case/' . $id) ?>">
                                 <?= icon('visibility', 16) ?> Ver caso
                             </a>
+                            <a class="btn-tiny btn-outline btn" href="<?= e($base . '/case/' . $id . '/export') ?>"
+                               title="Descargar el caso y su triaje en Markdown">
+                                <?= icon('download', 16) ?> MD
+                            </a>
                         </td>
                     </tr>
                 <?php endforeach; ?>

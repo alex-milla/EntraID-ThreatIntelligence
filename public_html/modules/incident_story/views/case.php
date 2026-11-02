@@ -4,8 +4,11 @@
  *
  * @var Module_IncidentStory $module
  * @var array $case
+ * @var string $view
+ * @var array $evidencia
  * @var array $eventos
  * @var int $eventosTotal
+ * @var array $resumen
  * @var array $decisions
  * @var array $profiles
  * @var int|null $defaultProfileId
@@ -72,6 +75,26 @@ $analistaDefault = $analistaActual !== null
     ? (trim((string)($analistaActual['display_name'] ?? '')) ?: (string)$analistaActual['username'])
     : '';
 $inputClass = 'w-full px-3 py-2 rounded-lg border border-line-strong bg-input text-ink text-sm focus:ring-2 focus:ring-brand-500 outline-none';
+
+$procesosResumen = is_array($resumen['procesos'] ?? null) ? $resumen['procesos'] : [];
+$scriptsResumen = is_array($resumen['scripts'] ?? null) ? $resumen['scripts'] : [];
+$hashesResumen = is_array($resumen['hashes'] ?? null) ? $resumen['hashes'] : [];
+$alertasResumen = is_array($resumen['alertas'] ?? null) ? $resumen['alertas'] : [];
+$triageTieneContenido = $triage !== [] && (
+    trim((string)($triage['veredicto_asistido'] ?? '')) !== ''
+    || trim((string)($triage['resumen_ejecutivo'] ?? '')) !== ''
+    || trim((string)($triage['cadena_de_eventos'] ?? '')) !== ''
+    || trim((string)($triage['hipotesis_principal'] ?? '')) !== ''
+    || $list($triage['acciones_recomendadas'] ?? []) !== []
+    || $list($triage['tecnicas_attck'] ?? []) !== []
+);
+$bannerBorder = match ($verdict) {
+    'benigna'    => 'border-green-500',
+    'sospechosa' => 'border-yellow-500',
+    'ataque'     => 'border-red-500',
+    default      => 'border-line-strong',
+};
+$baseVista = $base . '/case/' . (int)$case['id'];
 ?>
 
 <?php if (!empty($notice) && is_array($notice)): ?>
@@ -108,6 +131,9 @@ $inputClass = 'w-full px-3 py-2 rounded-lg border border-line-strong bg-input te
                     Decisión: <?= e($decisionLabel((string)$decisionActual['classification'])) ?>
                 </span>
             <?php endif; ?>
+            <a class="btn btn-outline" href="<?= e($baseVista . '/export') ?>">
+                <?= icon('download', 18) ?> Exportar Markdown
+            </a>
         </div>
     </div>
 </div>
@@ -120,6 +146,33 @@ $inputClass = 'w-full px-3 py-2 rounded-lg border border-line-strong bg-input te
                 <li><?= e((string)$w) ?></li>
             <?php endforeach; ?>
         </ul>
+    </div>
+<?php endif; ?>
+
+<?php if ($triage !== []): ?>
+    <div class="card p-4 mb-6 border-l-4 <?= e($bannerBorder) ?>">
+        <div class="flex items-start justify-between gap-3 flex-wrap">
+            <div class="min-w-0">
+                <p class="text-[11px] uppercase tracking-wide text-ink-muted">Veredicto asistido por IA</p>
+                <p class="text-lg font-bold">
+                    <?= e($verdict !== '' ? ucfirst($verdict) : 'Triaje guardado sin veredicto') ?>
+                    <?php if (!empty($triage['confianza_pct'])): ?>
+                        <span class="text-xs font-normal text-ink-muted">· confianza <?= (int)$triage['confianza_pct'] ?>%</span>
+                    <?php endif; ?>
+                </p>
+                <?php if (!empty($triage['resumen_ejecutivo'])): ?>
+                    <p class="text-sm mt-1 whitespace-pre-line"><?= e(truncate((string)$triage['resumen_ejecutivo'], 420)) ?></p>
+                <?php endif; ?>
+                <?php if (!$triageTieneContenido && empty($triage['respuesta_original'])): ?>
+                    <p class="text-xs text-ink-muted mt-1">
+                        El modelo respondió, pero no con los campos esperados. Puedes ver la respuesta guardada en la tarjeta de triaje.
+                    </p>
+                <?php endif; ?>
+            </div>
+            <a href="#triaje" class="btn btn-tiny btn-outline shrink-0">
+                <?= icon('psychology', 16) ?> Ver triaje completo
+            </a>
+        </div>
     </div>
 <?php endif; ?>
 
@@ -156,11 +209,132 @@ $inputClass = 'w-full px-3 py-2 rounded-lg border border-line-strong bg-input te
         </div>
 
         <div class="card p-5">
-            <div class="flex items-center justify-between gap-3 mb-4">
-                <h2 class="text-sm font-semibold">Eventos normalizados</h2>
-                <span class="text-xs text-ink-muted">
-                    <?= count($eventos) ?> de <?= number_format((float)$eventosTotal, 0, ',', '.') ?>
+            <div class="flex items-start justify-between gap-3 flex-wrap mb-3">
+                <div>
+                    <h2 class="text-sm font-semibold">Resumen del story (sin IA)</h2>
+                    <p class="text-[11px] text-ink-soft mt-0.5">
+                        Calculado del propio story: no necesita proveedor de IA ni consume cuota.
+                    </p>
+                </div>
+                <span class="inline-flex px-2 py-0.5 text-xs rounded-full bg-muted text-ink-muted">
+                    <?= $view === 'anon' ? 'Evidencia pseudonimizada' : 'Evidencia original' ?>
                 </span>
+            </div>
+
+            <dl class="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-3 text-sm">
+                <div>
+                    <dt class="text-xs text-ink-muted">Eventos</dt>
+                    <dd class="mt-0.5 font-semibold"><?= (int)($resumen['total_eventos'] ?? 0) ?></dd>
+                </div>
+                <div>
+                    <dt class="text-xs text-ink-muted">Primera actividad</dt>
+                    <dd class="mt-0.5"><?= e($fmtDate($resumen['desde'] ?? null)) ?></dd>
+                </div>
+                <div>
+                    <dt class="text-xs text-ink-muted">Última actividad</dt>
+                    <dd class="mt-0.5"><?= e($fmtDate($resumen['hasta'] ?? null)) ?></dd>
+                </div>
+                <div>
+                    <dt class="text-xs text-ink-muted">Hashes únicos</dt>
+                    <dd class="mt-0.5 font-semibold"><?= count($hashesResumen) ?></dd>
+                </div>
+            </dl>
+
+            <?php if ($alertasResumen !== []): ?>
+                <div class="mt-4">
+                    <p class="text-xs text-ink-muted mb-1.5">Alertas del story</p>
+                    <div class="flex flex-wrap gap-1.5">
+                        <?php foreach ($alertasResumen as $al): ?>
+                            <span class="inline-flex px-2 py-0.5 text-xs rounded-full bg-muted text-ink-muted">
+                                <?= e((string)($al['nombre'] ?? 'Alerta')) ?>
+                                <?php if (!empty($al['severidad'])): ?> · <?= e((string)$al['severidad']) ?><?php endif; ?>
+                            </span>
+                        <?php endforeach; ?>
+                    </div>
+                </div>
+            <?php endif; ?>
+
+            <?php if ($procesosResumen !== []): ?>
+                <div class="mt-4 overflow-x-auto">
+                    <p class="text-xs text-ink-muted mb-1.5">Procesos observados</p>
+                    <table class="data-table w-full text-xs">
+                        <thead>
+                            <tr>
+                                <th>Proceso</th>
+                                <th>Eventos</th>
+                                <th>Usuarios</th>
+                                <th class="col-secondary">Primera</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        <?php foreach (array_slice($procesosResumen, 0, 15) as $p): ?>
+                            <tr>
+                                <td><strong><?= e((string)($p['proceso'] ?? '—')) ?></strong></td>
+                                <td><?= (int)($p['eventos'] ?? 0) ?></td>
+                                <td class="text-ink-muted"><?= e(implode(', ', (array)($p['usuarios'] ?? [])) ?: '—') ?></td>
+                                <td class="col-secondary whitespace-nowrap"><?= e($fmtDate($p['primera'] ?? null)) ?></td>
+                            </tr>
+                        <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                    <?php if (count($procesosResumen) > 15): ?>
+                        <p class="text-[11px] text-ink-soft mt-1">Se muestran 15 de <?= count($procesosResumen) ?> procesos.</p>
+                    <?php endif; ?>
+                </div>
+            <?php endif; ?>
+
+            <?php if ($scriptsResumen !== []): ?>
+                <div class="mt-4">
+                    <p class="text-xs text-ink-muted mb-1.5">Scripts detectados (<?= count($scriptsResumen) ?>)</p>
+                    <ul class="space-y-2 text-xs">
+                        <?php foreach (array_slice($scriptsResumen, 0, 5) as $s): ?>
+                            <li class="border border-line-subtle rounded-lg p-2">
+                                <div class="text-ink-muted">
+                                    <?= e((string)($s['proceso'] ?? 'script')) ?>
+                                    · <?= e((string)($s['usuario'] ?? '—')) ?>
+                                    · <?= (int)($s['longitud'] ?? 0) ?> caracteres
+                                </div>
+                                <code class="block mt-1 break-all"><?= e((string)($s['preview'] ?? '')) ?></code>
+                            </li>
+                        <?php endforeach; ?>
+                    </ul>
+                    <?php if (count($scriptsResumen) > 5): ?>
+                        <p class="text-[11px] text-ink-soft mt-1">Se muestran 5 de <?= count($scriptsResumen) ?> scripts; el resto está en la evidencia.</p>
+                    <?php endif; ?>
+                </div>
+            <?php endif; ?>
+
+            <?php if ($hashesResumen !== []): ?>
+                <div class="mt-4">
+                    <p class="text-xs text-ink-muted mb-1.5">Hashes</p>
+                    <ul class="space-y-1 text-xs font-mono break-all">
+                        <?php foreach (array_slice($hashesResumen, 0, 8) as $h): ?>
+                            <li><?= e((string)($h['tipo'] ?? 'hash')) ?>: <?= e((string)($h['valor'] ?? '')) ?></li>
+                        <?php endforeach; ?>
+                    </ul>
+                </div>
+            <?php endif; ?>
+        </div>
+
+        <div class="card p-5">
+            <div class="flex items-center justify-between gap-3 mb-4 flex-wrap">
+                <div>
+                    <h2 class="text-sm font-semibold">
+                        Eventos normalizados
+                        <span class="text-xs font-normal text-ink-muted">
+                            (<?= $view === 'anon' ? 'pseudonimizados' : 'originales' ?>)
+                        </span>
+                    </h2>
+                    <p class="text-[11px] text-ink-soft mt-0.5">
+                        <?= count($eventos) ?> de <?= number_format((float)$eventosTotal, 0, ',', '.') ?> eventos.
+                        La IA siempre recibe la versión pseudonimizada.
+                    </p>
+                </div>
+                <a class="btn btn-tiny btn-outline"
+                   href="<?= e($baseVista . '?view=' . ($view === 'anon' ? 'original' : 'anon')) ?>">
+                    <?= icon('swap_horiz', 16) ?>
+                    <?= $view === 'anon' ? 'Ver evidencia original' : 'Ver evidencia pseudonimizada' ?>
+                </a>
             </div>
             <?php if ($eventos === []): ?>
                 <p class="text-sm text-ink-muted">No se han podido extraer eventos estructurados. Revisa el texto crudo del caso.</p>
@@ -232,12 +406,10 @@ $inputClass = 'w-full px-3 py-2 rounded-lg border border-line-strong bg-input te
         <div class="card p-5">
             <h2 class="text-sm font-semibold mb-3">Datos para auditoría</h2>
             <details>
-                <summary class="cursor-pointer text-sm text-brand-600 dark:text-brand-300">Caso normalizado (JSON)</summary>
-                <pre class="mt-2 whitespace-pre-wrap break-all font-mono text-[11px] max-h-96 overflow-auto"><?= e($json($caso)) ?></pre>
-            </details>
-            <details class="mt-3">
-                <summary class="cursor-pointer text-sm text-brand-600 dark:text-brand-300">Evidencia pseudonimizada enviada a la IA (JSON)</summary>
-                <pre class="mt-2 whitespace-pre-wrap break-all font-mono text-[11px] max-h-96 overflow-auto"><?= e($json($case['anon'] ?? [])) ?></pre>
+                <summary class="cursor-pointer text-sm text-brand-600 dark:text-brand-300">
+                    Evidencia <?= $view === 'anon' ? 'pseudonimizada' : 'original' ?> (JSON)
+                </summary>
+                <pre class="mt-2 whitespace-pre-wrap break-all font-mono text-[11px] max-h-96 overflow-auto"><?= e($json($evidencia)) ?></pre>
             </details>
             <p class="mt-3 text-[11px] text-ink-soft">
                 La tabla de mapeo de pseudónimos no se muestra aquí. Solo se conserva en el servidor
@@ -248,7 +420,7 @@ $inputClass = 'w-full px-3 py-2 rounded-lg border border-line-strong bg-input te
 
     <!-- Columna derecha: triaje y decisión -->
     <div class="space-y-6">
-        <div class="card p-5">
+        <div class="card p-5" id="triaje">
             <div class="flex items-center justify-between gap-2 mb-3">
                 <h2 class="text-sm font-semibold">Triaje asistido por IA</h2>
                 <?php if ($verdict !== ''): ?>
@@ -275,6 +447,12 @@ $inputClass = 'w-full px-3 py-2 rounded-lg border border-line-strong bg-input te
                 <?php if (isset($triage['respuesta_original'])): ?>
                     <div class="alert alert-warning" role="status">La IA no devolvió JSON válido. Respuesta original:</div>
                     <pre class="whitespace-pre-wrap break-all font-mono text-[11px] max-h-64 overflow-auto"><?= e((string)$triage['respuesta_original']) ?></pre>
+                <?php elseif (!$triageTieneContenido): ?>
+                    <div class="alert alert-info" role="status">
+                        El triaje se guardó, pero el modelo no devolvió los campos esperados.
+                        Este es el contenido almacenado:
+                    </div>
+                    <pre class="whitespace-pre-wrap break-all font-mono text-[11px] max-h-64 overflow-auto"><?= e($json($triage)) ?></pre>
                 <?php else: ?>
                     <div class="space-y-3 text-sm">
                         <?php if (!empty($triage['confianza_pct'])): ?>

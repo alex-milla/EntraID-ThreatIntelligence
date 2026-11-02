@@ -78,6 +78,7 @@ class Module_IncidentStory extends BaseModule
             ['method' => 'GET',  'pattern' => 'new',             'handler' => [$this, 'create']],
             ['method' => 'POST', 'pattern' => 'ingest',          'handler' => [$this, 'ingest']],
             ['method' => 'GET',  'pattern' => 'case/{id}',       'handler' => [$this, 'show']],
+            ['method' => 'GET',  'pattern' => 'case/{id}/export', 'handler' => [$this, 'export']],
             ['method' => 'POST', 'pattern' => 'case/{id}/triage',   'handler' => [$this, 'triage']],
             ['method' => 'POST', 'pattern' => 'case/{id}/decision', 'handler' => [$this, 'decision']],
             ['method' => 'POST', 'pattern' => 'case/{id}/delete',   'handler' => [$this, 'delete']],
@@ -247,11 +248,20 @@ class Module_IncidentStory extends BaseModule
         $defaultProfileId = llm_profile_default()['id'] ?? null;
         $llmConfigured = $llm instanceof Module_Llm ? $llm->isConfigured($defaultProfileId !== null ? (int)$defaultProfileId : null) : false;
 
+        $view = ((string)($_GET['view'] ?? '')) === 'original' ? 'original' : 'anon';
+        $evidencia = $view === 'original'
+            ? (is_array($case['caso'] ?? null) ? $case['caso'] : [])
+            : (is_array($case['anon'] ?? null) ? $case['anon'] : []);
+        $eventosTotal = count((array)($evidencia['eventos'] ?? []));
+
         echo $this->page('case', [
             'module'           => $this,
             'case'             => $case,
-            'eventos'          => array_slice((array)($case['caso']['eventos'] ?? []), 0, 500),
-            'eventosTotal'     => count((array)($case['caso']['eventos'] ?? [])),
+            'view'             => $view,
+            'evidencia'        => $evidencia,
+            'eventos'          => array_slice((array)($evidencia['eventos'] ?? []), 0, 500),
+            'eventosTotal'     => $eventosTotal,
+            'resumen'          => IncidentStoryParser::summarize($evidencia),
             'decisions'        => $this->store()->listDecisions((int)$case['id']),
             'profiles'         => $profiles,
             'defaultProfileId' => $defaultProfileId,
@@ -260,6 +270,215 @@ class Module_IncidentStory extends BaseModule
             'determinations'   => IncidentStoryStore::DETERMINATIONS,
             'notice'           => flash('incident_story'),
         ]);
+    }
+
+    /* =====================================================================
+     * Exportación a Markdown (para informes / tratamiento posterior)
+     * ================================================================== */
+
+    public function export(array $params = []): void
+    {
+        $case = $this->loadCaseOrRedirect($params);
+        $case['decisions'] = $this->store()->listDecisions((int)$case['id']);
+        $md = self::exportMarkdown($case);
+        $slug = preg_replace('/[^a-z0-9-]/i', '', (string)($case['public_id'] ?? ('caso-' . (int)$case['id']))) ?: ('caso-' . (int)$case['id']);
+        $filename = 'incidente-story-' . $slug . '.md';
+
+        header('Content-Type: text/markdown; charset=utf-8');
+        header('Content-Disposition: attachment; filename="' . $filename . '"');
+        header('Cache-Control: no-store, no-cache, must-revalidate');
+        header('X-Content-Type-Options: nosniff');
+        echo $md;
+    }
+
+    /**
+     * Markdown del caso con la evidencia pseudonimizada, el resumen sin IA,
+     * el triaje y las decisiones humanas. Nunca incluye la tabla de mapeo.
+     */
+    public static function exportMarkdown(array $case): string
+    {
+        $caso = is_array($case['caso'] ?? null) ? $case['caso'] : [];
+        $anon = is_array($case['anon'] ?? null) ? $case['anon'] : [];
+        $incidencia = is_array($caso['incidencia'] ?? null) ? $caso['incidencia'] : [];
+        $resumen = IncidentStoryParser::summarize($anon);
+        $triage = is_array($case['triage'] ?? null) ? $case['triage'] : [];
+        $decisions = is_array($case['decisions'] ?? null) ? $case['decisions'] : [];
+
+        $cell = static function (mixed $value): string {
+            $s = is_scalar($value) ? (string)$value : '';
+            return str_replace(['|', "\r", "\n"], ['\\|', ' ', ' '], $s);
+        };
+        $fmt = static fn(mixed $value): string => trim((string)(is_scalar($value) ? $value : '')) !== ''
+            ? str_replace('T', ' ', (string)$value)
+            : '—';
+        $listOr = static fn(mixed $value): string => is_array($value) && $value !== []
+            ? implode(', ', array_map('strval', array_filter($value, 'is_scalar')))
+            : '—';
+
+        $out = [];
+        $out[] = '# Incidente: ' . self::mdText((string)($incidencia['nombre'] ?? 'Caso ' . (int)($case['id'] ?? 0)));
+        $out[] = '';
+        $out[] = '| Campo | Valor |';
+        $out[] = '|---|---|';
+        $out[] = '| Caso | ' . $cell($case['public_id'] ?? '') . ' |';
+        $out[] = '| Incidencia Defender | ' . $cell($incidencia['id_defender'] ?? '—') . ' |';
+        $out[] = '| Severidad | ' . $cell($incidencia['severidad'] ?? '—') . ' |';
+        $out[] = '| Estado | ' . $cell($incidencia['estado'] ?? '—') . ' |';
+        $out[] = '| Formato de entrada | ' . $cell($case['formato_entrada'] ?? '—') . ' |';
+        $out[] = '| Origen | ' . $cell($case['origen'] ?? '—') . ' |';
+        $out[] = '| Eventos | ' . (int)($resumen['total_eventos'] ?? 0) . ' |';
+        $out[] = '| Ventana temporal | ' . $cell($fmt($resumen['desde'] ?? null)) . ' → ' . $cell($fmt($resumen['hasta'] ?? null)) . ' |';
+        $out[] = '| Hash del story | `' . $cell($case['story_hash'] ?? '') . '` |';
+        $out[] = '| Analizado | ' . $cell($fmt($case['created_at'] ?? null)) . ' |';
+        $out[] = '';
+        $out[] = '> Evidencia pseudonimizada antes del análisis. Este informe no contiene la tabla de mapeo.';
+        $out[] = '';
+
+        $out[] = '## Resumen del story (sin IA)';
+        $out[] = '';
+        $alertas = is_array($resumen['alertas'] ?? null) ? $resumen['alertas'] : [];
+        if ($alertas !== []) {
+            $out[] = '### Alertas';
+            $out[] = '';
+            foreach ($alertas as $al) {
+                $out[] = '- ' . self::mdText((string)($al['nombre'] ?? 'Alerta')) . ' (' . self::mdText((string)($al['severidad'] ?? '—')) . ')';
+            }
+            $out[] = '';
+        }
+
+        $procesos = is_array($resumen['procesos'] ?? null) ? $resumen['procesos'] : [];
+        $out[] = '### Procesos observados';
+        $out[] = '';
+        if ($procesos === []) {
+            $out[] = '_No se han extraído procesos._';
+        } else {
+            $out[] = '| Proceso | Eventos | Usuarios | Equipos | Primera | Última |';
+            $out[] = '|---|---:|---|---|---|---|';
+            foreach ($procesos as $p) {
+                $out[] = '| ' . $cell($p['proceso'] ?? '') . ' | ' . (int)($p['eventos'] ?? 0)
+                    . ' | ' . $cell($listOr($p['usuarios'] ?? []))
+                    . ' | ' . $cell($listOr($p['equipos'] ?? []))
+                    . ' | ' . $cell($fmt($p['primera'] ?? null))
+                    . ' | ' . $cell($fmt($p['ultima'] ?? null)) . ' |';
+            }
+        }
+        $out[] = '';
+
+        $scripts = is_array($resumen['scripts'] ?? null) ? $resumen['scripts'] : [];
+        if ($scripts !== []) {
+            $out[] = '### Scripts detectados';
+            $out[] = '';
+            foreach ($scripts as $s) {
+                $out[] = '- **' . self::mdText((string)($s['proceso'] ?? 'script')) . '** · '
+                    . self::mdText((string)($s['usuario'] ?? '—')) . ' · '
+                    . self::mdText($fmt($s['timestamp'] ?? null)) . ' · '
+                    . (int)($s['longitud'] ?? 0) . " caracteres\n  > " . self::mdText((string)($s['preview'] ?? ''));
+            }
+            $out[] = '';
+        }
+
+        $hashes = is_array($resumen['hashes'] ?? null) ? $resumen['hashes'] : [];
+        if ($hashes !== []) {
+            $out[] = '### Hashes';
+            $out[] = '';
+            foreach ($hashes as $h) {
+                $out[] = '- ' . self::mdText((string)($h['tipo'] ?? 'hash')) . ': `' . self::mdText((string)($h['valor'] ?? '')) . '`';
+            }
+            $out[] = '';
+        }
+
+        $out[] = '## Triaje asistido por IA';
+        $out[] = '';
+        if ($triage === []) {
+            $out[] = '_Sin triaje IA registrado._';
+        } else {
+            $out[] = '- **Veredicto asistido:** ' . self::mdText((string)($triage['veredicto_asistido'] ?? '—'));
+            $out[] = '- **Confianza:** ' . (int)($triage['confianza_pct'] ?? 0) . '%';
+            $out[] = '- **Modelo:** ' . self::mdText((string)($case['triage_model'] ?? '—'));
+            $out[] = '- **Fecha:** ' . self::mdText($fmt($case['triage_at'] ?? null));
+            $out[] = '';
+            $campos = [
+                'resumen_ejecutivo'       => 'Resumen ejecutivo',
+                'cadena_de_eventos'       => 'Cadena de eventos',
+                'hipotesis_principal'     => 'Hipótesis principal',
+                'tecnicas_attck'          => 'Técnicas ATT&CK',
+                'indicadores_benignos'    => 'Indicadores benignos',
+                'indicadores_maliciosos'  => 'Indicadores maliciosos',
+                'datos_faltantes'         => 'Datos faltantes',
+                'acciones_recomendadas'   => 'Acciones recomendadas',
+                'preguntas_para_el_analista' => 'Preguntas para el analista',
+            ];
+            foreach ($campos as $key => $label) {
+                $value = $triage[$key] ?? null;
+                if (is_array($value)) {
+                    $items = array_values(array_filter(array_map(
+                        static fn($v) => is_scalar($v) ? trim((string)$v) : '',
+                        $value
+                    ), static fn($v) => $v !== ''));
+                    if ($items === []) {
+                        continue;
+                    }
+                    $out[] = '### ' . $label;
+                    $out[] = '';
+                    foreach ($items as $item) {
+                        $out[] = '- ' . self::mdText($item);
+                    }
+                    $out[] = '';
+                } elseif (is_scalar($value) && trim((string)$value) !== '') {
+                    $out[] = '### ' . $label;
+                    $out[] = '';
+                    $out[] = self::mdText((string)$value);
+                    $out[] = '';
+                }
+            }
+            $suggestion = is_array($triage['clasificacion_defender_sugerida'] ?? null) ? $triage['clasificacion_defender_sugerida'] : [];
+            if ($suggestion !== []) {
+                $out[] = '### Clasificación sugerida en Defender';
+                $out[] = '';
+                $out[] = '- Clasificación: ' . self::mdText((string)($suggestion['classification'] ?? '—'));
+                $out[] = '- Determinación: ' . self::mdText((string)($suggestion['determination'] ?? '—'));
+                $out[] = '';
+            }
+            if (!empty($triage['respuesta_original'])) {
+                $out[] = '### Respuesta original del modelo (no era JSON válido)';
+                $out[] = '';
+                $out[] = '```text';
+                $out[] = (string)$triage['respuesta_original'];
+                $out[] = '```';
+                $out[] = '';
+            }
+        }
+
+        $out[] = '## Decisión humana';
+        $out[] = '';
+        if ($decisions === []) {
+            $out[] = '_Pendiente de decisión humana._';
+        } else {
+            $out[] = '| Fecha | Analista | Clasificación | Determinación | Justificación |';
+            $out[] = '|---|---|---|---|---|';
+            foreach ($decisions as $d) {
+                $out[] = '| ' . $cell($fmt($d['created_at'] ?? null))
+                    . ' | ' . $cell($d['analista'] ?? '')
+                    . ' | ' . $cell($d['classification'] ?? '')
+                    . ' | ' . $cell($d['determination'] ?? '')
+                    . ' | ' . $cell($d['justificacion'] ?? '') . ' |';
+            }
+        }
+        $out[] = '';
+
+        $out[] = '## Evidencia pseudonimizada (JSON)';
+        $out[] = '';
+        $out[] = '```json';
+        $out[] = (string)json_encode($anon, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        $out[] = '```';
+        $out[] = '';
+
+        return implode("\n", $out) . "\n";
+    }
+
+    private static function mdText(string $text): string
+    {
+        return str_replace(['\\', '`'], ['\\\\', '\\`'], $text);
     }
 
     /* =====================================================================
@@ -350,7 +569,7 @@ class Module_IncidentStory extends BaseModule
         );
 
         flash('incident_story', ['type' => 'success', 'text' => 'Triaje IA completado. Revisa el resultado y registra la decisión humana.']);
-        redirect(base_url('modules/incident_story/case/' . (int)$case['id']));
+        redirect(base_url('modules/incident_story/case/' . (int)$case['id']) . '#triaje');
     }
 
     /** Parsea el JSON del LLM tolerando fences y texto envolvente. */

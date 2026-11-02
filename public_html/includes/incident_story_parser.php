@@ -692,6 +692,125 @@ final class IncidentStoryParser
      * Finalización y utilidades
      * ================================================================== */
 
+    /* =====================================================================
+     * Resumen determinista (sin IA)
+     * ================================================================== */
+
+    /**
+     * Resumen legible del story: alertas, procesos, scripts y hashes.
+     * Se calcula sobre el caso normalizado o pseudonimizado, sin coste de API.
+     *
+     * @return array<string,mixed>
+     */
+    public static function summarize(array $caso): array
+    {
+        $eventos = array_values(array_filter((array)($caso['eventos'] ?? []), 'is_array'));
+        $procesos = [];
+        $scripts = [];
+        $hashes = [];
+        $desde = null;
+        $hasta = null;
+
+        foreach ($eventos as $ev) {
+            $proc = trim((string)($ev['proceso'] ?? ''));
+            if ($proc === '') {
+                $proc = '(proceso desconocido)';
+            }
+            $key = strtolower($proc);
+            if (!isset($procesos[$key])) {
+                $procesos[$key] = [
+                    'proceso'  => $proc,
+                    'eventos'  => 0,
+                    'usuarios' => [],
+                    'equipos'  => [],
+                    'primera'  => null,
+                    'ultima'   => null,
+                    'ejemplos' => [],
+                ];
+            }
+            $procesos[$key]['eventos']++;
+            if (!empty($ev['usuario'])) {
+                $procesos[$key]['usuarios'][(string)$ev['usuario']] = true;
+            }
+            if (!empty($ev['equipo'])) {
+                $procesos[$key]['equipos'][(string)$ev['equipo']] = true;
+            }
+
+            $ts = $ev['timestamp'] ?? null;
+            if (is_string($ts) && $ts !== '') {
+                if ($desde === null || $ts < $desde) {
+                    $desde = $ts;
+                }
+                if ($hasta === null || $ts > $hasta) {
+                    $hasta = $ts;
+                }
+                if ($procesos[$key]['primera'] === null || $ts < $procesos[$key]['primera']) {
+                    $procesos[$key]['primera'] = $ts;
+                }
+                if ($procesos[$key]['ultima'] === null || $ts > $procesos[$key]['ultima']) {
+                    $procesos[$key]['ultima'] = $ts;
+                }
+            }
+
+            $cmd = trim((string)($ev['command_line'] ?? ''));
+            if ($cmd !== '' && count($procesos[$key]['ejemplos']) < 2) {
+                $procesos[$key]['ejemplos'][] = truncate($cmd, 220);
+            }
+
+            foreach (['sha1' => 'SHA1', 'sha256' => 'SHA256', 'script_sha256' => 'SHA256 script'] as $field => $label) {
+                $hash = trim((string)($ev[$field] ?? ''));
+                if ($hash !== '') {
+                    $hashes[$label . ':' . strtolower($hash)] = ['tipo' => $label, 'valor' => $hash];
+                }
+            }
+
+            $script = (string)($ev['script_content'] ?? '');
+            if (trim($script) !== '') {
+                $scripts[] = [
+                    'proceso'   => $proc,
+                    'usuario'   => (string)($ev['usuario'] ?? ''),
+                    'timestamp' => $ts,
+                    'longitud'  => strlen($script),
+                    'preview'   => truncate(preg_replace('/\s+/', ' ', $script) ?? $script, 220),
+                ];
+            }
+        }
+
+        $procesos = array_values($procesos);
+        usort($procesos, static function (array $a, array $b): int {
+            return ($b['eventos'] <=> $a['eventos'])
+                ?: strcmp(strtolower($a['proceso']), strtolower($b['proceso']));
+        });
+        foreach ($procesos as &$p) {
+            $p['usuarios'] = array_keys($p['usuarios']);
+            $p['equipos'] = array_keys($p['equipos']);
+        }
+        unset($p);
+
+        $alertas = [];
+        foreach ((array)($caso['incidencia']['alertas'] ?? []) as $al) {
+            if (is_array($al)) {
+                $alertas[] = [
+                    'nombre'    => (string)($al['nombre'] ?? $al['title'] ?? 'Alerta'),
+                    'severidad' => (string)($al['severidad'] ?? $al['severity'] ?? ''),
+                ];
+            }
+        }
+
+        return [
+            'total_eventos' => count($eventos),
+            'desde'         => $desde,
+            'hasta'         => $hasta,
+            'alertas'       => $alertas,
+            'procesos'      => $procesos,
+            'scripts'       => $scripts,
+            'hashes'        => array_values($hashes),
+            'usuarios'      => array_values((array)($caso['usuarios'] ?? [])),
+            'equipos'       => array_values((array)($caso['equipos'] ?? [])),
+            'dominios'      => array_values((array)($caso['dominios'] ?? [])),
+        ];
+    }
+
     private static function finalize(array $caso, array $eventos): array
     {
         /* Orden estable por timestamp cuando exista; los nulos al final. */

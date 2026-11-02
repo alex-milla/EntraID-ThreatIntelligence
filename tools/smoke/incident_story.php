@@ -40,7 +40,7 @@ $nav = $module?->getNavItem();
 check('grupo Seguridad', is_array($nav) && ($nav['group'] ?? '') === 'Seguridad');
 check('etiqueta del menú', is_array($nav) && ($nav['label'] ?? '') === 'Incidentes Story');
 check('ancla tras incidents', is_array($nav) && ($nav['after'] ?? '') === 'incidents');
-check('rutas registradas (7)', $module !== null && count($module->routes()) === 7);
+check('rutas registradas (8)', $module !== null && count($module->routes()) === 8);
 
 /* =====================================================================
  * 2. Parser — texto pegado
@@ -229,9 +229,80 @@ check('anon: ip privada', ($mapping['ips']['10.0.0.198'] ?? '') === 'IPT001');
 check('anon: UPN correlado', str_contains($anonJson, 'Usu001@dom001.invalid') || str_contains($anonJson, 'Usu003@dom001.invalid'));
 check('anon: sin avisos de restos', $anon['warnings'] === [], implode(' | ', $anon['warnings']));
 
-/* Un caso idéntico produce el mismo mapeo (determinismo). */
+/* Un caso idéntico produce el mismo conjunto de pseudónimos (determinismo). */
 $anon2 = (new IncidentStoryAnonymizer(['diba.es']))->anonymize($casoAnon);
 check('anon: determinista', $anon2['mapping'] === $mapping);
+
+/* Usuario dentro de una ruta arbitraria (sin depender de C:\Users). */
+$rutas = [
+    'image_path' => 'C:\Users\pinedarp\AppData\Local\Programs\Git\cmd\git.exe',
+    'otros'      => '\Users\pinedarp\Documents\nota.txt',
+    'unc'        => '\\fileserver\Users\pinedarp\perfil',
+    'doble'      => 'C:\\\\Users\\\\pinedarp\\\\AppData\\\\Local\\\\Temp',
+];
+$rutasAnon = (new IncidentStoryAnonymizer([]))->anonymize([
+    'usuarios' => [], 'equipos' => [], 'dominios' => [], 'extra' => [],
+    'eventos'  => [$rutas],
+]);
+$rutasJson = json_encode($rutasAnon['caso'], JSON_UNESCAPED_SLASHES) ?: '';
+check('anon: usuario en ruta C:\\Users', !str_contains($rutasJson, 'pinedarp'));
+check('anon: usuario en ruta sin unidad', !str_contains($rutasJson, 'pinedarp'));
+check('anon: usuario en UNC y barras dobles', !str_contains($rutasJson, 'pinedarp'));
+check('anon: ruta con pseudónimo', str_contains($rutasJson, 'Usu001'));
+check('anon: mapeo de ruta', ($rutasAnon['mapping']['usuarios']['pinedarp'] ?? '') === 'Usu001');
+
+/* =====================================================================
+ * 6 bis. Resumen determinista sin IA
+ * ================================================================== */
+
+$resumen = IncidentStoryParser::summarize($caso);
+check('resumen: total eventos', (int)($resumen['total_eventos'] ?? 0) === 1);
+check('resumen: alertas', count((array)($resumen['alertas'] ?? [])) === 1);
+check('resumen: procesos', isset($resumen['procesos'][0]) && $resumen['procesos'][0]['proceso'] === 'powershell.exe');
+check('resumen: usuarios del proceso', in_array('DIBA\pinedarp', $resumen['procesos'][0]['usuarios'] ?? [], true));
+check('resumen: scripts', count((array)($resumen['scripts'] ?? [])) === 1);
+check('resumen: hashes', count((array)($resumen['hashes'] ?? [])) >= 2);
+check('resumen: ventana desde', ($resumen['desde'] ?? '') === '2026-10-30T08:10:38');
+
+/* =====================================================================
+ * 6 ter. Export Markdown
+ * ================================================================== */
+
+$anonText = (new IncidentStoryAnonymizer([]))->anonymize($caso)['caso'];
+$exportCase = [
+    'id'           => 1,
+    'public_id'    => 'test-export-1234',
+    'formato_entrada' => 'texto_pegado',
+    'origen'       => 'Smoke',
+    'story_hash'   => str_repeat('a', 64),
+    'created_at'   => '2026-11-02T10:00:00Z',
+    'triage_model' => 'test-model',
+    'triage_at'    => '2026-11-02T10:01:00Z',
+    'caso'         => $anonText,
+    'anon'         => $anonText,
+    'triage'       => [
+        'veredicto_asistido' => 'sospechosa',
+        'confianza_pct'      => 60,
+        'resumen_ejecutivo'  => 'Actividad de descubrimiento.',
+        'acciones_recomendadas' => ['Revisar el equipo'],
+        'clasificacion_defender_sugerida' => ['classification' => 'truePositive', 'determination' => 'SuspiciousActivity'],
+    ],
+    'decisions'    => [[
+        'created_at'    => '2026-11-02T10:05:00Z',
+        'analista'      => 'analista',
+        'classification'=> 'truePositive',
+        'determination' => 'SuspiciousActivity',
+        'justificacion' => 'Actividad confirmada',
+    ]],
+];
+$md = Module_IncidentStory::exportMarkdown($exportCase);
+check('export: cabecera', str_contains($md, '# Incidente:'));
+check('export: resumen sin IA', str_contains($md, '## Resumen del story (sin IA)'));
+check('export: procesos', str_contains($md, 'powershell.exe'));
+check('export: triaje', str_contains($md, 'veredicto') || str_contains($md, 'Veredicto asistido'));
+check('export: decisión humana', str_contains($md, 'Actividad confirmada'));
+check('export: sin datos originales', !str_contains($md, 'pinedarp') && !str_contains($md, 'DIBA'));
+check('export: sin tabla de mapeo', !str_contains($md, 'mapping'));
 
 /* =====================================================================
  * 7. Store (BD temporal)
