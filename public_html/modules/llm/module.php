@@ -527,10 +527,41 @@ class Module_Llm extends BaseModule
     }
 
     /**
-     * HTTP POST genérico con cURL.
+     * HTTP POST genérico con cURL (con fallback si la extensión no está).
      */
     private function httpPost(string $url, string $body, array $headers, int $timeout = 120): array
     {
+        if (!function_exists('curl_init')) {
+            /* Hosting sin cURL: se usa el wrapper HTTP de PHP. */
+            $context = stream_context_create([
+                'http' => [
+                    'method'        => 'POST',
+                    'header'        => implode("\r\n", $headers),
+                    'content'       => $body,
+                    'timeout'       => max(10, $timeout),
+                    'ignore_errors' => true,
+                ],
+                'ssl' => ['verify_peer' => true, 'verify_peer_name' => true],
+            ]);
+            $response = @file_get_contents($url, false, $context);
+            if ($response === false) {
+                $err = error_get_last()['message'] ?? 'error desconocido';
+                throw new RuntimeException('No se pudo conectar con el proveedor (sin cURL): ' . $err);
+            }
+            $httpCode = 0;
+            foreach ($http_response_header ?? [] as $line) {
+                if (preg_match('#^HTTP/\S+\s+(\d{3})#', (string)$line, $m)) {
+                    $httpCode = (int)$m[1];
+                }
+            }
+            $decoded = json_decode($response, true);
+            if ($httpCode >= 400) {
+                $msg = $decoded['error']['message'] ?? $decoded['message'] ?? $response;
+                throw new RuntimeException("LLM API Error ($httpCode): $msg");
+            }
+            return is_array($decoded) ? $decoded : ['raw' => $response];
+        }
+
         $ch = curl_init($url);
         curl_setopt_array($ch, [
             CURLOPT_RETURNTRANSFER => true,

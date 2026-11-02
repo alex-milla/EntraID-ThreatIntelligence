@@ -268,8 +268,31 @@ class Module_IncidentStory extends BaseModule
             'llmConfigured'    => $llmConfigured,
             'classifications'  => IncidentStoryStore::CLASSIFICATIONS,
             'determinations'   => IncidentStoryStore::DETERMINATIONS,
-            'notice'           => flash('incident_story'),
+            'notice'           => $this->notice(),
         ]);
+    }
+
+    /**
+     * Aviso de la petición. El triaje usa parámetros de URL porque
+     * Module_Llm::chat() cierra la sesión (release_session_lock) y un flash
+     * escrito después se perdería. El resto de acciones siguen usando flash.
+     */
+    private function notice(): ?array
+    {
+        $notice = flash('incident_story');
+        if (is_array($notice)) {
+            return $notice;
+        }
+        if (isset($_GET['triage_ok'])) {
+            return ['type' => 'success', 'text' => 'Triaje IA completado. Revisa el resultado y registra la decisión humana.'];
+        }
+        if (isset($_GET['triage_error'])) {
+            $msg = trim((string)$_GET['triage_error']);
+            if ($msg !== '') {
+                return ['type' => 'error', 'text' => 'Triaje IA: ' . self::clip($msg, 500)];
+            }
+        }
+        return null;
     }
 
     /* =====================================================================
@@ -547,17 +570,18 @@ class Module_IncidentStory extends BaseModule
             . "\n\nTAREA: Analiza esta incidencia y devuelve únicamente el JSON indicado.";
 
         $res = $llm->chat($system . ' ' . $format, $userPrompt, ['max_tokens' => 2500], $profileId);
+        $baseCaso = base_url('modules/incident_story/case/' . (int)$case['id']);
         if (empty($res['success'])) {
-            flash('incident_story', ['type' => 'error', 'text' => 'Triaje IA: ' . (string)($res['error'] ?? 'error desconocido')]);
-            redirect(base_url('modules/incident_story/case/' . (int)$case['id']));
+            redirect($baseCaso . '?triage_error=' . rawurlencode(self::clip((string)($res['error'] ?? 'error desconocido'), 500)) . '#triaje');
         }
 
-        $parsed = self::parseAiJson((string)($res['content'] ?? ''));
+        $rawContent = (string)($res['content'] ?? '');
+        $parsed = self::parseAiJson($rawContent);
         if ($parsed === null) {
             $parsed = [
                 'veredicto_asistido' => null,
                 'resumen_ejecutivo'  => 'La IA no devolvió JSON válido. Respuesta original conservada abajo.',
-                'respuesta_original' => (string)($res['content'] ?? ''),
+                'respuesta_original' => $rawContent,
             ];
         }
 
@@ -565,11 +589,11 @@ class Module_IncidentStory extends BaseModule
             (int)$case['id'],
             $parsed,
             isset($res['model']) ? (string)$res['model'] : null,
-            $profileId
+            $profileId,
+            $rawContent
         );
 
-        flash('incident_story', ['type' => 'success', 'text' => 'Triaje IA completado. Revisa el resultado y registra la decisión humana.']);
-        redirect(base_url('modules/incident_story/case/' . (int)$case['id']) . '#triaje');
+        redirect($baseCaso . '?triage_ok=1#triaje');
     }
 
     /** Parsea el JSON del LLM tolerando fences y texto envolvente. */

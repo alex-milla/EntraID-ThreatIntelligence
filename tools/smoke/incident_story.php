@@ -344,6 +344,14 @@ try {
     check('store: triaje guardado', ($loaded['triage_verdict'] ?? '') === 'benigna');
     check('store: modelo guardado', ($loaded['triage_model'] ?? '') === 'test-model');
 
+    /* Respuesta no serializable: nunca debe quedar un triaje vacío. */
+    $store->saveTriage($saved['id'], ['veredicto_asistido' => "mal\xB1"], 'test-model', null, "respuesta cruda \xB1");
+    $fallback = $store->getCase($saved['id']);
+    check(
+        'store: triaje no serializable conserva respuesta',
+        is_array($fallback['triage'] ?? null) && isset($fallback['triage']['respuesta_original'])
+    );
+
     $decisionId = $store->addDecision($saved['id'], 'analista', 'falsePositive', 'NotAvailable', 'Prueba', 'benigna');
     check('store: decisión creada', $decisionId > 0);
     $decisions = $store->listDecisions($saved['id']);

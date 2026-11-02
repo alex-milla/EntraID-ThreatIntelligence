@@ -239,15 +239,36 @@ final class IncidentStoryStore
      * Triaje IA
      * ================================================================== */
 
-    public function saveTriage(int $id, array $triage, ?string $model, ?int $profileId): void
+    public function saveTriage(int $id, array $triage, ?string $model, ?int $profileId, ?string $rawContent = null): void
     {
         $verdict = self::str($triage['veredicto_asistido'] ?? null);
+        $encoded = json_encode($triage, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if ($encoded === false || $encoded === '' || $encoded === 'null') {
+            /* Nunca guardar un triaje vacío: si falla la serialización se
+               conserva la respuesta original del modelo para poder verla. */
+            $encoded = self::json([
+                'veredicto_asistido' => $verdict,
+                'resumen_ejecutivo'  => 'La respuesta del modelo no se pudo serializar.',
+                'respuesta_original' => (string)($rawContent ?? ''),
+            ]);
+            if ($encoded === '{}') {
+                /* Si hasta el fallback falla, se sanea la respuesta original. */
+                $encoded = (string)json_encode(
+                    [
+                        'veredicto_asistido' => $verdict,
+                        'resumen_ejecutivo'  => 'La respuesta del modelo no se pudo serializar.',
+                        'respuesta_original' => (string)($rawContent ?? ''),
+                    ],
+                    JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE
+                );
+            }
+        }
         $stmt = $this->pdo->prepare(
             'UPDATE casos SET triage_json = ?, triage_verdict = ?, triage_model = ?,
                     triage_profile = ?, triage_at = ? WHERE id = ?'
         );
         $stmt->execute([
-            self::json($triage),
+            $encoded,
             $verdict,
             self::str($model),
             $profileId,
