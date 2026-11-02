@@ -1,6 +1,6 @@
 <?php
 /**
- * Vista de alta/edición — Seguimiento TI.
+ * Vista de alta/edición — Seguimiento TI TF.
  *
  * @var Module_TiTracker $module
  * @var array $search

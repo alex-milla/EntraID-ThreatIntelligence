@@ -1,6 +1,6 @@
 <?php
 /**
- * Vista de resultados de una búsqueda — Seguimiento TI.
+ * Vista de resultados de una búsqueda — Seguimiento TI TF.
  *
  * @var Module_TiTracker $module
  * @var array $search

@@ -1,6 +1,6 @@
 <?php
 /**
- * Vista índice — Seguimiento TI.
+ * Vista índice — Seguimiento TI TF.
  *
  * @var Module_TiTracker $module
  * @var array $searches
@@ -58,12 +58,19 @@ $describe = static function (array $f): string {
 <?php endif; ?>
 
 <div class="page-header">
-    <h1>Seguimiento TI</h1>
+    <h1>Seguimiento TI TF</h1>
     <p class="subtitle">
         Búsquedas de IOCs guardadas con memoria de lo ya visto: cada ejecución
         marca las novedades y permite exportarlas a STIX, MISP o TXT.
     </p>
     <span class="spacer"></span>
+    <form method="POST" action="<?= e($base . '/run-all') ?>" class="inline"
+          data-confirm="Se ejecutarán todas las búsquedas guardadas contra la base local. ¿Continuar?">
+        <?= Csrf::field() ?>
+        <button type="submit" class="btn-outline btn" title="Ejecutar todas y actualizar novedades">
+            <?= icon('play_circle', 18) ?> Ejecutar todas
+        </button>
+    </form>
     <a class="btn" href="<?= e($base . '/new') ?>">
         <?= icon('add', 18) ?> Nueva búsqueda
     </a>

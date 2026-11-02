@@ -1,6 +1,6 @@
 <?php
 /**
- * Módulo: Seguimiento TI (ti_tracker)
+ * Módulo: Seguimiento TI TF (ti_tracker)
  *
  * Búsquedas guardadas sobre los IOCs de ThreatFox con memoria de lo ya visto
  * (novedades) y exportación STIX 2.1 / MISP / TXT para herramientas de
@@ -17,6 +17,7 @@
  *   POST /modules/ti_tracker/save           guardar (alta/edición)
  *   POST /modules/ti_tracker/delete/{id}    borrar búsqueda y su seguimiento
  *   POST /modules/ti_tracker/run/{id}       ejecutar y actualizar novedades
+ *   POST /modules/ti_tracker/run-all        ejecutar todas las búsquedas locales
  *   POST /modules/ti_tracker/export/{id}    descargar STIX/MISP/TXT
  */
 
@@ -58,13 +59,13 @@ class Module_TiTracker extends BaseModule
 
     public function sync(int $tenantId): array
     {
-        return ['success' => false, 'error' => 'El Seguimiento TI no se sincroniza por tenant.'];
+        return ['success' => false, 'error' => 'El Seguimiento TI TF no se sincroniza por tenant.'];
     }
 
     public function getNavItem(): ?array
     {
         return [
-            'label' => 'Seguimiento TI',
+            'label' => 'Seguimiento TI TF',
             'url'   => base_url('modules/ti_tracker'),
             'icon'  => 'radar',
             'group' => 'Inteligencia',
@@ -81,6 +82,7 @@ class Module_TiTracker extends BaseModule
             ['method' => 'POST', 'pattern' => 'save',      'handler' => [$this, 'save']],
             ['method' => 'POST', 'pattern' => 'delete/{id}', 'handler' => [$this, 'delete']],
             ['method' => 'POST', 'pattern' => 'run/{id}',  'handler' => [$this, 'run']],
+            ['method' => 'POST', 'pattern' => 'run-all',   'handler' => [$this, 'runAll']],
             ['method' => 'POST', 'pattern' => 'export/{id}', 'handler' => [$this, 'export']],
         ];
     }
@@ -293,8 +295,54 @@ class Module_TiTracker extends BaseModule
         ]);
     }
 
+    /** Ejecuta todas las búsquedas locales de una vez (sin red). */
+    public function runAll(array $params = []): void
+    {
+        $store = $this->store();
+        $searches = $store->listSearches();
+        if ($searches === []) {
+            flash('ti_tracker', ['type' => 'info', 'text' => 'No hay búsquedas guardadas que ejecutar.']);
+            redirect(base_url('modules/ti_tracker'));
+        }
+
+        $ran = 0;
+        $newTotal = 0;
+        $skipped = 0;
+        $errors = 0;
+
+        foreach ($searches as $search) {
+            $filters = TiTrackerRunner::filtersFor($search);
+            if ((string)($filters['source'] ?? 'db') === 'api') {
+                $skipped++;
+                continue;
+            }
+            try {
+                $exec = TiTrackerRunner::execute($store, $search);
+                $ran++;
+                $newTotal += (int)($exec['result']['new'] ?? 0);
+            } catch (Throwable $e) {
+                $errors++;
+            }
+        }
+
+        $text = sprintf('Ejecutadas %d búsqueda%s: %d IOCs nuevos.', $ran, $ran === 1 ? '' : 's', $newTotal);
+        if ($skipped > 0) {
+            $text .= sprintf(' %d omitida%s (fuente API en vivo).', $skipped, $skipped === 1 ? '' : 's');
+        }
+        if ($errors > 0) {
+            $text .= sprintf(' %d con error.', $errors);
+        }
+
+        flash('ti_tracker', [
+            'type' => $errors > 0 ? 'warning' : ($ran > 0 ? 'success' : 'info'),
+            'text' => $text,
+        ]);
+        redirect(base_url('modules/ti_tracker'));
+    }
+
     public function export(array $params = []): void
     {
+        /* La interfaz envía JSON (api()); los formularios clásicos, $_POST. */
         $input = $_POST;
         if ($input === []) {
             $decoded = json_decode((string)file_get_contents('php://input'), true);

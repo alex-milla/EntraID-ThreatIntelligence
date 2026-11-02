@@ -208,9 +208,10 @@ check('Módulo: nombre sincronizado en la BD', $dbName === 'Seguimiento TI TF', 
 check('Módulo: no sincroniza por tenant', $module !== null && $module->isSyncable() === false);
 check('Módulo: sin permisos de Graph', $module !== null && $module->requiredPermissions() === []);
 check('Módulo: grupo de navegación Inteligencia', ($module?->getNavItem()['group'] ?? '') === 'Inteligencia');
+check('Módulo: etiqueta de menú «Seguimiento TI TF»', ($module?->getNavItem()['label'] ?? '') === 'Seguimiento TI TF');
 
 $patterns = array_map(static fn($r) => $r['pattern'], $module?->routes() ?? []);
-foreach (['', 'new', 'edit/{id}', 'save', 'delete/{id}', 'run/{id}', 'export/{id}'] as $pattern) {
+foreach (['', 'new', 'edit/{id}', 'save', 'delete/{id}', 'run/{id}', 'run-all', 'export/{id}'] as $pattern) {
     check('Ruta registrada: /' . $pattern, in_array($pattern, $patterns, true));
 }
 
@@ -243,6 +244,11 @@ foreach ($views as $view) {
 }
 
 $indexSource = (string)@file_get_contents(MODULES_PATH . '/ti_tracker/views/index.php');
+check('Panel: cabecera «Seguimiento TI TF»', str_contains($indexSource, '>Seguimiento TI TF<'));
+check(
+    'Panel: botón «Ejecutar todas»',
+    str_contains($indexSource, '/run-all') && str_contains($indexSource, 'Ejecutar todas')
+);
 check('Panel: botones de exportación', str_contains($indexSource, 'data-tt-export'));
 check('Panel: confirmación de borrado', str_contains($indexSource, 'data-confirm-danger'));
 check('Panel: formulario CSRF', str_contains($indexSource, 'Csrf::field'));
