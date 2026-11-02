@@ -41,6 +41,8 @@ $routes = @(
     '/index.php/modules/export',
     '/index.php/modules/hunting',
     '/index.php/modules/incidents',
+    '/index.php/modules/incident_story',
+    '/index.php/modules/incident_story/new',
     '/index.php/modules/llm',
     '/index.php/modules/reports',
     '/index.php/modules/secure_score',

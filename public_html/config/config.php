@@ -180,6 +180,21 @@ define('TI_TRACKER_MAX_ROWS', 5000);       // tope de IOCs por búsqueda/export
 define('TI_TRACKER_MAX_SEARCHES', 100);    // tope de búsquedas guardadas
 define('TI_TRACKER_DAYS_DB_MAX', 190);     // retención de la base local ThreatFox
 
+// ============================================================
+// Incidentes Story (triaje asistido de Defender XDR)
+// Ingesta manual (texto pegado / JSON) → normalización → pseudonimización
+// → triaje IA → decisión humana registrada. Base independiente
+// (storage/incident_story.sqlite) con casos, decisiones y mapeos.
+// ============================================================
+define('INCIDENT_STORY_DB_PATH', ROOT_PATH . '/' . ($env['INCIDENT_STORY_DB_PATH'] ?? 'storage/incident_story.sqlite'));
+define('INCIDENT_STORY_MAX_BYTES', 5 * 1024 * 1024);       // límite de subida JSON
+define('INCIDENT_STORY_MAX_EVENTS', 5000);                 // tope de eventos por caso
+define('INCIDENT_STORY_MAX_DEPTH', 200);                   // profundidad máxima del parser
+define('INCIDENT_STORY_MAX_NODES', 20000);                 // nodos máximos recorridos
+define('INCIDENT_STORY_MAX_PROMPT_CHARS', 60000);          // recorte del caso anonimizado
+define('INCIDENT_STORY_MAX_CASES', 2000);                  // tope de casos guardados
+define('INCIDENT_STORY_CLIENT_DOMAINS', $env['INCIDENT_STORY_CLIENT_DOMAINS'] ?? '');
+
 // LLM
 define('LLM_PROVIDER', $env['LLM_PROVIDER'] ?? '');
 define('LLM_API_KEY', $env['LLM_API_KEY'] ?? '');
