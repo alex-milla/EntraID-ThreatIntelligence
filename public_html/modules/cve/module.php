@@ -87,6 +87,7 @@ class Module_Cve extends BaseModule
             ['method' => 'POST', 'pattern' => 'vm/create-from-group', 'handler' => [$this, 'vmCreateCasesFromGroup']],
             ['method' => 'POST', 'pattern' => 'vm/update',      'handler' => [$this, 'vmUpdateCase']],
             ['method' => 'POST', 'pattern' => 'vm/evidence',    'handler' => [$this, 'vmAddEvidence']],
+            ['method' => 'POST', 'pattern' => 'vm/bulk',        'handler' => [$this, 'vmBulkUpdate']],
             ['method' => 'POST', 'pattern' => 'vm/{caseId}/evidence/pin', 'handler' => [$this, 'vmPinEvidence']],
             ['method' => 'POST', 'pattern' => 'vm/reopen',      'handler' => [$this, 'vmReopenCase']],
             ['method' => 'GET',  'pattern' => 'vm/report',      'handler' => [$this, 'vmReport']],
@@ -175,6 +176,9 @@ class Module_Cve extends BaseModule
         $vmLastImport = null;
         $vmPending = null;
         $vmPlanKeys = [];
+        $vmLatestImportCves = [];
+        $vmAbsentInImport = false;
+        $vmAbsentImportAt = '';
 
         try {
             $groups = $this->groupTree();
@@ -235,12 +239,15 @@ class Module_Cve extends BaseModule
                     'due'      => trim((string)($_GET['vm_due'] ?? '')),
                     'q'        => trim((string)($_GET['vm_q'] ?? '')),
                     'sort'     => trim((string)($_GET['vm_sort'] ?? 'due')),
+                    'group'    => trim((string)($_GET['vm_group'] ?? 'cve')) === 'software' ? 'software' : 'cve',
                 ];
                 // Los KPI se calculan sobre TODOS los casos de la empresa
                 // seleccionada; la cola aplica además los filtros de la UI.
                 $vmKpis = VmCases::kpis($this->listVmCases(['company' => $vmFilters['company']]));
                 $vmCases = $this->listVmCases($vmFilters);
                 $vmLastImport = $this->latestTvmImport($vmFilters['company']);
+                $vmImportIndex = $this->vmLatestImportIndex($vmFilters['company']);
+                $vmLatestImportCves = $vmImportIndex['cves'];
                 if ($vmFilters['company'] > 0) {
                     $vmPending = $this->countVmPendingCases($vmFilters['company']);
                 }
@@ -251,6 +258,9 @@ class Module_Cve extends BaseModule
                     if ($vmCase !== null) {
                         $vmEvents = $this->listVmCaseEvents($vmCaseId);
                         $vmEvidence = $this->listVmCaseEvidence($vmCaseId);
+                        $vmCaseImportIndex = $this->vmLatestImportIndex((int)($vmCase['group_id'] ?? 0));
+                        $vmAbsentInImport = $this->vmCaseIsAbsent($vmCase, $vmCaseImportIndex);
+                        $vmAbsentImportAt = (string)($vmCaseImportIndex['import']['created_at'] ?? '');
                     }
                 }
             } else {
@@ -347,6 +357,9 @@ class Module_Cve extends BaseModule
             'vmLastImport'  => $vmLastImport,
             'vmPending'     => $vmPending,
             'vmPlanKeys'    => $vmPlanKeys,
+            'vmLatestImportCves' => $vmLatestImportCves,
+            'vmAbsentInImport'   => $vmAbsentInImport,
+            'vmAbsentImportAt'   => $vmAbsentImportAt,
         ]);
     }
 
@@ -2017,6 +2030,9 @@ class Module_Cve extends BaseModule
 
         $vmEvents = $this->listVmCaseEvents($caseId);
         $vmEvidence = $this->listVmCaseEvidence($caseId);
+        $vmCaseImportIndex = $this->vmLatestImportIndex((int)($vmCase['group_id'] ?? 0));
+        $vmAbsentInImport = $this->vmCaseIsAbsent($vmCase, $vmCaseImportIndex);
+        $vmAbsentImportAt = (string)($vmCaseImportIndex['import']['created_at'] ?? '');
         require __DIR__ . '/views/_vm_case_panel.php';
     }
 
@@ -2582,6 +2598,182 @@ class Module_Cve extends BaseModule
         }
 
         redirect($returnUrl);
+    }
+
+    /**
+     * Acciones en lote de la cola (v0.3.23).
+     *
+     * Solo aplica estados operativos; el cierre verificado y el riesgo aceptado
+     * exigen datos adicionales y se hacen caso a caso para no saltarse reglas.
+     */
+    public function vmBulkUpdate(array $params = []): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        $companyId = max(0, (int)($_POST['company_id'] ?? 0));
+        $action = (string)($_POST['action'] ?? '');
+        $rawIds = $_POST['case_ids'] ?? [];
+        if (!is_array($rawIds)) {
+            $rawIds = [];
+        }
+        $ids = [];
+        foreach ($rawIds as $rawId) {
+            $id = (int)$rawId;
+            if ($id > 0 && !in_array($id, $ids, true)) {
+                $ids[] = $id;
+            }
+        }
+        $ids = array_slice($ids, 0, 200);
+
+        $back = base_url('modules/cve?tab=vm' . ($companyId > 0 ? '&company=' . $companyId : ''));
+        if ($ids === []) {
+            flash('error', 'Selecciona al menos un caso.');
+            redirect($back);
+        }
+
+        $status = '';
+        $assignee = '';
+        $note = '';
+        if ($action === 'status') {
+            $status = (string)($_POST['bulk_status'] ?? '');
+            if (!in_array($status, VmCases::BULK_STATUSES, true)) {
+                flash('error', 'Ese estado no se puede aplicar en lote. El cierre verificado y el riesgo aceptado se hacen caso a caso.');
+                redirect($back);
+            }
+        } elseif ($action === 'assignee') {
+            $assignee = trim((string)($_POST['bulk_assignee'] ?? ''));
+            if ($assignee === '') {
+                flash('error', 'Indica un responsable.');
+                redirect($back);
+            }
+            $assignee = truncate($assignee, 120, '');
+        } elseif ($action === 'note') {
+            $note = trim((string)($_POST['bulk_note'] ?? ''));
+            if ($note === '') {
+                flash('error', 'Escribe una nota.');
+                redirect($back);
+            }
+            $note = truncate($note, 2000, '');
+        } else {
+            flash('error', 'Acción en lote no válida.');
+            redirect($back);
+        }
+
+        $done = 0;
+        $skipped = 0;
+        $db = CveDatabase::getInstance();
+        try {
+            $db->beginTransaction();
+            foreach ($ids as $id) {
+                $case = $this->getVmCase($id);
+                if ($case === null) {
+                    $skipped++;
+                    continue;
+                }
+                if ($companyId > 0 && (int)($case['group_id'] ?? 0) !== $companyId) {
+                    $skipped++;
+                    continue;
+                }
+
+                if ($action === 'status') {
+                    $old = (string)($case['status'] ?? '');
+                    if ($old === $status) {
+                        $skipped++;
+                        continue;
+                    }
+                    CveDatabase::query(
+                        "UPDATE vm_cases SET status = ?, updated_at = datetime('now') WHERE id = ?",
+                        [$status, $id]
+                    );
+                    $this->vmLogEvent(
+                        $id,
+                        'status',
+                        VmCases::statusLabel($old),
+                        VmCases::statusLabel($status),
+                        'Cambio en lote'
+                    );
+                } elseif ($action === 'assignee') {
+                    $old = (string)($case['assignee_name'] ?? '');
+                    CveDatabase::query(
+                        "UPDATE vm_cases SET assignee_name = ?, updated_at = datetime('now') WHERE id = ?",
+                        [$assignee, $id]
+                    );
+                    $this->vmLogEvent($id, 'assignee', $old, $assignee, 'Asignación en lote');
+                } else {
+                    $this->vmAddEvidenceRow($id, 'note', $note);
+                }
+                $done++;
+            }
+            $db->commit();
+            log_activity('cve.vm_bulk_update', [
+                'action'  => $action,
+                'done'    => $done,
+                'skipped' => $skipped,
+                'company' => $companyId,
+            ]);
+            flash(
+                $done > 0 ? 'success' : 'warning',
+                $done . ' caso(s) actualizado(s)' . ($skipped > 0 ? '; ' . $skipped . ' sin cambios' : '') . '.'
+            );
+        } catch (Throwable $e) {
+            if ($db->inTransaction()) {
+                $db->rollBack();
+            }
+            flash('error', 'No se pudo aplicar la acción en lote: ' . $e->getMessage());
+        }
+
+        redirect($back);
+    }
+
+    /**
+     * Última importación completada de la empresa y su índice de CVEs.
+     *
+     * @return array{cves: array<string, bool>, import: array<string, mixed>|null}
+     */
+    private function vmLatestImportIndex(int $companyId): array
+    {
+        if ($companyId <= 0) {
+            return ['cves' => [], 'import' => null];
+        }
+        try {
+            $import = CveDatabase::fetchOne(
+                "SELECT id, created_at, status FROM cve_tvm_imports
+                 WHERE company_id = ? AND status = 'done'
+                 ORDER BY id DESC LIMIT 1",
+                [$companyId]
+            );
+            if ($import === null) {
+                return ['cves' => [], 'import' => null];
+            }
+            $rows = CveDatabase::fetchAll(
+                "SELECT cve_id FROM cve_tvm_import_rows WHERE import_id = ?",
+                [(int)$import['id']]
+            );
+            $cves = [];
+            foreach ($rows as $row) {
+                $cve = strtoupper(trim((string)($row['cve_id'] ?? '')));
+                if ($cve !== '') {
+                    $cves[$cve] = true;
+                }
+            }
+            return ['cves' => $cves, 'import' => $import];
+        } catch (Throwable $e) {
+            return ['cves' => [], 'import' => null];
+        }
+    }
+
+    /** El caso no aparece en la última importación. Nunca implica cierre. */
+    private function vmCaseIsAbsent(array $case, array $index): bool
+    {
+        if (($index['import'] ?? null) === null) {
+            return false;
+        }
+        if (VmCases::isClosed((string)($case['status'] ?? ''))) {
+            return false;
+        }
+        $cve = strtoupper(trim((string)($case['cve_id'] ?? '')));
+        return $cve !== '' && !isset($index['cves'][$cve]);
     }
 
     /** Organización de Remediation principal de una empresa (0 si no hay). */

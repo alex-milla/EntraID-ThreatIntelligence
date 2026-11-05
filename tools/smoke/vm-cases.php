@@ -283,5 +283,18 @@ $checksTable = Database::fetchOne(
 );
 check('Esquema: tabla de checklist del plan', $checksTable !== null);
 
+// Fase 3 (v0.3.23): estados aplicables en lote.
+check('Lote: incluye estados operativos', in_array('in_progress', VmCases::BULK_STATUSES, true));
+check(
+    'Lote: excluye cierre, riesgo aceptado y falso positivo',
+    !in_array('resolved_verified', VmCases::BULK_STATUSES, true)
+    && !in_array('risk_accepted', VmCases::BULK_STATUSES, true)
+    && !in_array('false_positive', VmCases::BULK_STATUSES, true)
+);
+check(
+    'Lote: solo estados válidos',
+    array_diff(VmCases::BULK_STATUSES, array_keys(VmCases::STATUSES)) === []
+);
+
 echo PHP_EOL . ($fail === 0 ? 'RESULTADO: OK (' . $total . ' comprobaciones)' : "RESULTADO: {$fail} de {$total} fallidas") . PHP_EOL;
 exit($fail === 0 ? 0 : 1);

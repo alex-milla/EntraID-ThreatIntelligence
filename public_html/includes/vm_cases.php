@@ -56,6 +56,16 @@ final class VmCases
 
     public const DUE_SOON_DAYS = 7;
 
+    public const BULK_STATUSES = [
+        'detected',
+        'in_review',
+        'planned',
+        'assigned',
+        'in_progress',
+        'mitigated',
+        'pending_verification',
+    ];
+
     public static function isStatus(string $status): bool
     {
         return isset(self::STATUSES[$status]);

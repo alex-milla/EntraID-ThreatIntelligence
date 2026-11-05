@@ -109,6 +109,8 @@ foreach ($vmEvents as $eventRow) {
         break;
     }
 }
+$vmAbsentInImport = !empty($vmAbsentInImport);
+$vmAbsentImportAt = trim((string)($vmAbsentImportAt ?? ''));
 
 $softwareLabels = [];
 foreach (preg_split('/[;,]+/', (string)($case['related_software'] ?? '')) ?: [] as $pair) {
@@ -224,6 +226,13 @@ $pinnedNotes = array_values(array_filter(
     <?php if ($isReobserved && VmCases::isClosed($status)): ?>
         <div class="px-3 py-2 rounded-lg text-[11px] text-amber-700 bg-amber-50 dark:bg-amber-900/20 dark:text-amber-300">
             Este CVE ha vuelto a aparecer en una importación posterior. El caso sigue cerrado hasta que decidas reabrirlo.
+        </div>
+    <?php endif; ?>
+
+    <?php if ($vmAbsentInImport): ?>
+        <div class="px-3 py-2 rounded-lg text-[11px] text-amber-700 bg-amber-50 dark:bg-amber-900/20 dark:text-amber-300">
+            No aparece en la última importación de Defender<?= $vmAbsentImportAt !== '' ? ' (' . e($fmtDateTime($vmAbsentImportAt)) . ')' : '' ?>.
+            <strong>No se cierra automáticamente</strong>: si IT confirma el parche, pásalo a «Pendiente de verificación» y registra la comprobación.
         </div>
     <?php endif; ?>
 

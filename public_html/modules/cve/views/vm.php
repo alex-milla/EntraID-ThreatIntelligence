@@ -15,7 +15,7 @@ $vmCase = is_array($vmCase ?? null) ? $vmCase : null;
 $vmEvents = is_array($vmEvents ?? null) ? $vmEvents : [];
 $vmEvidence = is_array($vmEvidence ?? null) ? $vmEvidence : [];
 $vmFilters = array_merge(
-    ['company' => 0, 'status' => '', 'priority' => '', 'due' => '', 'q' => '', 'sort' => 'due'],
+    ['company' => 0, 'status' => '', 'priority' => '', 'due' => '', 'q' => '', 'sort' => 'due', 'group' => 'cve'],
     is_array($vmFilters ?? null) ? $vmFilters : []
 );
 $vmLastImport = is_array($vmLastImport ?? null) ? $vmLastImport : null;
@@ -91,6 +91,7 @@ $queryBase = [
     'vm_due' => (string)$vmFilters['due'],
     'vm_q' => (string)$vmFilters['q'],
     'vm_sort' => (string)$vmFilters['sort'],
+    'vm_group' => (string)($vmFilters['group'] ?? 'cve'),
 ];
 $caseUrl = static function (int $caseId) use ($queryBase): string {
     $queryBase['case'] = $caseId;
@@ -344,126 +345,176 @@ $quickViews = [
     </div>
 </details>
 
+<?php
+$groupBySoftware = ($vmFilters['group'] ?? 'cve') === 'software';
+$softwareGroups = [];
+$priorityRank = ['critical' => 0, 'high' => 1, 'medium' => 2, 'low' => 3];
+if ($groupBySoftware) {
+    foreach ($vmCases as $caseRow) {
+        $productSource = (string)($caseRow['related_software'] ?? '');
+        if (trim($productSource) === '') {
+            $productSource = (string)($caseRow['catalog_products'] ?? '');
+        }
+        if (trim($productSource) === '') {
+            $productSource = (string)($caseRow['finding_products'] ?? '');
+        }
+        $primary = 'Sin producto identificado';
+        foreach (preg_split('/[;,]+/', $productSource) ?: [] as $pair) {
+            $pair = trim($pair);
+            if ($pair !== '') {
+                $primary = $pair;
+                break;
+            }
+        }
+        $softwareGroups[$primary][] = $caseRow;
+    }
+    ksort($softwareGroups, SORT_NATURAL | SORT_FLAG_CASE);
+}
+?>
 <!-- Cola -->
 <div class="card overflow-hidden mb-4">
     <div class="p-3 border-b border-line flex items-center justify-between gap-2 flex-wrap">
         <p class="text-xs font-semibold">
             Cola · <?= count($vmCases) ?> caso(s)<?= $companyName !== '' ? ' · ' . e($companyName) : '' ?>
         </p>
-        <p class="text-[10px] text-ink-soft">Clic en el CVE o en «Ver» abre la ficha sin salir de esta pantalla.</p>
+        <div class="flex items-center gap-3 flex-wrap">
+            <div class="inline-flex rounded-lg border border-line overflow-hidden text-[10px]">
+                <a href="<?= e($quickUrl(['vm_group' => 'cve'])) ?>"
+                   class="px-2 py-1 <?= !$groupBySoftware ? 'bg-brand-500 text-white font-semibold' : 'text-ink-muted hover:bg-muted' ?>">
+                    Por CVE
+                </a>
+                <a href="<?= e($quickUrl(['vm_group' => 'software'])) ?>"
+                   class="px-2 py-1 <?= $groupBySoftware ? 'bg-brand-500 text-white font-semibold' : 'text-ink-muted hover:bg-muted' ?>">
+                    Por software
+                </a>
+            </div>
+            <p class="text-[10px] text-ink-soft">Clic en el CVE o en «Ver» abre la ficha sin salir de esta pantalla.</p>
+        </div>
     </div>
+
+    <?php if ($isAdmin && $vmCases !== []): ?>
+        <details class="border-b border-line" data-vm-bulk>
+            <summary class="px-3 py-2 cursor-pointer text-xs font-medium flex items-center justify-between gap-2">
+                <span class="inline-flex items-center gap-1.5">
+                    <i class="material-icons icon-14" aria-hidden="true">checklist</i>
+                    Acciones en lote
+                </span>
+                <span class="text-[10px] text-ink-soft"><span data-vm-bulk-count>0</span> seleccionado(s)</span>
+            </summary>
+            <form id="vm-bulk-form" method="post" action="<?= base_url('modules/cve/vm/bulk') ?>"
+                  class="px-3 pb-3 space-y-2">
+                <?= Csrf::field() ?>
+                <input type="hidden" name="company_id" value="<?= $selectedCompany ?>">
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 items-end">
+                    <label class="block">
+                        <span class="text-[10px] font-medium text-ink-muted">Acción</span>
+                        <select name="action" data-vm-bulk-action
+                                class="mt-0.5 w-full px-2 py-1.5 rounded-lg border border-line-strong bg-input text-ink text-xs">
+                            <option value="status">Cambiar estado</option>
+                            <option value="assignee">Asignar responsable</option>
+                            <option value="note">Añadir nota común</option>
+                        </select>
+                    </label>
+                    <label class="block" data-vm-bulk-field="status">
+                        <span class="text-[10px] font-medium text-ink-muted">Nuevo estado</span>
+                        <select name="bulk_status"
+                                class="mt-0.5 w-full px-2 py-1.5 rounded-lg border border-line-strong bg-input text-ink text-xs">
+                            <?php foreach (VmCases::BULK_STATUSES as $bulkStatus): ?>
+                                <option value="<?= e($bulkStatus) ?>"><?= e($statusLabels[$bulkStatus] ?? $bulkStatus) ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </label>
+                    <label class="block" data-vm-bulk-field="assignee" hidden>
+                        <span class="text-[10px] font-medium text-ink-muted">Responsable</span>
+                        <input type="text" name="bulk_assignee" maxlength="120" placeholder="Nombre o equipo"
+                               class="mt-0.5 w-full px-2.5 py-1.5 rounded-lg border border-line-strong bg-input text-ink text-xs">
+                    </label>
+                    <label class="block" data-vm-bulk-field="note" hidden>
+                        <span class="text-[10px] font-medium text-ink-muted">Nota común</span>
+                        <input type="text" name="bulk_note" maxlength="2000" placeholder="Se añade como evidencia en cada caso"
+                               class="mt-0.5 w-full px-2.5 py-1.5 rounded-lg border border-line-strong bg-input text-ink text-xs">
+                    </label>
+                </div>
+                <div class="flex items-center gap-2 flex-wrap">
+                    <button type="submit"
+                            class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-brand-500 hover:bg-brand-600 text-white text-[11px] font-semibold rounded-lg transition-colors">
+                        <i class="material-icons icon-12" aria-hidden="true">done_all</i>
+                        Aplicar a seleccionados
+                    </button>
+                    <button type="button" data-vm-bulk-clear
+                            class="text-[10px] text-ink-soft hover:underline">Limpiar selección</button>
+                </div>
+                <p class="text-[10px] text-ink-soft">
+                    El cierre verificado y el riesgo aceptado se hacen caso a caso para no saltarse las reglas.
+                </p>
+            </form>
+        </details>
+    <?php endif; ?>
+
     <?php if ($vmCases === []): ?>
         <p class="p-4 text-sm text-ink-muted">
             No hay casos con estos filtros. Crea casos desde una importación o desde el botón «Crear pendientes».
         </p>
+    <?php elseif ($groupBySoftware): ?>
+        <div class="divide-y divide-line">
+            <?php foreach ($softwareGroups as $groupLabel => $groupRows): ?>
+                <?php
+                $openCount = 0;
+                $overdueCount = 0;
+                $worstPriority = 'low';
+                foreach ($groupRows as $groupRow) {
+                    if (!VmCases::isClosed((string)($groupRow['status'] ?? ''))) {
+                        $openCount++;
+                    }
+                    $groupDeadline = VmCases::deadlineState(
+                        (string)($groupRow['due_date'] ?? ''),
+                        (string)($groupRow['status'] ?? ''),
+                        (string)($groupRow['accepted_until'] ?? ''),
+                        $today
+                    );
+                    if (in_array($groupDeadline, ['expired', 'exception_expired'], true)) {
+                        $overdueCount++;
+                    }
+                    $groupPriority = (string)($groupRow['priority'] ?? '');
+                    if (isset($priorityRank[$groupPriority]) && $priorityRank[$groupPriority] < $priorityRank[$worstPriority]) {
+                        $worstPriority = $groupPriority;
+                    }
+                }
+                ?>
+                <details class="group">
+                    <summary class="px-3 py-2 cursor-pointer select-none flex items-center justify-between gap-2 flex-wrap hover:bg-muted/50">
+                        <span class="text-xs font-semibold font-mono"><?= e((string)$groupLabel) ?></span>
+                        <span class="flex items-center gap-1.5 text-[10px] text-ink-soft flex-wrap">
+                            <span><?= count($groupRows) ?> CVE(s)</span>
+                            <span>· <?= $openCount ?> abierto(s)</span>
+                            <?php if ($overdueCount > 0): ?>
+                                <span class="text-danger font-medium">· <?= $overdueCount ?> vencido(s)</span>
+                            <?php endif; ?>
+                            <span class="inline-flex px-1.5 py-0.5 rounded font-semibold <?= $priorityClasses[$worstPriority] ?? '' ?>">
+                                <?= e(VmCases::priorityLabel($worstPriority)) ?>
+                            </span>
+                        </span>
+                    </summary>
+                    <div class="overflow-x-auto border-t border-line">
+                        <table class="w-full text-xs">
+                            <?php require __DIR__ . '/_vm_case_table_head.php'; ?>
+                            <tbody class="divide-y divide-line">
+                                <?php foreach ($groupRows as $caseRow): ?>
+                                    <?php require __DIR__ . '/_vm_case_row.php'; ?>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                </details>
+            <?php endforeach; ?>
+        </div>
     <?php else: ?>
         <div class="overflow-x-auto">
             <table class="w-full text-xs">
-                <thead class="bg-muted text-ink-muted">
-                    <tr>
-                        <th class="px-3 py-2 text-left">CVE</th>
-                        <th class="px-3 py-2 text-left">Producto</th>
-                        <th class="px-3 py-2 text-left">Empresa</th>
-                        <th class="px-3 py-2 text-left">Prioridad</th>
-                        <th class="px-3 py-2 text-left">Estado</th>
-                        <th class="px-3 py-2 text-left">Vencimiento</th>
-                        <th class="px-3 py-2 text-left">Responsable</th>
-                        <th class="px-3 py-2 text-left">Última obs.</th>
-                        <th class="px-3 py-2"></th>
-                    </tr>
-                </thead>
+                <?php require __DIR__ . '/_vm_case_table_head.php'; ?>
                 <tbody class="divide-y divide-line">
                     <?php foreach ($vmCases as $caseRow): ?>
-                        <?php
-                        $rowId = (int)$caseRow['id'];
-                        $rowStatus = (string)$caseRow['status'];
-                        $rowPriority = (string)($caseRow['priority'] ?? '');
-                        $rowDeadline = VmCases::deadlineState(
-                            (string)($caseRow['due_date'] ?? ''),
-                            $rowStatus,
-                            (string)($caseRow['accepted_until'] ?? ''),
-                            $today
-                        );
-                        $rowSource = (string)($caseRow['source'] ?? 'defender-tvm');
-                        $panelUrl = base_url('modules/cve/vm/' . $rowId . '/panel');
-                        ?>
-                        <tr class="hover:bg-muted/50">
-                            <td class="px-3 py-2">
-                                <a href="<?= base_url('modules/cve/detail/' . urlencode((string)$caseRow['cve_id']) . '/panel') ?>"
-                                   data-vm-panel data-vm-title="<?= e((string)$caseRow['cve_id']) ?>"
-                                   class="font-mono font-medium text-brand-600 dark:text-brand-300 hover:underline">
-                                    <?= e((string)$caseRow['cve_id']) ?>
-                                </a>
-                                <?php if (!empty($caseRow['kev_id'])): ?>
-                                    <span class="ml-1 inline-flex px-1 py-0.5 rounded bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300 text-[9px] font-semibold">KEV</span>
-                                <?php endif; ?>
-                                <span class="ml-1 inline-flex px-1 py-0.5 rounded text-[9px] <?= $rowSource === 'catalog' ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300' : 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' ?>"
-                                      title="<?= e($sourceLabels[$rowSource] ?? $rowSource) ?>">
-                                    <?= $rowSource === 'catalog' ? 'Mis CVE' : 'TVM' ?>
-                                </span>
-                                <?php if (isset($vmPlanKeys[(int)$caseRow['group_id'] . '|' . strtoupper((string)$caseRow['cve_id'])])): ?>
-                                    <span class="ml-1 inline-flex px-1 py-0.5 rounded text-[9px] bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300"
-                                          data-vm-plan-badge title="Tiene plan de remediación guardado">Plan</span>
-                                <?php endif; ?>
-                            </td>
-                            <td class="px-3 py-2 max-w-[220px]">
-                                <?php
-                                $productSource = (string)($caseRow['related_software'] ?? '');
-                                if (trim($productSource) === '') {
-                                    $productSource = (string)($caseRow['catalog_products'] ?? '');
-                                }
-                                if (trim($productSource) === '') {
-                                    $productSource = (string)($caseRow['finding_products'] ?? '');
-                                }
-                                $productLabels = [];
-                                foreach (preg_split('/[;,]+/', $productSource) ?: [] as $pair) {
-                                    $pair = trim($pair);
-                                    if ($pair !== '' && !in_array($pair, $productLabels, true)) {
-                                        $productLabels[] = $pair;
-                                    }
-                                }
-                                ?>
-                                <?php if ($productLabels === []): ?>
-                                    <span class="text-ink-soft">—</span>
-                                <?php else: ?>
-                                    <div class="flex flex-wrap gap-1" title="<?= e(implode(' · ', $productLabels)) ?>">
-                                        <?php foreach (array_slice($productLabels, 0, 2) as $label): ?>
-                                            <span class="inline-flex px-1.5 py-0.5 rounded bg-muted text-[10px] text-ink-muted font-mono"><?= e($label) ?></span>
-                                        <?php endforeach; ?>
-                                        <?php if (count($productLabels) > 2): ?>
-                                            <span class="inline-flex px-1.5 py-0.5 rounded bg-muted text-[10px] text-ink-soft">+<?= count($productLabels) - 2 ?></span>
-                                        <?php endif; ?>
-                                    </div>
-                                <?php endif; ?>
-                            </td>
-                            <td class="px-3 py-2 max-w-[150px] truncate" title="<?= e((string)($caseRow['company_name'] ?? '')) ?>">
-                                <?= e((string)($caseRow['company_name'] ?? '—')) ?>
-                            </td>
-                            <td class="px-3 py-2">
-                                <span class="inline-flex px-1.5 py-0.5 rounded text-[10px] font-semibold <?= $priorityClasses[$rowPriority] ?? 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300' ?>">
-                                    <?= e(VmCases::priorityLabel($rowPriority)) ?>
-                                </span>
-                            </td>
-                            <td class="px-3 py-2">
-                                <span class="inline-flex px-1.5 py-0.5 rounded text-[10px] font-medium <?= $statusClasses[$rowStatus] ?? '' ?>">
-                                    <?= e($statusLabels[$rowStatus] ?? $rowStatus) ?>
-                                </span>
-                            </td>
-                            <td class="px-3 py-2 whitespace-nowrap">
-                                <span class="inline-flex px-1.5 py-0.5 rounded text-[10px] font-medium <?= $deadlineClasses[$rowDeadline] ?? '' ?>">
-                                    <?= e($deadlineLabels[$rowDeadline] ?? $rowDeadline) ?>
-                                </span>
-                                <span class="block text-[10px] text-ink-soft"><?= e($fmtDate((string)($caseRow['due_date'] ?? ''))) ?></span>
-                            </td>
-                            <td class="px-3 py-2"><?= e((string)($caseRow['assignee_name'] ?? '—')) ?></td>
-                            <td class="px-3 py-2 whitespace-nowrap"><?= e($fmtDate((string)($caseRow['last_seen_at'] ?? ''))) ?></td>
-                            <td class="px-3 py-2 text-right">
-                                <a href="<?= e($caseUrl($rowId)) ?>"
-                                   data-vm-panel data-vm-title="Caso <?= e((string)$caseRow['cve_id']) ?>"
-                                   data-vm-url="<?= e($panelUrl) ?>"
-                                   class="text-brand-600 dark:text-brand-300 hover:underline">Ver</a>
-                            </td>
-                        </tr>
+                        <?php require __DIR__ . '/_vm_case_row.php'; ?>
                     <?php endforeach; ?>
                 </tbody>
             </table>
@@ -834,6 +885,63 @@ $quickViews = [
     document.addEventListener('keydown', function (event) {
         if (event.key === 'Escape') { closeDrawer(); }
     });
+
+    // Acciones en lote: contador, "seleccionar todos" y campos por acción (v0.3.23).
+    (function () {
+        var bulk = document.querySelector('[data-vm-bulk]');
+        if (!bulk) { return; }
+        var actionEl = bulk.querySelector('[data-vm-bulk-action]');
+        var countEl = bulk.querySelector('[data-vm-bulk-count]');
+
+        function checkboxes() {
+            return Array.prototype.slice.call(document.querySelectorAll('[data-vm-case-check]'));
+        }
+        function tableChecks(master) {
+            var table = master ? master.closest('table') : null;
+            return table
+                ? Array.prototype.slice.call(table.querySelectorAll('[data-vm-case-check]'))
+                : checkboxes();
+        }
+        function refresh() {
+            var boxes = checkboxes();
+            var selected = boxes.filter(function (box) { return box.checked; }).length;
+            if (countEl) { countEl.textContent = String(selected); }
+            Array.prototype.forEach.call(document.querySelectorAll('[data-vm-bulk-all]'), function (master) {
+                var group = tableChecks(master);
+                var groupSelected = group.filter(function (box) { return box.checked; }).length;
+                master.checked = group.length > 0 && groupSelected === group.length;
+                master.indeterminate = groupSelected > 0 && groupSelected < group.length;
+            });
+        }
+        function syncFields() {
+            if (!actionEl) { return; }
+            Array.prototype.forEach.call(bulk.querySelectorAll('[data-vm-bulk-field]'), function (field) {
+                field.hidden = field.getAttribute('data-vm-bulk-field') !== actionEl.value;
+            });
+        }
+
+        document.addEventListener('change', function (event) {
+            var master = event.target.closest('[data-vm-bulk-all]');
+            if (master) {
+                tableChecks(master).forEach(function (box) { box.checked = master.checked; });
+                refresh();
+                return;
+            }
+            if (event.target.closest('[data-vm-case-check]')) { refresh(); }
+        });
+        if (actionEl) {
+            actionEl.addEventListener('change', syncFields);
+            syncFields();
+        }
+        var clearEl = bulk.querySelector('[data-vm-bulk-clear]');
+        if (clearEl) {
+            clearEl.addEventListener('click', function () {
+                checkboxes().forEach(function (box) { box.checked = false; });
+                refresh();
+            });
+        }
+        refresh();
+    })();
 
     syncConditions(document);
     hydrateCvePanels(document);

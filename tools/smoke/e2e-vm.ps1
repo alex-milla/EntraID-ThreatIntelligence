@@ -197,6 +197,14 @@ try {
     Check 'E2E: importación sin el CVE no cierra ni altera' ($closedAgain.status -eq 'resolved_verified') $closedAgain.status
     Check 'E2E: la observación del caso cerrado no cambia' ([int]$closedAgain.last_seen_import_id -eq $firstSeenImport) "$($closedAgain.last_seen_import_id)"
 
+    # --- Fase 3: ausente en el último TVM (sin cerrar nada) ---
+    $absentQueue = Invoke-WebRequest -Uri "$base/index.php/modules/cve?tab=vm&company=$companyId" -WebSession $ws -UseBasicParsing -TimeoutSec 30
+    Check 'E2E fase3: aviso de ausente en la cola' ($absentQueue.Content -match 'No aparece en la última importación') 'sin marca de ausente'
+    $absentPanel = Invoke-WebRequest -Uri "$base/index.php/modules/cve/vm/$([int]$riskCase.id)/panel" -WebSession $ws -UseBasicParsing -TimeoutSec 30
+    Check 'E2E fase3: aviso de ausente en la ficha' ($absentPanel.Content -match 'No aparece en la última importación') 'sin aviso en la ficha'
+    $riskStillOpen = (Probe @('case', [string]$riskCase.id)).case
+    Check 'E2E fase3: ausente no cierra el caso' ($riskStillOpen.status -eq 'detected') $riskStillOpen.status
+
     # --- tercera importación CON el CVE cerrado ---
     $csv3 = Join-Path $tmp 'tvm-3.csv'
     @(
@@ -299,6 +307,12 @@ try {
         $vmPage.Content -match 'Mesa de trabajo' -and
         $vmPage.Content -match 'CVE-2026-00001'
     ) 'la navegación nueva no se pinta'
+    $softwarePage = Invoke-WebRequest -Uri "$base/index.php/modules/cve?tab=vm&company=$companyId&vm_group=software" -WebSession $ws -UseBasicParsing -TimeoutSec 30
+    Check 'E2E fase3: agrupación por software' (
+        $softwarePage.Content -match 'atlassian:jira' -and
+        $softwarePage.Content -match 'nginx:nginx' -and
+        $softwarePage.Content -match 'Por CVE'
+    ) 'los grupos de software no se pintan'
 
     # --- guardar plan desde una conversación de CVE (sin tarea) ---
     $seedChat = Probe @('seed-remediation-chat', "$companyId", 'CVE-2030-4242')
@@ -463,6 +477,50 @@ try {
         $assignedOk = $false
     }
     Check 'E2E estados: Asignada aceptada' $assignedOk 'no se guardó el estado assigned'
+
+    # --- Fase 3: acciones en lote ---
+    $bulkStatusBody = 'company_id=' + $companyId +
+        '&action=status&bulk_status=in_progress' +
+        '&csrf_token=' + [uri]::EscapeDataString($token) +
+        '&case_ids%5B%5D=' + [int]$riskCase.id +
+        '&case_ids%5B%5D=' + [int]$catalogCaseId
+    $null = Invoke-WebRequest -Uri "$base/index.php/modules/cve/vm/bulk" -Method POST -WebSession $ws `
+        -Body $bulkStatusBody -ContentType 'application/x-www-form-urlencoded' `
+        -UseBasicParsing -TimeoutSec 60 -MaximumRedirection 5
+    Start-Sleep -Milliseconds 300
+    $casesBulk = (Probe @('cases', "$companyId")).cases
+    $bulkOne = $casesBulk | Where-Object { [int]$_.id -eq [int]$riskCase.id }
+    $bulkTwo = $casesBulk | Where-Object { [int]$_.id -eq [int]$catalogCaseId }
+    Check 'E2E fase3: estado aplicado en lote' (
+        $bulkOne.status -eq 'in_progress' -and $bulkTwo.status -eq 'in_progress'
+    ) "uno=$($bulkOne.status) dos=$($bulkTwo.status)"
+
+    $bulkNoteBody = 'company_id=' + $companyId +
+        '&action=note&bulk_note=' + [uri]::EscapeDataString('Nota de lote E2E') +
+        '&csrf_token=' + [uri]::EscapeDataString($token) +
+        '&case_ids%5B%5D=' + [int]$riskCase.id
+    $null = Invoke-WebRequest -Uri "$base/index.php/modules/cve/vm/bulk" -Method POST -WebSession $ws `
+        -Body $bulkNoteBody -ContentType 'application/x-www-form-urlencoded' `
+        -UseBasicParsing -TimeoutSec 60 -MaximumRedirection 5
+    Start-Sleep -Milliseconds 300
+    $caseBulk = Probe @('case', [string][int]$riskCase.id)
+    Check 'E2E fase3: nota común en lote' (
+        ($caseBulk.evidence | Where-Object { $_.comment -eq 'Nota de lote E2E' }).Count -ge 1
+    ) 'sin evidencia de lote'
+    Check 'E2E fase3: evento de cambio en lote' (
+        ($caseBulk.events | Where-Object { $_.event_type -eq 'status' -and $_.comment -eq 'Cambio en lote' }).Count -ge 1
+    ) 'sin evento de lote'
+
+    $bulkCloseBody = 'company_id=' + $companyId +
+        '&action=status&bulk_status=resolved_verified' +
+        '&csrf_token=' + [uri]::EscapeDataString($token) +
+        '&case_ids%5B%5D=' + [int]$riskCase.id
+    $rejectBulk = Invoke-WebRequest -Uri "$base/index.php/modules/cve/vm/bulk" -Method POST -WebSession $ws `
+        -Body $bulkCloseBody -ContentType 'application/x-www-form-urlencoded' `
+        -UseBasicParsing -TimeoutSec 60 -MaximumRedirection 5
+    Check 'E2E fase3: el cierre no se aplica en lote' ($rejectBulk.Content -match 'se hacen caso a caso') 'no se rechazó'
+    $afterReject = (Probe @('case', [string][int]$riskCase.id)).case
+    Check 'E2E fase3: el estado no cambia tras rechazo' ($afterReject.status -eq 'in_progress') $afterReject.status
 }
 finally {
     if ($server -and -not $server.HasExited) { Stop-Process -Id $server.Id -Force }
