@@ -243,5 +243,45 @@ $leftover = CveDatabase::fetchOne(
 );
 check('Esquema: la prueba no deja datos', (int)($leftover['n'] ?? 0) === 0);
 
+// ============================================================
+// Fase 2 (v0.3.22): playbooks, checklist y notas fijadas
+// ============================================================
+$playbooks = VmCases::playbooks('CVE-2026-0001');
+check('Playbooks: cuatro definidos', count($playbooks) === 4, (string)count($playbooks));
+check(
+    'Playbooks: el prompt incluye el CVE',
+    isset($playbooks['patch']['text']) && str_contains($playbooks['patch']['text'], 'CVE-2026-0001')
+);
+
+$markdownPlan = "# Plan\n\n- [ ] Aplicar parche\n- [x] Reiniciar servicio\n";
+$items = plan_checklist_items($markdownPlan);
+check('Checklist: dos elementos detectados', count($items) === 2, (string)count($items));
+check('Checklist: estado escrito respetado', $items[0]['default'] === false && $items[1]['default'] === true);
+check('Checklist: clave estable', $items[0]['key'] === plan_checklist_key('Aplicar parche', 0));
+check(
+    'Checklist: claves distintas para textos iguales',
+    plan_checklist_key('Aplicar parche', 0) !== plan_checklist_key('Aplicar parche', 1)
+);
+$rendered = render_plan_with_checklist($markdownPlan, 42, [$items[0]['key'] => 1]);
+check('Checklist: checkbox real renderizado', str_contains($rendered, 'data-plan-check'));
+check('Checklist: tarea y clave en el HTML', str_contains($rendered, 'data-task-id="42"'));
+check('Checklist: texto conservado', str_contains($rendered, 'Aplicar parche'));
+check(
+    'Checklist: estado guardado manda sobre el plan',
+    preg_match('/data-item-key="' . preg_quote($items[0]['key'], '/') . '"[^>]*checked/', $rendered) === 1
+);
+$plainPlan = render_plan_with_checklist("# Solo texto\n\nSin checklist.", 7, []);
+check('Checklist: plan sin elementos no cambia', !str_contains($plainPlan, 'data-plan-check'));
+
+$pinCols = [];
+foreach (CveDatabase::getInstance()->query("PRAGMA table_info(vm_case_evidence)") as $col) {
+    $pinCols[$col['name']] = true;
+}
+check('Esquema: columna pinned en evidencias', isset($pinCols['pinned']));
+$checksTable = Database::fetchOne(
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'remediation_task_checks'"
+);
+check('Esquema: tabla de checklist del plan', $checksTable !== null);
+
 echo PHP_EOL . ($fail === 0 ? 'RESULTADO: OK (' . $total . ' comprobaciones)' : "RESULTADO: {$fail} de {$total} fallidas") . PHP_EOL;
 exit($fail === 0 ? 0 : 1);

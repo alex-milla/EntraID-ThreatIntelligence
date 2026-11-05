@@ -334,6 +334,55 @@ try {
     $postUnsaved = Invoke-WebRequest -Uri "$base/index.php/modules/cve/vm/$rawCaseId/remediation-plan" -WebSession $ws -UseBasicParsing -TimeoutSec 30
     Check 'E2E plan: respuesta guardada visible y sin aviso' ($postUnsaved.Content -match 'Paso AUTO' -and $postUnsaved.Content -notmatch 'aún no se han guardado') 'aviso persistente o plan ausente'
 
+    # --- Fase 2: checklist interactiva del plan ---
+    $checkSeed = Probe @('seed-plan-checklist', "$companyId", 'CVE-2026-21589')
+    Check 'E2E fase2: checklist sembrada' ([int]$checkSeed.task_id -gt 0) "task=$($checkSeed.task_id)"
+    $planChecks = Invoke-WebRequest -Uri "$base/index.php/modules/cve/vm/$criticalId/remediation-plan" -WebSession $ws -UseBasicParsing -TimeoutSec 30
+    Check 'E2E fase2: checklist visible y contada' (
+        $planChecks.Content -match 'data-plan-check' -and
+        $planChecks.Content -match 'Checklist: 0/2'
+    ) 'sin checklist o contador'
+    $checkKey = [regex]::Match($planChecks.Content, 'data-item-key="([a-f0-9]+)"').Groups[1].Value
+    Check 'E2E fase2: clave estable del elemento' ($checkKey -ne '') 'sin clave'
+    $toggle = Invoke-WebRequest -Uri "$base/index.php/modules/cve/vm/$criticalId/plan-check" -Method POST -WebSession $ws `
+        -Body @{ task_id = [int]$checkSeed.task_id; item_key = $checkKey; checked = '1'; csrf_token = $token } `
+        -UseBasicParsing -TimeoutSec 30
+    Check 'E2E fase2: marcar elemento devuelve JSON' ($toggle.Content -match '"success":true') $toggle.Content
+    $planChecked = Invoke-WebRequest -Uri "$base/index.php/modules/cve/vm/$criticalId/remediation-plan" -WebSession $ws -UseBasicParsing -TimeoutSec 30
+    Check 'E2E fase2: estado de checklist persistido' ($planChecked.Content -match 'Checklist: 1/2') 'el contador no cambia'
+
+    # --- Fase 2: nota fijada como punto clave ---
+    $null = Invoke-WebRequest -Uri "$base/index.php/modules/cve/vm/evidence" -Method POST -WebSession $ws `
+        -Body @{ case_id = $criticalId; kind = 'note'; comment = 'Nota fijable E2E'; reference = 'E2E-PIN'; csrf_token = $token } `
+        -UseBasicParsing -TimeoutSec 30 -MaximumRedirection 5
+    $casePin = Probe @('case', "$criticalId")
+    $noteRow = $casePin.evidence | Where-Object { $_.comment -eq 'Nota fijable E2E' } | Select-Object -Last 1
+    Check 'E2E fase2: nota creada' ($null -ne $noteRow) 'sin nota'
+    $null = Invoke-WebRequest -Uri "$base/index.php/modules/cve/vm/$criticalId/evidence/pin" -Method POST -WebSession $ws `
+        -Body @{ evidence_id = [int]$noteRow.id; pinned = '1'; csrf_token = $token } `
+        -UseBasicParsing -TimeoutSec 30 -MaximumRedirection 5
+    $panelPinned = Invoke-WebRequest -Uri "$base/index.php/modules/cve/vm/$criticalId/panel" -WebSession $ws -UseBasicParsing -TimeoutSec 30
+    Check 'E2E fase2: punto clave visible' (
+        $panelPinned.Content -match 'Puntos clave' -and
+        $panelPinned.Content -match 'Nota fijable E2E'
+    ) 'no aparece la nota fijada'
+    $casePin2 = Probe @('case', "$criticalId")
+    Check 'E2E fase2: evento de nota fijada' (($casePin2.events | Where-Object { $_.event_type -eq 'evidence_pin' }).Count -ge 1) 'sin evento'
+
+    # --- Fase 2: playbooks auditados ---
+    $playbookResp = Invoke-WebRequest -Uri "$base/index.php/modules/cve/vm/$criticalId/playbook" -Method POST -WebSession $ws `
+        -Body @{ playbook = 'patch'; csrf_token = $token } `
+        -UseBasicParsing -TimeoutSec 60 -MaximumRedirection 5
+    Check 'E2E fase2: playbook abre el asistente con el prompt' (
+        $playbookResp.StatusCode -eq 200 -and
+        $playbookResp.Content -match 'Actúa como analista de vulnerabilidades senior' -and
+        $playbookResp.Content -match 'CVE-2026-21589'
+    ) "status=$($playbookResp.StatusCode)"
+    $casePb = Probe @('case', "$criticalId")
+    Check 'E2E fase2: playbook auditado' (
+        ($casePb.events | Where-Object { $_.event_type -eq 'ai_prompt' -and $_.new_value -eq 'patch' }).Count -ge 1
+    ) 'sin evento ai_prompt'
+
     # --- hallazgos por activo ---
     $findBase = @{
         source = 'manual'; status = 'detected'; environment = 'Producción';

@@ -800,6 +800,17 @@ class CveDatabase
             $db->exec("ALTER TABLE vm_cases ADD COLUMN accepted_controls TEXT");
         }
 
+        // v0.3.22: notas fijadas como puntos clave del caso. Se guardan en la
+        // propia evidencia (sin tabla nueva) y no alteran el historial.
+        $evCols = [];
+        foreach ($db->query("PRAGMA table_info(vm_case_evidence)") as $col) {
+            $evCols[$col['name']] = true;
+        }
+        if (!isset($evCols['pinned'])) {
+            $db->exec("ALTER TABLE vm_case_evidence ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0");
+        }
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_vm_case_evidence_pinned ON vm_case_evidence(case_id, pinned)");
+
         self::seedVmFindings($db);
     }
 

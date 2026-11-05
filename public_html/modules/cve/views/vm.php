@@ -774,6 +774,63 @@ $quickViews = [
         });
     });
 
+    // Checklist interactiva de los planes de remediación (v0.3.22).
+    document.addEventListener('change', function (event) {
+        var box = event.target.closest('[data-plan-check]');
+        if (!box) { return; }
+        var form = box.closest('form[data-plan-checks]');
+        if (!form) { return; }
+
+        var taskId = box.getAttribute('data-task-id') || '';
+        var data = new FormData(form);
+        data.append('task_id', taskId);
+        data.append('item_key', box.getAttribute('data-item-key') || '');
+        data.append('checked', box.checked ? '1' : '0');
+
+        var label = box.closest('label');
+        var text = label ? label.querySelector('span') : null;
+        var paint = function () {
+            if (!text) { return; }
+            text.classList.toggle('line-through', box.checked);
+            text.classList.toggle('text-ink-soft', box.checked);
+        };
+        paint();
+
+        box.disabled = true;
+        fetch(form.getAttribute('action'), {
+            method: 'POST',
+            body: data,
+            credentials: 'same-origin',
+            headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        }).then(function (response) {
+            return response.json();
+        }).then(function (res) {
+            if (!res || !res.success) {
+                throw new Error((res && res.error) ? res.error : 'No se pudo guardar');
+            }
+            var root = box.closest('[data-vm-case-root]') || document;
+            var progress = root.querySelector('[data-plan-progress="' + taskId + '"]');
+            if (progress) {
+                var all = form.querySelectorAll('[data-plan-check]');
+                var done = 0;
+                Array.prototype.forEach.call(all, function (check) {
+                    if (check.checked) { done++; }
+                });
+                progress.textContent = 'Checklist: ' + done + '/' + all.length;
+            }
+        }).catch(function (err) {
+            box.checked = !box.checked;
+            paint();
+            if (typeof appAlert === 'function') {
+                appAlert('No se pudo guardar el checklist: ' + err.message);
+            } else {
+                window.alert('No se pudo guardar el checklist: ' + err.message);
+            }
+        }).finally(function () {
+            box.disabled = false;
+        });
+    });
+
     document.addEventListener('keydown', function (event) {
         if (event.key === 'Escape') { closeDrawer(); }
     });

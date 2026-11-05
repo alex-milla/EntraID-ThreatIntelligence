@@ -1,6 +1,6 @@
 <?php
 /**
- * Parcial: detalle de un caso de seguimiento (v0.3.21).
+ * Parcial: detalle de un caso de seguimiento (v0.3.22).
  *
  * Se usa de dos formas:
  *   · incluido en views/vm.php cuando se navega con ?case=ID;
@@ -132,6 +132,8 @@ foreach ($vmEvidence as $evRow) {
     $timeline[] = [
         'at'          => (string)($evRow['occurred_at'] ?? ''),
         'kind'        => 'evidence',
+        'id'          => (int)($evRow['id'] ?? 0),
+        'pinned'      => (int)($evRow['pinned'] ?? 0) === 1,
         'icon'        => match ($evKind) {
             'plan'         => 'assignment',
             'mitigation'   => 'shield',
@@ -153,6 +155,8 @@ foreach ($vmEvents as $eventRow) {
     $timeline[] = [
         'at'          => (string)($eventRow['created_at'] ?? ''),
         'kind'        => 'event',
+        'id'          => 0,
+        'pinned'      => false,
         'icon'        => match ($evType) {
             'status'     => 'swap_horiz',
             'reobserved' => 'replay',
@@ -175,35 +179,13 @@ usort($timeline, static function (array $a, array $b): int {
 $timelineTotal = count($timeline);
 $timelineVisible = array_slice($timeline, 0, 40);
 
-// --- Playbooks IA: abren el asistente con el contexto del CVE y el prompt listo ---
-$assistantUrl = base_url('modules/remediation?tab=assistant&cve=' . urlencode($cveId));
-$playbooks = [
-    [
-        'icon'  => 'build',
-        'title' => 'Plan de parcheo y rollback',
-        'hint'  => 'Versiones/KB corregidas, despliegue, reinicio y vuelta atrás.',
-        'text'  => 'Actúa como analista de vulnerabilidades senior. Para el CVE ' . $cveId . ' en esta organización, elabora un plan de remediación paso a paso: versiones o KB corregidas, orden de despliegue, ventana de mantenimiento, impacto de reinicio, comprobaciones previas y posteriores, y procedimiento de rollback. Incluye los comandos o pasos exactos cuando proceda y marca explícitamente lo que no puedas verificar.',
-    ],
-    [
-        'icon'  => 'shield',
-        'title' => 'Mitigación sin parche',
-        'hint'  => 'Controles compensatorios inmediatos y cómo comprobarlos.',
-        'text'  => 'Para el CVE ' . $cveId . ' no es posible aplicar el parche a corto plazo. Propón mitigaciones y controles compensatorios inmediatos (firewall, GPO, registro, configuración del servicio, segmentación) indicando alcance, limitaciones y cómo verificar que están realmente aplicados.',
-    ],
-    [
-        'icon'  => 'search',
-        'title' => 'Detección y verificación',
-        'hint'  => 'KQL para Defender Hunting y/o script PowerShell de solo lectura.',
-        'text'  => 'Genera mecanismos de detección y verificación para el CVE ' . $cveId . ': una consulta KQL para Defender Advanced Hunting y/o un script PowerShell de solo lectura que compruebe versión, archivo o configuración afectada. Indica cómo interpretar el resultado y qué evidencia adjuntar al cierre.',
-    ],
-    [
-        'icon'  => 'mail',
-        'title' => 'Nota ejecutiva para el cliente',
-        'hint'  => 'Riesgo, acción solicitada y plazo, sin jerga.',
-        'text'  => 'Redacta una nota ejecutiva breve (máximo 200 palabras) sobre el CVE ' . $cveId . ': qué riesgo supone, a quién afecta, qué acción se solicita y en qué plazo. Sin jerga innecesaria y sin inventar datos que no consten.',
-    ],
-];
+// --- Playbooks IA: se definen en servidor y se lanzan por POST (v0.3.22) ---
+$playbooks = VmCases::playbooks($cveId);
 $findingsCount = (int)($case['findings_count'] ?? 0);
+$pinnedNotes = array_values(array_filter(
+    $vmEvidence,
+    static fn(array $row): bool => (int)($row['pinned'] ?? 0) === 1
+));
 ?>
 
 <div class="space-y-4" data-vm-case-root>
@@ -363,6 +345,41 @@ $findingsCount = (int)($case['findings_count'] ?? 0);
 
     <!-- ================= RESUMEN Y NOTAS ================= -->
     <section data-vm-pane="summary" class="space-y-3">
+        <?php if ($pinnedNotes !== []): ?>
+            <div class="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 px-3 py-2">
+                <p class="text-[11px] font-semibold text-amber-800 dark:text-amber-200 flex items-center gap-1">
+                    <i class="material-icons icon-14" aria-hidden="true">push_pin</i>
+                    Puntos clave
+                </p>
+                <ul class="mt-1 space-y-1.5">
+                    <?php foreach ($pinnedNotes as $pinned): ?>
+                        <li class="flex items-start justify-between gap-2">
+                            <div class="min-w-0">
+                                <p class="text-[11px] text-ink"><?= e((string)($pinned['comment'] ?? '')) ?></p>
+                                <p class="text-[10px] text-ink-soft">
+                                    <?= e($evidenceKinds[(string)($pinned['kind'] ?? 'note')] ?? 'Nota') ?>
+                                    · <?= e($fmtDate((string)($pinned['occurred_at'] ?? ''))) ?>
+                                    <?php if ((string)($pinned['reference'] ?? '') !== ''): ?>
+                                        · Ref: <?= e((string)$pinned['reference']) ?>
+                                    <?php endif; ?>
+                                </p>
+                            </div>
+                            <form method="post"
+                                  action="<?= base_url('modules/cve/vm/' . $caseId . '/evidence/pin') ?>">
+                                <?= Csrf::field() ?>
+                                <input type="hidden" name="evidence_id" value="<?= (int)($pinned['id'] ?? 0) ?>">
+                                <input type="hidden" name="pinned" value="0">
+                                <button type="submit" title="Desfijar"
+                                        class="px-1.5 py-1 text-[10px] text-ink-soft hover:text-gray-700 whitespace-nowrap">
+                                    Desfijar
+                                </button>
+                            </form>
+                        </li>
+                    <?php endforeach; ?>
+                </ul>
+            </div>
+        <?php endif; ?>
+
         <form method="post" action="<?= base_url('modules/cve/vm/evidence') ?>"
               class="rounded-lg border border-line p-3 space-y-2">
             <?= Csrf::field() ?>
@@ -529,6 +546,9 @@ $findingsCount = (int)($case['findings_count'] ?? 0);
                             <p class="text-[11px] font-medium flex items-center gap-1">
                                 <i class="material-icons icon-12 text-ink-soft" aria-hidden="true"><?= e($item['icon']) ?></i>
                                 <?= e($item['title']) ?>
+                                <?php if ($item['pinned']): ?>
+                                    <i class="material-icons icon-12 text-amber-600" title="Punto clave" aria-hidden="true">push_pin</i>
+                                <?php endif; ?>
                                 <?php if ($item['old'] !== '' || $item['new'] !== ''): ?>
                                     <span class="text-ink-soft font-normal"><?= e($item['old']) ?> → <?= e($item['new']) ?></span>
                                 <?php endif; ?>
@@ -539,12 +559,27 @@ $findingsCount = (int)($case['findings_count'] ?? 0);
                             <?php if ($item['reference'] !== ''): ?>
                                 <p class="text-[10px] text-ink-soft">Ref: <?= e($item['reference']) ?></p>
                             <?php endif; ?>
-                            <p class="text-[10px] text-ink-soft">
-                                <?= e($fmtDateTime($item['at'])) ?> · <?= e($item['user']) ?>
-                                <?php if ($item['kind'] === 'evidence'): ?>
-                                    · <?= e($item['source']) ?>
+                            <div class="text-[10px] text-ink-soft flex items-center gap-2 flex-wrap">
+                                <span>
+                                    <?= e($fmtDateTime($item['at'])) ?> · <?= e($item['user']) ?>
+                                    <?php if ($item['kind'] === 'evidence'): ?>
+                                        · <?= e($item['source']) ?>
+                                    <?php endif; ?>
+                                </span>
+                                <?php if ($item['kind'] === 'evidence' && $item['id'] > 0): ?>
+                                    <form method="post"
+                                          action="<?= base_url('modules/cve/vm/' . $caseId . '/evidence/pin') ?>"
+                                          class="inline">
+                                        <?= Csrf::field() ?>
+                                        <input type="hidden" name="evidence_id" value="<?= (int)$item['id'] ?>">
+                                        <input type="hidden" name="pinned" value="<?= $item['pinned'] ? '0' : '1' ?>">
+                                        <button type="submit"
+                                                class="text-[10px] text-brand-600 dark:text-brand-300 hover:underline">
+                                            <?= $item['pinned'] ? 'Desfijar' : 'Fijar como punto clave' ?>
+                                        </button>
+                                    </form>
                                 <?php endif; ?>
-                            </p>
+                            </div>
                         </li>
                     <?php endforeach; ?>
                 </ol>
@@ -577,19 +612,23 @@ $findingsCount = (int)($case['findings_count'] ?? 0);
                 <span class="text-[10px] text-ink-soft">Abren el asistente con el CVE y el prompt listos</span>
             </div>
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                <?php foreach ($playbooks as $playbook): ?>
-                    <a href="<?= e($assistantUrl . '&prompt=' . urlencode($playbook['text'])) ?>"
-                       class="group flex items-start gap-2 rounded-lg border border-line px-3 py-2 hover:border-brand-400 hover:bg-muted transition-colors">
-                        <i class="material-icons icon-16 text-brand-600 dark:text-brand-300 mt-0.5" aria-hidden="true"><?= e($playbook['icon']) ?></i>
-                        <span class="min-w-0">
-                            <span class="block text-[11px] font-semibold"><?= e($playbook['title']) ?></span>
-                            <span class="block text-[10px] text-ink-soft"><?= e($playbook['hint']) ?></span>
-                        </span>
-                    </a>
+                <?php foreach ($playbooks as $playbookKey => $playbook): ?>
+                    <form method="post" action="<?= base_url('modules/cve/vm/' . $caseId . '/playbook') ?>">
+                        <?= Csrf::field() ?>
+                        <input type="hidden" name="playbook" value="<?= e($playbookKey) ?>">
+                        <button type="submit"
+                                class="w-full text-left flex items-start gap-2 rounded-lg border border-line px-3 py-2 hover:border-brand-400 hover:bg-muted transition-colors">
+                            <i class="material-icons icon-16 text-brand-600 dark:text-brand-300 mt-0.5" aria-hidden="true"><?= e($playbook['icon']) ?></i>
+                            <span class="min-w-0">
+                                <span class="block text-[11px] font-semibold"><?= e($playbook['title']) ?></span>
+                                <span class="block text-[10px] text-ink-soft"><?= e($playbook['hint']) ?></span>
+                            </span>
+                        </button>
+                    </form>
                 <?php endforeach; ?>
             </div>
             <p class="mt-2 text-[10px] text-ink-soft">
-                El asistente guarda el resultado como plan si lo pides; desde aquí puedes ampliarlo y fijarlo en el caso.
+                Cada playbook queda registrado en el historial del caso y abre el asistente con la pregunta preparada.
             </p>
         </div>
 

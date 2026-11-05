@@ -87,6 +87,7 @@ class Module_Cve extends BaseModule
             ['method' => 'POST', 'pattern' => 'vm/create-from-group', 'handler' => [$this, 'vmCreateCasesFromGroup']],
             ['method' => 'POST', 'pattern' => 'vm/update',      'handler' => [$this, 'vmUpdateCase']],
             ['method' => 'POST', 'pattern' => 'vm/evidence',    'handler' => [$this, 'vmAddEvidence']],
+            ['method' => 'POST', 'pattern' => 'vm/{caseId}/evidence/pin', 'handler' => [$this, 'vmPinEvidence']],
             ['method' => 'POST', 'pattern' => 'vm/reopen',      'handler' => [$this, 'vmReopenCase']],
             ['method' => 'GET',  'pattern' => 'vm/report',      'handler' => [$this, 'vmReport']],
             ['method' => 'GET',  'pattern' => 'vm/{caseId}/panel', 'handler' => [$this, 'vmCasePanel']],
@@ -95,6 +96,8 @@ class Module_Cve extends BaseModule
             ['method' => 'GET',  'pattern' => 'vm/{caseId}/remediation-plan', 'handler' => [$this, 'vmRemediationPlan']],
             ['method' => 'POST', 'pattern' => 'vm/{caseId}/remediation-save', 'handler' => [$this, 'vmRemediationSavePlan']],
             ['method' => 'POST', 'pattern' => 'vm/{caseId}/remediation-link', 'handler' => [$this, 'vmRemediationLinkOrg']],
+            ['method' => 'POST', 'pattern' => 'vm/{caseId}/playbook', 'handler' => [$this, 'vmRunPlaybook']],
+            ['method' => 'POST', 'pattern' => 'vm/{caseId}/plan-check', 'handler' => [$this, 'vmTogglePlanCheck']],
             ['method' => 'GET',  'pattern' => 'vm/{caseId}/findings', 'handler' => [$this, 'vmFindingsPanel']],
             ['method' => 'POST', 'pattern' => 'vm/{caseId}/findings/save', 'handler' => [$this, 'vmSaveFinding']],
         ];
@@ -1757,9 +1760,142 @@ class Module_Cve extends BaseModule
     }
 
     /**
-     * Reabre un caso cerrado o una excepción. Conserva todo el historial:
-     * no se borran eventos ni evidencias.
+     * Fija o desfija una nota del caso como punto clave (v0.3.22).
+     * El estado vive en `vm_case_evidence.pinned`; no se duplica la nota.
      */
+    public function vmPinEvidence(array $params = []): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        $case = $this->getVmCase((int)($params['caseId'] ?? 0));
+        if ($case === null) {
+            http_response_code(404);
+            echo '<div class="p-3 text-xs text-danger">Caso de seguimiento no encontrado.</div>';
+            return;
+        }
+        $caseId = (int)$case['id'];
+        $back = base_url('modules/cve?tab=vm&company=' . (int)$case['group_id'] . '&case=' . $caseId);
+
+        $evidenceId = (int)($_POST['evidence_id'] ?? 0);
+        $pinned = !empty($_POST['pinned']) ? 1 : 0;
+        $row = CveDatabase::fetchOne(
+            "SELECT id, pinned FROM vm_case_evidence WHERE id = ? AND case_id = ?",
+            [$evidenceId, $caseId]
+        );
+        if ($row === null) {
+            flash('error', 'La nota no pertenece a este caso.');
+            redirect($back);
+        }
+
+        try {
+            CveDatabase::query("UPDATE vm_case_evidence SET pinned = ? WHERE id = ?", [$pinned, $evidenceId]);
+            $this->vmLogEvent(
+                $caseId,
+                'evidence_pin',
+                (string)(int)$row['pinned'],
+                (string)$pinned,
+                $pinned ? 'Nota fijada como punto clave' : 'Nota desfijada'
+            );
+            flash('success', $pinned ? 'Nota fijada como punto clave.' : 'Nota desfijada.');
+        } catch (Throwable $e) {
+            flash('error', 'No se pudo actualizar la nota: ' . $e->getMessage());
+        }
+
+        redirect($back);
+    }
+
+    /**
+     * Lanza un playbook del caso: registra la acción y abre el asistente con
+     * el prompt construido en servidor (v0.3.22).
+     */
+    public function vmRunPlaybook(array $params = []): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        $case = $this->getVmCase((int)($params['caseId'] ?? 0));
+        if ($case === null) {
+            http_response_code(404);
+            echo '<div class="p-3 text-xs text-danger">Caso de seguimiento no encontrado.</div>';
+            return;
+        }
+        $caseId = (int)$case['id'];
+        $back = base_url('modules/cve?tab=vm&company=' . (int)$case['group_id'] . '&case=' . $caseId);
+
+        $cveId = strtoupper((string)$case['cve_id']);
+        $key = trim((string)($_POST['playbook'] ?? ''));
+        $playbooks = VmCases::playbooks($cveId);
+        if (!isset($playbooks[$key])) {
+            flash('error', 'Playbook no válido.');
+            redirect($back);
+        }
+
+        try {
+            $this->vmLogEvent($caseId, 'ai_prompt', null, $key, 'Playbook IA: ' . $playbooks[$key]['title']);
+        } catch (Throwable $e) {
+            // El registro no debe impedir abrir el asistente.
+        }
+
+        $orgId = $this->vmPrimaryOrgId((int)$case['group_id']);
+        redirect(base_url(
+            'modules/remediation?tab=assistant'
+            . '&cve=' . urlencode($cveId)
+            . '&prompt=' . urlencode($playbooks[$key]['text'])
+            . ($orgId > 0 ? '&org=' . $orgId : '')
+        ));
+    }
+
+    /**
+     * Marca o desmarca un elemento de la checklist de un plan (v0.3.22).
+     * Solo acepta tareas de planes vinculados al caso.
+     */
+    public function vmTogglePlanCheck(array $params = []): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+        header('Content-Type: application/json; charset=utf-8');
+
+        $case = $this->getVmCase((int)($params['caseId'] ?? 0));
+        if ($case === null) {
+            http_response_code(404);
+            echo json_encode(['success' => false, 'error' => 'Caso no encontrado']);
+            return;
+        }
+
+        $taskId = (int)($_POST['task_id'] ?? 0);
+        $itemKey = trim((string)($_POST['item_key'] ?? ''));
+        $checked = !empty($_POST['checked']) ? 1 : 0;
+        if ($taskId <= 0 || $itemKey === '' || strlen($itemKey) > 64) {
+            http_response_code(422);
+            echo json_encode(['success' => false, 'error' => 'Elemento no válido']);
+            return;
+        }
+
+        $data = $this->vmRemediationForCase($case);
+        $allowed = array_map(static fn(array $task): int => (int)$task['id'], $data['tasks']);
+        if (!in_array($taskId, $allowed, true)) {
+            http_response_code(403);
+            echo json_encode(['success' => false, 'error' => 'La tarea no pertenece a este caso']);
+            return;
+        }
+
+        try {
+            Database::query(
+                "INSERT INTO remediation_task_checks (task_id, item_key, checked, user_id, updated_at)
+                 VALUES (?, ?, ?, ?, datetime('now'))
+                 ON CONFLICT(task_id, item_key) DO UPDATE SET
+                     checked = excluded.checked,
+                     user_id = excluded.user_id,
+                     updated_at = datetime('now')",
+                [$taskId, $itemKey, $checked, Auth::id()]
+            );
+            echo json_encode(['success' => true, 'checked' => $checked === 1]);
+        } catch (Throwable $e) {
+            http_response_code(500);
+            echo json_encode(['success' => false, 'error' => 'No se pudo guardar el estado']);
+        }
+    }
     public function vmReopenCase(array $params = []): void
     {
         Auth::requireAdmin();
@@ -2299,6 +2435,7 @@ class Module_Cve extends BaseModule
         $vmRemediationGroupId = $data['group_id'];
         $vmRemediationGroupName = $data['group_name'];
         $vmRemediationCanLink = $data['can_link'];
+        $vmRemediationChecks = $this->vmPlanChecksForTasks($data['tasks']);
         require __DIR__ . '/views/_vm_remediation_plan.php';
     }
 
@@ -2363,6 +2500,7 @@ class Module_Cve extends BaseModule
         $vmRemediationGroupId = $data['group_id'];
         $vmRemediationGroupName = $data['group_name'];
         $vmRemediationCanLink = $data['can_link'];
+        $vmRemediationChecks = $this->vmPlanChecksForTasks($data['tasks']);
         require __DIR__ . '/views/_vm_remediation_plan.php';
     }
 
@@ -2444,6 +2582,64 @@ class Module_Cve extends BaseModule
         }
 
         redirect($returnUrl);
+    }
+
+    /** Organización de Remediation principal de una empresa (0 si no hay). */
+    private function vmPrimaryOrgId(int $companyId): int
+    {
+        if ($companyId <= 0) {
+            return 0;
+        }
+        try {
+            $org = Database::fetchOne(
+                "SELECT id FROM remediation_orgs WHERE software_group_id = ? ORDER BY id LIMIT 1",
+                [$companyId]
+            );
+            if ($org !== null) {
+                return (int)$org['id'];
+            }
+            $all = Database::fetchAll("SELECT id, software_group_id FROM remediation_orgs ORDER BY id");
+            if (count($all) === 1 && (int)($all[0]['software_group_id'] ?? 0) === 0) {
+                return (int)$all[0]['id'];
+            }
+        } catch (Throwable $e) {
+            return 0;
+        }
+        return 0;
+    }
+
+    /**
+     * Estado guardado de las checklists de los planes del caso.
+     *
+     * @return array<int, array<string, int>> task_id => item_key => 0|1
+     */
+    private function vmPlanChecksForTasks(array $tasks): array
+    {
+        $ids = [];
+        foreach ($tasks as $task) {
+            $id = (int)($task['id'] ?? 0);
+            if ($id > 0) {
+                $ids[] = $id;
+            }
+        }
+        if ($ids === []) {
+            return [];
+        }
+        try {
+            $placeholders = implode(',', array_fill(0, count($ids), '?'));
+            $rows = Database::fetchAll(
+                "SELECT task_id, item_key, checked FROM remediation_task_checks
+                 WHERE task_id IN (" . $placeholders . ")",
+                $ids
+            );
+            $out = [];
+            foreach ($rows as $row) {
+                $out[(int)$row['task_id']][(string)$row['item_key']] = (int)$row['checked'];
+            }
+            return $out;
+        } catch (Throwable $e) {
+            return [];
+        }
     }
 
     /**

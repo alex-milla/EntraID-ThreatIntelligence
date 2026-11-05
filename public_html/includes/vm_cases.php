@@ -558,8 +558,55 @@ final class VmCases
             'note'            => 'Nota',
             'finding_created' => 'Hallazgo añadido',
             'finding_updated' => 'Hallazgo actualizado',
+            'evidence_pin'    => 'Nota fijada o desfijada',
+            'ai_prompt'       => 'Playbook de IA lanzado',
             default           => $event,
         };
+    }
+
+    /**
+     * Playbooks de remediación del caso (v0.3.22).
+     *
+     * Se definen en servidor para que el prompt que recibe el asistente no
+     * dependa de un campo oculto del formulario y para poder auditar cuál se
+     * lanzó. La vista pinta un botón por clave; el handler valida la clave y
+     * redirige con el texto ya construido.
+     *
+     * @return array<string, array{icon: string, title: string, hint: string, text: string}>
+     */
+    public static function playbooks(string $cveId): array
+    {
+        $cveId = strtoupper(trim($cveId));
+        if ($cveId === '') {
+            $cveId = 'el CVE de este caso';
+        }
+
+        return [
+            'patch' => [
+                'icon'  => 'build',
+                'title' => 'Plan de parcheo y rollback',
+                'hint'  => 'Versiones/KB corregidas, despliegue, reinicio y vuelta atrás.',
+                'text'  => 'Actúa como analista de vulnerabilidades senior. Para el CVE ' . $cveId . ' en esta organización, elabora un plan de remediación paso a paso: versiones o KB corregidas, orden de despliegue, ventana de mantenimiento, impacto de reinicio, comprobaciones previas y posteriores, y procedimiento de rollback. Incluye los comandos o pasos exactos cuando proceda y marca explícitamente lo que no puedas verificar.',
+            ],
+            'mitigate' => [
+                'icon'  => 'shield',
+                'title' => 'Mitigación sin parche',
+                'hint'  => 'Controles compensatorios inmediatos y cómo comprobarlos.',
+                'text'  => 'Para el CVE ' . $cveId . ' no es posible aplicar el parche a corto plazo. Propón mitigaciones y controles compensatorios inmediatos (firewall, GPO, registro, configuración del servicio, segmentación) indicando alcance, limitaciones y cómo verificar que están realmente aplicados.',
+            ],
+            'detect' => [
+                'icon'  => 'search',
+                'title' => 'Detección y verificación',
+                'hint'  => 'KQL para Defender Hunting y/o script PowerShell de solo lectura.',
+                'text'  => 'Genera mecanismos de detección y verificación para el CVE ' . $cveId . ': una consulta KQL para Defender Advanced Hunting y/o un script PowerShell de solo lectura que compruebe versión, archivo o configuración afectada. Indica cómo interpretar el resultado y qué evidencia adjuntar al cierre.',
+            ],
+            'executive' => [
+                'icon'  => 'mail',
+                'title' => 'Nota ejecutiva para el cliente',
+                'hint'  => 'Riesgo, acción solicitada y plazo, sin jerga.',
+                'text'  => 'Redacta una nota ejecutiva breve (máximo 200 palabras) sobre el CVE ' . $cveId . ': qué riesgo supone, a quién afecta, qué acción se solicita y en qué plazo. Sin jerga innecesaria y sin inventar datos que no consten.',
+            ],
+        ];
     }
 
     private static function numberOrNull(mixed $value): ?float

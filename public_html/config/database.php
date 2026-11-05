@@ -92,6 +92,20 @@ class Database
         $db->prepare("UPDATE modules SET description = ? WHERE module_key = 'ti_tracker'")
            ->execute(['Seguimiento de Threat Intelligence de ThreatFox: búsquedas guardadas, novedades y export STIX/MISP/TXT']);
 
+        // v0.3.22: checklist interactiva de los planes de remediación. El plan
+        // sigue viviendo en remediation_tasks.plan; aquí solo se guarda el
+        // estado de cada elemento marcable, identificado por su texto.
+        $db->exec("CREATE TABLE IF NOT EXISTS remediation_task_checks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id INTEGER NOT NULL,
+            item_key TEXT NOT NULL,
+            checked INTEGER NOT NULL DEFAULT 0,
+            user_id INTEGER,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE (task_id, item_key)
+        )");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_remediation_task_checks_task ON remediation_task_checks(task_id)");
+
         // v0.2.5.23: retirada del proveedor OpenCode (sus modelos gratis no se
         // pueden usar desde la web). Limpieza idempotente, una sola vez.
         self::cleanupRemovedProviders($db);

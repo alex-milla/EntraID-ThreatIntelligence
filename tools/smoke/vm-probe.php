@@ -54,7 +54,8 @@ switch ($cmd) {
                 [$caseId]
             ),
             'evidence' => CveDatabase::fetchAll(
-                "SELECT kind, source, comment, reference, username FROM vm_case_evidence WHERE case_id = ? ORDER BY id",
+                "SELECT id, kind, source, comment, reference, username, pinned
+                 FROM vm_case_evidence WHERE case_id = ? ORDER BY id",
                 [$caseId]
             ),
         ];
@@ -175,6 +176,30 @@ switch ($cmd) {
             [$chatId, "# Respuesta E2E\n\nPaso AUTO: contenido sin guardar como plan."]
         );
         $out = ['org_id' => $orgId, 'chat_id' => $chatId, 'cve_id' => $cveId];
+        break;
+
+    case 'seed-plan-checklist':
+        // Solo para el E2E: añade elementos marcables al plan ya sembrado.
+        $companyId = (int)($argv[2] ?? 0);
+        $cveId = strtoupper(trim((string)($argv[3] ?? '')));
+        $org = Database::fetchOne("SELECT id FROM remediation_orgs WHERE name = 'E2E Remediation'");
+        $task = $org !== null
+            ? Database::fetchOne(
+                "SELECT id, plan FROM remediation_tasks WHERE org_id = ? AND cve_id = ?",
+                [(int)$org['id'], $cveId]
+            )
+            : null;
+        if ($task === null || $companyId <= 0) {
+            fwrite(STDERR, "No hay tarea E2E para ese CVE.\n");
+            exit(1);
+        }
+        $plan = rtrim((string)$task['plan'])
+            . "\n\n## Checklist E2E\n\n- [ ] Verificar versión corregida\n- [ ] Confirmar reinicio del servicio\n";
+        Database::query(
+            "UPDATE remediation_tasks SET plan = ?, updated_at = datetime('now') WHERE id = ?",
+            [$plan, (int)$task['id']]
+        );
+        $out = ['task_id' => (int)$task['id'], 'cve_id' => $cveId];
         break;
 
     case 'findings':

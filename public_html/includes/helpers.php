@@ -1083,3 +1083,121 @@ if (!function_exists('render_ai_markdown')) {
         return $html;
     }
 }
+
+if (!function_exists('plan_checklist_key')) {
+    /**
+     * Clave estable de un elemento de checklist del plan (v0.3.22).
+     *
+     * Se deriva del texto normalizado y del número de repetición dentro del
+     * plan, para que dos elementos iguales no compartan estado.
+     */
+    function plan_checklist_key(string $text, int $occurrence = 0): string
+    {
+        $normalized = strtolower(trim((string)preg_replace('/\s+/u', ' ', $text)));
+        return substr(sha1($normalized . '#' . $occurrence), 0, 20);
+    }
+}
+
+if (!function_exists('plan_checklist_items')) {
+    /**
+     * Extrae los elementos marcables de un plan Markdown, en orden.
+     *
+     * @return array<int, array{key: string, text: string, default: bool}>
+     */
+    function plan_checklist_items(?string $plan): array
+    {
+        $markdown = normalize_ai_markdown($plan);
+        if (trim($markdown) === '') {
+            return [];
+        }
+        $lines = preg_split('/\R/u', $markdown) ?: [];
+        $items = [];
+        $occurrences = [];
+        foreach ($lines as $line) {
+            if (preg_match('/^\s*[-*]\s+\[([ xX])\]\s+(.+?)\s*$/u', $line, $m) !== 1) {
+                continue;
+            }
+            $text = trim((string)$m[2]);
+            $normalized = strtolower($text);
+            $occurrence = (int)($occurrences[$normalized] ?? 0);
+            $occurrences[$normalized] = $occurrence + 1;
+            $items[] = [
+                'key'     => plan_checklist_key($text, $occurrence),
+                'text'    => $text,
+                'default' => strtolower((string)$m[1]) === 'x',
+            ];
+        }
+        return $items;
+    }
+}
+
+if (!function_exists('render_plan_with_checklist')) {
+    /**
+     * Renderiza un plan Markdown convirtiendo `- [ ]` / `- [x]` en
+     * checkboxes reales sin perder el resto del Markdown (v0.3.22).
+     *
+     * `$checks` es un mapa item_key => 0|1 con el estado guardado. Si un
+     * elemento no tiene fila, manda el estado escrito en el propio plan.
+     */
+    function render_plan_with_checklist(?string $plan, int $taskId, array $checks = []): string
+    {
+        $markdown = normalize_ai_markdown($plan);
+        if (trim($markdown) === '') {
+            return '';
+        }
+
+        $lines = preg_split('/\R/u', $markdown) ?: [];
+        $hasChecklist = false;
+        foreach ($lines as $line) {
+            if (preg_match('/^\s*[-*]\s+\[[ xX]\]\s+\S/u', $line) === 1) {
+                $hasChecklist = true;
+                break;
+            }
+        }
+        if (!$hasChecklist) {
+            return render_ai_markdown($markdown);
+        }
+
+        $html = '';
+        $buffer = [];
+        $occurrences = [];
+        $flush = static function () use (&$buffer, &$html): void {
+            if ($buffer === []) {
+                return;
+            }
+            $chunk = implode("\n", $buffer);
+            $buffer = [];
+            if (trim($chunk) !== '') {
+                $html .= render_markdown($chunk);
+            }
+        };
+
+        foreach ($lines as $line) {
+            if (preg_match('/^\s*[-*]\s+\[([ xX])\]\s+(.+?)\s*$/u', $line, $m) === 1) {
+                $flush();
+                $text = trim((string)$m[2]);
+                $normalized = strtolower($text);
+                $occurrence = (int)($occurrences[$normalized] ?? 0);
+                $occurrences[$normalized] = $occurrence + 1;
+                $key = plan_checklist_key($text, $occurrence);
+                $checked = array_key_exists($key, $checks)
+                    ? (int)$checks[$key] === 1
+                    : strtolower((string)$m[1]) === 'x';
+
+                $html .= '<label class="flex items-start gap-2 py-0.5 text-[11px] cursor-pointer">'
+                    . '<input type="checkbox" data-plan-check data-task-id="' . $taskId . '"'
+                    . ' data-item-key="' . e($key) . '"' . ($checked ? ' checked' : '')
+                    . ' class="mt-0.5 accent-brand-500">'
+                    . '<span' . ($checked ? ' class="line-through text-ink-soft"' : '') . '>'
+                    . e($text)
+                    . '</span></label>';
+                continue;
+            }
+            $buffer[] = $line;
+        }
+        $flush();
+
+        return $html;
+    }
+}
+

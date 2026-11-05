@@ -17,6 +17,7 @@ $vmRemediationCaseId = (int)($vmRemediationCaseId ?? 0);
 $vmRemediationGroupId = (int)($vmRemediationGroupId ?? 0);
 $vmRemediationGroupName = trim((string)($vmRemediationGroupName ?? ''));
 $vmRemediationCanLink = !empty($vmRemediationCanLink);
+$vmRemediationChecks = is_array($vmRemediationChecks ?? null) ? $vmRemediationChecks : [];
 
 $orgNames = [];
 $firstOrgId = 0;
@@ -119,6 +120,17 @@ $fmtDate = static function (?string $value): string {
             $taskId = (int)$task['id'];
             $orgId = (int)$task['org_id'];
             $taskStatus = (string)($task['status'] ?? '');
+            $taskChecks = is_array($vmRemediationChecks[$taskId] ?? null) ? $vmRemediationChecks[$taskId] : [];
+            $checkItems = plan_checklist_items((string)($task['plan'] ?? ''));
+            $checkDone = 0;
+            foreach ($checkItems as $checkItem) {
+                $state = array_key_exists($checkItem['key'], $taskChecks)
+                    ? (int)$taskChecks[$checkItem['key']] === 1
+                    : $checkItem['default'];
+                if ($state) {
+                    $checkDone++;
+                }
+            }
             ?>
             <article class="rounded-lg border border-line overflow-hidden">
                 <header class="px-3 py-2 bg-muted flex items-center justify-between gap-2 flex-wrap">
@@ -130,14 +142,22 @@ $fmtDate = static function (?string $value): string {
                             <?= e($orgNames[$orgId] ?? 'Organización') ?>
                             · Estado: <?= e($statusLabels[$taskStatus] ?? ($taskStatus !== '' ? $taskStatus : '—')) ?>
                             · Actualizado <?= e($fmtDate((string)($task['updated_at'] ?? ''))) ?>
+                            <?php if ($checkItems !== []): ?>
+                                · <span data-plan-progress="<?= $taskId ?>">Checklist: <?= $checkDone ?>/<?= count($checkItems) ?></span>
+                            <?php endif; ?>
                         </p>
                     </div>
                     <a href="<?= base_url('modules/remediation?tab=tasks&org=' . $orgId . '&task=' . $taskId) ?>"
                        class="text-[10px] text-brand-600 dark:text-brand-300 hover:underline">Abrir tarea</a>
                 </header>
-                <div class="px-3 py-2 md-body text-[11px] leading-relaxed">
-                    <?= render_ai_markdown((string)($task['plan'] ?? '')) ?>
-                </div>
+                <form data-plan-checks method="post"
+                      action="<?= base_url('modules/cve/vm/' . $vmRemediationCaseId . '/plan-check') ?>"
+                      class="px-3 py-2">
+                    <?= Csrf::field() ?>
+                    <div class="md-body text-[11px] leading-relaxed">
+                        <?= render_plan_with_checklist((string)($task['plan'] ?? ''), $taskId, $taskChecks) ?>
+                    </div>
+                </form>
                 <footer class="px-3 py-2 border-t border-line">
                     <a href="<?= base_url('modules/remediation?tab=assistant&org=' . $orgId . '&task=' . $taskId) ?>"
                        class="text-[10px] text-brand-600 dark:text-brand-300 hover:underline">
