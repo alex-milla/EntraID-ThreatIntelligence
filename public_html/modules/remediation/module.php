@@ -110,6 +110,13 @@ class Module_Remediation extends BaseModule
         if (!preg_match('/^CVE-\d{4}-\d{4,7}$/', $cveQuery)) {
             $cveQuery = '';
         }
+        // v0.3.21 — playbooks del caso abren el asistente con el prompt ya escrito.
+        $promptQuery = trim((string)($_GET['prompt'] ?? ''));
+        if (function_exists('mb_substr')) {
+            $promptQuery = mb_substr($promptQuery, 0, 1200, 'UTF-8');
+        } else {
+            $promptQuery = substr($promptQuery, 0, 1200);
+        }
         $cveData = $selectedTask !== null ? $this->cveData((string)$selectedTask['cve_id']) : null;
         $cveContext = $cveData !== null ? $cveData : ($cveQuery !== '' ? $this->cveData($cveQuery) : null);
         if ($selectedTask === null && $cveQuery !== '') {
@@ -141,6 +148,7 @@ class Module_Remediation extends BaseModule
             'selectedTask'   => $selectedTask,
             'cveData'        => $cveData,
             'cveQuery'       => $cveQuery,
+            'prompt'         => $promptQuery,
             'cveContext'     => $cveContext,
             'chats'          => $chats,
             'chat'           => $chat,

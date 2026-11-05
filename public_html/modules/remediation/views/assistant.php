@@ -7,6 +7,7 @@
  */
 
 $modUrl = base_url('modules/remediation');
+$promptText = trim((string)($prompt ?? ''));
 $assistantUrl = $modUrl . '?tab=assistant&org=' . $selectedOrgId
     . ($selectedTask !== null ? '&task=' . (int)$selectedTask['id'] : '')
     . ($cveQuery !== '' ? '&cve=' . urlencode($cveQuery) : '');
@@ -181,7 +182,7 @@ $canSavePlan = $selectedTask !== null || $planCve !== '';
             <input type="hidden" name="csrf_token" value="<?= e(Csrf::token()) ?>">
             <div class="flex items-end gap-2">
                 <textarea id="assistant-input" rows="2" placeholder="Escribe tu pregunta… (Enter para enviar, Shift+Enter para nueva línea)"
-                          class="flex-1 resize-none px-3 py-2 rounded-lg border border-line-strong bg-input text-ink text-sm focus:ring-2 focus:ring-brand-500 outline-none"></textarea>
+                          class="flex-1 resize-none px-3 py-2 rounded-lg border border-line-strong bg-input text-ink text-sm focus:ring-2 focus:ring-brand-500 outline-none"><?= e($promptText) ?></textarea>
                 <button type="button" id="assistant-send"
                         class="px-4 py-2.5 bg-brand-500 hover:bg-brand-600 disabled:opacity-50 text-white text-sm font-medium rounded-lg">
                     Enviar
@@ -397,7 +398,6 @@ $canSavePlan = $selectedTask !== null || $planCve !== '';
     document.querySelectorAll('.save-plan').forEach(function (btn) {
         btn.addEventListener('click', function () { savePlan(btn); });
     });
-
     document.querySelectorAll('.quick-prompt').forEach(function (btn) {
         btn.addEventListener('click', function () {
             inputEl.value = btn.getAttribute('data-prompt') || '';

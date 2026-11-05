@@ -81,6 +81,10 @@ try {
     $companyId = [int](Probe @('company', 'E2E VM')).id
     Check 'E2E: empresa creada' ($companyId -gt 0) "id=$companyId"
 
+    # --- con empresas, la entrada del módulo es la mesa de trabajo ---
+    $defaultPage = Invoke-WebRequest -Uri "$base/index.php/modules/cve" -WebSession $ws -UseBasicParsing -TimeoutSec 30
+    Check 'E2E navegación: mesa de trabajo por defecto' ($defaultPage.Content -match 'Mesa de trabajo de vulnerabilidades') 'no abre la mesa de trabajo'
+
     # --- fixture CSV (datos sintéticos) ---
     $csvPath = Join-Path $tmp 'tvm-1.csv'
     @(
@@ -158,6 +162,15 @@ try {
     # --- paneles inline (sin recargar) ---
     $casePanel = Invoke-WebRequest -Uri "$base/index.php/modules/cve/vm/$criticalId/panel" -WebSession $ws -UseBasicParsing -TimeoutSec 30
     Check 'E2E panel: fragmento del caso' ($casePanel.StatusCode -eq 200 -and $casePanel.Content -match 'Guardar cambios') "status=$($casePanel.StatusCode)"
+    Check 'E2E panel: pestañas de la ficha' (
+        $casePanel.Content -match 'data-vm-tab="summary"' -and
+        $casePanel.Content -match 'data-vm-tab="remediation"' -and
+        $casePanel.Content -match 'data-vm-tab="assets"'
+    ) 'faltan las pestañas internas'
+    Check 'E2E panel: playbooks y nota rápida' (
+        $casePanel.Content -match 'Playbooks de remediación' -and
+        $casePanel.Content -match 'Añadir nota o evidencia'
+    ) 'faltan playbooks o nota rápida'
     $cvePanel = Invoke-WebRequest -Uri "$base/index.php/modules/cve/detail/CVE-2026-21589/panel" -WebSession $ws -UseBasicParsing -TimeoutSec 30
     Check 'E2E panel: ficha del CVE' ($cvePanel.StatusCode -eq 200) "status=$($cvePanel.StatusCode)"
     $casePage = Invoke-WebRequest -Uri "$base/index.php/modules/cve?tab=vm&company=$companyId&case=$criticalId" -WebSession $ws -UseBasicParsing -TimeoutSec 30
@@ -282,6 +295,10 @@ try {
     Check 'E2E productos: pares del CSV visibles' ($vmPage.Content -match 'nginx:nginx' -and $vmPage.Content -match 'atlassian:jira') 'no se muestran productos importados'
     $searchPage = Invoke-WebRequest -Uri "$base/index.php/modules/cve?tab=vm&company=$companyId&vm_q=nginx" -WebSession $ws -UseBasicParsing -TimeoutSec 30
     Check 'E2E productos: búsqueda por producto' ($searchPage.Content -match 'CVE-2026-00001') 'la búsqueda no encuentra por producto'
+    Check 'E2E navegación: mesa de trabajo y menú Más' (
+        $vmPage.Content -match 'Mesa de trabajo' -and
+        $vmPage.Content -match 'CVE-2026-00001'
+    ) 'la navegación nueva no se pinta'
 
     # --- guardar plan desde una conversación de CVE (sin tarea) ---
     $seedChat = Probe @('seed-remediation-chat', "$companyId", 'CVE-2030-4242')

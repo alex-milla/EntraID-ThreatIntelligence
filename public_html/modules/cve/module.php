@@ -94,6 +94,7 @@ class Module_Cve extends BaseModule
             ['method' => 'POST', 'pattern' => 'vm/{caseId}/ai-report', 'handler' => [$this, 'vmGenerateCveReport']],
             ['method' => 'GET',  'pattern' => 'vm/{caseId}/remediation-plan', 'handler' => [$this, 'vmRemediationPlan']],
             ['method' => 'POST', 'pattern' => 'vm/{caseId}/remediation-save', 'handler' => [$this, 'vmRemediationSavePlan']],
+            ['method' => 'POST', 'pattern' => 'vm/{caseId}/remediation-link', 'handler' => [$this, 'vmRemediationLinkOrg']],
             ['method' => 'GET',  'pattern' => 'vm/{caseId}/findings', 'handler' => [$this, 'vmFindingsPanel']],
             ['method' => 'POST', 'pattern' => 'vm/{caseId}/findings/save', 'handler' => [$this, 'vmSaveFinding']],
         ];
@@ -108,8 +109,20 @@ class Module_Cve extends BaseModule
         Auth::require();
 
         $isAdmin = Auth::isAdmin();
-        $tabParam = (string)($_GET['tab'] ?? 'catalog');
+        // v0.3.21 — si hay empresas con seguimiento, la mesa de trabajo es la
+        // entrada por defecto. Sin empresas se mantiene el catálogo para no
+        // dejar una pantalla vacía. Los enlaces con ?tab= no cambian.
+        $tabParam = (string)($_GET['tab'] ?? '');
         $tab = in_array($tabParam, ['software', 'reports', 'import', 'vm'], true) ? $tabParam : 'catalog';
+        if ($tabParam === '') {
+            try {
+                if (CveDatabase::fetchOne("SELECT id FROM software_groups WHERE kind = 'company' LIMIT 1") !== null) {
+                    $tab = 'vm';
+                }
+            } catch (Throwable $e) {
+                $tab = 'catalog';
+            }
+        }
         $showImportForm = $isAdmin && $tab === 'software' && isset($_GET['import']);
         $selectedGroup = (int)($_GET['group'] ?? 0);
         $q = trim((string)($_GET['q'] ?? ''));
@@ -2283,6 +2296,9 @@ class Module_Cve extends BaseModule
         $vmRemediationLastUnsaved = $data['last_unsaved'];
         $vmRemediationCaseId = (int)$case['id'];
         $vmRemediationCve = strtoupper((string)$case['cve_id']);
+        $vmRemediationGroupId = $data['group_id'];
+        $vmRemediationGroupName = $data['group_name'];
+        $vmRemediationCanLink = $data['can_link'];
         require __DIR__ . '/views/_vm_remediation_plan.php';
     }
 
@@ -2344,21 +2360,116 @@ class Module_Cve extends BaseModule
         $vmRemediationLastUnsaved = $data['last_unsaved'];
         $vmRemediationCaseId = (int)$case['id'];
         $vmRemediationCve = $cveId;
+        $vmRemediationGroupId = $data['group_id'];
+        $vmRemediationGroupName = $data['group_name'];
+        $vmRemediationCanLink = $data['can_link'];
         require __DIR__ . '/views/_vm_remediation_plan.php';
     }
 
     /**
-     * @return array{orgs: array<int, array<string, mixed>>, tasks: array<int, array<string, mixed>>, fallback: bool, error: string, unsaved_count: int, last_unsaved: array<string, mixed>|null}
+     * Vincula la empresa del caso con una organización de Remediation.
+     *
+     * v0.3.21 — transparencia del flujo: si la empresa aún no tiene
+     * organización, se crea con su nombre (o se reutiliza una existente con el
+     * mismo nombre) y se enlaza por `software_group_id`. Solo se ejecuta por
+     * acción explícita del usuario; nunca al leer el caso.
+     */
+    public function vmRemediationLinkOrg(array $params = []): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        $case = $this->getVmCase((int)($params['caseId'] ?? 0));
+        if ($case === null) {
+            http_response_code(404);
+            echo '<div class="p-3 text-xs text-danger">Caso de seguimiento no encontrado.</div>';
+            return;
+        }
+
+        $companyId = (int)($case['group_id'] ?? 0);
+        $returnUrl = base_url('modules/cve?tab=vm&company=' . $companyId . '&case=' . (int)$case['id']);
+        if ($companyId <= 0) {
+            flash('error', 'El caso no tiene empresa; no se puede vincular una organización.');
+            redirect($returnUrl);
+        }
+
+        $companyName = 'Empresa ' . $companyId;
+        try {
+            $group = CveDatabase::fetchOne("SELECT name FROM software_groups WHERE id = ?", [$companyId]);
+            if ($group !== null && trim((string)($group['name'] ?? '')) !== '') {
+                $companyName = (string)$group['name'];
+            }
+        } catch (Throwable $e) {
+            // Se mantiene el nombre de respaldo.
+        }
+
+        try {
+            $linked = Database::fetchOne(
+                "SELECT id FROM remediation_orgs WHERE software_group_id = ? LIMIT 1",
+                [$companyId]
+            );
+            if ($linked !== null) {
+                flash('info', 'Esta empresa ya tiene una organización de remediación vinculada.');
+                redirect($returnUrl);
+            }
+
+            // Si ya existe una organización con el mismo nombre, se reutiliza:
+            // evita duplicados y el UNIQUE de nombre.
+            $byName = Database::fetchOne(
+                "SELECT id FROM remediation_orgs WHERE name = ? LIMIT 1",
+                [$companyName]
+            );
+            if ($byName !== null) {
+                Database::query(
+                    "UPDATE remediation_orgs SET software_group_id = ?, updated_at = datetime('now') WHERE id = ?",
+                    [$companyId, (int)$byName['id']]
+                );
+                $orgId = (int)$byName['id'];
+            } else {
+                $orgId = Database::insert(
+                    "INSERT INTO remediation_orgs (name, kind, software_group_id, created_by)
+                     VALUES (?, 'manual', ?, ?)",
+                    [$companyName, $companyId, Auth::id()]
+                );
+            }
+
+            log_activity('cve.vm_remediation_linked', [
+                'case_id' => (int)$case['id'],
+                'org_id'  => $orgId,
+                'group'   => $companyId,
+            ]);
+            flash('success', 'Organización de remediación vinculada a la empresa «' . $companyName . '».');
+        } catch (Throwable $e) {
+            flash('error', 'No se pudo vincular la organización: ' . $e->getMessage());
+        }
+
+        redirect($returnUrl);
+    }
+
+    /**
+     * @return array{orgs: array<int, array<string, mixed>>, tasks: array<int, array<string, mixed>>, fallback: bool, error: string, unsaved_count: int, last_unsaved: array<string, mixed>|null, group_id: int, group_name: string, can_link: bool}
      */
     private function vmRemediationForCase(array $case): array
     {
+        $companyId = (int)($case['group_id'] ?? 0);
+        $cveId = strtoupper((string)($case['cve_id'] ?? ''));
+
+        $groupName = '';
+        if ($companyId > 0) {
+            try {
+                $group = CveDatabase::fetchOne("SELECT name FROM software_groups WHERE id = ?", [$companyId]);
+                $groupName = (string)($group['name'] ?? '');
+            } catch (Throwable $e) {
+                $groupName = '';
+            }
+        }
+
         $empty = [
             'orgs' => [], 'tasks' => [], 'fallback' => false, 'error' => '',
             'unsaved_count' => 0, 'last_unsaved' => null,
+            'group_id' => $companyId, 'group_name' => $groupName, 'can_link' => $companyId > 0,
         ];
 
-        $companyId = (int)($case['group_id'] ?? 0);
-        $cveId = strtoupper((string)($case['cve_id'] ?? ''));
         if ($companyId <= 0 || $cveId === '') {
             $empty['error'] = 'El caso no tiene empresa o CVE válidos.';
             return $empty;
@@ -2457,6 +2568,9 @@ class Module_Cve extends BaseModule
                 'error'         => '',
                 'unsaved_count' => $unsavedCount,
                 'last_unsaved'  => $lastUnsaved,
+                'group_id'      => $companyId,
+                'group_name'    => $groupName,
+                'can_link'      => false,
             ];
         } catch (Throwable $e) {
             $empty['error'] = $e->getMessage();

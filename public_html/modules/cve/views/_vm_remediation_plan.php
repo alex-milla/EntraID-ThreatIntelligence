@@ -14,6 +14,9 @@ $vmRemediationCve = strtoupper((string)($vmRemediationCve ?? ''));
 $vmRemediationUnsavedCount = max(0, (int)($vmRemediationUnsavedCount ?? 0));
 $vmRemediationLastUnsaved = is_array($vmRemediationLastUnsaved ?? null) ? $vmRemediationLastUnsaved : null;
 $vmRemediationCaseId = (int)($vmRemediationCaseId ?? 0);
+$vmRemediationGroupId = (int)($vmRemediationGroupId ?? 0);
+$vmRemediationGroupName = trim((string)($vmRemediationGroupName ?? ''));
+$vmRemediationCanLink = !empty($vmRemediationCanLink);
 
 $orgNames = [];
 $firstOrgId = 0;
@@ -45,11 +48,24 @@ $fmtDate = static function (?string $value): string {
         No se pudo consultar Remediation: <?= e($vmRemediationError) ?>
     </div>
 <?php elseif ($vmRemediationOrgs === []): ?>
-    <div class="rounded-lg bg-muted px-3 py-2 space-y-1">
+    <div class="rounded-lg bg-muted px-3 py-2 space-y-2">
         <p class="text-[11px] text-ink-muted">
-            No hay una organización de Remediation vinculada a esta empresa. Vincula una en
-            <strong>Remediation → Editar organización → Empresa del CVE</strong> y sus planes aparecerán aquí.
+            Esta empresa todavía no tiene una organización de Remediation vinculada.
+            <?php if ($vmRemediationGroupName !== ''): ?>
+                Puedes crear una para <strong><?= e($vmRemediationGroupName) ?></strong> y sus planes aparecerán aquí.
+            <?php endif; ?>
         </p>
+        <?php if ($vmRemediationCanLink): ?>
+            <form method="post"
+                  action="<?= base_url('modules/cve/vm/' . $vmRemediationCaseId . '/remediation-link') ?>">
+                <?= Csrf::field() ?>
+                <button type="submit"
+                        class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-brand-500 hover:bg-brand-600 text-white text-[11px] font-semibold rounded-lg transition-colors">
+                    <i class="material-icons icon-12" aria-hidden="true">link</i>
+                    Crear y vincular organización
+                </button>
+            </form>
+        <?php endif; ?>
         <a href="<?= base_url('modules/remediation') ?>"
            class="inline-flex items-center gap-1 text-[11px] text-brand-600 dark:text-brand-300 hover:underline">
             Ir a Remediation <i class="material-icons icon-12" aria-hidden="true">arrow_forward</i>

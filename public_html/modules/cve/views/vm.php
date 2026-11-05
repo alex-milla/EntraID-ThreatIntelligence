@@ -96,11 +96,41 @@ $caseUrl = static function (int $caseId) use ($queryBase): string {
     $queryBase['case'] = $caseId;
     return base_url('modules/cve?' . http_build_query($queryBase));
 };
+$quickUrl = static function (array $over) use ($queryBase): string {
+    return base_url('modules/cve?' . http_build_query(array_merge($queryBase, $over)));
+};
+$quickViews = [
+    [
+        'label'  => 'Todas',
+        'over'   => ['vm_status' => '', 'vm_priority' => '', 'vm_due' => ''],
+        'active' => $vmFilters['status'] === '' && $vmFilters['priority'] === '' && $vmFilters['due'] === '',
+    ],
+    [
+        'label'  => 'Urgentes',
+        'over'   => ['vm_status' => '', 'vm_priority' => '', 'vm_due' => 'overdue'],
+        'active' => $vmFilters['due'] === 'overdue',
+    ],
+    [
+        'label'  => 'En curso',
+        'over'   => ['vm_status' => 'in_progress', 'vm_priority' => '', 'vm_due' => ''],
+        'active' => $vmFilters['status'] === 'in_progress',
+    ],
+    [
+        'label'  => 'Por verificar',
+        'over'   => ['vm_status' => 'pending_verification', 'vm_priority' => '', 'vm_due' => ''],
+        'active' => $vmFilters['status'] === 'pending_verification',
+    ],
+    [
+        'label'  => 'Cerradas',
+        'over'   => ['vm_status' => 'resolved_verified', 'vm_priority' => '', 'vm_due' => ''],
+        'active' => $vmFilters['status'] === 'resolved_verified',
+    ],
+];
 ?>
 
 <div class="mb-4 flex items-start justify-between gap-3 flex-wrap">
     <div>
-        <h2 class="text-lg font-bold">Seguimiento de vulnerabilidades</h2>
+        <h2 class="text-lg font-bold">Mesa de trabajo de vulnerabilidades</h2>
         <p class="text-[11px] text-ink-soft">
             Casos por empresa + CVE creados desde importaciones o desde Mis CVE. Origen manual y verificable.
         </p>
@@ -118,6 +148,19 @@ $caseUrl = static function (int $caseId) use ($queryBase): string {
         </a>
     </div>
 </div>
+
+<?php if ($companyGroups !== []): ?>
+    <div class="no-print flex items-center gap-1.5 flex-wrap mb-3">
+        <?php foreach ($quickViews as $view): ?>
+            <a href="<?= e($quickUrl($view['over'])) ?>"
+               class="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-medium border transition-colors <?= $view['active']
+                   ? 'bg-brand-500 border-brand-500 text-white'
+                   : 'border-line text-ink-muted hover:bg-muted' ?>">
+                <?= e($view['label']) ?>
+            </a>
+        <?php endforeach; ?>
+    </div>
+<?php endif; ?>
 
 <?php if ($companyGroups === []): ?>
     <div class="card p-5">
@@ -575,6 +618,32 @@ $caseUrl = static function (int $caseId) use ($queryBase): string {
         });
     }
 
+    function activatePane(root, name) {
+        if (!root) { return; }
+        var caseRoot = root.matches && root.matches('[data-vm-case-root]')
+            ? root
+            : root.querySelector('[data-vm-case-root]');
+        if (!caseRoot) { return; }
+
+        Array.prototype.forEach.call(caseRoot.querySelectorAll('[data-vm-tab]'), function (tab) {
+            var isActive = tab.getAttribute('data-vm-tab') === name;
+            tab.setAttribute('aria-selected', isActive ? 'true' : 'false');
+            tab.classList.toggle('border-brand-500', isActive);
+            tab.classList.toggle('text-brand-600', isActive);
+            tab.classList.toggle('dark:text-brand-300', isActive);
+            tab.classList.toggle('font-semibold', isActive);
+            tab.classList.toggle('border-transparent', !isActive);
+            tab.classList.toggle('text-gray-500', !isActive);
+            tab.classList.toggle('hover:text-gray-700', !isActive);
+            tab.classList.toggle('dark:hover:text-gray-300', !isActive);
+            tab.classList.toggle('font-medium', !isActive);
+        });
+
+        Array.prototype.forEach.call(caseRoot.querySelectorAll('[data-vm-pane]'), function (pane) {
+            pane.hidden = pane.getAttribute('data-vm-pane') !== name;
+        });
+    }
+
     function closeDrawer() {
         drawer.classList.add('hidden');
         drawer.setAttribute('aria-hidden', 'true');
@@ -582,6 +651,13 @@ $caseUrl = static function (int $caseId) use ($queryBase): string {
     }
 
     document.addEventListener('click', function (event) {
+        var tab = event.target.closest('[data-vm-tab]');
+        if (tab) {
+            event.preventDefault();
+            activatePane(tab.closest('[data-vm-case-root]') || document, tab.getAttribute('data-vm-tab'));
+            return;
+        }
+
         var closer = event.target.closest('[data-vm-close]');
         if (closer) {
             event.preventDefault();
@@ -593,6 +669,7 @@ $caseUrl = static function (int $caseId) use ($queryBase): string {
         if (scroller) {
             event.preventDefault();
             var scope = event.target.closest('#vm-case-inline, #vm-drawer-body') || document;
+            activatePane(scope, 'summary');
             var section = scope.querySelector('[data-vm-cve-panel]');
             if (section) {
                 section.scrollIntoView({ behavior: 'smooth', block: 'start' });
