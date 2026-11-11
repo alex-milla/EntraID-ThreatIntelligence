@@ -335,6 +335,136 @@ TXT,
                 'is_locked'   => false,
                 'default'     => '¿Qué riesgos tiene aplicar el parche y cómo hago el rollback?',
             ],
+
+            // ====================================================
+            // Equipos expuestos (informe de parcheo desde un CSV)
+            // ====================================================
+            'llm.exposed.compact' => [
+                'scope'       => 'exposed',
+                'scope_label' => 'Equipos expuestos',
+                'label'       => 'Informe compacto · prompt de ejecución',
+                'description' => 'Se envía con el CSV. Define resumen, tabla y top 3 de acciones. '
+                    . 'Aquí se ajustan el idioma, el número de acciones, las columnas y el orden.',
+                'is_locked'   => false,
+                'default'     => <<<'TXT'
+Analista de ciberseguridad. El CSV adjunto es el resultado de una KQL de
+Microsoft Defender XDR: servidores internet-exposed con parcheo de SO
+pendiente. Genera un informe compacto en castellano con EXACTAMENTE esta
+estructura:
+
+1. Resumen (máx. 3 frases): nº de servidores, cuántos High, cuántos con
+   exploit público, antigüedad máxima sin parchear.
+2. Tabla única en Markdown con SOLO estas columnas: Servidor, Exposición,
+   Exploits públicos, CVEs críticos, Días sin parchear y Primer KB a aplicar
+   (PaqueteMasAntiguo sin el sufijo "(Last updated at ...)"). Ordenada por:
+   Exploits públicos desc → Exposición (High primero) → Días sin parchear desc.
+3. Top 3 acciones numeradas. Cada acción en 2-3 frases: servidor + KB/paquete
+   a aplicar primero + una breve justificación del riesgo (exposición, exploits
+   públicos, días sin parchear) + consecuencia esperada al aplicarlo.
+
+Reglas: cada cifra debe existir en el CSV; DiasSinParchear es cota inferior
+("al menos X días"); en PaquetesPendientes deduplica por mes y año (ignora
+los sufijos "Last updated at" y las cadenas vacías); no afirmes puertos
+abiertos ni explotación en curso. No adjuntes, referencies ni enlaces el
+archivo CSV en el informe. No incluyas anexos, la consulta KQL ni ningún
+contenido fuera de las 3 secciones indicadas. Salida: solo el informe,
+nada más.
+TXT,
+            ],
+            'llm.exposed.detailed' => [
+                'scope'       => 'exposed',
+                'scope_label' => 'Equipos expuestos',
+                'label'       => 'Informe detallado · envoltorio',
+                'description' => 'Mensaje que acompaña al JSON de especificación y al CSV en el modo detallado.',
+                'is_locked'   => false,
+                'default'     => <<<'TXT'
+Actúa como analista senior de ciberseguridad especializado en Microsoft
+Defender y gestión de vulnerabilidades. Adjunto un JSON de especificación
+(vínculo para ti) y un CSV con resultados de una KQL de Defender XDR.
+Lee primero el JSON completo y trátalo como especificación vinculante;
+aplica sus reglas de interpretación, genera el informe en castellano
+siguiendo EXACTAMENTE su estructura de 8 secciones, y verifica antes de
+responder que cada cifra citada existe literalmente en el CSV. Si el CSV
+contradice al JSON, prevalece el CSV y señálalo al final.
+Salida: solo el informe, nada más.
+TXT,
+            ],
+            'llm.exposed.spec' => [
+                'scope'       => 'exposed',
+                'scope_label' => 'Equipos expuestos',
+                'label'       => 'Informe detallado · JSON de especificación',
+                'description' => 'Especificación vinculante del modo detallado (esquema de campos, reglas y '
+                    . 'estructura). El marcador {kql} se sustituye por la consulta de origen.',
+                'is_locked'   => false,
+                'default'     => <<<'JSON'
+{
+  "instrucciones_para_la_ia": {
+    "rol": "Eres un analista de ciberseguridad senior especializado en gestión de vulnerabilidades y Microsoft Defender. Elaboras informes técnicos orientados a la dirección de un servicio de seguridad gestionada.",
+    "tarea": "Genera un informe claro, detallado y accionable a partir del CSV adjunto, que contiene el resultado de una consulta KQL contra Microsoft Defender XDR Advanced Hunting. Detalla TODOS los puntos que extrae la consulta: exposición a Internet, sistema operativo, IP pública, KBs pendientes, ciclos mensuales de parcheo atrasados, CVEs acumulados, CVEs críticos, CVEs con exploit público y tiempo sin parchear.",
+    "idioma_salida": "castellano",
+    "formato_salida": "Informe en Markdown con tablas para los datos tabulares y prosa para el análisis. Longitud orientativa: 800-1500 palabras, más tablas y anexos.",
+    "entrada": "Un CSV con una fila por servidor y las columnas definidas en 'esquema_campos'. No hay más fuentes de datos: todo dato del informe debe salir del CSV o de este JSON."
+  },
+  "contexto_del_analisis": {
+    "que_es": "Detección de servidores Windows expuestos a Internet (internet-exposed) con nivel de exposición High o Medium según Microsoft Defender, y análisis de su estado de parcheo del sistema operativo.",
+    "fuente": "Microsoft Defender XDR → Advanced Hunting (portal security.microsoft.com). La consulta une DeviceInfo, DeviceTvmSoftwareVulnerabilities y DeviceTvmSoftwareVulnerabilitiesKB.",
+    "alcance": "Solo parcheo de sistema operativo Windows (la consulta filtra SoftwareName startswith 'Windows'); no incluye vulnerabilidades de aplicaciones de terceros.",
+    "uso_previsto": "Informe de seguimiento mensual / threat hunting para el cliente. Puede alimentar el anexo de Threat Hunting de un informe de servicio de seguridad gestionada."
+  },
+  "esquema_campos": [
+    { "columna": "DeviceName", "significado": "FQDN del servidor." },
+    { "columna": "ExposureLevel", "significado": "Nivel de exposición del equipo según Defender: High o Medium en esta consulta. High = mayor riesgo de explotación." },
+    { "columna": "OSPlatform", "significado": "Sistema operativo (p. ej. WindowsServer2016, WindowsServer2022)." },
+    { "columna": "PublicIP", "significado": "IP pública con la que el equipo se conecta al servicio de Defender. Puede ser IP propia, NAT o proxy: NO garantiza que sea una IP expuesta al inbound." },
+    { "columna": "KBsPendientes", "significado": "Número de KBs (actualizaciones de seguridad de SO) distintos que faltan por aplicar." },
+    { "columna": "PaquetesPendientes", "significado": "Lista (JSON array) de paquetes mensuales de actualizaciones pendientes, p. ej. 'October 2026 Security Updates'. Muestra qué ciclos de Patch Tuesday tiene atrasados el servidor." },
+    { "columna": "CVEs", "significado": "Número total de CVEs distintos pendientes de corregir en el SO." },
+    { "columna": "Criticos", "significado": "Número de esos CVEs con severidad Critical." },
+    { "columna": "ExploitsPublicos", "significado": "Número de CVEs pendientes para los que existe código de explotación disponible públicamente (IsExploitAvailable = true)." },
+    { "columna": "CVEsConExploit", "significado": "Lista (JSON array) de los CVEs concretos con exploit público. Vacío si no hay ninguno." },
+    { "columna": "SinParchearDesde", "significado": "Fecha de publicación del arreglo más antiguo que sigue pendiente. Indica que el servidor lleva COMO MÍNIMO desde esa fecha sin parchear (cota inferior, no fecha exacta del último parcheo)." },
+    { "columna": "PaqueteMasAntiguo", "significado": "Paquete mensual más antiguo pendiente, coherente con SinParchearDesde." },
+    { "columna": "DiasSinParchear", "significado": "Días transcurridos desde SinParchearDesde hasta la fecha de ejecución de la consulta." },
+    { "columna": "TieneExploit", "significado": "1 si el servidor tiene al menos un CVE pendiente con exploit público; 0 en caso contrario. Es el flag de prioridad máxima." }
+  ],
+  "reglas_interpretacion": [
+    "PaquetesPendientes puede contener duplicados con sufijo '(Last updated at ...)': es el mismo paquete mensual reeditado o actualizado por Microsoft. Para contar ciclos atrasados, deduplicar por mes y año.",
+    "PaquetesPendientes puede contener cadenas vacías (''): ignorarlas, corresponden a CVEs sin paquete mensual asociado.",
+    "El último parcheo correcto del servidor se deduce de PaquetesPendientes: si faltan los ciclos de octubre y noviembre de 2026, el último parcheo correcto fue el ciclo de septiembre de 2026.",
+    "DiasSinParchear es una cota inferior. Indica 'lleva al menos X días sin parchear', nunca 'lleva exactamente X días'.",
+    "Un número de CVEs elevado (cientos o miles) es normal cuando el servidor acumula varios meses sin parchear: cada paquete mensual de Windows contiene decenas de CVEs.",
+    "Las fechas del CSV pueden venir en formato inglés (ej.: 'Jan 27, 2026 5:34:24 PM'). Convertirlas al formato castellano en el informe.",
+    "PublicIP es la IP de salida hacia Defender; el hecho determinante de exposición a Internet ya lo marca la propia consulta. No afirmar que un servidor 'tiene un puerto abierto' a partir de PublicIP.",
+    "ExploitsPublicos > 0 significa que hay exploits listos para vulnerabilidades sin corregir en un servidor expuesto a Internet: es el criterio de criticidad máxima y debe encabezar el informe.",
+    "Todos los servidores de la lista ya son internet-exposed; no describir la exposición como hipotética."
+  ],
+  "criterios_priorizacion": [
+    "1º — TieneExploit = 1 (CVEs con exploit público sin parchear en servidor expuesto a Internet).",
+    "2º — ExposureLevel = High frente a Medium.",
+    "3º — Mayor DiasSinParchear (más tiempo acumulado sin parchear).",
+    "4º — Mayor número de Criticos.",
+    "5º — Desempate por mayor número de KBsPendientes."
+  ],
+  "estructura_requerida_del_informe": [
+    { "seccion": "1. Resumen ejecutivo", "contenido": "3-5 frases: nº de servidores afectados, cuántos con nivel High, cuántos con exploits públicos, antigüedad máxima sin parchear, y mensaje de acción prioritaria." },
+    { "seccion": "2. Alcance y metodología", "contenido": "Origen del dato, qué mide la consulta, limitaciones (solo SO Windows; SinParchearDesde es cota inferior; snapshot del momento de la ejecución)." },
+    { "seccion": "3. Vista global: tabla resumen", "contenido": "Tabla con una fila por servidor con todas las columnas relevantes, ordenada por los criterios de priorización." },
+    { "seccion": "4. Análisis por servidor", "contenido": "Un subapartado por servidor: exposición, SO, IP, estado de parcheo, CVEs, exploits públicos y evaluación del riesgo." },
+    { "seccion": "5. Priorización de remediación", "contenido": "Lista ordenada de servidores a parchear con justificación y KB/paquete a aplicar en primer lugar." },
+    { "seccion": "6. Recomendaciones", "contenido": "Acciones derivadas de los datos: parcheo inmediato de los servidores con exploit público, revisión del ciclo de parcheo, y verificación posterior." },
+    { "seccion": "Anexo A. Consulta KQL utilizada", "contenido": "Incluir la KQL completa para trazabilidad." },
+    { "seccion": "Anexo B. Definiciones", "contenido": "Definición breve de: KB, CVE, exploit público, ExposureLevel, IsInternetFacing y Patch Tuesday." }
+  ],
+  "restricciones": [
+    "No inventar ningún dato: si un campo está vacío o ausente, decirlo explícitamente.",
+    "No afirmar explotación en curso: 'exploit público' significa código de explotación disponible, no explotación confirmada.",
+    "No inferir puertos abiertos, servicios expuestos ni vector de ataque concreto a partir de PublicIP.",
+    "El informe debe ser reproducible: cualquier cifra mencionada debe poder localizarse en el CSV adjunto."
+  ],
+  "metodologia_kql": "{kql}"
+}
+JSON,
+            ],
         ];
 
         return $catalog;

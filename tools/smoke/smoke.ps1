@@ -61,6 +61,7 @@ $routes = @(
     '/index.php/modules/vulnerabilities',
     '/index.php/modules/cve',
     '/index.php/modules/remediation',
+    '/index.php/modules/exposed_report',
     '/index.php/modules/cve?tab=catalog',
     '/index.php/modules/cve?tab=software',
     '/index.php/modules/cve?tab=reports',

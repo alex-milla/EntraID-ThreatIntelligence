@@ -639,6 +639,7 @@ class Database
             ['vulnerabilities',    'Vulnerabilidades (TVM)',        'Vulnerabilidades de equipos y software',           '1.0.0'],
             ['cve',                'CVE (catálogo público)',        'Catálogo público de CVEs e inventario de software', '0.1.0'],
             ['remediation',        'Remediación',                   'Tareas de remediación, SLA y asistente IA',         '0.1.0'],
+            ['exposed_report',     'Equipos expuestos',             'Informe de parcheo de servidores internet-exposed (Defender Advanced Hunting)', '1.0.0'],
             ['secure_score',       'Secure Score',                  'Evolución de la postura de seguridad',             '1.0.0'],
             ['hunting',            'Advanced Hunting (KQL)',        'Consultas programáticas KQL',                      '1.0.0'],
             ['threatfox',          'IOCs ThreatFox',                'Indicadores de compromiso de abuse.ch (ThreatFox)', '1.0.0'],
