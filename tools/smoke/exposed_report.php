@@ -37,7 +37,7 @@ check('clave del módulo', $module !== null && $module->key() === 'exposed_repor
 check('nombre visible', $module !== null && $module->name() === 'Equipos expuestos');
 check('sin permisos Graph', $module !== null && $module->requiredPermissions() === []);
 check('no sincronizable', $module !== null && $module->isSyncable() === false);
-check('rutas registradas (2)', $module !== null && count($module->routes()) === 2);
+check('rutas registradas (3)', $module !== null && count($module->routes()) === 3);
 
 $nav = $module?->getNavItem();
 check('grupo Seguridad', is_array($nav) && ($nav['group'] ?? '') === 'Seguridad');
@@ -333,8 +333,116 @@ check('catálogo: la prueba no deja datos',
     CveDatabase::fetchOne("SELECT cve_id FROM cve_catalog WHERE cve_id = ?", [$testCve]) === null);
 
 /* =====================================================================
- * 8. La vista se renderiza
+ * 7 ter. Análisis por CVE y JSON de especificación
  * ================================================================== */
+
+$analysisCve = 'CVE-2099-0002';
+$seededAnalysis = false;
+$reportId = 0;
+try {
+    CveDatabase::query(
+        "INSERT INTO cve_catalog (cve_id, description, severity, cvss_v3_score, published_at)
+         VALUES (?, 'Descripción del CVE de análisis', 'high', 8.1, '2026-09-08')",
+        [$analysisCve]
+    );
+    CveDatabase::query(
+        "INSERT INTO cve_epss (cve_id, epss, percentile, score_date) VALUES (?, 0.28, 0.91, '2026-11-01')",
+        [$analysisCve]
+    );
+
+    $reportId = CveDatabase::insert(
+        "INSERT INTO cve_ai_reports (cve_ids, title, status, token, no_ai, mode, total_items)
+         VALUES (?, 'Prueba exposed_report', 'done', 'test-token', 0, 'extended', 1)",
+        [json_encode([$analysisCve])]
+    );
+    CveDatabase::query(
+        "INSERT INTO cve_ai_report_items
+         (report_id, cve_id, position, status, ai_text, sections_json, ai_model)
+         VALUES (?, ?, 1, 'done', 'texto de prueba', ?, 'modelo-de-prueba')",
+        [
+            $reportId,
+            $analysisCve,
+            json_encode([
+                ['title' => 'Naturaleza y alcance', 'bullets' => ['Afecta a la validación de certificados TLS.'], 'paragraphs' => []],
+                ['title' => 'Evaluación de riesgo', 'bullets' => ['Riesgo alto en equipos expuestos.'], 'paragraphs' => []],
+            ], JSON_UNESCAPED_UNICODE),
+        ]
+    );
+    $seededAnalysis = true;
+
+    // Datos completos y bloque del prompt.
+    $details = ExposedReportEnrichment::cveDetails([$analysisCve]);
+    check('datos: el CVE existe', isset($details[$analysisCve]));
+    check('datos: severidad', strtolower((string)($details[$analysisCve]['severity'] ?? '')) === 'high');
+    check('datos: CVSS', (float)($details[$analysisCve]['cvss'] ?? 0) === 8.1);
+    check('datos: EPSS', (float)($details[$analysisCve]['epss'] ?? 0) === 0.28);
+    check('datos: prioridad calculada', (string)($details[$analysisCve]['priority'] ?? '') !== '');
+
+    $block = ExposedReportEnrichment::promptBlock([$analysisCve]);
+    check('prompt: bloque de CVE', $block['count'] === 1 && str_contains($block['text'], $analysisCve));
+    check('prompt: incluye datos', str_contains($block['text'], 'CVSS 8,1') && str_contains($block['text'], 'EPSS 28,0 %'));
+    check('prompt: incluye descripción', str_contains($block['text'], 'Descripción del CVE de análisis'));
+    check('prompt: sin CVE no hay bloque',
+        ExposedReportEnrichment::promptBlock(['CVE-2099-7777'])['text'] === '');
+
+    // Análisis reutilizados.
+    $stored = ExposedReportEnrichment::storedAnalyses([$analysisCve]);
+    check('análisis: se recupera el guardado', isset($stored[$analysisCve]));
+    check('análisis: modelo', ($stored[$analysisCve]['model'] ?? '') === 'modelo-de-prueba');
+    check('análisis: secciones', count((array)($stored[$analysisCve]['sections'] ?? [])) === 2);
+
+    $annexAnalyses = ExposedReportEnrichment::annexAnalyses([$analysisCve, 'CVE-2099-7777']);
+    check('anexo D: se genera', str_contains($annexAnalyses['markdown'], 'Anexo D. Análisis por CVE'));
+    check('anexo D: incluye el CVE', str_contains($annexAnalyses['markdown'], $analysisCve));
+    check('anexo D: incluye las viñetas',
+        str_contains($annexAnalyses['markdown'], '**Naturaleza y alcance**')
+        && str_contains($annexAnalyses['markdown'], '- Afecta a la validación de certificados TLS.'));
+    check('anexo D: avisa de los que faltan', in_array('CVE-2099-7777', $annexAnalyses['missing'], true));
+    check('análisis pendientes', ExposedReportEnrichment::pendingAnalyses([$analysisCve, 'CVE-2099-7777']) === ['CVE-2099-7777']);
+
+    $emptyAnalyses = ExposedReportEnrichment::annexAnalyses(['CVE-2099-7777']);
+    check('anexo D: sin análisis avisa', $emptyAnalyses['markdown'] === '' && $emptyAnalyses['notice'] !== null);
+} catch (Throwable $e) {
+    check('análisis: preparación de la prueba', false, $e->getMessage());
+} finally {
+    if ($seededAnalysis) {
+        try {
+            if ($reportId > 0) {
+                CveDatabase::query("DELETE FROM cve_ai_report_items WHERE report_id = ?", [$reportId]);
+                CveDatabase::query("DELETE FROM cve_ai_reports WHERE id = ?", [$reportId]);
+            }
+            CveDatabase::query("DELETE FROM cve_catalog WHERE cve_id = ?", [$analysisCve]);
+            CveDatabase::query("DELETE FROM cve_epss WHERE cve_id = ?", [$analysisCve]);
+        } catch (Throwable $e) {
+            // nada que limpiar
+        }
+    }
+}
+check('análisis: la prueba no deja datos',
+    CveDatabase::fetchOne("SELECT cve_id FROM cve_catalog WHERE cve_id = ?", [$analysisCve]) === null);
+
+// JSON de especificación: plantilla, personalizado y no válido.
+$resolvedDefault = ExposedReportEnrichment::resolveSpec('', ExposedReportParser::kqlJson());
+check('json: plantilla por defecto', $resolvedDefault['custom'] === false
+    && $resolvedDefault['notice'] === null
+    && str_contains($resolvedDefault['spec'], 'instrucciones_para_la_ia'));
+check('json: la plantilla lleva la KQL', str_contains($resolvedDefault['spec'], 'DeviceInfo'));
+
+$customJson = '{"instrucciones_para_la_ia":{"rol":"prueba"},"metodologia_kql":"{kql}"}';
+$resolvedCustom = ExposedReportEnrichment::resolveSpec($customJson, ExposedReportParser::kqlJson());
+check('json: personalizado se usa', $resolvedCustom['custom'] === true
+    && str_contains($resolvedCustom['spec'], '"rol":"prueba"'));
+check('json: marcador sustituido', str_contains($resolvedCustom['spec'], 'DeviceTvmSoftwareVulnerabilities'));
+
+$resolvedInvalid = ExposedReportEnrichment::resolveSpec('{ esto no es json }', ExposedReportParser::kqlJson());
+check('json: inválido cae a la plantilla', $resolvedInvalid['custom'] === false
+    && is_string($resolvedInvalid['notice'])
+    && str_contains($resolvedInvalid['spec'], 'instrucciones_para_la_ia'));
+
+check('json: exceso de tamaño cae a la plantilla',
+    ExposedReportEnrichment::resolveSpec(str_repeat('x', ExposedReportEnrichment::MAX_SPEC_CHARS + 10), '')['custom'] === false);
+
+
 
 $viewData = [
     'module'           => $module,
@@ -363,6 +471,12 @@ $viewData = [
     'enrichSources'    => ExposedReportEnrichment::SOURCES,
     'catalogAvailable' => ExposedReportEnrichment::catalogAvailable(),
     'inventoryAvailable' => ExposedReportEnrichment::inventoryAvailable(),
+    'specJson'         => ExposedReportEnrichment::resolveSpec('', '')['spec'],
+    'specCustom'       => false,
+    'specNotice'       => null,
+    'cveIds'           => [],
+    'analysesMissing'  => [],
+    'queueNotice'      => null,
 ];
 
 $html = $module !== null ? $module->render('index', $viewData) : '';
@@ -375,6 +489,8 @@ check('vista: explica que la IA no está configurada', str_contains($html, 'La I
 check('vista: aviso de límites', str_contains($html, (string)ExposedReportParser::MAX_ROWS));
 check('vista: selector de detalle de CVE', str_contains($html, 'name="enrich"'));
 check('vista: inventario deshabilitado sin datos', str_contains($html, 'sin inventario sincronizado'));
+check('vista: editor de JSON', str_contains($html, 'name="spec_json"')
+    && str_contains($html, 'Especificación JSON del modo detallado'));
 
 $viewWithReport = $viewData;
 $viewWithReport['stats'] = $out['stats'];
@@ -394,6 +510,19 @@ check('vista: imprimir/PDF', str_contains($htmlReport, 'printReport()'));
 check('vista: botón de descarga', str_contains($htmlReport, 'informe-parcheo-20261111-1200.md'));
 check('vista: KPIs deterministas', str_contains($htmlReport, 'Con exploit público'));
 check('vista: ciclos pendientes', str_contains($htmlReport, 'October 2026 Security Updates'));
+
+$viewPending = $viewWithReport;
+$viewPending['analysesMissing'] = ['CVE-2026-1111', 'CVE-2026-2222'];
+$htmlPending = $module !== null ? $module->render('index', $viewPending) : '';
+check('vista: botón de análisis por CVE',
+    str_contains($htmlPending, 'analyze-cves')
+    && str_contains($htmlPending, 'Generar análisis de los CVE (2)')
+    && str_contains($htmlPending, 'name="cve_ids[]"'));
+
+$viewQueued = $viewWithReport;
+$viewQueued['queueNotice'] = '3 análisis por CVE en cola.';
+$htmlQueued = $module !== null ? $module->render('index', $viewQueued) : '';
+check('vista: aviso de análisis en cola', str_contains($htmlQueued, '3 análisis por CVE en cola'));
 
 /* =====================================================================
  * Resultado

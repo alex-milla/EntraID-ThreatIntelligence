@@ -73,8 +73,9 @@ class Module_ExposedReport extends BaseModule
     public function routes(): array
     {
         return [
-            ['method' => 'GET',  'pattern' => '',         'handler' => [$this, 'index']],
-            ['method' => 'POST', 'pattern' => 'generate', 'handler' => [$this, 'generate']],
+            ['method' => 'GET',  'pattern' => '',             'handler' => [$this, 'index']],
+            ['method' => 'POST', 'pattern' => 'generate',     'handler' => [$this, 'generate']],
+            ['method' => 'POST', 'pattern' => 'analyze-cves', 'handler' => [$this, 'analyzeCves']],
         ];
     }
 
@@ -105,6 +106,8 @@ class Module_ExposedReport extends BaseModule
         if ($mode !== 'detailed') {
             $enrich = ExposedReportEnrichment::SOURCE_NONE;
         }
+
+        $specOverride = (string)($_POST['spec_json'] ?? '');
 
         $llm = ModuleManager::get('llm');
         if (!$llm instanceof Module_Llm || !$llm->isConfigured($profileId > 0 ? $profileId : null)) {
@@ -172,7 +175,23 @@ class Module_ExposedReport extends BaseModule
             return;
         }
 
-        [$system, $user, $maxTokens] = $this->prompts($parsed['csv'], $mode);
+        // CVE que el CSV identifica (los que tienen exploit público).
+        $cveIds = ExposedReportEnrichment::collectExploitCves($parsed['rows']);
+
+        // JSON de especificación: el editado en pantalla o el de la plantilla.
+        $spec = ExposedReportEnrichment::resolveSpec($specOverride, ExposedReportParser::kqlJson());
+
+        // Datos de los CVE para que el modelo los analice en prosa.
+        $cveBlock = $enrich !== ExposedReportEnrichment::SOURCE_NONE
+            ? ExposedReportEnrichment::promptBlock($cveIds)
+            : ['text' => '', 'count' => 0];
+
+        [$system, $user, $maxTokens] = $this->prompts(
+            $parsed['csv'],
+            $mode,
+            $spec['spec'],
+            (string)$cveBlock['text']
+        );
 
         $startedAt = microtime(true);
         $res = $llm->chat($system, $user, [
@@ -211,14 +230,13 @@ class Module_ExposedReport extends BaseModule
             return;
         }
 
-        // Anexo C determinista: lo añade la aplicación, no lo redacta la IA,
+        // Anexos deterministas: los añade la aplicación, no los redacta la IA,
         // para que cada dato sea rastreable a su fuente.
         $annexMd = '';
         $enrichNotice = null;
+        $analysesMissing = [];
         if ($enrich === ExposedReportEnrichment::SOURCE_CATALOG) {
-            $catalog = ExposedReportEnrichment::fromCatalog(
-                ExposedReportEnrichment::collectExploitCves($parsed['rows'])
-            );
+            $catalog = ExposedReportEnrichment::fromCatalog($cveIds);
             $annex = ExposedReportEnrichment::annexCatalog($parsed['rows'], $catalog);
             $annexMd = (string)$annex['markdown'];
             $enrichNotice = $annex['notice'];
@@ -229,6 +247,24 @@ class Module_ExposedReport extends BaseModule
             foreach ((array)($annex['mismatch'] ?? []) as $item) {
                 $warnings[] = 'Defender: ' . (string)$item;
                 $warningsTotal++;
+            }
+        }
+
+        // Anexo D: análisis por CVE que ya existen en el módulo CVE.
+        if ($enrich !== ExposedReportEnrichment::SOURCE_NONE) {
+            $analyses = ExposedReportEnrichment::annexAnalyses($cveIds);
+            if ((string)$analyses['markdown'] !== '') {
+                $annexMd = trim($annexMd . "\n\n" . (string)$analyses['markdown']);
+            }
+            // Solo se puede encolar el análisis de los CVE que están en el
+            // catálogo local; el resto no tiene datos.
+            $analysable = array_keys(ExposedReportEnrichment::cveDetails($cveIds));
+            $analysesMissing = array_values(array_intersect(
+                (array)($analyses['missing'] ?? []),
+                $analysable
+            ));
+            if ($enrichNotice === null && $analyses['notice'] !== null) {
+                $enrichNotice = (string)$analyses['notice'];
             }
         }
 
@@ -258,8 +294,100 @@ class Module_ExposedReport extends BaseModule
             'profileId'     => $profileId,
             'enrich'        => $enrich,
             'enrichNotice'  => $enrichNotice,
+            'specJson'      => $specOverride !== '' ? $specOverride : self::specTemplate(),
+            'specCustom'    => (bool)$spec['custom'],
+            'specNotice'    => $spec['notice'],
+            'cveIds'        => $cveIds,
+            'analysesMissing' => $analysesMissing,
             'downloadName'  => 'informe-parcheo-' . gmdate('Ymd-Hi') . '.md',
         ]);
+    }
+
+    /* =====================================================================
+     * Análisis por CVE (encola el informe IA del módulo CVE)
+     * ================================================================== */
+
+    public function analyzeCves(array $params = []): void
+    {
+        $ids = [];
+        foreach ((array)($_POST['cve_ids'] ?? []) as $value) {
+            if (!is_scalar($value)) {
+                continue;
+            }
+            $id = strtoupper(trim((string)$value));
+            if (preg_match('/^CVE-\d{4}-\d{4,}$/', $id) === 1) {
+                $ids[$id] = true;
+            }
+        }
+        $ids = array_keys($ids);
+
+        if ($ids === []) {
+            $this->renderPage(['error' => 'No hay CVE válidos para analizar.']);
+            return;
+        }
+
+        // Solo se pueden analizar los CVE que están en el catálogo local.
+        $available = array_keys(ExposedReportEnrichment::cveDetails($ids));
+        $skipped = array_values(array_diff($ids, $available));
+        $queue = array_slice($available, 0, ExposedReportEnrichment::MAX_ANALYSIS_QUEUE);
+
+        if ($queue === []) {
+            $this->renderPage([
+                'error' => 'Ninguno de los CVE está en el catálogo local, así que no hay datos para analizar. '
+                    . 'Actualiza el catálogo desde el módulo CVE y vuelve a intentarlo.',
+            ]);
+            return;
+        }
+
+        $llm = ModuleManager::get('llm');
+        if (!$llm instanceof Module_Llm || !$llm->isConfigured()) {
+            $this->renderPage([
+                'error' => 'La IA no está configurada. Revisa el perfil en Admin → APIs antes de encolar análisis.',
+            ]);
+            return;
+        }
+
+        try {
+            $token = bin2hex(random_bytes(24));
+            $reportId = CveDatabase::insert(
+                "INSERT INTO cve_ai_reports
+                 (cve_ids, title, status, token, ai_profile_id, generated_by, no_ai, mode, total_items)
+                 VALUES (?, ?, 'pending', ?, ?, ?, 0, 'extended', ?)",
+                [
+                    json_encode($queue, JSON_UNESCAPED_SLASHES),
+                    'Equipos expuestos · análisis de CVE · ' . date('d/m/Y H:i'),
+                    $token,
+                    llm_task_profile('cve_report'),
+                    Auth::id(),
+                    count($queue),
+                ]
+            );
+
+            CveReportAi::ensureReportItems($reportId);
+
+            $workerUrl = rtrim((string)APP_URL, '/') . '/cve-worker.php?ai_token=' . rawurlencode($token);
+            $started = background_request($workerUrl);
+
+            log_activity('exposed_report.analyses_queued', [
+                'report'  => $reportId,
+                'cves'    => count($queue),
+                'skipped' => count($skipped),
+                'worker'  => $started,
+            ]);
+
+            $notice = count($queue) . ' análisis por CVE en cola (informe IA #' . $reportId . '). '
+                . ($started
+                    ? 'Se generan en segundo plano; vuelve a generar este informe en unos minutos para adjuntarlos.'
+                    : 'El proceso se ha registrado pero el servidor no pudo lanzarlo; se ejecutará con '
+                        . '«Generar pendientes» en el módulo CVE.')
+                . ($skipped !== []
+                    ? ' ' . count($skipped) . ' CVE no están en el catálogo local y se han omitido.'
+                    : '');
+
+            $this->renderPage(['queueNotice' => $notice]);
+        } catch (Throwable $e) {
+            $this->renderPage(['error' => 'No se pudieron encolar los análisis: ' . $e->getMessage()]);
+        }
     }
 
     /* =====================================================================
@@ -303,6 +431,12 @@ class Module_ExposedReport extends BaseModule
             'enrichSources'   => ExposedReportEnrichment::SOURCES,
             'catalogAvailable'=> ExposedReportEnrichment::catalogAvailable(),
             'inventoryAvailable' => ExposedReportEnrichment::inventoryAvailable(),
+            'specJson'        => self::specTemplate(),
+            'specCustom'      => false,
+            'specNotice'      => null,
+            'cveIds'          => [],
+            'analysesMissing' => [],
+            'queueNotice'     => null,
         ], $extra));
     }
 
@@ -318,7 +452,7 @@ class Module_ExposedReport extends BaseModule
      *
      * @return array{0:string,1:string,2:int}
      */
-    private function prompts(string $csv, string $mode): array
+    private function prompts(string $csv, string $mode, string $spec, string $cveBlock): array
     {
         $catalog = llm_prompts_catalog();
         $csvBlock = "CSV con los resultados de la KQL (una fila por servidor):\n\n```csv\n" . $csv . "\n```";
@@ -327,13 +461,16 @@ class Module_ExposedReport extends BaseModule
             $systemDefault = (string)($catalog['llm.exposed.detailed']['default'] ?? '');
             $system = llm_prompt('llm.exposed.detailed', $systemDefault);
 
-            $specDefault = (string)($catalog['llm.exposed.spec']['default'] ?? '');
-            $spec = llm_prompt('llm.exposed.spec', $specDefault, ['{kql}' => ExposedReportParser::kqlJson()]);
-
             $user = "JSON de especificación (vínculo vinculante; aplica sus reglas y su estructura):\n\n"
-                . "```json\n" . $spec . "\n```\n\n" . $csvBlock;
+                . "```json\n" . $spec . "\n```\n\n";
 
-            return [$system, $user, 4000];
+            if ($cveBlock !== '') {
+                $user .= $cveBlock . "\n\n";
+            }
+
+            $user .= $csvBlock;
+
+            return [$system, $user, 4500];
         }
 
         $systemDefault = (string)($catalog['llm.exposed.compact']['default'] ?? '');
@@ -345,6 +482,14 @@ class Module_ExposedReport extends BaseModule
     /* =====================================================================
      * Utilidades
      * ================================================================== */
+
+    /** JSON de especificación de la plantilla, con el marcador {kql} intacto. */
+    private static function specTemplate(): string
+    {
+        $catalog = llm_prompts_catalog();
+        $default = (string)($catalog['llm.exposed.spec']['default'] ?? '');
+        return llm_prompt('llm.exposed.spec', $default);
+    }
 
     private function uploadError(int $code): string
     {

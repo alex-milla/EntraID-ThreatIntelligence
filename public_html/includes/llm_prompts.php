@@ -385,12 +385,17 @@ TXT,
                 'default'     => <<<'TXT'
 Actúa como analista senior de ciberseguridad especializado en Microsoft
 Defender y gestión de vulnerabilidades. Adjunto un JSON de especificación
-(vínculo para ti) y un CSV con resultados de una KQL de Defender XDR.
-Lee primero el JSON completo y trátalo como especificación vinculante;
-aplica sus reglas de interpretación, genera el informe en castellano
-siguiendo EXACTAMENTE su estructura de 8 secciones, y verifica antes de
-responder que cada cifra citada existe literalmente en el CSV. Si el CSV
-contradice al JSON, prevalece el CSV y señálalo al final.
+(vínculo para ti), un CSV con resultados de una KQL de Defender XDR y, en
+ocasiones, un bloque «Datos de los CVE». Lee primero el JSON completo y
+trátalo como especificación vinculante; aplica sus reglas de interpretación,
+genera el informe en castellano siguiendo EXACTAMENTE su estructura de 8
+secciones, y verifica antes de responder que cada cifra citada existe
+literalmente en el CSV.
+Si se adjunta el bloque «Datos de los CVE», úsalo para ANALIZAR los CVE en
+prosa dentro del análisis por servidor: qué son, si son explotables y qué
+impacto tienen en ese equipo y en su exposición. No repitas ese bloque como
+tabla: los datos van en el anexo del informe.
+Si el CSV contradice al JSON, prevalece el CSV y señálalo al final.
 Salida: solo el informe, nada más.
 TXT,
             ],
@@ -408,7 +413,7 @@ TXT,
     "tarea": "Genera un informe claro, detallado y accionable a partir del CSV adjunto, que contiene el resultado de una consulta KQL contra Microsoft Defender XDR Advanced Hunting. Detalla TODOS los puntos que extrae la consulta: exposición a Internet, sistema operativo, IP pública, KBs pendientes, ciclos mensuales de parcheo atrasados, CVEs acumulados, CVEs críticos, CVEs con exploit público y tiempo sin parchear.",
     "idioma_salida": "castellano",
     "formato_salida": "Informe en Markdown con tablas para los datos tabulares y prosa para el análisis. Longitud orientativa: 800-1500 palabras, más tablas y anexos.",
-    "entrada": "Un CSV con una fila por servidor y las columnas definidas en 'esquema_campos'. No hay más fuentes de datos: todo dato del informe debe salir del CSV o de este JSON."
+    "entrada": "Un CSV con una fila por servidor y las columnas definidas en 'esquema_campos', y, si se adjunta, un bloque de 'Datos de los CVE' con información del catálogo local. No hay más fuentes: todo dato del informe debe salir del CSV, de este JSON o del bloque de CVE."
   },
   "contexto_del_analisis": {
     "que_es": "Detección de servidores Windows expuestos a Internet (internet-exposed) con nivel de exposición High o Medium según Microsoft Defender, y análisis de su estado de parcheo del sistema operativo.",
@@ -454,7 +459,7 @@ TXT,
     { "seccion": "1. Resumen ejecutivo", "contenido": "3-5 frases: nº de servidores afectados, cuántos con nivel High, cuántos con exploits públicos, antigüedad máxima sin parchear, y mensaje de acción prioritaria." },
     { "seccion": "2. Alcance y metodología", "contenido": "Origen del dato, qué mide la consulta, limitaciones (solo SO Windows; SinParchearDesde es cota inferior; snapshot del momento de la ejecución)." },
     { "seccion": "3. Vista global: tabla resumen", "contenido": "Tabla con una fila por servidor con todas las columnas relevantes, ordenada por los criterios de priorización." },
-    { "seccion": "4. Análisis por servidor", "contenido": "Un subapartado por servidor: exposición, SO, IP, estado de parcheo, CVEs, exploits públicos y evaluación del riesgo." },
+    { "seccion": "4. Análisis por servidor", "contenido": "Un subapartado por servidor: exposición, SO, IP, estado de parcheo, CVEs, exploits públicos y evaluación del riesgo. Analiza en prosa los CVE que afectan a cada servidor (naturaleza, explotabilidad, impacto y parche asociado) usando el bloque «Datos de los CVE» si está disponible; no repitas el bloque como tabla." },
     { "seccion": "5. Priorización de remediación", "contenido": "Lista ordenada de servidores a parchear con justificación y KB/paquete a aplicar en primer lugar." },
     { "seccion": "6. Recomendaciones", "contenido": "Acciones derivadas de los datos: parcheo inmediato de los servidores con exploit público, revisión del ciclo de parcheo, y verificación posterior." },
     { "seccion": "Anexo A. Consulta KQL utilizada", "contenido": "Incluir la KQL completa para trazabilidad." },

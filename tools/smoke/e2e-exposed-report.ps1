@@ -120,6 +120,7 @@ try {
     Check 'E2E compacto: html, md y PDF' (($compact.Content -match '\.html') -and ($compact.Content -match '\.md') -and ($compact.Content -match 'PDF'))
     Check 'E2E compacto: KQL como nota plegada' ($compact.Content -match 'Notas técnicas')
     Check 'E2E compacto: sin anexo de CVE' (-not ($compact.Content -match 'Anexo C\.'))
+    Check 'E2E compacto: sin bloque de CVE en el prompt' ($compact.Content -match 'Bloque de CVE: no')
     Check 'E2E compacto: el modelo recibió el CSV' ($compact.Content -match 'CSV recibido: sí')
     Check 'E2E compacto: sin JSON de especificación' ($compact.Content -match 'Modo detectado: compacto')
     Check 'E2E compacto: sin KQL en el prompt' ($compact.Content -match 'KQL recibida: no')
@@ -142,6 +143,41 @@ try {
     Check 'E2E detallado: el informe apareció' ($detailed.Content -match 'Informe de parcheo \(prueba\)')
     Check 'E2E detallado: anexo C de CVE' ($detailed.Content -match 'Anexo C\.' -and $detailed.Content -match 'CVE-2026-1111')
     Check 'E2E detallado: aviso de cobertura del catálogo' ($detailed.Content -match 'catálogo local no tiene datos')
+    Check 'E2E detallado: editor de JSON present' ($detailed.Content -match 'name="spec_json"')
+    Check 'E2E detallado: sin bloque de CVE sin catálogo' ($detailed.Content -match 'Bloque de CVE: no')
+
+    # --- JSON de especificación editado en la pantalla ---
+    $customJson = '{"instrucciones_para_la_ia":{"rol":"MARCADOR-E2E"},"metodologia_kql":"{kql}"}'
+    $custom = Invoke-WebRequest -Uri "$base/index.php/modules/exposed_report/generate" -Method POST `
+        -WebSession $ws -Form @{
+            csrf_token = $csrf
+            mode       = 'detailed'
+            profile_id = $profileId
+            spec_json  = $customJson
+            csv        = Get-Item $csvPath
+        } -UseBasicParsing -TimeoutSec 120
+    Check 'E2E JSON: el modelo recibe el JSON editado' ($custom.Content -match 'JSON personalizado: sí')
+    Check 'E2E JSON: el informe aparece' ($custom.Content -match 'Informe generado')
+
+    $invalidJson = Invoke-WebRequest -Uri "$base/index.php/modules/exposed_report/generate" -Method POST `
+        -WebSession $ws -Form @{
+            csrf_token = $csrf
+            mode       = 'detailed'
+            profile_id = $profileId
+            spec_json  = '{ esto no es json }'
+            csv        = Get-Item $csvPath
+        } -UseBasicParsing -TimeoutSec 120
+    Check 'E2E JSON inválido: avisa y no rompe' ($invalidJson.Content -match 'El JSON editado no es válido')
+    Check 'E2E JSON inválido: usa la plantilla' ($invalidJson.Content -match 'JSON personalizado: no')
+
+    # --- análisis por CVE: validación sin encolar nada ---
+    $noCves = Invoke-WebRequest -Uri "$base/index.php/modules/exposed_report/analyze-cves" -Method POST `
+        -WebSession $ws -Form @{ csrf_token = $csrf } -UseBasicParsing -TimeoutSec 60
+    Check 'E2E análisis: sin CVE avisa' ($noCves.Content -match 'No hay CVE válidos')
+
+    $notInCatalog = Invoke-WebRequest -Uri "$base/index.php/modules/exposed_report/analyze-cves" -Method POST `
+        -WebSession $ws -Form @{ csrf_token = $csrf; 'cve_ids[]' = 'CVE-2099-9999' } -UseBasicParsing -TimeoutSec 60
+    Check 'E2E análisis: CVE fuera del catálogo no se encola' ($notInCatalog.Content -match 'Ninguno de los CVE está en el catálogo local')
 
     # --- validación: CSV con columnas incorrectas ---
     $bad = Invoke-WebRequest -Uri "$base/index.php/modules/exposed_report/generate" -Method POST `

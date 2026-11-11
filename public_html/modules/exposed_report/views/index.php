@@ -32,6 +32,12 @@
  * @var array $enrichSources
  * @var bool $catalogAvailable
  * @var bool $inventoryAvailable
+ * @var string $specJson
+ * @var bool $specCustom
+ * @var string|null $specNotice
+ * @var array $cveIds
+ * @var array $analysesMissing
+ * @var string|null $queueNotice
  */
 
 $base = base_url('modules/exposed_report');
@@ -46,6 +52,12 @@ $profileId = (int)($profileId ?? 0);
 $mode = ((string)($mode ?? 'compact')) === 'detailed' ? 'detailed' : 'compact';
 $enrich = (string)($enrich ?? 'catalog');
 $enrichNotice = $enrichNotice ?? null;
+$specJson = (string)($specJson ?? '');
+$specNotice = $specNotice ?? null;
+$specCustom = !empty($specCustom);
+$cveIds = is_array($cveIds ?? null) ? $cveIds : [];
+$analysesMissing = is_array($analysesMissing ?? null) ? $analysesMissing : [];
+$queueNotice = $queueNotice ?? null;
 ?>
 
 <div class="page-header no-print">
@@ -72,6 +84,14 @@ $enrichNotice = $enrichNotice ?? null;
 
 <?php if (!empty($error)): ?>
     <div class="alert alert-error no-print" role="status"><?= e((string)$error) ?></div>
+<?php endif; ?>
+
+<?php if (is_string($queueNotice) && $queueNotice !== ''): ?>
+    <div class="alert alert-info no-print" role="status"><?= e($queueNotice) ?></div>
+<?php endif; ?>
+
+<?php if (is_string($specNotice) && $specNotice !== ''): ?>
+    <div class="alert alert-warning no-print" role="status"><?= e($specNotice) ?></div>
 <?php endif; ?>
 
 <?php if ($errors !== []): ?>
@@ -193,6 +213,22 @@ $enrichNotice = $enrichNotice ?? null;
             <?php endforeach; ?>
         </div>
     </details>
+
+    <details class="mt-4">
+        <summary class="cursor-pointer text-xs font-medium text-ink-muted">
+            Especificación JSON del modo detallado
+            <span class="text-ink-soft"><?= $specCustom ? '· personalizada en la última ejecución' : '· plantilla' ?></span>
+        </summary>
+        <div class="mt-3">
+            <p class="text-[11px] text-ink-soft mt-0 mb-2">
+                Solo se usa en el modo detallado. Deja el marcador
+                <code class="font-mono">{kql}</code> donde quieras que se inserte la consulta.
+                Si lo dejas vacío o el JSON no es válido, se usa la plantilla guardada.
+            </p>
+            <textarea id="spec_json" name="spec_json" rows="12" spellcheck="false"
+                      class="w-full px-3 py-2 rounded-lg border border-line-strong bg-input text-ink font-mono text-xs focus:ring-2 focus:ring-brand-500 outline-none"><?= e($specJson) ?></textarea>
+        </div>
+    </details>
 </div>
 
 <!-- ============================================================
@@ -312,6 +348,18 @@ $enrichNotice = $enrichNotice ?? null;
                         title="Imprimir o guardar como PDF">
                     <?= icon('print', 16) ?> PDF
                 </button>
+                <?php if ($analysesMissing !== []): ?>
+                    <form method="POST" action="<?= e($base . '/analyze-cves') ?>" class="m-0">
+                        <?= Csrf::field() ?>
+                        <?php foreach ($analysesMissing as $pendingCve): ?>
+                            <input type="hidden" name="cve_ids[]" value="<?= e((string)$pendingCve) ?>">
+                        <?php endforeach; ?>
+                        <button type="submit" class="btn"
+                                title="Encola el análisis IA de cada CVE en el módulo CVE; se adjuntará en el próximo informe">
+                            <?= icon('psychology', 16) ?> Generar análisis de los CVE (<?= count($analysesMissing) ?>)
+                        </button>
+                    </form>
+                <?php endif; ?>
             </div>
         </div>
 

@@ -33,11 +33,15 @@ if (trim($prompt) === '') {
 $detailed = str_contains($prompt, 'instrucciones_para_la_ia');
 $hasCsv = str_contains($prompt, 'srv01.contoso.com');
 $hasKql = str_contains($prompt, 'DeviceTvmSoftwareVulnerabilities');
+$hasCveBlock = str_contains($prompt, 'Datos de los CVE con exploit público');
+$customSpec = str_contains($prompt, 'MARCADOR-E2E');
 
 $report = "# Informe de parcheo (prueba)\n\n"
     . "- Modo detectado: " . ($detailed ? 'detallado' : 'compacto') . "\n"
     . "- CSV recibido: " . ($hasCsv ? 'sí' : 'no') . "\n"
     . "- KQL recibida: " . ($hasKql ? 'sí' : 'no') . "\n"
+    . "- Bloque de CVE: " . ($hasCveBlock ? 'sí' : 'no') . "\n"
+    . "- JSON personalizado: " . ($customSpec ? 'sí' : 'no') . "\n"
     . "- Longitud del prompt: " . strlen($prompt) . "\n\n"
     . "## Resumen\n\n"
     . "Dos servidores expuestos, uno con exploit público y 64 días sin parchear.\n\n"
