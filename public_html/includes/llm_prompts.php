@@ -362,6 +362,11 @@ estructura:
    a aplicar primero + una breve justificación del riesgo (exposición, exploits
    públicos, días sin parchear) + consecuencia esperada al aplicarlo.
 
+Numeración: empieza cada sección con su número (1., 2., 3.) y numera las
+acciones de la sección 3 como 1., 2. y 3.: reinicia la numeración, no
+continúes la de las secciones. No uses encabezados Markdown (#) para las
+secciones; usa la lista numerada.
+
 Reglas: cada cifra debe existir en el CSV; DiasSinParchear es cota inferior
 ("al menos X días"); en PaquetesPendientes deduplica por mes y año (ignora
 los sufijos "Last updated at" y las cadenas vacías); no afirmes puertos

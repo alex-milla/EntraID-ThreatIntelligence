@@ -216,6 +216,7 @@ $compact = (string)$catalog['llm.exposed.compact']['default'];
 check('prompt compacto: 3 secciones', str_contains($compact, '1. Resumen')
     && str_contains($compact, '2. Tabla única') && str_contains($compact, '3. Top 3 acciones'));
 check('prompt compacto: reglas de cota inferior', str_contains($compact, 'cota inferior'));
+check('prompt compacto: reinicia la numeración', str_contains($compact, 'reinicia la numeración'));
 
 $detailed = (string)$catalog['llm.exposed.detailed']['default'];
 check('prompt detallado: exige el JSON', str_contains($detailed, 'JSON'));
@@ -229,6 +230,107 @@ check('especificación: 14 campos', is_array($decoded) && count($decoded['esquem
 check('especificación: 8 secciones', is_array($decoded) && count($decoded['estructura_requerida_del_informe'] ?? []) === 8);
 check('especificación: KQL sustituida', is_array($decoded)
     && str_contains((string)($decoded['metodologia_kql'] ?? ''), 'DeviceInfo'));
+
+/* =====================================================================
+ * 7 bis. Detalle de CVE (anexo determinista)
+ * ================================================================== */
+
+check('enriquecimiento: fuentes definidas',
+    array_keys(ExposedReportEnrichment::SOURCES) === ['none', 'catalog', 'inventory']);
+
+$exploitCves = ExposedReportEnrichment::collectExploitCves($out['rows']);
+check('enriquecimiento: CVE con exploit del CSV', $exploitCves === ['CVE-2026-1111', 'CVE-2026-2222', 'CVE-2026-3333'],
+    json_encode($exploitCves));
+check('enriquecimiento: ignora CVE mal formados',
+    ExposedReportEnrichment::collectExploitCves([['exploit_cves' => ['no-es-cve', 'CVE-2026-9']]]) === []);
+
+// Inventario V2 sin sincronizar (instalación de pruebas)
+check('enriquecimiento: inventario disponible solo con datos',
+    ExposedReportEnrichment::inventoryAvailable() === false);
+$annexNoInventory = ExposedReportEnrichment::annexInventory($out['rows']);
+check('enriquecimiento: V2 sin datos avisa', $annexNoInventory['markdown'] === ''
+    && is_string($annexNoInventory['notice']) && $annexNoInventory['notice'] !== '');
+
+// Catálogo V1: se siembra un CVE de prueba y se limpia al final.
+$testCve = 'CVE-2099-0001';
+$seeded = false;
+try {
+    CveDatabase::query(
+        "INSERT INTO cve_catalog (cve_id, description, severity, cvss_v3_score, published_at, nvd_url)
+         VALUES (?, 'Descripción de prueba', 'critical', 9.8, '2026-01-27', 'https://example.invalid/cve')",
+        [$testCve]
+    );
+    CveDatabase::query("INSERT INTO cve_epss (cve_id, epss, percentile, score_date) VALUES (?, 0.42, 0.97, '2026-11-01')", [$testCve]);
+    CveDatabase::query(
+        "INSERT INTO cve_kev (cve_id, vulnerability_name, known_ransomware, due_date) VALUES (?, 'Prueba KEV', 'Known', '2026-02-10')",
+        [$testCve]
+    );
+    CveDatabase::query(
+        "INSERT INTO cve_exploit (cve_id, source, title, url, published_at) VALUES (?, 'github', 'PoC', 'https://example.invalid/poc', '2026-01-28')",
+        [$testCve]
+    );
+    $seeded = true;
+
+    check('catálogo: disponible con datos', ExposedReportEnrichment::catalogAvailable() === true);
+
+    $catalog = ExposedReportEnrichment::fromCatalog([$testCve, 'CVE-2099-9999']);
+    check('catálogo: devuelve el CVE sembrado', isset($catalog[$testCve]));
+    check('catálogo: severidad', ($catalog[$testCve]['severity'] ?? '') === 'critical');
+    check('catálogo: CVSS', ($catalog[$testCve]['cvss'] ?? null) === 9.8);
+    check('catálogo: EPSS', ($catalog[$testCve]['epss'] ?? null) === 0.42);
+    check('catálogo: KEV', ($catalog[$testCve]['kev'] ?? false) === true);
+    check('catálogo: exploits', ($catalog[$testCve]['exploits'] ?? 0) === 1);
+    check('catálogo: descripción', ($catalog[$testCve]['description'] ?? '') === 'Descripción de prueba');
+    check('catálogo: no inventa los ausentes', !isset($catalog['CVE-2099-9999']));
+
+    $rowsForAnnex = [[
+        'device'       => 'srv01.contoso.com',
+        'exposure'     => 'High',
+        'exploit_cves' => [$testCve],
+    ], [
+        'device'       => 'srv02.contoso.com',
+        'exposure'     => 'Medium',
+        'exploit_cves' => ['CVE-2099-9999'],
+    ]];
+    $annex = ExposedReportEnrichment::annexCatalog($rowsForAnnex, $catalog);
+    check('anexo C: se genera', str_contains($annex['markdown'], 'Anexo C. Detalle de los CVE'));
+    check('anexo C: cabecera de tabla', str_contains($annex['markdown'], '| Servidor | CVE | Severidad | CVSS | EPSS | KEV | Exploit | Publicado |'));
+    check('anexo C: fila con datos', str_contains($annex['markdown'], 'Crítica') && str_contains($annex['markdown'], '9,8'));
+    check('anexo C: EPSS en porcentaje', str_contains($annex['markdown'], '42,0 %'));
+    check('anexo C: KEV', str_contains($annex['markdown'], '| Sí |'));
+    check('anexo C: fuentes de exploit', str_contains($annex['markdown'], '1 fuente'));
+    check('anexo C: CVE ausente marcado con —', str_contains($annex['markdown'], 'CVE-2099-9999'));
+    check('anexo C: avisa de los ausentes',
+        str_contains($annex['markdown'], 'no constan en el catálogo local'));
+
+    check('anexo C: sin CVE en el CSV no genera tabla',
+        ExposedReportEnrichment::annexCatalog([['exploit_cves' => []]], $catalog)['markdown'] === '');
+
+    // Catálogo sin datos para TODOS los CVE: se listan los identificadores.
+    $onlyMissing = ExposedReportEnrichment::annexCatalog([
+        ['device' => 'srv03.contoso.com', 'exploit_cves' => ['CVE-2099-8888']],
+    ], []);
+    check('anexo C: sin cobertura no pinta tabla',
+        !str_contains($onlyMissing['markdown'], '| Servidor | CVE |')
+        && str_contains($onlyMissing['markdown'], 'CVE-2099-8888'));
+    check('anexo C: sin cobertura avisa en la interfaz',
+        is_string($onlyMissing['notice']) && $onlyMissing['notice'] !== '');
+} catch (Throwable $e) {
+    check('catálogo: preparación de la prueba', false, $e->getMessage());
+} finally {
+    if ($seeded) {
+        try {
+            CveDatabase::query("DELETE FROM cve_catalog WHERE cve_id = ?", [$testCve]);
+            CveDatabase::query("DELETE FROM cve_epss WHERE cve_id = ?", [$testCve]);
+            CveDatabase::query("DELETE FROM cve_kev WHERE cve_id = ?", [$testCve]);
+            CveDatabase::query("DELETE FROM cve_exploit WHERE cve_id = ?", [$testCve]);
+        } catch (Throwable $e) {
+            // nada que limpiar
+        }
+    }
+}
+check('catálogo: la prueba no deja datos',
+    CveDatabase::fetchOne("SELECT cve_id FROM cve_catalog WHERE cve_id = ?", [$testCve]) === null);
 
 /* =====================================================================
  * 8. La vista se renderiza
@@ -256,13 +358,23 @@ $viewData = [
     'filename'         => '',
     'elapsedMs'        => 0,
     'downloadName'     => '',
+    'enrich'           => ExposedReportEnrichment::SOURCE_CATALOG,
+    'enrichNotice'     => null,
+    'enrichSources'    => ExposedReportEnrichment::SOURCES,
+    'catalogAvailable' => ExposedReportEnrichment::catalogAvailable(),
+    'inventoryAvailable' => ExposedReportEnrichment::inventoryAvailable(),
 ];
 
 $html = $module !== null ? $module->render('index', $viewData) : '';
 check('vista: renderiza', $html !== '' && !str_contains($html, 'Vista no encontrada'));
 check('vista: muestra la KQL', str_contains($html, 'IsInternetFacing'));
+check('vista: la KQL va en una nota plegada', str_contains($html, 'Notas técnicas · consulta de origen (KQL)')
+    && str_contains($html, '<details'));
+check('vista: sin tarjeta de consulta arriba', !str_contains($html, '1 · Consulta de origen'));
 check('vista: explica que la IA no está configurada', str_contains($html, 'La IA no está configurada'));
 check('vista: aviso de límites', str_contains($html, (string)ExposedReportParser::MAX_ROWS));
+check('vista: selector de detalle de CVE', str_contains($html, 'name="enrich"'));
+check('vista: inventario deshabilitado sin datos', str_contains($html, 'sin inventario sincronizado'));
 
 $viewWithReport = $viewData;
 $viewWithReport['stats'] = $out['stats'];
@@ -273,6 +385,12 @@ $viewWithReport['filename'] = 'export.csv';
 $viewWithReport['downloadName'] = 'informe-parcheo-20261111-1200.md';
 $htmlReport = $module !== null ? $module->render('index', $viewWithReport) : '';
 check('vista: pinta el informe', str_contains($htmlReport, 'Informe generado'));
+check('vista: hoja de documento', str_contains($htmlReport, 'id="doc-sheet"') && str_contains($htmlReport, 'class="doc-sheet"'));
+check('vista: vista Markdown disponible', str_contains($htmlReport, 'id="doc-raw"') && str_contains($htmlReport, 'showDocView(\'markdown\')'));
+check('vista: copiar con formato', str_contains($htmlReport, 'copyRich()') && str_contains($htmlReport, 'Copiar informe'));
+check('vista: copiar Markdown', str_contains($htmlReport, 'copyMarkdown()'));
+check('vista: descarga html y md', str_contains($htmlReport, 'downloadHtml()') && str_contains($htmlReport, 'downloadMd()'));
+check('vista: imprimir/PDF', str_contains($htmlReport, 'printReport()'));
 check('vista: botón de descarga', str_contains($htmlReport, 'informe-parcheo-20261111-1200.md'));
 check('vista: KPIs deterministas', str_contains($htmlReport, 'Con exploit público'));
 check('vista: ciclos pendientes', str_contains($htmlReport, 'October 2026 Security Updates'));

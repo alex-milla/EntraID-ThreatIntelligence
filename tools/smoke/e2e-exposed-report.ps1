@@ -113,11 +113,18 @@ try {
     Check 'E2E compacto: 200' ([int]$compact.StatusCode -eq 200)
     Check 'E2E compacto: informe visible' ($compact.Content -match 'Informe generado')
     Check 'E2E compacto: contenido del modelo' ($compact.Content -match 'Informe de parcheo \(prueba\)')
+    Check 'E2E compacto: hoja de documento' ($compact.Content -match 'class="doc-sheet"')
+    Check 'E2E compacto: vista Markdown disponible' ($compact.Content -match 'id="doc-raw"')
+    Check 'E2E compacto: copiar con formato' ($compact.Content -match 'Copiar informe')
+    Check 'E2E compacto: copiar Markdown' ($compact.Content -match 'Copiar Markdown')
+    Check 'E2E compacto: html, md y PDF' (($compact.Content -match '\.html') -and ($compact.Content -match '\.md') -and ($compact.Content -match 'PDF'))
+    Check 'E2E compacto: KQL como nota plegada' ($compact.Content -match 'Notas técnicas')
+    Check 'E2E compacto: sin anexo de CVE' (-not ($compact.Content -match 'Anexo C\.'))
     Check 'E2E compacto: el modelo recibió el CSV' ($compact.Content -match 'CSV recibido: sí')
     Check 'E2E compacto: sin JSON de especificación' ($compact.Content -match 'Modo detectado: compacto')
     Check 'E2E compacto: sin KQL en el prompt' ($compact.Content -match 'KQL recibida: no')
     Check 'E2E compacto: tabla del modelo' ($compact.Content -match 'srv01\.contoso\.com')
-    Check 'E2E compacto: botón de descarga' ($compact.Content -match 'Descargar \.md' -and $compact.Content -match 'informe-parcheo-')
+    Check 'E2E compacto: botón de descarga' ($compact.Content -match 'informe-parcheo-' -and $compact.Content -match 'downloadMd\(\)')
     Check 'E2E compacto: KPIs deterministas' ($compact.Content -match 'Con exploit público' -and $compact.Content -match '64')
     Check 'E2E compacto: CSV con BOM aceptado' (-not ($compact.Content -match 'El CSV no se puede usar'))
 
@@ -133,6 +140,8 @@ try {
     Check 'E2E detallado: el modelo recibió el JSON' ($detailed.Content -match 'Modo detectado: detallado')
     Check 'E2E detallado: KQL incrustada en el JSON' ($detailed.Content -match 'KQL recibida: sí')
     Check 'E2E detallado: el informe apareció' ($detailed.Content -match 'Informe de parcheo \(prueba\)')
+    Check 'E2E detallado: anexo C de CVE' ($detailed.Content -match 'Anexo C\.' -and $detailed.Content -match 'CVE-2026-1111')
+    Check 'E2E detallado: aviso de cobertura del catálogo' ($detailed.Content -match 'catálogo local no tiene datos')
 
     # --- validación: CSV con columnas incorrectas ---
     $bad = Invoke-WebRequest -Uri "$base/index.php/modules/exposed_report/generate" -Method POST `

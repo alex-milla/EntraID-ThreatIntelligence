@@ -18,6 +18,7 @@
 declare(strict_types=1);
 
 require_once INCLUDES_PATH . '/exposed_report_parser.php';
+require_once INCLUDES_PATH . '/exposed_report_enrichment.php';
 
 class Module_ExposedReport extends BaseModule
 {
@@ -94,6 +95,16 @@ class Module_ExposedReport extends BaseModule
     {
         $mode = ((string)($_POST['mode'] ?? 'compact')) === 'detailed' ? 'detailed' : 'compact';
         $profileId = max(0, (int)($_POST['profile_id'] ?? 0));
+
+        // El detalle de CVEs solo aplica al informe detallado (el compacto va
+        // sin anexos por contrato de la especificación).
+        $enrich = (string)($_POST['enrich'] ?? ExposedReportEnrichment::SOURCE_CATALOG);
+        if (!array_key_exists($enrich, ExposedReportEnrichment::SOURCES)) {
+            $enrich = ExposedReportEnrichment::SOURCE_CATALOG;
+        }
+        if ($mode !== 'detailed') {
+            $enrich = ExposedReportEnrichment::SOURCE_NONE;
+        }
 
         $llm = ModuleManager::get('llm');
         if (!$llm instanceof Module_Llm || !$llm->isConfigured($profileId > 0 ? $profileId : null)) {
@@ -200,14 +211,37 @@ class Module_ExposedReport extends BaseModule
             return;
         }
 
-        $html = trim((string)($res['content_html'] ?? ''));
-        if ($html === '') {
-            $html = render_ai_markdown($markdown);
+        // Anexo C determinista: lo añade la aplicación, no lo redacta la IA,
+        // para que cada dato sea rastreable a su fuente.
+        $annexMd = '';
+        $enrichNotice = null;
+        if ($enrich === ExposedReportEnrichment::SOURCE_CATALOG) {
+            $catalog = ExposedReportEnrichment::fromCatalog(
+                ExposedReportEnrichment::collectExploitCves($parsed['rows'])
+            );
+            $annex = ExposedReportEnrichment::annexCatalog($parsed['rows'], $catalog);
+            $annexMd = (string)$annex['markdown'];
+            $enrichNotice = $annex['notice'];
+        } elseif ($enrich === ExposedReportEnrichment::SOURCE_INVENTORY) {
+            $annex = ExposedReportEnrichment::annexInventory($parsed['rows']);
+            $annexMd = (string)$annex['markdown'];
+            $enrichNotice = $annex['notice'];
+            foreach ((array)($annex['mismatch'] ?? []) as $item) {
+                $warnings[] = 'Defender: ' . (string)$item;
+                $warningsTotal++;
+            }
         }
+
+        if ($annexMd !== '') {
+            $markdown = trim($markdown) . "\n\n---\n\n" . $annexMd;
+        }
+
+        $html = render_ai_markdown($markdown);
 
         log_activity('exposed_report.generated', [
             'servers' => (int)$parsed['stats']['servers'],
             'mode'    => $mode,
+            'enrich'  => $enrich,
             'bytes'   => (int)$parsed['bytes'],
             'ms'      => $elapsedMs,
         ]);
@@ -222,6 +256,8 @@ class Module_ExposedReport extends BaseModule
             'reportHtml'    => $html,
             'elapsedMs'     => $elapsedMs,
             'profileId'     => $profileId,
+            'enrich'        => $enrich,
+            'enrichNotice'  => $enrichNotice,
             'downloadName'  => 'informe-parcheo-' . gmdate('Ymd-Hi') . '.md',
         ]);
     }
@@ -262,6 +298,11 @@ class Module_ExposedReport extends BaseModule
             'filename'        => '',
             'elapsedMs'       => 0,
             'downloadName'    => '',
+            'enrich'          => ExposedReportEnrichment::SOURCE_CATALOG,
+            'enrichNotice'    => null,
+            'enrichSources'   => ExposedReportEnrichment::SOURCES,
+            'catalogAvailable'=> ExposedReportEnrichment::catalogAvailable(),
+            'inventoryAvailable' => ExposedReportEnrichment::inventoryAvailable(),
         ], $extra));
     }
 
