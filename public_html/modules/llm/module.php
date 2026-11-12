@@ -122,6 +122,9 @@ class Module_Llm extends BaseModule
         $low = strtolower($msg);
         $who = $provider !== '' ? $provider : 'el proveedor';
 
+        if (llm_err_is_context_overflow($msg)) {
+            return $this->contextOverflowMessage($msg, $cfg);
+        }
         if (llm_err_is_model_error($msg)) {
             return 'El modelo «' . ($model !== '' ? $model : '(vacío)') . '» no existe en ' . $who
                  . '. Usa «Listar modelos» en Admin → APIs para copiar el identificador exacto que sirve el servidor.';
@@ -156,6 +159,70 @@ class Module_Llm extends BaseModule
             return 'Acceso denegado (403) por ' . $who . '. Revisa la API key, los permisos o la Base URL.';
         }
         return $msg;
+    }
+
+    /**
+     * Mensaje accionable para el «fin de contexto»: el prompt no cabe en la
+     * ventana del modelo. Se aprovechan los contadores que manda el servidor
+     * (llama.cpp) y, si no vienen, se consulta /props una vez.
+     */
+    private function contextOverflowMessage(string $msg, array $cfg): string
+    {
+        $nums = llm_err_context_numbers($msg);
+        $prompt = (int)($nums['prompt'] ?? 0);
+        $ctx = (int)($nums['ctx'] ?? 0);
+        if ($ctx === 0) {
+            $ctx = $this->serverContext($cfg);
+        }
+
+        $detail = '';
+        if ($prompt > 0 && $ctx > 0) {
+            $detail = ' (' . number_format($prompt, 0, ',', '.') . ' tokens pedidos > '
+                . number_format($ctx, 0, ',', '.') . ' de ventana)';
+        } elseif ($ctx > 0) {
+            $detail = ' (la ventana del servidor es de ' . number_format($ctx, 0, ',', '.') . ' tokens)';
+        } elseif ($prompt > 0) {
+            $detail = ' (' . number_format($prompt, 0, ',', '.') . ' tokens pedidos)';
+        }
+
+        return 'Fin de contexto: el prompt no cabe en la ventana del modelo' . $detail . '. '
+             . 'Sube el contexto del servidor (--ctx-size en llama.cpp, num_ctx/OLLAMA_CONTEXT_LENGTH en Ollama) '
+             . 'o reduce los datos del informe.';
+    }
+
+    /**
+     * Ventana de contexto del servidor, leída de `GET /props` (llama.cpp).
+     * 0 si el servidor no la expone. Se cachea por host en la petición.
+     */
+    private function serverContext(array $cfg): int
+    {
+        $host = $this->providerHost($cfg);
+        if ($host === '') {
+            return 0;
+        }
+        static $cache = [];
+        if (array_key_exists($host, $cache)) {
+            return $cache[$host];
+        }
+
+        $ctx = 0;
+        $base = llm_ollama_base($host);
+        foreach (array_unique([rtrim($host, '/'), $base]) as $candidate) {
+            if ($candidate === '') {
+                continue;
+            }
+            try {
+                $res = $this->httpGet($candidate . '/props', (string)($cfg['api_key'] ?? ''), 5);
+            } catch (Throwable $e) {
+                continue;
+            }
+            $ctx = llm_props_ctx($res);
+            if ($ctx > 0) {
+                break;
+            }
+        }
+
+        return $cache[$host] = $ctx;
     }
 
     /**
@@ -407,11 +474,14 @@ class Module_Llm extends BaseModule
             $models = llm_models_from_response($res);
             if ($models) {
                 $kind = str_contains($url, '/api/tags') ? 'API nativa de Ollama' : 'API compatible con OpenAI';
+                $context = $this->serverContext($cfg);
                 return [
                     'success'  => true,
-                    'message'  => 'Conexión correcta. Endpoint detectado: ' . $url . ' (' . $kind . '). Modelos disponibles: ' . count($models) . '.',
+                    'message'  => 'Conexión correcta. Endpoint detectado: ' . $url . ' (' . $kind . '). Modelos disponibles: ' . count($models) . '.'
+                        . ($context > 0 ? ' Ventana de contexto: ' . number_format($context, 0, ',', '.') . ' tokens.' : ''),
                     'models'   => count($models),
                     'endpoint' => $url,
+                    'context'  => $context,
                 ];
             }
             $errors[] = 'El endpoint ' . $url . ' respondió sin modelos.';
@@ -456,6 +526,7 @@ class Module_Llm extends BaseModule
                     'models'    => $models,
                     'endpoint'  => $url,
                     'suggested' => $models[0],
+                    'context'   => $this->serverContext($cfg),
                 ];
             }
             $errors[] = $url . ' → respuesta sin modelos';
@@ -771,8 +842,7 @@ class Module_Llm extends BaseModule
 
                 $decoded = json_decode($response, true);
                 if ($httpCode >= 400) {
-                    $msg = $decoded['error']['message'] ?? $decoded['message'] ?? $response;
-                    throw new RuntimeException("LLM API Error ($httpCode): $msg");
+                    throw new RuntimeException($this->httpErrorMessage($httpCode, $response, $decoded));
                 }
                 return is_array($decoded) ? $decoded : ['raw' => $response];
             }
@@ -811,8 +881,7 @@ class Module_Llm extends BaseModule
 
             $decoded = json_decode($response, true);
             if ($httpCode >= 400) {
-                $msg = $decoded['error']['message'] ?? $decoded['message'] ?? $response;
-                throw new RuntimeException("LLM API Error ($httpCode): $msg");
+                throw new RuntimeException($this->httpErrorMessage($httpCode, $response, $decoded));
             }
 
             return $decoded ?? ['raw' => $response];
@@ -842,7 +911,7 @@ class Module_Llm extends BaseModule
     /**
      * HTTP GET genérico con cURL (JSON), con API key opcional.
      */
-    private function httpGet(string $url, string $apiKey = ''): array
+    private function httpGet(string $url, string $apiKey = '', int $timeout = 30): array
     {
         $headers = ['Accept: application/json'];
         if ($apiKey !== '') {
@@ -855,7 +924,7 @@ class Module_Llm extends BaseModule
                 'http' => [
                     'method'        => 'GET',
                     'header'        => implode("\r\n", $headers),
-                    'timeout'       => 30,
+                    'timeout'       => max(3, $timeout),
                     'ignore_errors' => true,
                 ],
                 'ssl' => ['verify_peer' => true, 'verify_peer_name' => true],
@@ -873,11 +942,7 @@ class Module_Llm extends BaseModule
             }
             $decoded = json_decode($response, true);
             if ($httpCode >= 400) {
-                $msg = $decoded['error']['message'] ?? $decoded['error'] ?? $decoded['message'] ?? $response;
-                if (is_array($msg)) {
-                    $msg = json_encode($msg);
-                }
-                throw new RuntimeException("HTTP $httpCode: $msg");
+                throw new RuntimeException($this->httpErrorMessage($httpCode, $response, $decoded));
             }
             return is_array($decoded) ? $decoded : [];
         }
@@ -885,7 +950,7 @@ class Module_Llm extends BaseModule
         $ch = curl_init($url);
         curl_setopt_array($ch, [
             CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_TIMEOUT        => 30,
+            CURLOPT_TIMEOUT        => max(3, $timeout),
             CURLOPT_SSL_VERIFYPEER => true,
             CURLOPT_SSL_VERIFYHOST => 2,
             CURLOPT_FOLLOWLOCATION => true,
@@ -903,14 +968,54 @@ class Module_Llm extends BaseModule
 
         $decoded = json_decode($response, true);
         if ($httpCode >= 400) {
-            $msg = $decoded['error']['message'] ?? $decoded['error'] ?? $decoded['message'] ?? $response;
-            if (is_array($msg)) {
-                $msg = json_encode($msg);
-            }
-            throw new RuntimeException("HTTP $httpCode: $msg");
+            throw new RuntimeException($this->httpErrorMessage($httpCode, $response, $decoded));
         }
 
         return $decoded ?? [];
+    }
+
+    /**
+     * Mensaje de error HTTP con el detalle del proveedor. Conserva los
+     * contadores de contexto que llama.cpp pone fuera de `error.message`
+     * (n_prompt_tokens, n_ctx) para poder explicar el fin de contexto.
+     */
+    private function httpErrorMessage(int $code, string $raw, mixed $decoded): string
+    {
+        $msg = '';
+        $extra = [];
+
+        if (is_array($decoded)) {
+            $err = $decoded['error'] ?? null;
+            if (is_array($err)) {
+                $msg = (string)($err['message'] ?? '');
+                if (!empty($err['type']) && is_string($err['type'])) {
+                    $extra[] = 'type=' . $err['type'];
+                }
+                if (!empty($err['code']) && is_string($err['code'])) {
+                    $extra[] = 'code=' . $err['code'];
+                }
+            } elseif (is_string($err)) {
+                $msg = $err;
+            }
+            if ($msg === '' && isset($decoded['message']) && is_string($decoded['message'])) {
+                $msg = $decoded['message'];
+            }
+            foreach (['n_prompt_tokens', 'n_ctx', 'n_predict'] as $field) {
+                if (isset($decoded[$field]) && is_numeric($decoded[$field])) {
+                    $extra[] = $field . '=' . (int)$decoded[$field];
+                }
+            }
+        }
+
+        if ($msg === '') {
+            $msg = trim(strip_tags($raw));
+            if (strlen($msg) > 300) {
+                $msg = substr($msg, 0, 300) . '…';
+            }
+        }
+
+        return 'LLM API Error (' . $code . '): ' . $msg
+            . ($extra !== [] ? ' [' . implode(', ', array_unique($extra)) . ']' : '');
     }
 
     // ============================================================

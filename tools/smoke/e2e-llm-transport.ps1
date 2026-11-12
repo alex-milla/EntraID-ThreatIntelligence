@@ -181,6 +181,20 @@ try {
     $v = $verify.Content | ConvertFrom-Json
     Check 'E2E verificar: success' ($v.success -eq $true) ($v.error)
     Check 'E2E verificar: detecta la API compatible' ($v.message -match 'compatible con OpenAI')
+    Check 'E2E verificar: ventana de contexto desde /props' ($v.message -match 'Ventana de contexto' -and [int]$v.context -eq 1536) "ctx=$($v.context)"
+
+    # ============================================================
+    # 4 bis - Fin de contexto: mensaje traducido con las cifras
+    # ============================================================
+    $rCtx = Chat -ProfileId ([int]$p1.id) -Prompt 'TRIGGER-CTX'
+    Check 'E2E contexto: falla' ($rCtx.success -eq $false)
+    Check 'E2E contexto: mensaje traducido' ($rCtx.error -match 'Fin de contexto') ($rCtx.error)
+    Check 'E2E contexto: cifras del servidor' ($rCtx.error -match '2\.100' -and $rCtx.error -match '1\.536') ($rCtx.error)
+    Check 'E2E contexto: no se confunde con 404' (-not ($rCtx.error -match 'Ruta inexistente')) ($rCtx.error)
+
+    $rCtxOllama = Chat -ProfileId ([int]$p1.id) -Prompt 'TRIGGER-CTX-OLLAMA'
+    Check 'E2E contexto Ollama: mensaje traducido' ($rCtxOllama.error -match 'Fin de contexto') ($rCtxOllama.error)
+    Check 'E2E contexto Ollama: ventana desde /props' ($rCtxOllama.error -match '1\.536') ($rCtxOllama.error)
 
     # ============================================================
     # 5 - Errores traducidos

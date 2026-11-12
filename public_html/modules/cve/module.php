@@ -4987,18 +4987,56 @@ class Module_Cve extends BaseModule
 
         try {
             $result = CveReportAi::runById($id);
+            $result['item_errors'] = $this->failedItemErrors($id);
             $result['url'] = base_url('modules/cve/report-ai/' . $id);
             json_response($result);
         } catch (Throwable $e) {
             app_log('error', 'cve_ai', 'Error ejecutando el informe', ['id' => $id, 'error' => $e->getMessage()]);
             json_response([
-                'success' => false,
-                'id'      => $id,
-                'status'  => 'error',
-                'error'   => $e->getMessage(),
-                'url'     => base_url('modules/cve/report-ai/' . $id),
+                'success'     => false,
+                'id'          => $id,
+                'status'      => 'error',
+                'error'       => $e->getMessage(),
+                'item_errors' => [],
+                'url'         => base_url('modules/cve/report-ai/' . $id),
             ], 500);
         }
+    }
+
+    /**
+     * Motivos reales de los análisis que fallaron en un informe (para que la
+     * pantalla no se quede en «N con error» sin explicar por qué).
+     *
+     * @return array<int,array{cve_id:string,error:string}>
+     */
+    private function failedItemErrors(int $reportId, int $limit = 10): array
+    {
+        if ($reportId <= 0) {
+            return [];
+        }
+        try {
+            $rows = CveDatabase::fetchAll(
+                "SELECT cve_id, ai_error FROM cve_ai_report_items
+                 WHERE report_id = ? AND status = 'error'
+                 ORDER BY position, id LIMIT ?",
+                [$reportId, max(1, min(50, $limit))]
+            );
+        } catch (Throwable $e) {
+            return [];
+        }
+
+        $out = [];
+        foreach ($rows as $row) {
+            $error = trim((string)($row['ai_error'] ?? ''));
+            if ($error === '') {
+                continue;
+            }
+            $out[] = [
+                'cve_id' => (string)($row['cve_id'] ?? ''),
+                'error'  => truncate($error, 400),
+            ];
+        }
+        return $out;
     }
 
     public function retryAiReport(array $params = []): void
@@ -5162,6 +5200,7 @@ class Module_Cve extends BaseModule
                 'report_id' => $id,
                 'status'    => (string)$row['status'],
                 'error'     => (string)($row['ai_error'] ?? ''),
+                'item_errors' => $this->failedItemErrors($id),
                 'mode'      => (string)($row['mode'] ?? 'extended'),
                 'processed' => $processedItems,
                 'total'     => $totalItems,

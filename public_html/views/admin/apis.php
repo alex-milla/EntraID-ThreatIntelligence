@@ -755,7 +755,8 @@ function listModelsForm() {
                 return;
             }
             fillModels(res.models || [], res.suggested || '');
-            toast('Modelos del servidor: ' + (res.models || []).length + '. Se ha puesto el primero en el campo Modelo.', 'success');
+            var extra = (res.context > 0) ? ' Ventana de contexto: ' + Number(res.context).toLocaleString('es-ES') + ' tokens.' : '';
+            toast('Modelos del servidor: ' + (res.models || []).length + '. Se ha puesto el primero en el campo Modelo.' + extra, 'success');
         })
         .catch(function() { toast('Error de conexión', 'error'); });
 }

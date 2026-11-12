@@ -212,3 +212,94 @@ if (!function_exists('llm_err_is_timeout')) {
         return false;
     }
 }
+
+if (!function_exists('llm_err_is_context_overflow')) {
+    /**
+     * ¿El error es que el prompt no cabe en la ventana de contexto?
+     *
+     * Firmas conocidas:
+     *  - llama.cpp: "the request exceeds the available context size. try increasing
+     *    the context size or enable context shift" / type "exceed_context_size_error"
+     *    / "input is too large to process".
+     *  - Ollama: "prompt too long; exceeded max context length by N tokens".
+     *  - vLLM: "This model's maximum context length is N tokens".
+     *  - OpenAI: "maximum context length exceeded" / "context_length_exceeded".
+     */
+    function llm_err_is_context_overflow(string $msg): bool
+    {
+        $low = strtolower($msg);
+        foreach ([
+            'exceeds the available context size',
+            'exceed_context_size_error',
+            'exceeds the context size',
+            'input is too large to process',
+            'context shift',
+            'prompt too long',
+            'too long; exceeded max context length',
+            'exceeded max context length',
+            'maximum context length',
+            'context_length_exceeded',
+            'context length exceeded',
+            'requires more context',
+        ] as $needle) {
+            if (str_contains($low, $needle)) {
+                return true;
+            }
+        }
+        return false;
+    }
+}
+
+if (!function_exists('llm_err_context_numbers')) {
+    /**
+     * Extrae los contadores de contexto de un mensaje de error.
+     *
+     * Admite el formato de llama.cpp ("request (2100 tokens) exceeds the
+     * available context size (1536 tokens)") y el resumen que añade
+     * Module_Llm ("[n_prompt_tokens=2100, n_ctx=1536]").
+     *
+     * @return array{prompt:int,ctx:int} 0 = desconocido
+     */
+    function llm_err_context_numbers(string $msg): array
+    {
+        $prompt = 0;
+        $ctx = 0;
+
+        if (preg_match('/request\s*\(\s*(\d+)\s*tokens?\s*\)\s*exceeds the available context size\s*\(\s*(\d+)\s*tokens?\s*\)/i', $msg, $m)) {
+            $prompt = (int)$m[1];
+            $ctx = (int)$m[2];
+        }
+        if ($prompt === 0 && preg_match('/n_prompt_tokens\s*=\s*(\d+)/i', $msg, $m)) {
+            $prompt = (int)$m[1];
+        }
+        if ($ctx === 0 && preg_match('/\bn_ctx\s*=\s*(\d+)/i', $msg, $m)) {
+            $ctx = (int)$m[1];
+        }
+        if ($prompt === 0 && preg_match('/exceeded max context length by\s+(\d+)\s+tokens/i', $msg, $m)) {
+            $prompt = (int)$m[1];
+        }
+
+        return ['prompt' => $prompt, 'ctx' => $ctx];
+    }
+}
+
+if (!function_exists('llm_props_ctx')) {
+    /**
+     * Ventana de contexto a partir de `GET /props` de llama.cpp.
+     * Devuelve 0 si la respuesta no la expone (Ollama, vLLM, OpenAI…).
+     */
+    function llm_props_ctx(array $res): int
+    {
+        $candidates = [
+            $res['default_generation_settings']['n_ctx'] ?? null,
+            $res['n_ctx'] ?? null,
+            $res['default_generation_settings']['n_ctx_per_seq'] ?? null,
+        ];
+        foreach ($candidates as $value) {
+            if (is_numeric($value) && (int)$value > 0) {
+                return (int)$value;
+            }
+        }
+        return 0;
+    }
+}

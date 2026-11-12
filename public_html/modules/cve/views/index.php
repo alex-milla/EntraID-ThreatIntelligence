@@ -2869,9 +2869,31 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
         hooks = hooks || {};
         return new Promise(function (resolve) {
             var failures = 0;
+            var errors = [];
+            var errorsMore = 0;
+            function collectErrors(res, fallback) {
+                var found = (res && Array.isArray(res.item_errors)) ? res.item_errors : [];
+                if (!found.length && res && res.error) {
+                    found = [{ cve_id: '', error: res.error }];
+                }
+                if (!found.length && fallback) {
+                    found = [{ cve_id: '', error: String(fallback) }];
+                }
+                found.forEach(function (entry) {
+                    var why = entry && entry.error ? String(entry.error).trim() : '';
+                    if (!why) {
+                        return;
+                    }
+                    if (errors.length >= 3) {
+                        errorsMore++;
+                        return;
+                    }
+                    errors.push({ cve_id: entry.cve_id ? String(entry.cve_id) : '', error: why });
+                });
+            }
             function next(index) {
                 if (index >= ids.length) {
-                    resolve({ failures: failures });
+                    resolve({ failures: failures, errors: errors, errorsMore: errorsMore });
                     return;
                 }
                 var id = ids[index];
@@ -2879,14 +2901,19 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
                     hooks.onStart(index + 1, ids.length, id);
                 }
                 postJson(RUN_URL + '/' + id, {}).then(function (res) {
-                    if (!res || (!res.success && res.status !== 'done')) {
-                        failures++;
+                    var itemErrors = (res && Array.isArray(res.item_errors)) ? res.item_errors.length : 0;
+                    if (!res || (!res.success && res.status !== 'done') || itemErrors > 0) {
+                        if (!res || (!res.success && res.status !== 'done')) {
+                            failures++;
+                        }
+                        collectErrors(res, '');
                     }
                     if (typeof hooks.onResult === 'function') {
                         return hooks.onResult(id, res || {});
                     }
                 }).catch(function (err) {
                     failures++;
+                    collectErrors(null, (err && err.message) ? err.message : 'Error de conexión');
                     if (typeof hooks.onError === 'function') {
                         return hooks.onError(id, err);
                     }
@@ -2896,6 +2923,35 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
             }
             next(0);
         });
+    }
+
+    /**
+     * Motivo(s) de los análisis que fallaron, en una línea (los diálogos usan
+     * textContent, así que no admite saltos de línea).
+     */
+    function batchFailureDetail(result, maxChars) {
+        var errors = (result && Array.isArray(result.errors)) ? result.errors : [];
+        var parts = [];
+        errors.slice(0, 3).forEach(function (entry) {
+            var why = entry && entry.error ? String(entry.error).trim() : '';
+            if (!why) {
+                return;
+            }
+            parts.push((entry.cve_id ? entry.cve_id + ': ' : '') + why);
+        });
+        if (!parts.length) {
+            return '';
+        }
+        var more = (result && result.errorsMore) ? (parseInt(result.errorsMore, 10) || 0) : 0;
+        if (more > 0) {
+            parts.push('y ' + more + ' más');
+        }
+        var text = ' ' + parts.join(' · ');
+        var limit = maxChars || 240;
+        if (text.length > limit) {
+            text = text.slice(0, limit).replace(/[ ,;:]+$/, '') + '…';
+        }
+        return text;
     }
 
     var listReconcileTimer = null;
@@ -2969,7 +3025,10 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
             }).then(function () {
                 updatePendingButton();
                 if (result.failures > 0) {
-                    setBatchBanner('Generación parcial: ' + result.failures + ' con error.');
+                    setBatchBanner('Generación parcial: ' + result.failures + ' con error.'
+                        + batchFailureDetail(result, 180));
+                } else if (result.errors && result.errors.length) {
+                    setBatchBanner('Generación con avisos:' + batchFailureDetail(result, 180));
                 } else {
                     setBatchBanner('Generación completada.');
                 }
@@ -3044,7 +3103,11 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
         }).then(function (result) {
             if (result.failures > 0) {
                 appAlert('Se crearon ' + ids.length + ' informes, pero ' + result.failures
-                    + ' no se pudieron generar. Puedes reintentarlos con «Generar pendientes».',
+                    + ' no se pudieron generar.' + batchFailureDetail(result)
+                    + ' Puedes reintentarlos con «Generar pendientes».',
+                    { title: 'Generación parcial' });
+            } else if (result.errors && result.errors.length) {
+                appAlert('Informes creados con avisos:' + batchFailureDetail(result),
                     { title: 'Generación parcial' });
             }
             if (button) {
@@ -3346,7 +3409,11 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
                 }
                 if (result.failures > 0) {
                     appAlert('Se procesaron ' + ids.length + ' informes; ' + result.failures
-                        + ' siguen con error o pendientes.', { title: 'Generación parcial' });
+                        + ' siguen con error o pendientes.' + batchFailureDetail(result),
+                        { title: 'Generación parcial' });
+                } else if (result.errors && result.errors.length) {
+                    appAlert('Informes procesados con avisos:' + batchFailureDetail(result),
+                        { title: 'Generación parcial' });
                 }
             });
         });

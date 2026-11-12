@@ -1525,6 +1525,7 @@ TXT);
         $model = '';
         $total = count($items);
         $llm = null;
+        $firstItemError = '';
 
         foreach ($items as $item) {
             $current = CveDatabase::fetchOne("SELECT status FROM cve_ai_reports WHERE id = ?", [$reportId]);
@@ -1621,6 +1622,9 @@ TXT);
                 if (stripos($aiError, 'curl_init') !== false || stripos($aiError, 'curl extension') !== false) {
                     $aiError = 'La extensión cURL de PHP no está disponible en el servidor; no se puede llamar a la IA.';
                 }
+                if ($firstItemError === '') {
+                    $firstItemError = $aiError;
+                }
                 CveDatabase::update(
                     "UPDATE cve_ai_report_items
                      SET status = 'error', ai_error = ?, finished_at = datetime('now'), updated_at = datetime('now')
@@ -1644,7 +1648,11 @@ TXT);
         $status = $done > 0 ? 'done' : 'error';
         $error = '';
         if ($failed > 0) {
-            $error = $failed . ' de ' . $total . ' análisis fallaron. Puedes reintentarlos individualmente.';
+            $error = $failed . ' de ' . $total . ' análisis fallaron';
+            if ($firstItemError !== '') {
+                $error .= ': ' . $firstItemError;
+            }
+            $error .= '. Puedes reintentarlos individualmente.';
         } elseif ($done === 0) {
             $error = 'No se pudo analizar ningún CVE.';
         }

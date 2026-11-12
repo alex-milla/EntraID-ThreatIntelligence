@@ -23,6 +23,8 @@ header('Content-Type: application/json; charset=utf-8');
 
 const FAKE_KEY   = 'e2e-orin-key';
 const FAKE_MODEL = 'e2e-orin-model.gguf';
+const FAKE_CTX_MODEL = 'e2e-ctx-model';
+const FAKE_CTX = 1536;
 
 $logFile = sys_get_temp_dir() . '/entraid-fake-llm-openai.log';
 $flag503 = sys_get_temp_dir() . '/entraid-fake-llm-openai-503.flag';
@@ -71,12 +73,40 @@ if ($method === 'GET' && $path === '/v1/models') {
     ]);
 }
 
+// llama.cpp expone la ventana real del servidor en GET /props.
+if ($method === 'GET' && $path === '/props') {
+    fakeOut(200, [
+        'default_generation_settings' => ['n_ctx' => FAKE_CTX],
+        'total_slots' => 1,
+        'model_path'  => FAKE_MODEL,
+    ]);
+}
+
 if ($method === 'POST' && $path === '/v1/chat/completions') {
-    if ((string)($body['model'] ?? '') !== FAKE_MODEL) {
+    $model = (string)($body['model'] ?? '');
+    if ($model !== FAKE_MODEL && $model !== FAKE_CTX_MODEL) {
         fakeOut(404, ['error' => ['code' => 404, 'message' => 'Model not found']]);
     }
     if (($body['stream'] ?? null) !== false) {
         fakeOut(400, ['error' => ['message' => 'stream must be explicitly false']]);
+    }
+
+    // Fin de contexto con el formato real de llama.cpp.
+    if ($model === FAKE_CTX_MODEL || str_contains($prompt, 'TRIGGER-CTX')) {
+        fakeOut(400, [
+            'error' => [
+                'code'    => 400,
+                'message' => 'request (2100 tokens) exceeds the available context size (' . FAKE_CTX . ' tokens), try increasing it',
+                'type'    => 'exceed_context_size_error',
+            ],
+            'n_prompt_tokens' => 2100,
+            'n_ctx'           => FAKE_CTX,
+        ]);
+    }
+
+    // Fin de contexto con el formato de Ollama.
+    if (str_contains($prompt, 'TRIGGER-CTX-OLLAMA')) {
+        fakeOut(400, ['error' => 'prompt too long; exceeded max context length by 1200 tokens']);
     }
 
     if (str_contains($prompt, 'TRIGGER-503')) {

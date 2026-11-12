@@ -53,6 +53,7 @@ foreach ($llmProfiles as $llmProfile) {
         $aiSearch = strtolower(implode(' ', array_map('strval', $aiRowIds)) . ' ' . (string)$aiRow['title']);
         $aiRowTags = CveReportAi::decodeTags((string)($aiRow['tags'] ?? ''));
         $aiErrorText = trim((string)($aiRow['ai_error'] ?? ''));
+        $aiErrorShort = $aiErrorText !== '' ? truncate($aiErrorText, 150) : '';
         $aiRowProfileId = (int)($aiRow['ai_profile_id'] ?? 0);
         $aiRowProfile = $profileMap[$aiRowProfileId] ?? null;
         $aiRowProfileName = $aiRowProfile !== null
@@ -62,6 +63,7 @@ foreach ($llmProfiles as $llmProfile) {
         $aiRowModel = trim((string)($aiRow['ai_model'] ?? ''));
         $aiRowModelLabel = $aiRowModel !== '' ? $aiRowModel : $aiRowProfileModel;
         $aiRowFailedLabel = $aiRowProfileName . ($aiRowModelLabel !== '' ? ' · ' . $aiRowModelLabel : '');
+        $aiErrorTitle = trim('Modelo que falló: ' . $aiRowFailedLabel . ($aiErrorText !== '' ? ' — ' . $aiErrorText : ''));
         ?>
         <div class="ai-report-item group border-b border-gray-100 dark:border-gray-800 px-3 py-2.5 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/40 <?= $selectedAiId === $aiRowId ? 'bg-brand-50 dark:bg-brand-950/40' : '' ?>"
              data-id="<?= $aiRowId ?>"
@@ -143,8 +145,8 @@ foreach ($llmProfiles as $llmProfile) {
             </div>
             <?php if ($aiRowStatus === 'error'): ?>
                 <p class="text-[10px] text-danger mt-1 pl-4 truncate"
-                   title="Modelo que falló: <?= e($aiRowFailedLabel) ?>">
-                    Falló: <?= e($aiRowFailedLabel) ?>
+                   title="<?= e($aiErrorTitle) ?>">
+                    Falló: <?= e($aiRowFailedLabel) ?><?= $aiErrorShort !== '' ? ' — ' . e($aiErrorShort) : '' ?>
                 </p>
             <?php endif; ?>
             <?php if ($aiRowTags !== []): ?>

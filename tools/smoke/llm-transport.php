@@ -134,6 +134,36 @@ try {
     check('401 no es 503', !llm_err_is_unavailable('LLM API Error (401): unauthorized: Invalid API Key'));
 
     // ============================================================
+    // 6 bis - Fin de contexto
+    // ============================================================
+    $ctxLlama = 'LLM API Error (400): request (2100 tokens) exceeds the available context size (1536 tokens), try increasing it'
+        . ' [type=exceed_context_size_error, n_prompt_tokens=2100, n_ctx=1536]';
+    check('contexto llama.cpp se detecta', llm_err_is_context_overflow($ctxLlama));
+    $ctxNums = llm_err_context_numbers($ctxLlama);
+    check('contexto llama.cpp: 2100/1536', $ctxNums['prompt'] === 2100 && $ctxNums['ctx'] === 1536, json_encode($ctxNums));
+
+    $ctxOllama = 'LLM API Error (400): prompt too long; exceeded max context length by 1200 tokens';
+    check('contexto Ollama se detecta', llm_err_is_context_overflow($ctxOllama));
+    check('contexto Ollama: exceso 1200', llm_err_context_numbers($ctxOllama)['prompt'] === 1200);
+
+    check(
+        'contexto vLLM se detecta',
+        llm_err_is_context_overflow("This model's maximum context length is 4096 tokens. However, you requested 5000 tokens")
+    );
+    check(
+        'contexto OpenAI se detecta',
+        llm_err_is_context_overflow('LLM API Error (400): maximum context length exceeded [code=context_length_exceeded]')
+    );
+    check('404 no es contexto', !llm_err_is_context_overflow('LLM API Error (404): File Not Found'));
+    check('401 no es contexto', !llm_err_is_context_overflow('LLM API Error (401): unauthorized: Invalid API Key'));
+    check('timeout no es contexto', !llm_err_is_context_overflow('Error cURL: Operation timed out after 120000 milliseconds'));
+
+    check('props: default_generation_settings.n_ctx', llm_props_ctx(['default_generation_settings' => ['n_ctx' => 8192]]) === 8192);
+    check('props: n_ctx en la raíz', llm_props_ctx(['n_ctx' => 4096]) === 4096);
+    check('props: sin datos', llm_props_ctx(['model_path' => 'x']) === 0);
+    check('props: valor inválido', llm_props_ctx(['n_ctx' => 'abc']) === 0);
+
+    // ============================================================
     // 7 - Constantes y API pública del módulo
     // ============================================================
     check('constante LLM_503_RETRY_DELAY', defined('LLM_503_RETRY_DELAY') && is_int(LLM_503_RETRY_DELAY));
