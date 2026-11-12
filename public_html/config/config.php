@@ -201,6 +201,10 @@ define('LLM_API_KEY', $env['LLM_API_KEY'] ?? '');
 define('LLM_API_URL', $env['LLM_API_URL'] ?? '');
 define('LLM_MODEL', $env['LLM_MODEL'] ?? '');
 define('LLM_MAX_TOKENS', (int)($env['LLM_MAX_TOKENS'] ?? 2048));
+// Espera (segundos) antes de reintentar una petición que devolvió 503
+// (modelo cargando). 0 = reintento inmediato. Se omite si no hay margen de
+// ejecución (ver Module_Llm::retryDelay()).
+define('LLM_503_RETRY_DELAY', (int)($env['LLM_503_RETRY_DELAY'] ?? 20));
 
 // Cron
 define('CRON_TOKEN', $env['CRON_TOKEN'] ?? '');

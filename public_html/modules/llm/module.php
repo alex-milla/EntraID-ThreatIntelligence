@@ -57,6 +57,19 @@ class Module_Llm extends BaseModule
     }
 
     /**
+     * ¿La clave es opcional? Ollama local no la usa y un servidor propio
+     * compatible con OpenAI puede no exigirla (LM Studio, llama.cpp sin auth).
+     */
+    private function keyOptional(array $cfg): bool
+    {
+        $provider = (string)($cfg['provider'] ?? '');
+        if ($provider === 'ollama') {
+            return true;
+        }
+        return $provider === 'custom' && trim((string)($cfg['api_url'] ?? '')) !== '';
+    }
+
+    /**
      * Verifica si el módulo está configurado (para un perfil concreto o el predeterminado).
      */
     public function isConfigured(?int $profileId = null): bool
@@ -65,8 +78,8 @@ class Module_Llm extends BaseModule
         if ($c['provider'] === '') {
             return false;
         }
-        // Ollama (local) no requiere API key
-        if ($c['provider'] === 'ollama') {
+        // Ollama (local) no requiere API key; un servidor propio tampoco.
+        if ($this->keyOptional($c)) {
             return true;
         }
         return $c['api_key'] !== '';
@@ -109,9 +122,22 @@ class Module_Llm extends BaseModule
         $low = strtolower($msg);
         $who = $provider !== '' ? $provider : 'el proveedor';
 
-        if (str_contains($low, 'invalid model') || str_contains($low, 'does not exist') || str_contains($low, 'unknown model') || str_contains($low, 'model_not_found')) {
+        if (llm_err_is_model_error($msg)) {
             return 'El modelo «' . ($model !== '' ? $model : '(vacío)') . '» no existe en ' . $who
-                 . '. Revisa el nombre del modelo en Admin → APIs: debe corresponder al proveedor elegido.';
+                 . '. Usa «Listar modelos» en Admin → APIs para copiar el identificador exacto que sirve el servidor.';
+        }
+        if (llm_err_is_unavailable($msg)) {
+            return 'El servidor de ' . $who . ' está ocupado (503): el modelo se está cargando. '
+                 . 'Espera 15-30 s y reinténtalo.';
+        }
+        if (llm_err_is_timeout($msg)) {
+            return 'Tiempo de espera agotado con ' . $who . '. La generación es larga (modelo local): '
+                 . 'reduce el tamaño de la petición o vuelve a intentarlo.';
+        }
+        if (llm_err_is_not_found($msg)) {
+            return 'Ruta inexistente (404) en ' . $who . '. La Base URL debe ser la raíz del servidor '
+                 . '(p. ej. https://host): la aplicación añade /v1/chat/completions. No pegues '
+                 . '/api/chat ni /chat/completions en el perfil.';
         }
         if (str_contains($low, 'invalid api key') || str_contains($low, 'incorrect api key') || str_contains($low, 'invalid credential') || str_contains($low, 'unauthorized') || str_contains($low, '(401)')) {
             $hint = '';
@@ -171,7 +197,7 @@ class Module_Llm extends BaseModule
         if (empty($cfg['provider'])) {
             return ['success' => false, 'error' => 'Falta seleccionar un proveedor'];
         }
-        if ($cfg['provider'] !== 'ollama' && empty($cfg['api_key'])) {
+        if ($cfg['provider'] !== '' && !$this->keyOptional($cfg) && empty($cfg['api_key'])) {
             return ['success' => false, 'error' => 'Falta la API key'];
         }
         try {
@@ -197,42 +223,89 @@ class Module_Llm extends BaseModule
             'mistral'  => ['https://api.mistral.ai/v1/chat/completions', 'mistral-large-latest'],
             default    => ['https://api.openai.com/v1/chat/completions', 'gpt-4o-mini'],
         };
-        $url = $cfg['api_url'] ?: $defaultUrl;
-        $model = $cfg['model'] ?: $defaultModel;
+        $apiUrl = trim((string)($cfg['api_url'] ?? ''));
+        $base = $apiUrl !== '' ? $apiUrl : $defaultUrl;
+        $urls = llm_openai_endpoints($base) ?: [$defaultUrl];
+        $model = trim((string)($cfg['model'] ?? ''));
 
-        $urls = [$url];
+        // Sin modelo configurado en un servidor propio: se pregunta cuál sirve.
+        if ($model === '' && $apiUrl !== '') {
+            $model = $this->firstModel($cfg, $base);
+        }
+        if ($model === '') {
+            $model = $defaultModel;
+        }
 
+        $lastError = null;
+        $modelError = null;
+        $modelRetried = false;
+        foreach ($urls as $url) {
+            try {
+                return $this->openaiChat($url, $cfg, $model, $system, $user, $options);
+            } catch (Throwable $e) {
+                $lastError = $e;
+                if (llm_err_is_model_error($e->getMessage())) {
+                    $modelError = $modelError ?? $e;
+                }
+
+                // El servidor existe pero el modelo pedido no es el cargado:
+                // se resuelve por /v1/models y se reintenta una sola vez.
+                if (!$modelRetried && llm_err_is_model_error($e->getMessage())) {
+                    $modelRetried = true;
+                    $found = $this->firstModel($cfg, $base);
+                    if ($found !== '' && $found !== $model) {
+                        $model = $found;
+                        try {
+                            return $this->openaiChat($url, $cfg, $model, $system, $user, $options);
+                        } catch (Throwable $e2) {
+                            $lastError = $e2;
+                        }
+                    }
+                }
+
+                // Solo se prueban rutas alternativas ante un 404: un 401, un 429
+                // o un timeout no mejoran cambiando de ruta.
+                if (!llm_err_is_not_found($lastError->getMessage())) {
+                    throw $lastError;
+                }
+            }
+        }
+
+        // Si lo que falló fue el modelo, ese error es más útil que el 404 de la
+        // última ruta probada (p. ej. «Model not found» frente a «File Not Found»).
+        throw $modelError ?? $lastError ?? new RuntimeException('Error en la llamada al modelo');
+    }
+
+    /**
+     * POST /chat/completions y extracción del texto (formato OpenAI).
+     * La URL se recibe ya resuelta por llm_openai_endpoints().
+     */
+    private function openaiChat(string $url, array $cfg, string $model, string $system, string $user, array $options): array
+    {
         $body = json_encode([
             'model'       => $model,
             'messages'    => [
                 ['role' => 'system', 'content' => $system],
                 ['role' => 'user',   'content' => $user],
             ],
-            'max_tokens'  => $options['max_tokens'] ?? $cfg['max_tokens'],
-            'temperature' => $options['temperature'] ?? 0.3,
+            'max_tokens'  => (int)($options['max_tokens'] ?? $cfg['max_tokens']),
+            'temperature' => (float)($options['temperature'] ?? 0.3),
+            'stream'      => false,
         ]);
 
-        $lastError = null;
-        foreach ($urls as $u) {
-            try {
-                $response = $this->httpPost($u, $body, [
-                    'Authorization: Bearer ' . $cfg['api_key'],
-                    'Content-Type: application/json',
-                ], (int)($options['timeout'] ?? 120));
-
-                $content = $response['choices'][0]['message']['content'] ?? null;
-                if ($content === null) {
-                    $lastError = new RuntimeException('Respuesta vacía del modelo');
-                    continue;
-                }
-
-                return ['success' => true, 'content' => $content, 'model' => $model];
-            } catch (Throwable $e) {
-                $lastError = $e;
-            }
+        $headers = ['Content-Type: application/json'];
+        $key = trim((string)($cfg['api_key'] ?? ''));
+        if ($key !== '') {
+            $headers[] = 'Authorization: Bearer ' . $key;
         }
 
-        throw $lastError ?? new RuntimeException('Error en la llamada al modelo');
+        $response = $this->httpPost($url, (string)$body, $headers, (int)($options['timeout'] ?? 120));
+        $content = $response['choices'][0]['message']['content'] ?? null;
+        if ($content === null) {
+            throw new RuntimeException('Respuesta vacía del modelo (' . $url . ')');
+        }
+
+        return ['success' => true, 'content' => $content, 'model' => $model];
     }
 
     private function callAnthropic(array $cfg, string $system, string $user, array $options): array
@@ -264,58 +337,185 @@ class Module_Llm extends BaseModule
     }
 
     /**
-     * Normaliza el host de Ollama: admite solo el host, o una URL con
-     * /api/chat, /api, /v1/chat/completions o /v1 de más (no duplica rutas).
+     * Host efectivo del proveedor: su Base URL o el host por defecto.
      */
-    private function ollamaBase(string $host): string
+    private function providerHost(array $cfg): string
     {
-        $base = rtrim($host, '/');
-        $changed = true;
-        while ($changed) {
-            $changed = false;
-            foreach (['/api/chat', '/v1/chat/completions', '/api', '/v1'] as $suffix) {
-                if (str_ends_with($base, $suffix)) {
-                    $base = rtrim(substr($base, 0, -strlen($suffix)), '/');
-                    $changed = true;
-                    break;
-                }
-            }
+        $url = trim((string)($cfg['api_url'] ?? ''));
+        if ($url !== '') {
+            return $url;
         }
-        return $base;
+        return match ((string)($cfg['provider'] ?? '')) {
+            'ollama'       => 'http://localhost:11434',
+            'ollama_cloud' => 'https://ollama.com',
+            'openai'       => 'https://api.openai.com',
+            'mistral'      => 'https://api.mistral.ai',
+            'gemini'       => 'https://generativelanguage.googleapis.com/v1beta/openai',
+            default        => '',
+        };
     }
 
     /**
-     * Comprueba que la API key de Ollama funciona (lista de modelos).
+     * Primer modelo que publica el servidor ('' si no se puede averiguar).
+     * Prueba /v1/models (OpenAI) y /api/tags (Ollama nativo).
+     */
+    private function firstModel(array $cfg, string $url): string
+    {
+        $key = trim((string)($cfg['api_key'] ?? ''));
+        foreach (llm_model_endpoints($url) as $endpoint) {
+            try {
+                $models = llm_models_from_response($this->httpGet($endpoint, $key));
+            } catch (Throwable $e) {
+                continue;
+            }
+            if ($models) {
+                return $models[0];
+            }
+        }
+        return '';
+    }
+
+    /**
+     * Comprueba la conexión listando modelos. Vale igual para un servidor
+     * compatible con OpenAI (/v1/models) y para Ollama nativo (/api/tags).
      */
     public function verifyOllama(array $cfg = []): array
     {
         $cfg = array_merge($this->cfg(), $cfg);
         $provider = (string)($cfg['provider'] ?? '');
-        if (!in_array($provider, ['ollama', 'ollama_cloud'], true)) {
-            return ['success' => false, 'error' => 'La verificación de clave solo aplica a Ollama / Ollama Cloud.'];
+        if ($provider === '') {
+            return ['success' => false, 'error' => 'Falta seleccionar un proveedor.'];
         }
-        $isCloud = $provider === 'ollama_cloud';
-        $host = $cfg['api_url'] ?: ($isCloud ? 'https://ollama.com' : 'http://localhost:11434');
-        $url = $this->ollamaBase($host) . '/api/tags';
-
-        try {
-            $res = $this->httpGet($url, (string)($cfg['api_key'] ?? ''));
-        } catch (Throwable $e) {
-            return ['success' => false, 'error' => $this->friendlyError($e->getMessage(), $cfg)];
+        if (in_array($provider, ['anthropic', 'azure'], true)) {
+            return ['success' => false, 'error' => 'La verificación automática solo aplica a proveedores con listado de modelos (OpenAI-compatible y Ollama). Usa «Probar conexión».'];
         }
 
-        $n = is_array($res['models'] ?? null) ? count($res['models']) : 0;
-        return ['success' => true, 'message' => 'La clave funciona correctamente. Modelos disponibles: ' . $n . '.', 'models' => $n];
+        $host = $this->providerHost($cfg);
+        if ($host === '') {
+            return ['success' => false, 'error' => 'Falta la Base URL del proveedor.'];
+        }
+
+        $errors = [];
+        $key = trim((string)($cfg['api_key'] ?? ''));
+        foreach (llm_model_endpoints($host) as $url) {
+            try {
+                $res = $this->httpGet($url, $key);
+            } catch (Throwable $e) {
+                $errors[] = $this->friendlyError($e->getMessage(), $cfg);
+                continue;
+            }
+            $models = llm_models_from_response($res);
+            if ($models) {
+                $kind = str_contains($url, '/api/tags') ? 'API nativa de Ollama' : 'API compatible con OpenAI';
+                return [
+                    'success'  => true,
+                    'message'  => 'Conexión correcta. Endpoint detectado: ' . $url . ' (' . $kind . '). Modelos disponibles: ' . count($models) . '.',
+                    'models'   => count($models),
+                    'endpoint' => $url,
+                ];
+            }
+            $errors[] = 'El endpoint ' . $url . ' respondió sin modelos.';
+        }
+
+        return ['success' => false, 'error' => 'No se pudo verificar: ' . implode(' | ', array_unique($errors))];
+    }
+
+    /**
+     * Lista los modelos del servidor configurado (para rellenar el campo
+     * Modelo con el identificador exacto que sirve, sin hardcodear).
+     */
+    public function listModels(array $cfg = []): array
+    {
+        $cfg = array_merge($this->cfg(), $cfg);
+        $provider = (string)($cfg['provider'] ?? '');
+        if ($provider === '') {
+            return ['success' => false, 'error' => 'Falta seleccionar un proveedor.'];
+        }
+        if ($provider === 'azure') {
+            return ['success' => false, 'error' => 'Azure OpenAI no lista modelos: en este proveedor el campo Modelo es el nombre del deployment.'];
+        }
+
+        $host = $this->providerHost($cfg);
+        if ($host === '') {
+            return ['success' => false, 'error' => 'Falta la Base URL del proveedor.'];
+        }
+
+        $errors = [];
+        $key = trim((string)($cfg['api_key'] ?? ''));
+        foreach (llm_model_endpoints($host) as $url) {
+            try {
+                $res = $this->httpGet($url, $key);
+            } catch (Throwable $e) {
+                $errors[] = $url . ' → ' . $this->friendlyError($e->getMessage(), $cfg);
+                continue;
+            }
+            $models = llm_models_from_response($res);
+            if ($models) {
+                return [
+                    'success'   => true,
+                    'models'    => $models,
+                    'endpoint'  => $url,
+                    'suggested' => $models[0],
+                ];
+            }
+            $errors[] = $url . ' → respuesta sin modelos';
+        }
+
+        return ['success' => false, 'error' => 'No se pudo listar modelos. ' . implode(' | ', $errors)];
     }
 
     private function callOllama(array $cfg, string $system, string $user, array $options): array
     {
         // Ollama local (sin API key) u Ollama Cloud (API oficial, con API key)
         $isCloud = ($cfg['provider'] ?? '') === 'ollama_cloud';
-        $host = $cfg['api_url'] ?: ($isCloud ? 'https://ollama.com' : 'http://localhost:11434');
-        $url = $this->ollamaBase($host) . '/api/chat';
-        $model = $cfg['model'] ?: ($isCloud ? 'gpt-oss:120b' : 'llama3.1');
+        $host = (string)($cfg['api_url'] ?: ($isCloud ? 'https://ollama.com' : 'http://localhost:11434'));
+        $root = llm_ollama_base($host);
+        $url = ($root !== '' ? $root : rtrim($host, '/')) . '/api/chat';
+        $model = trim((string)($cfg['model'] ?? ''));
 
+        try {
+            return $this->ollamaChat($url, $cfg, $model !== '' ? $model : ($isCloud ? 'gpt-oss:120b' : 'llama3.1'), $system, $user, $options);
+        } catch (Throwable $e) {
+            $msg = $e->getMessage();
+
+            // Modelo nativo inexistente: se resuelve por /api/tags y se reintenta.
+            if (llm_err_is_model_error($msg)) {
+                $found = $this->firstModel($cfg, $host);
+                if ($found !== '' && $found !== $model) {
+                    return $this->ollamaChat($url, $cfg, $found, $system, $user, $options);
+                }
+                throw $e;
+            }
+
+            // Sin API nativa de Ollama (llama.cpp, vLLM, LM Studio, la Orin…):
+            // se reintenta con el transporte compatible con OpenAI.
+            if (!llm_err_is_not_found($msg)) {
+                throw $e;
+            }
+
+            $fallback = $cfg;
+            $fallback['api_url'] = $host;
+            // El modelo por defecto del transporte nativo no sirve aquí: sin
+            // modelo configurado se pregunta al servidor por el cargado.
+            if ($model === '') {
+                $fallback['model'] = '';
+            }
+            try {
+                return $this->callOpenAI($fallback, $system, $user, $options);
+            } catch (Throwable $e2) {
+                throw new RuntimeException(
+                    'El servidor no responde a la API nativa de Ollama (/api/chat) ni a la compatible con OpenAI (/v1/chat/completions): '
+                    . $e2->getMessage()
+                );
+            }
+        }
+    }
+
+    /**
+     * POST /api/chat y extracción del texto (formato nativo de Ollama).
+     */
+    private function ollamaChat(string $url, array $cfg, string $model, string $system, string $user, array $options): array
+    {
         $body = json_encode([
             'model'    => $model,
             'messages' => [
@@ -324,16 +524,17 @@ class Module_Llm extends BaseModule
             ],
             'stream'   => false,
             'options'  => [
-                'num_predict' => $options['max_tokens'] ?? $cfg['max_tokens'],
+                'num_predict' => (int)($options['max_tokens'] ?? $cfg['max_tokens']),
             ],
         ]);
 
         $headers = ['Content-Type: application/json'];
-        if (!empty($cfg['api_key'])) {
-            $headers[] = 'Authorization: Bearer ' . $cfg['api_key'];
+        $key = trim((string)($cfg['api_key'] ?? ''));
+        if ($key !== '') {
+            $headers[] = 'Authorization: Bearer ' . $key;
         }
 
-        $response = $this->httpPost($url, $body, $headers, (int)($options['timeout'] ?? 120));
+        $response = $this->httpPost($url, (string)$body, $headers, (int)($options['timeout'] ?? 120));
 
         $content = $response['message']['content'] ?? null;
         if ($content === null) {
@@ -528,17 +729,133 @@ class Module_Llm extends BaseModule
 
     /**
      * HTTP POST genérico con cURL (con fallback si la extensión no está).
+     * Ante un 503 (modelo cargando) reintenta una vez tras un backoff corto.
      */
     private function httpPost(string $url, string $body, array $headers, int $timeout = 120): array
     {
         if (!function_exists('curl_init')) {
             /* Hosting sin cURL: se usa el wrapper HTTP de PHP. */
+            $attempt = 0;
+            while (true) {
+                $attempt++;
+                $context = stream_context_create([
+                    'http' => [
+                        'method'        => 'POST',
+                        'header'        => implode("\r\n", $headers),
+                        'content'       => $body,
+                        'timeout'       => max(10, $timeout),
+                        'ignore_errors' => true,
+                    ],
+                    'ssl' => ['verify_peer' => true, 'verify_peer_name' => true],
+                ]);
+                $response = @file_get_contents($url, false, $context);
+                if ($response === false) {
+                    $err = error_get_last()['message'] ?? 'error desconocido';
+                    throw new RuntimeException('No se pudo conectar con el proveedor (sin cURL): ' . $err);
+                }
+                $httpCode = 0;
+                foreach ($http_response_header ?? [] as $line) {
+                    if (preg_match('#^HTTP/\S+\s+(\d{3})#', (string)$line, $m)) {
+                        $httpCode = (int)$m[1];
+                    }
+                }
+
+                // 503 = el modelo se está cargando: un reintento con espera.
+                if ($httpCode === 503 && $attempt === 1) {
+                    $wait = $this->retryDelay();
+                    if ($wait > 0) {
+                        sleep($wait);
+                    }
+                    continue;
+                }
+
+                $decoded = json_decode($response, true);
+                if ($httpCode >= 400) {
+                    $msg = $decoded['error']['message'] ?? $decoded['message'] ?? $response;
+                    throw new RuntimeException("LLM API Error ($httpCode): $msg");
+                }
+                return is_array($decoded) ? $decoded : ['raw' => $response];
+            }
+        }
+
+        $attempt = 0;
+        while (true) {
+            $attempt++;
+            $ch = curl_init($url);
+            curl_setopt_array($ch, [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_POST           => true,
+                CURLOPT_POSTFIELDS     => $body,
+                CURLOPT_HTTPHEADER     => $headers,
+                CURLOPT_TIMEOUT        => max(10, $timeout),
+                CURLOPT_SSL_VERIFYPEER => true,
+                CURLOPT_SSL_VERIFYHOST => 2,
+            ]);
+            $response = curl_exec($ch);
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $error = curl_error($ch);
+            curl_close($ch);
+
+            if ($response === false) {
+                throw new RuntimeException("Error cURL: $error");
+            }
+
+            // 503 = el modelo se está cargando: un reintento con espera.
+            if ($httpCode === 503 && $attempt === 1) {
+                $wait = $this->retryDelay();
+                if ($wait > 0) {
+                    sleep($wait);
+                }
+                continue;
+            }
+
+            $decoded = json_decode($response, true);
+            if ($httpCode >= 400) {
+                $msg = $decoded['error']['message'] ?? $decoded['message'] ?? $response;
+                throw new RuntimeException("LLM API Error ($httpCode): $msg");
+            }
+
+            return $decoded ?? ['raw' => $response];
+        }
+    }
+
+    /**
+     * Espera del reintento ante 503, recortada si no hay margen de ejecución
+     * (hosting compartido con max_execution_time bajo).
+     */
+    private function retryDelay(): int
+    {
+        $seconds = defined('LLM_503_RETRY_DELAY') ? (int)LLM_503_RETRY_DELAY : 20;
+        if ($seconds <= 0) {
+            return 0;
+        }
+        $max = (int)ini_get('max_execution_time');
+        if ($max > 0) {
+            $left = $max - (time() - (int)($_SERVER['REQUEST_TIME'] ?? time()));
+            if ($left <= $seconds + 15) {
+                return 0;
+            }
+        }
+        return $seconds;
+    }
+
+    /**
+     * HTTP GET genérico con cURL (JSON), con API key opcional.
+     */
+    private function httpGet(string $url, string $apiKey = ''): array
+    {
+        $headers = ['Accept: application/json'];
+        if ($apiKey !== '') {
+            $headers[] = 'Authorization: Bearer ' . $apiKey;
+        }
+
+        if (!function_exists('curl_init')) {
+            /* Hosting sin cURL: wrapper HTTP de PHP (mismo criterio que httpPost). */
             $context = stream_context_create([
                 'http' => [
-                    'method'        => 'POST',
+                    'method'        => 'GET',
                     'header'        => implode("\r\n", $headers),
-                    'content'       => $body,
-                    'timeout'       => max(10, $timeout),
+                    'timeout'       => 30,
                     'ignore_errors' => true,
                 ],
                 'ssl' => ['verify_peer' => true, 'verify_peer_name' => true],
@@ -556,52 +873,15 @@ class Module_Llm extends BaseModule
             }
             $decoded = json_decode($response, true);
             if ($httpCode >= 400) {
-                $msg = $decoded['error']['message'] ?? $decoded['message'] ?? $response;
-                throw new RuntimeException("LLM API Error ($httpCode): $msg");
+                $msg = $decoded['error']['message'] ?? $decoded['error'] ?? $decoded['message'] ?? $response;
+                if (is_array($msg)) {
+                    $msg = json_encode($msg);
+                }
+                throw new RuntimeException("HTTP $httpCode: $msg");
             }
-            return is_array($decoded) ? $decoded : ['raw' => $response];
+            return is_array($decoded) ? $decoded : [];
         }
 
-        $ch = curl_init($url);
-        curl_setopt_array($ch, [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_POST           => true,
-            CURLOPT_POSTFIELDS     => $body,
-            CURLOPT_HTTPHEADER     => $headers,
-            CURLOPT_TIMEOUT        => max(10, $timeout),
-            CURLOPT_SSL_VERIFYPEER => true,
-            CURLOPT_SSL_VERIFYHOST => 2,
-        ]);
-        $response = curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $error = curl_error($ch);
-        curl_close($ch);
-
-        if ($response === false) {
-            throw new RuntimeException("Error cURL: $error");
-        }
-
-        $decoded = json_decode($response, true);
-        if ($httpCode >= 400) {
-            $msg = $decoded['error']['message'] ?? $decoded['message'] ?? $response;
-            throw new RuntimeException("LLM API Error ($httpCode): $msg");
-        }
-
-        return $decoded ?? ['raw' => $response];
-    }
-
-    /**
-     * HTTP GET genérico con cURL (JSON), con API key opcional.
-     */
-    private function httpGet(string $url, string $apiKey = ''): array
-    {
-        if (!function_exists('curl_init')) {
-            throw new RuntimeException('cURL no está disponible en el servidor.');
-        }
-        $headers = ['Accept: application/json'];
-        if ($apiKey !== '') {
-            $headers[] = 'Authorization: Bearer ' . $apiKey;
-        }
         $ch = curl_init($url);
         curl_setopt_array($ch, [
             CURLOPT_RETURNTRANSFER => true,

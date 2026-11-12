@@ -1086,6 +1086,24 @@ class AdminController
     }
 
     /**
+     * Lista los modelos que publica el servidor del perfil (botón
+     * «Listar modelos» del panel Admin → APIs).
+     */
+    public static function apisModels(): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        $input = json_decode(file_get_contents('php://input'), true) ?? $_POST;
+        $module = ModuleManager::get('llm');
+        if (!$module) {
+            json_response(['success' => false, 'error' => 'El módulo LLM no está activo'], 400);
+        }
+
+        json_response($module->listModels(llm_cfg_from_input($input)));
+    }
+
+    /**
      * Actualizaciones del sistema desde GitHub (solo admin).
      * GET: estado (versión instalada vs última release, backups).
      * POST: install / restore (CSRF + backup automático + PRG).
@@ -1791,6 +1809,7 @@ $adminRoutes = [
         'apis/save'        => 'apisSave',
         'apis/test'        => 'apisTest',
         'apis/verify'      => 'apisVerify',
+        'apis/models'      => 'apisModels',
         'apis/default'     => 'apisDefault',
         'apis/delete'      => 'apisDelete',
         'apis/tasks'       => 'apisTasks',

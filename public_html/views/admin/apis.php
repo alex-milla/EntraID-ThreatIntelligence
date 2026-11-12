@@ -9,7 +9,7 @@ $providers = [
     'openai'    => 'OpenAI',
     'anthropic' => 'Anthropic',
     'azure'     => 'Azure OpenAI',
-    'ollama'    => 'Ollama (local)',
+    'ollama'    => 'Ollama o compatible (local)',
     'ollama_cloud' => 'Ollama Cloud (API)',
     'gemini'    => 'Google Gemini',
     'mistral'   => 'Mistral',
@@ -115,8 +115,9 @@ foreach ($flashData as $type => $msg):
 
     <div>
         <label class="block text-sm font-medium text-ink mb-1">Base URL <span class="text-ink-soft font-normal">(opcional)</span></label>
-        <input type="text" name="api_url" value="<?= e($editProfile['api_url'] ?? '') ?>" placeholder="Vacío = endpoint por defecto del proveedor"
+        <input type="text" name="api_url" value="<?= e($editProfile['api_url'] ?? '') ?>" placeholder="Raíz del servidor: https://host (la app añade /v1/chat/completions)"
                class="w-full px-3 py-2 rounded-lg border border-line-strong bg-surface text-ink font-mono text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+        <p class="text-xs text-ink-soft mt-1" id="api-url-hint">Vacío = endpoint por defecto del proveedor.</p>
     </div>
 
     <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -125,7 +126,7 @@ foreach ($flashData as $type => $msg):
             <input type="text" name="model" id="model-input" value="<?= e($editProfile['model'] ?? '') ?>" placeholder="mistral-large-latest / gpt-4o-mini" list="model-suggestions" autocomplete="off"
                    class="w-full px-3 py-2 rounded-lg border border-line-strong bg-surface text-ink font-mono text-sm focus:ring-2 focus:ring-brand-500 outline-none">
             <datalist id="model-suggestions"></datalist>
-            <p class="text-xs text-ink-soft mt-1">El modelo debe ser válido para el proveedor elegido (se sugieren los típicos de cada uno).</p>
+            <p class="text-xs text-ink-soft mt-1">El modelo debe ser válido para el proveedor elegido. Usa «Listar modelos» para copiar el identificador exacto que sirve el servidor.</p>
         </div>
         <div>
             <label class="block text-sm font-medium text-ink mb-1">Max tokens</label>
@@ -137,7 +138,7 @@ foreach ($flashData as $type => $msg):
     <div>
         <label class="block text-sm font-medium text-ink mb-1">API Key</label>
         <input type="password" name="api_key" autocomplete="new-password"
-               placeholder="<?= !empty($editProfile['api_key']) ? '•••••••• (ya configurada — deja vacío para mantenerla)' : 'Pega aquí tu API key (no necesaria para Ollama local)' ?>"
+               placeholder="<?= !empty($editProfile['api_key']) ? '•••••••• (ya configurada — deja vacío para mantenerla)' : 'Pega aquí tu API key (vacío si el servidor no la exige: Ollama o servidor propio)' ?>"
                class="w-full px-3 py-2 rounded-lg border border-line-strong bg-surface text-ink font-mono text-sm focus:ring-2 focus:ring-brand-500 outline-none">
     </div>
 
@@ -149,7 +150,8 @@ foreach ($flashData as $type => $msg):
     <div class="flex items-center gap-3 pt-2 border-t border-line-subtle">
         <button type="submit" class="btn">Guardar perfil</button>
         <button type="button" onclick="testForm()" class="px-4 py-2 bg-muted hover:bg-surface-3 text-ink text-sm font-medium rounded-lg transition-colors">Probar conexión</button>
-        <button type="button" onclick="verifyForm()" class="px-4 py-2 bg-muted hover:bg-surface-3 text-ink text-sm font-medium rounded-lg transition-colors">Verificar clave (Ollama)</button>
+        <button type="button" onclick="listModelsForm()" class="px-4 py-2 bg-muted hover:bg-surface-3 text-ink text-sm font-medium rounded-lg transition-colors">Listar modelos</button>
+        <button type="button" onclick="verifyForm()" class="px-4 py-2 bg-muted hover:bg-surface-3 text-ink text-sm font-medium rounded-lg transition-colors">Verificar clave</button>
         <?php if ($editId): ?>
             <a href="<?= base_url('admin/apis') ?>" class="text-sm text-ink-muted hover:underline">Cancelar edición</a>
         <?php endif; ?>
@@ -610,6 +612,35 @@ function updateModelSuggestions() {
         o.value = m;
         list.appendChild(o);
     });
+    updateBaseUrlHint();
+}
+var BASE_URL_HINTS = {
+    ollama: 'Raíz del servidor: https://host. La app prueba la API nativa de Ollama (/api/chat) y, si no existe, la compatible con OpenAI (/v1/chat/completions).',
+    ollama_cloud: 'Vacío = https://ollama.com.',
+    openai: 'Vacío = https://api.openai.com. Para un proxy compatible, la raíz: la app añade /v1/chat/completions.',
+    mistral: 'Vacío = https://api.mistral.ai.',
+    gemini: 'Vacío = endpoint compatible OpenAI de Gemini.',
+    anthropic: 'Vacío = https://api.anthropic.com/v1/messages.',
+    azure: 'Base URL del recurso: https://recurso.openai.azure.com (sin ruta).',
+    custom: 'Raíz del servidor (p. ej. https://host o https://host/v1). La app añade /v1/chat/completions; también acepta el endpoint completo.'
+};
+function updateBaseUrlHint() {
+    var hint = document.getElementById('api-url-hint');
+    var prov = document.getElementById('provider');
+    if (!hint) return;
+    hint.textContent = (prov && BASE_URL_HINTS[prov.value]) ? BASE_URL_HINTS[prov.value] : 'Vacío = endpoint por defecto del proveedor.';
+}
+function fillModels(models, suggested) {
+    var input = document.getElementById('model-input');
+    if (input && suggested) { input.value = suggested; }
+    var list = document.getElementById('model-suggestions');
+    if (!list) return;
+    list.innerHTML = '';
+    models.forEach(function(m) {
+        var o = document.createElement('option');
+        o.value = m;
+        list.appendChild(o);
+    });
 }
 function startCveSyncFromAdmin(mode) {
     mode = mode || 'auto';
@@ -714,6 +745,18 @@ function formPayload() {
 function testForm() {
     api('POST', '<?= base_url('admin/apis/test') ?>', formPayload())
         .then(function(res) { toast(res.success ? (res.message || 'OK') : ('Error: ' + (res.error || 'desconocido')), res.success ? 'success' : 'error'); })
+        .catch(function() { toast('Error de conexión', 'error'); });
+}
+function listModelsForm() {
+    api('POST', '<?= base_url('admin/apis/models') ?>', formPayload())
+        .then(function(res) {
+            if (!res || !res.success) {
+                toast((res && res.error) ? res.error : 'No se pudieron listar los modelos', 'error');
+                return;
+            }
+            fillModels(res.models || [], res.suggested || '');
+            toast('Modelos del servidor: ' + (res.models || []).length + '. Se ha puesto el primero en el campo Modelo.', 'success');
+        })
         .catch(function() { toast('Error de conexión', 'error'); });
 }
 function verifyForm() {
