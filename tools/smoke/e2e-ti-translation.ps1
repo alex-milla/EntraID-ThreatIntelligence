@@ -141,6 +141,8 @@ try {
     Check 'E2E plan: cada bloque acotado' ((@($plan.chunks) | Measure-Object -Property chars -Maximum).Maximum -le 1400)
     $codeSegments = @($plan.chunks | Where-Object { $_.type -eq 'codigo' })
     Check 'E2E plan: hay segmento de código' ($codeSegments.Count -ge 1) "codigo=$($codeSegments.Count)"
+    $inlineCodeSegments = @($codeSegments | Where-Object { ([string]$_.text) -match 'DeviceProcessEvents' })
+    Check 'E2E plan: detecta el código en línea (KQL)' ($inlineCodeSegments.Count -ge 1) 'sin KQL en línea'
 
     # --- traducir todos los bloques ---
     $okChunks = 0
@@ -167,6 +169,9 @@ try {
     Check 'E2E save: sin bloques fallidos' ([int]$saved.failed_chunks -eq 0) "failed=$($saved.failed_chunks)"
     Check 'E2E save: contenido ensamblado' (([string]$saved.content) -match '\[ES\]')
     Check 'E2E save: el código se copia literal' (([string]$saved.content) -match 'Get-ChildItem C:\\Users') 'sin código'
+    Check 'E2E save: el KQL en línea se copia literal' (([string]$saved.content) -match '\| where RemoteIP in \(AttackerInfra\)') 'sin KQL en línea'
+    Check 'E2E save: líneas de código coinciden' ([int]$saved.code_lines_original -eq [int]$saved.code_lines_translation) "original=$($saved.code_lines_original) traduccion=$($saved.code_lines_translation)"
+    Check 'E2E save: sin aviso de código' (-not ([string]$saved.notice -match 'código')) ([string]$saved.notice)
     Check 'E2E save: sin vallas crudas en el HTML' (-not (([string]$saved.content_html) -match '```'))
     Check 'E2E save: encabezados renderizados' (([string]$saved.content_html) -match '<h2')
     Check 'E2E save: bloque de código renderizado' (([string]$saved.content_html) -match 'language-powershell') 'sin bloque de código'
@@ -175,6 +180,7 @@ try {
     $fakeLog = Join-Path (& php -r 'echo sys_get_temp_dir();') 'entraid-fake-llm-openai.log'
     $logText = if (Test-Path $fakeLog) { Get-Content $fakeLog -Raw } else { '' }
     Check 'E2E: el código no se envió al modelo' (-not ($logText -match 'Get-ChildItem')) 'se envió al modelo'
+    Check 'E2E: el KQL en línea no se envió al modelo' (-not ($logText -match 'RemoteIP in')) 'se envió al modelo'
 
     $state = Probe $tiProbe @('translation-state', "$articleId")
     Check 'E2E estado: traducción guardada' ($state.exists -eq $true)

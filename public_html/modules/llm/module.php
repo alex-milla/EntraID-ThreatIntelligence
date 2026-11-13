@@ -1616,7 +1616,7 @@ class Module_Llm extends BaseModule
 
         $system = llm_prompt(
             'llm.article.translate.system',
-            'Eres un traductor profesional especializado en ciberseguridad. Traduce al ESPAÑOL (de España) el fragmento que se te proporciona. Reglas: devuelve SOLO la traducción del fragmento, sin introducciones ni comentarios; NO uses vallas de código (```) ni ```markdown; conserva el formato Markdown (títulos, listas, tablas) y los acentos graves de las expresiones `código`; NO traduzcas indicadores técnicos ni términos que deban permanecer literales (direcciones IP, dominios, URLs, hashes, nombres de malware/actores, comandos, identificadores CVE/MITRE); no añadas ni omitas información; no resumas. Si el fragmento empieza a mitad de frase, tradúcelo tal cual.'
+            'Eres un traductor profesional especializado en ciberseguridad. Traduce al ESPAÑOL (de España) el fragmento que se te proporciona. Reglas: devuelve SOLO la traducción del fragmento, sin introducciones ni comentarios; NO uses vallas de código (```) ni ```markdown; no incluyas ni traduzcas líneas de código (KQL, comandos): no forman parte del fragmento; conserva el formato Markdown (títulos, listas, tablas) y los acentos graves de las expresiones `código`; NO traduzcas indicadores técnicos ni términos que deban permanecer literales (direcciones IP, dominios, URLs, hashes, nombres de malware/actores, comandos, identificadores CVE/MITRE); no añadas ni omitas información; no resumas. Si el fragmento empieza a mitad de frase, tradúcelo tal cual.'
         );
         $user = "FRAGMENTO A TRADUCIR (Markdown):\n\n{$text}";
 
@@ -1721,6 +1721,20 @@ class Module_Llm extends BaseModule
         }
 
         $content = implode("\n\n", $parts);
+
+        // Aviso si el código del original no aparece igual en la traducción.
+        $originalCodeLines = llm_count_code_lines($this->articleSource($a));
+        $translatedCodeLines = llm_count_code_lines($content);
+        $notices = [];
+        if ($failed > 0) {
+            $notices[] = $failed . ' de ' . $total . ' bloques no se pudieron traducir; el resto queda guardado.';
+        }
+        if ($originalCodeLines > 0 && $translatedCodeLines < $originalCodeLines) {
+            $notices[] = 'El código no coincide con el original: ' . $originalCodeLines
+                . ' línea(s) de código frente a ' . $translatedCodeLines . ' en la traducción.';
+        }
+        $notice = implode(' ', $notices);
+
         try {
             Database::query("DELETE FROM ti_article_translations WHERE created_at < datetime('now', '-90 days')");
             Database::query(
@@ -1747,9 +1761,9 @@ class Module_Llm extends BaseModule
             'cached'         => false,
             'chunks'         => $total,
             'failed_chunks'  => $failed,
-            'notice'         => $failed > 0
-                ? $failed . ' de ' . $total . ' bloques no se pudieron traducir; el resto queda guardado.'
-                : '',
+            'code_lines_original'   => $originalCodeLines,
+            'code_lines_translation' => $translatedCodeLines,
+            'notice'         => $notice,
         ];
     }
 

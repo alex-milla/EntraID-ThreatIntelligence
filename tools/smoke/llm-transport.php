@@ -264,6 +264,27 @@ try {
     foreach ($segments as $s) { $segJoin .= $s['text']; }
     check('segmentos: sin pérdida de contenido', preg_replace('/\s+/u', '', $segJoin) === preg_replace('/\s+/u', '', "# Titulo\n\nParrafo uno.\n\n```kql\nDeviceProcessEvents\n\n| where X == 1\n```\n\nMas prosa."));
 
+    // --- Código en línea (KQL de los artículos de Microsoft) ---
+    check('inline: línea KQL', llm_is_inline_code_line('`DeviceProcessEvents`'));
+    check('inline: línea con pipe', llm_is_inline_code_line('`| where Timestamp > ago(30d)`'));
+    check('inline: varios tramos', llm_is_inline_code_line('`a` + `b`'));
+    check('inline: prosa con dato', !llm_is_inline_code_line('El campo `Timeout` marca el plazo'));
+    check('inline: texto tras el tramo', !llm_is_inline_code_line('Consulta: `x`'));
+    check('inline: valla no es inline', !llm_is_inline_code_line('```kql'));
+    check('inline: línea vacía', !llm_is_inline_code_line('   '));
+
+    check('indentado: 4 espacios', llm_is_indented_code_line('    Get-ChildItem', 'Prosa anterior'));
+    check('indentado: continuación de lista', !llm_is_indented_code_line('    continuación', '- elemento'));
+    check('indentado: 2 espacios no', !llm_is_indented_code_line('  x', null));
+
+    check('code lines: inline + valla', llm_count_code_lines("`a`\n`b`\n\nprosa\n\n```kql\nq\n```") === 3);
+
+    $mdKql = "### T\n\nConsulta:\n\n`DeviceProcessEvents`\n`| where X > 1`\n\nProsa final.";
+    $segKql = llm_split_markdown_segments($mdKql, 1400);
+    $typesKql = array_map(static fn($s) => $s['type'], $segKql);
+    check('segmentos KQL: prosa/código/prosa', $typesKql === ['prosa', 'codigo', 'prosa'], implode(',', $typesKql));
+    check('segmentos KQL: el bloque en línea va byte a byte', $segKql[1]['text'] === "`DeviceProcessEvents`\n`| where X > 1`");
+
     // ============================================================
     // 7 - Constantes y API pública del módulo
     // ============================================================

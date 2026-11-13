@@ -459,6 +459,86 @@ if (!function_exists('llm_split_markdown')) {
     }
 }
 
+if (!function_exists('llm_is_inline_code_line')) {
+    /**
+     * ¿La línea es solo código en línea? (típico de los artículos de Microsoft:
+     * cada línea del KQL va entre acentos graves).
+     *
+     * Tras quitar los tramos `…`, si solo quedan espacios y signos de código,
+     * la línea es código. Una línea de prosa con un `dato` dentro NO lo es.
+     */
+    function llm_is_inline_code_line(string $line): bool
+    {
+        $t = trim($line);
+        if ($t === '' || !str_contains($t, '`')) {
+            return false;
+        }
+        if (preg_match('/^\s*(`{3,}|~{3,})/', $t) === 1) {
+            return false; // es una valla, no código en línea
+        }
+        $rest = preg_replace('/`[^`\n]*`/', '', $t) ?? $t;
+        $rest = trim($rest);
+        if ($rest === '') {
+            return true;
+        }
+        return preg_match('/^[|,;:+*\/\-()\[\]<>=!&%^~` \t]*$/', $rest) === 1;
+    }
+}
+
+if (!function_exists('llm_is_indented_code_line')) {
+    /**
+     * ¿La línea es código indentado (4+ espacios o tabulador)? Se excluye la
+     * continuación de una lista (la línea anterior es un elemento de lista).
+     */
+    function llm_is_indented_code_line(string $line, ?string $previousNonEmpty = null): bool
+    {
+        if (trim($line) === '') {
+            return false;
+        }
+        if (preg_match('/^(?: {4}|\t)/', $line) !== 1) {
+            return false;
+        }
+        if ($previousNonEmpty !== null && preg_match('/^\s*(?:[-*+]|\d+[.)])\s+\S/', $previousNonEmpty) === 1) {
+            return false;
+        }
+        return true;
+    }
+}
+
+if (!function_exists('llm_count_code_lines')) {
+    /**
+     * Cuenta las líneas de código de un documento con el mismo criterio que la
+     * segmentación (sin contar las líneas de las vallas).
+     */
+    function llm_count_code_lines(string $text): int
+    {
+        $count = 0;
+        $inFence = false;
+        $prevNonEmpty = null;
+
+        foreach (explode("\n", str_replace(["\r\n", "\r"], "\n", $text)) as $line) {
+            if (preg_match('/^\s*(`{3,}|~{3,})/', $line) === 1) {
+                $inFence = !$inFence;
+                $prevNonEmpty = $line;
+                continue;
+            }
+            if ($inFence) {
+                $count++;
+                $prevNonEmpty = $line;
+                continue;
+            }
+            if (llm_is_inline_code_line($line) || llm_is_indented_code_line($line, $prevNonEmpty)) {
+                $count++;
+            }
+            if (trim($line) !== '') {
+                $prevNonEmpty = $line;
+            }
+        }
+
+        return $count;
+    }
+}
+
 if (!function_exists('llm_split_markdown_segments')) {
     /**
      * Trocea Markdown en segmentos tipados para traducir SOLO la prosa.
@@ -482,6 +562,7 @@ if (!function_exists('llm_split_markdown_segments')) {
         $prosa = [];
         $code = [];
         $inFence = false;
+        $prevNonEmpty = null;
 
         $flushProsa = static function () use (&$prosa, &$blocks): void {
             if ($prosa === []) {
@@ -494,6 +575,14 @@ if (!function_exists('llm_split_markdown_segments')) {
             }
         };
 
+        $flushCode = static function () use (&$code, &$blocks): void {
+            if ($code === []) {
+                return;
+            }
+            $blocks[] = ['type' => 'codigo', 'text' => implode("\n", $code)];
+            $code = [];
+        };
+
         foreach ($lines as $line) {
             $isFence = preg_match('/^\s*(`{3,}|~{3,})/', $line) === 1;
 
@@ -501,20 +590,37 @@ if (!function_exists('llm_split_markdown_segments')) {
                 $code[] = $line;
                 if ($isFence) {
                     $inFence = false;
-                    $blocks[] = ['type' => 'codigo', 'text' => implode("\n", $code)];
-                    $code = [];
+                    $flushCode();
+                }
+                if (trim($line) !== '') {
+                    $prevNonEmpty = $line;
                 }
                 continue;
             }
 
             if ($isFence) {
                 $flushProsa();
+                $flushCode();
                 $inFence = true;
                 $code = [$line];
+                $prevNonEmpty = $line;
                 continue;
             }
 
+            // Código en línea (KQL de Microsoft) o código indentado: se copia
+            // literal, no se manda al modelo.
+            if (llm_is_inline_code_line($line) || llm_is_indented_code_line($line, $prevNonEmpty)) {
+                $flushProsa();
+                $code[] = $line;
+                $prevNonEmpty = $line;
+                continue;
+            }
+
+            $flushCode();
             $prosa[] = $line;
+            if (trim($line) !== '') {
+                $prevNonEmpty = $line;
+            }
         }
 
         $flushProsa();

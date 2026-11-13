@@ -66,6 +66,7 @@ if ($cmd === 'seed-article') {
     $body .= "## Resumen\n\n" . str_repeat($paragraph, 3) . "\n\n";
     $body .= "| Indicador | Tipo | Acción |\n|---|---|---|\n| 203.0.113.45 | IP | Bloquear |\n| evil.example.com | Dominio | Monitorizar |\n\n";
     $body .= "## Detalles\n\n- Primer acceso con credenciales válidas\n- Movimiento lateral por SMB\n- Exfiltración por HTTPS\n\n";
+    $body .= "Consulta de cazas:\n\n`DeviceProcessEvents`\n`| where Timestamp > ago(30d)`\n`| where RemoteIP in (AttackerInfra)`\n\n";
     $body .= "```powershell\nGet-ChildItem C:\\Users -Recurse\n```\n\n";
 
     $filler = '';
