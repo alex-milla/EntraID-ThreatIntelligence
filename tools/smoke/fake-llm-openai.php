@@ -163,6 +163,34 @@ if ($method === 'POST' && $path === '/v1/chat/completions') {
         ]);
     }
 
+    // Modelo con razonamiento: si el razonamiento está activo, gasta toda la
+    // salida pensando y devuelve content vacío. Con think=false responde.
+    if (str_contains($prompt, 'TRIGGER-THINK')) {
+        $noThink = (($body['chat_template_kwargs']['enable_thinking'] ?? null) === false)
+            || (($body['think'] ?? null) === false)
+            || str_contains(json_encode($body['messages'] ?? []), '/no_think');
+        if ($noThink) {
+            fakeOut(200, [
+                'choices' => [[
+                    'message'       => ['role' => 'assistant', 'content' => 'E2E-NOTHINK-OK'],
+                    'finish_reason' => 'stop',
+                ]],
+                'usage' => ['prompt_tokens' => 8, 'completion_tokens' => 4, 'total_tokens' => 12],
+            ]);
+        }
+        fakeOut(200, [
+            'choices' => [[
+                'message'       => [
+                    'role'    => 'assistant',
+                    'content' => '',
+                    'reasoning_content' => str_repeat('pensando sin parar ', 40),
+                ],
+                'finish_reason' => 'length',
+            ]],
+            'usage' => ['prompt_tokens' => 8, 'completion_tokens' => 200, 'total_tokens' => 208],
+        ]);
+    }
+
     fakeOut(200, [
         'choices' => [[
             'message'       => ['role' => 'assistant', 'content' => 'E2E-ORIN-OK model=' . FAKE_MODEL],

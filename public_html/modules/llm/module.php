@@ -125,13 +125,11 @@ class Module_Llm extends BaseModule
             llm_effective_max_tokens($taskMax, $cfg),
             $this->windowTokens($cfg)
         );
-        if ($fit['clipped']) {
-            $systemPrompt = $fit['system'];
-            $userPrompt = $fit['user'];
-            $options['max_tokens'] = $fit['max_tokens'];
-        } elseif (isset($options['max_tokens'])) {
-            $options['max_tokens'] = llm_effective_max_tokens((int)$options['max_tokens'], $cfg);
-        }
+        // Siempre se aplica: el ajuste protege la salida (los modelos con
+        // razonamiento necesitan margen) y recorta el cuerpo si hace falta.
+        $systemPrompt = $fit['system'];
+        $userPrompt = $fit['user'];
+        $options['max_tokens'] = $fit['max_tokens'];
 
         $started = microtime(true);
         try {
@@ -146,13 +144,41 @@ class Module_Llm extends BaseModule
                 if ($thinking !== '') {
                     $res['thinking'] = $thinking;
                 }
+
+                // El modelo gastó toda la salida razonando: se reintenta una vez
+                // SIN razonamiento, para que el presupuesto entero vaya a la
+                // respuesta. Con modelos pequeños (3B) el razonamiento es
+                // contraproducente y este reintento suele resolverlo.
+                if ($split['content'] === '' && $thinking !== '' && ($options['think'] ?? true) !== false) {
+                    $retryOptions = $options;
+                    $retryOptions['think'] = false;
+                    try {
+                        $retry = $this->dispatch($cfg, $systemPrompt, $userPrompt, $retryOptions);
+                        if (!empty($retry['success']) && isset($retry['content'])) {
+                            $retrySplit = llm_strip_thinking((string)$retry['content']);
+                            $retryThinking = trim((string)($retry['thinking'] ?? ''));
+                            if ($retrySplit['content'] !== '') {
+                                $retry['content'] = $retrySplit['content'];
+                                $retry['content_html'] = render_ai_markdown((string)$retry['content']);
+                                $retry['retried_without_thinking'] = true;
+                                $res = $retry;
+                                $split = $retrySplit;
+                                $thinking = $retryThinking;
+                            }
+                        }
+                    } catch (Throwable $e) {
+                        // Se conserva el error original (más informativo).
+                    }
+                }
+
                 if ($split['content'] === '' && $thinking !== '') {
-                    // El modelo gastó toda la salida razonando: es un fallo
-                    // explicable, no una respuesta vacía sin motivo.
+                    // Sigue sin responder: es un fallo explicable, no una
+                    // respuesta vacía sin motivo.
                     $res = [
                         'success' => false,
                         'error'   => 'El modelo agotó la salida razonando y no llegó a responder. '
-                            . 'Sube el límite de salida del perfil o usa un modelo sin razonamiento.',
+                            . 'Sube el límite de salida del perfil, baja el razonamiento del modelo '
+                            . '(think: false) o usa un modelo sin razonamiento.',
                     ];
                 } else {
                     $res['content'] = $split['content'];
@@ -169,6 +195,32 @@ class Module_Llm extends BaseModule
             $this->logCall($cfg, $res, $options, $profileId, $fit, $started);
             return $res;
         }
+    }
+
+    /**
+     * ¿La llamada quiere razonamiento? Por defecto se deja decidir al modelo;
+     * las tareas de extracción/traducción/resumen pasan `think => false`.
+     */
+    private function wantsThinking(array $options): bool
+    {
+        return !array_key_exists('think', $options) || (bool)$options['think'];
+    }
+
+    /**
+     * Refuerzo para modelos con razonamiento en transporte compatible con
+     * OpenAI: `/no_think` en el system (Qwen3 y familia). Los servidores que
+     * entienden `chat_template_kwargs` lo ignoran como texto; los que no,
+     * responden igual.
+     */
+    private function noThinkSystem(string $system, array $cfg, array $options): string
+    {
+        if ($this->wantsThinking($options) || str_contains($system, '/no_think')) {
+            return $system;
+        }
+        if (!llm_model_is_reasoning((string)($cfg['model'] ?? ''))) {
+            return $system;
+        }
+        return rtrim($system) . ' /no_think';
     }
 
     /**
@@ -499,7 +551,10 @@ class Module_Llm extends BaseModule
      */
     private function openaiChat(string $url, array $cfg, string $model, string $system, string $user, array $options): array
     {
-        $body = json_encode([
+        $think = $this->wantsThinking($options);
+        $system = $this->noThinkSystem($system, $cfg, $options);
+
+        $payload = [
             'model'       => $model,
             'messages'    => [
                 ['role' => 'system', 'content' => $system],
@@ -508,7 +563,19 @@ class Module_Llm extends BaseModule
             'max_tokens'  => llm_effective_max_tokens((int)($options['max_tokens'] ?? $cfg['max_tokens']), $cfg),
             'temperature' => (float)($options['temperature'] ?? 0.3),
             'stream'      => false,
-        ]);
+        ];
+
+        // Servidores locales (llama.cpp / vLLM / LM Studio): desactivar la
+        // plantilla de razonamiento. En cloud no se envía (lo rechazan).
+        if (!$think) {
+            $provider = (string)($cfg['provider'] ?? '');
+            if (in_array($provider, ['custom', 'ollama'], true)
+                && !llm_is_cloud_host((string)($cfg['api_url'] ?? ''))) {
+                $payload['chat_template_kwargs'] = ['enable_thinking' => false];
+            }
+        }
+
+        $body = json_encode($payload);
 
         $headers = ['Content-Type: application/json'];
         $key = trim((string)($cfg['api_key'] ?? ''));
@@ -743,17 +810,24 @@ class Module_Llm extends BaseModule
      */
     private function ollamaChat(string $url, array $cfg, string $model, string $system, string $user, array $options): array
     {
-        $body = json_encode([
+        $payload = [
             'model'    => $model,
             'messages' => [
-                ['role' => 'system', 'content' => $system],
+                ['role' => 'system', 'content' => $this->noThinkSystem($system, $cfg, $options)],
                 ['role' => 'user',   'content' => $user],
             ],
             'stream'   => false,
             'options'  => [
                 'num_predict' => llm_effective_max_tokens((int)($options['max_tokens'] ?? $cfg['max_tokens']), $cfg),
             ],
-        ]);
+        ];
+
+        // Ollama nativo: apagar el razonamiento cuando la tarea no lo quiere.
+        if (!$this->wantsThinking($options)) {
+            $payload['think'] = false;
+        }
+
+        $body = json_encode($payload);
 
         $headers = ['Content-Type: application/json'];
         $key = trim((string)($cfg['api_key'] ?? ''));
@@ -876,7 +950,7 @@ class Module_Llm extends BaseModule
 
         $user = $ctx . "\nTAREA: Analiza este incidente y devuelve el informe según la estructura indicada.";
 
-        return $this->chat($system, $user, ['max_tokens' => 1600], $profileId);
+        return $this->chat($system, $user, ['max_tokens' => 1600, 'think' => false], $profileId);
     }
 
     /**
@@ -896,7 +970,7 @@ class Module_Llm extends BaseModule
         ) . ' ' . llm_prompt('llm.ioc.classify.format', 'Responde en formato JSON array.');
         $user = "Clasifica estos IOCs:\n" . json_encode($iocs, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
 
-        $result = $this->chat($system, $user, ['max_tokens' => 1400], $profileId);
+        $result = $this->chat($system, $user, ['max_tokens' => 1400, 'think' => false], $profileId);
         if (!empty($result['success'])) {
             $parsed = llm_extract_json((string)$result['content']);
             $result['classification'] = $parsed['found']
@@ -919,7 +993,7 @@ class Module_Llm extends BaseModule
         );
         $user = "Analiza el siguiente contenido:\n\n" . $text;
 
-        $res = $this->chat($system, $user, ['max_tokens' => 1400], $profileId);
+        $res = $this->chat($system, $user, ['max_tokens' => 1400, 'think' => false], $profileId);
         if (!empty($res['success'])) {
             $parsed = llm_extract_json((string)$res['content']);
             $res['parsed'] = $parsed['found']
@@ -962,7 +1036,7 @@ class Module_Llm extends BaseModule
         );
         $user = "Genera un resumen ejecutivo del siguiente reporte ({$report['title']}):\n" . json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
 
-        return $this->chat($system, $user, ['max_tokens' => 900], $profileId);
+        return $this->chat($system, $user, ['max_tokens' => 900, 'think' => false], $profileId);
     }
 
     /**
@@ -1249,7 +1323,7 @@ class Module_Llm extends BaseModule
             $user .= "\n\nPREGUNTA DEL ANALISTA: " . trim($question);
         }
 
-        $res = $this->chat($system, $user, ['max_tokens' => $budget['max_tokens']], $profileId);
+        $res = $this->chat($system, $user, ['max_tokens' => $budget['max_tokens'], 'think' => false], $profileId);
         if ($budget['note'] !== '') {
             $res['notice'] = $budget['note'];
         }
@@ -1482,7 +1556,7 @@ class Module_Llm extends BaseModule
         $user = "DATOS DEL PERFIL:\n\n" . $budget['text'] . "\n\nTAREA: {$instruction}";
         if (trim($question) !== '') { $user .= "\n\nPREGUNTA DEL ANALISTA: " . trim($question); }
 
-        $res = $this->chat($system, $user, ['max_tokens' => $budget['max_tokens']], $llmProfileId);
+        $res = $this->chat($system, $user, ['max_tokens' => $budget['max_tokens'], 'think' => false], $llmProfileId);
         if ($budget['note'] !== '') { $res['notice'] = $budget['note']; }
         return $res;
     }
@@ -1511,7 +1585,7 @@ class Module_Llm extends BaseModule
         $user = "DATOS:\n\n" . $budget['text'] . "\n\nTAREA: {$instruction}";
         if (trim($question) !== '') { $user .= "\n\nPREGUNTA DEL ANALISTA: " . trim($question); }
 
-        $res = $this->chat($system, $user, ['max_tokens' => $budget['max_tokens']], $llmProfileId);
+        $res = $this->chat($system, $user, ['max_tokens' => $budget['max_tokens'], 'think' => false], $llmProfileId);
         if ($budget['note'] !== '') { $res['notice'] = $budget['note']; }
         return $res;
     }
@@ -1595,7 +1669,7 @@ class Module_Llm extends BaseModule
             . 'Si la tarea pide una tabla, limita la tabla a las 10 filas más relevantes.'
         );
 
-        $res = $this->chat($system, $user, ['max_tokens' => $budget['max_tokens']], $llmProfileId);
+        $res = $this->chat($system, $user, ['max_tokens' => $budget['max_tokens'], 'think' => false], $llmProfileId);
         if ($budget['note'] !== '') {
             $res['notice'] = $budget['note'];
         }
@@ -1779,7 +1853,7 @@ class Module_Llm extends BaseModule
         );
         $user = "FRAGMENTO A TRADUCIR (Markdown):\n\n{$text}";
 
-        $res = $this->chat($system, $user, ['max_tokens' => $maxTokens], $profileId);
+        $res = $this->chat($system, $user, ['max_tokens' => $maxTokens, 'think' => false], $profileId);
         if (empty($res['success'])) {
             return $res;
         }

@@ -220,6 +220,14 @@ try {
     Check 'E2E 503: respuesta del segundo intento' ($r503.content -match 'E2E-RETRY-OK')
 
     # ============================================================
+    # 6 bis - Modelo que agota la salida razonando: reintento sin think
+    # ============================================================
+    $rThink = Chat -ProfileId ([int]$p3.id) -Prompt 'TRIGGER-THINK'
+    Check 'E2E think: reintenta y responde' ($rThink.success -eq $true) ($rThink.error)
+    Check 'E2E think: contenido tras desactivar razonamiento' ($rThink.content -match 'E2E-NOTHINK-OK') ([string]$rThink.content)
+    Check 'E2E think: marca el reintento' ($rThink.retried_without_thinking -eq $true)
+
+    # ============================================================
     # 7 - Ollama nativo intacto (el LLM falso de los otros E2E)
     # ============================================================
     $nativePort = $fakePort + 1

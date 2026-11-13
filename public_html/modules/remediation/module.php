@@ -751,6 +751,7 @@ class Module_Remediation extends BaseModule
             'profile_id'  => $profileId,
             'max_tokens'  => 900,
             'temperature' => 0.2,
+            'think'       => false,
         ]);
         if (empty($result['success'])) {
             return $this->failChat($chatId, (string)($result['error'] ?? 'Error del proveedor de IA.'));
@@ -871,6 +872,7 @@ class Module_Remediation extends BaseModule
                 'profile_id'  => $profileId,
                 'max_tokens'  => 800,
                 'temperature' => 0.1,
+                'think'       => false,
             ]);
             if (empty($result['success'])) {
                 json_response(['success' => false, 'error' => (string)($result['error'] ?? 'Error del proveedor de IA.')], 502);

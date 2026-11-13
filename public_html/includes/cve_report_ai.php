@@ -784,6 +784,7 @@ final class CveReportAi
                 'profile_id'  => $profileId,
                 'max_tokens'  => $maxTokens,
                 'temperature' => 0.1,
+                'think'       => false,
             ]);
         } catch (Throwable $e) {
             app_log('warning', 'cve_ai', 'No se pudieron traducir los textos', ['error' => $e->getMessage()]);
@@ -1579,6 +1580,7 @@ TXT);
                     'profile_id'  => $profileId,
                     'max_tokens'  => 1100,
                     'temperature' => 0.2,
+                    'think'       => false,
                 ]);
                 if (empty($result['success'])) {
                     throw new RuntimeException((string)($result['error'] ?? 'Error desconocido del proveedor de IA.'));
@@ -1831,6 +1833,7 @@ TXT);
                         'profile_id'  => $profileId,
                         'max_tokens'  => 1200,
                         'temperature' => 0.2,
+                        'think'       => false,
                     ]);
                     if (!empty($result['success'])) {
                         $aiText = trim((string)($result['content'] ?? ''));

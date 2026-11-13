@@ -902,6 +902,51 @@ if (!function_exists('llm_extract_json')) {
     }
 }
 
+if (!function_exists('llm_model_is_reasoning')) {
+    /**
+     * ¿El nombre del modelo corresponde a una familia con razonamiento
+     * (Qwen3, DeepSeek-R1, LFM2.5, gpt-oss, Magistral, GLM, Kimi…)?
+     */
+    function llm_model_is_reasoning(string $model): bool
+    {
+        $m = strtolower($model);
+        foreach ([
+            'qwen3', 'qwen-3', 'deepseek-r1', 'deepseek-reasoner', 'reasoning',
+            'lfm2.5', 'lfm3', 'gpt-oss', 'magistral', 'glm-4.5', 'glm4', 'kimi',
+            'minimax', 'phi-4-reasoning', 'granite-3', 'exaone', 'qwq',
+        ] as $needle) {
+            if (str_contains($m, $needle)) {
+                return true;
+            }
+        }
+        return false;
+    }
+}
+
+if (!function_exists('llm_is_cloud_host')) {
+    /**
+     * ¿La URL apunta a una API cloud conocida? Sirve para no enviar parámetros
+     * de plantilla (chat_template_kwargs) a proveedores que los rechazan.
+     */
+    function llm_is_cloud_host(string $url): bool
+    {
+        $host = strtolower((string)(parse_url($url, PHP_URL_HOST) ?? ''));
+        if ($host === '') {
+            return false;
+        }
+        foreach ([
+            'api.openai.com', 'api.anthropic.com', 'generativelanguage.googleapis.com',
+            'api.mistral.ai', 'ollama.com', 'openrouter.ai', 'api.deepseek.com',
+            'api.groq.com', 'api.together.xyz', 'api.fireworks.ai',
+        ] as $cloud) {
+            if ($host === $cloud || str_ends_with($host, '.' . $cloud)) {
+                return true;
+            }
+        }
+        return false;
+    }
+}
+
 if (!function_exists('llm_window_fit')) {
     /**
      * Ajusta system+user a la ventana del modelo.
@@ -932,18 +977,17 @@ if (!function_exists('llm_window_fit')) {
         }
 
         $budget = max(64, $window - max(0, $reserve));
-        $minOut = min($maxTokens, 256);
 
-        // 1) La salida se queda con el hueco real que deja el prompt.
-        $maxOut = max($minOut, $budget - $promptTokens);
-        if ($maxOut < $maxTokens) {
-            $out['max_tokens'] = $maxOut;
-            $out['clipped'] = true;
-        }
+        // La SALIDA se protege: un modelo con razonamiento gasta el presupuesto
+        // pensando y se queda sin responder si le damos solo el hueco sobrante.
+        // Se reserva hasta el 40 % de la ventana (mínimo 256 tokens).
+        $capOut    = max(256, (int)floor($window * 0.40));
+        $outTokens = min($maxTokens, $capOut);
+        $floorOut  = min($outTokens, max(256, (int)floor($window * 0.25)));
 
-        // 2) Si aun así no cabe, se recorta el cuerpo (no la instrucción).
-        if ($promptTokens + $out['max_tokens'] > $budget) {
-            $allowedPrompt = max(64, $budget - $out['max_tokens']);
+        // 1) El cuerpo del prompt cede espacio a la salida.
+        if ($promptTokens + $outTokens > $budget) {
+            $allowedPrompt = max(64, $budget - $outTokens);
             $allowedChars = (int)floor($allowedPrompt * 3.6 / 1.10);
             if (llm_str_len($user) > $allowedChars) {
                 $out['user'] = rtrim(llm_str_cut($user, $allowedChars))
@@ -953,10 +997,26 @@ if (!function_exists('llm_window_fit')) {
             }
         }
 
+        // 2) Último recurso: si aun así no cabe, se baja la salida (nunca por
+        // debajo del suelo razonable que permita el hueco restante).
+        if ($promptTokens + $outTokens > $budget) {
+            $available = max(64, $budget - $promptTokens);
+            $outTokens = max(64, min($outTokens, $available));
+            if ($outTokens < $floorOut && $available >= $floorOut) {
+                $outTokens = $floorOut;
+            }
+            $out['clipped'] = true;
+        }
+
+        if ($outTokens < $maxTokens) {
+            $out['clipped'] = true;
+        }
+        $out['max_tokens'] = $outTokens;
+
         if ($out['clipped']) {
             $out['notice'] = 'Ajustado a la ventana del modelo ('
                 . number_format($window, 0, ',', '.') . ' tokens): salida '
-                . number_format($out['max_tokens'], 0, ',', '.') . ' tokens.';
+                . number_format($outTokens, 0, ',', '.') . ' tokens.';
         }
 
         $out['prompt_tokens'] = $promptTokens;

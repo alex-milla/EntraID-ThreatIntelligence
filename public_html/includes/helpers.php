@@ -1046,6 +1046,9 @@ if (!function_exists('llm_run')) {
         if (isset($options['timeout'])) {
             $chatOptions['timeout'] = (int)$options['timeout'];
         }
+        if (array_key_exists('think', $options)) {
+            $chatOptions['think'] = (bool)$options['think'];
+        }
 
         $res = $llm->chat($system, $user, $chatOptions, $useProfile);
 
@@ -1087,7 +1090,7 @@ if (!function_exists('llm_run_json')) {
             $system . ' Responde SOLO con JSON válido: sin texto alrededor ni vallas Markdown.',
             "Devuelve el mismo contenido como JSON válido. Si no hay datos, responde {}.\n\n"
                 . llm_str_cut($raw, 6000),
-            array_merge($options, ['temperature' => 0.0])
+            array_merge($options, ['temperature' => 0.0, 'think' => false])
         );
         if (!empty($retry['success'])) {
             $parsed2 = llm_extract_json((string)($retry['content'] ?? ''));

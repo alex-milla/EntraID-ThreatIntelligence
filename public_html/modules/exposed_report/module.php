@@ -198,6 +198,7 @@ class Module_ExposedReport extends BaseModule
             'profile_id'  => $profileId,
             'max_tokens'  => $maxTokens,
             'temperature' => 0.15,
+            'think'       => false,
         ]);
         $elapsedMs = (int)round((microtime(true) - $startedAt) * 1000);
 

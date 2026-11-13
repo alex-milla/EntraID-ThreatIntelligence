@@ -572,6 +572,7 @@ class Module_IncidentStory extends BaseModule
         $res = llm_run_json('incident_triage', $system . ' ' . $format, $userPrompt, [
             'profile_id'  => $profileId ?? 0,
             'max_tokens'  => 2500,
+            'think'       => false,
         ]);
         $baseCaso = base_url('modules/incident_story/case/' . (int)$case['id']);
         if (empty($res['success'])) {

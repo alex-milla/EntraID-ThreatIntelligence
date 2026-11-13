@@ -357,6 +357,30 @@ try {
     check('ventana: marca el recorte en el texto', str_contains($fitBody['user'], 'contexto recortado'));
     check('ventana: el system no se toca', $fitBody['system'] === 'sys');
 
+    // La salida se protege aunque el prompt sea grande: un modelo con
+    // razonamiento necesita margen o gasta todo pensando y no responde.
+    $fitBig = llm_window_fit('sys', str_repeat('dato ', 4000), 900, 4096);
+    check('ventana: la salida no baja de 256', $fitBig['max_tokens'] >= 256, 'max=' . $fitBig['max_tokens']);
+    check('ventana: protege hasta el 40% de la ventana', $fitBig['max_tokens'] <= (int)floor(4096 * 0.40) || $fitBig['max_tokens'] === 900, 'max=' . $fitBig['max_tokens']);
+    $fitSmall = llm_window_fit('sys', 'user', 4000, 1024);
+    check('ventana: tope de salida por ventana', $fitSmall['max_tokens'] <= 410, 'max=' . $fitSmall['max_tokens']);
+    check('ventana: avisa del tope', $fitSmall['clipped'] && $fitSmall['notice'] !== '');
+
+    // ============================================================
+    // 9 bis - Detección de razonamiento y hosts cloud
+    // ============================================================
+    check('razonamiento: qwen3', llm_model_is_reasoning('qwen3.8-4b-q4_k_m'));
+    check('razonamiento: deepseek-r1', llm_model_is_reasoning('deepseek-r1:14b'));
+    check('razonamiento: gpt-oss', llm_model_is_reasoning('gpt-oss:20b'));
+    check('razonamiento: lfm2.5', llm_model_is_reasoning('LFM2.5-24B-A2B'));
+    check('razonamiento: llama normal no', !llm_model_is_reasoning('llama3.1:8b'));
+    check('razonamiento: ministral no', !llm_model_is_reasoning('Ministral-3B-Instruct'));
+    check('cloud: api.openai.com', llm_is_cloud_host('https://api.openai.com/v1'));
+    check('cloud: ollama.com', llm_is_cloud_host('https://ollama.com'));
+    check('cloud: localhost no', !llm_is_cloud_host('http://localhost:11434'));
+    check('cloud: IP privada no', !llm_is_cloud_host('http://10.0.0.198:8080/v1'));
+    check('cloud: vacío no', !llm_is_cloud_host(''));
+
     // ============================================================
     // 10 - Fachadas comunes (llm_run / llm_run_json / llm_run_detached)
     // ============================================================
