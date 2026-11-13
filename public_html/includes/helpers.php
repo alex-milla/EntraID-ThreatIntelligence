@@ -957,6 +957,23 @@ if (!function_exists('llm_task_catalog')) {
     }
 }
 
+if (!function_exists('llm_task_profile_for')) {
+    /**
+     * Perfil que la interfaz debe preseleccionar para una tarea: el asignado en
+     * Admin → APIs → Modelo por tarea y, si no hay, el predeterminado.
+     * Devuelve 0 si no hay ningún perfil (la vista no pinta el selector).
+     */
+    function llm_task_profile_for(string $task): int
+    {
+        $id = (int)(llm_task_profile($task) ?? 0);
+        if ($id > 0) {
+            return $id;
+        }
+        $default = llm_profile_default();
+        return (int)($default['id'] ?? 0);
+    }
+}
+
 if (!function_exists('llm_run')) {
     /**
      * Puerta de entrada única a la IA.
@@ -1511,6 +1528,17 @@ if (!function_exists('ai_clean_prose')) {
 
         $md = ai_strip_residues($md);
         return trim($md);
+    }
+}
+
+if (!function_exists('ai_translation_is_broken')) {
+    /**
+     * ¿La traducción guardada es una de las antiguas que quedaron con bloques
+     * sin traducir? Se trata como inexistente para volver a generarla.
+     */
+    function ai_translation_is_broken(?string $content): bool
+    {
+        return preg_match('/\[bloque\s+\d+\s+sin\s+traducir\]/iu', (string)($content ?? '')) === 1;
     }
 }
 

@@ -2190,7 +2190,7 @@ class Module_ThreatIntelligence extends BaseModule
             $fresh  = (string)($cached['source_updated'] ?? '') === (string)($article['last_updated'] ?? '');
             $ts     = strtotime((string)$cached['created_at']);
             $notOld = ($ts !== false) && (time() - $ts) < 90 * 86400;
-            if ($fresh && $notOld && trim((string)$cached['content']) !== '') {
+            if ($fresh && $notOld && trim((string)$cached['content']) !== '' && !ai_translation_is_broken((string)$cached['content'])) {
                 $hasTranslation  = true;
                 $translationHtml = render_ai_markdown((string)$cached['content']);
             }

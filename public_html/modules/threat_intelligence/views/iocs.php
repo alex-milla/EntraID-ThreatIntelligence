@@ -146,8 +146,10 @@ if (($filters['to'] ?? '') !== '' && ($filters['to'] ?? '') !== $tiDefTo) { $c =
     <?php else: ?>
         <p class="text-xs text-ink-soft mb-2">Analiza los indicadores <strong>según los filtros actuales</strong> (máx. 200).</p>
         <select id="ia-profile" class="w-full px-2 py-1.5 rounded-lg border border-line-strong bg-input text-sm focus:ring-2 focus:ring-brand-500 outline-none mb-3">
+            <?php $iocsProfile = llm_task_profile_for('analyze_tenant'); ?>
+            <option value="0" <?= $iocsProfile <= 0 ? 'selected' : '' ?>>Predeterminado de la tarea</option>
             <?php foreach ($profiles as $p): ?>
-                <option value="<?= (int)$p['id'] ?>" <?= (int)($defaultProfileId ?? 0) === (int)$p['id'] ? 'selected' : '' ?>><?= e($p['name']) ?><?= !empty($p['model']) ? ' · ' . e($p['model']) : '' ?></option>
+                <option value="<?= (int)$p['id'] ?>" <?= $iocsProfile === (int)$p['id'] ? 'selected' : '' ?>><?= e($p['name']) ?><?= !empty($p['model']) ? ' · ' . e($p['model']) : '' ?></option>
             <?php endforeach; ?>
         </select>
         <div class="flex flex-wrap gap-2">
@@ -251,7 +253,7 @@ function analyzeIndicatorsIA(actionId) {
     }).then(function (res) {
         if (res.success) { SCOPE_REPORT = res.content || ''; box.innerHTML = res.content_html || esc(res.content); setScopeActions(SCOPE_REPORT.trim() !== ''); }
         else { box.innerHTML = '<p class="text-sm text-red-500">' + esc(res.error || 'Error') + '</p>'; toast('Error: ' + (res.error || ''), 'error'); }
-    }).catch(function () { box.innerHTML = '<p class="text-sm text-red-500">Error de conexión</p>'; });
+    }).catch(function (err) { box.innerHTML = '<p class="text-sm text-red-500">' + ((err && err.message) || 'Error de conexión') + '</p>'; });
 }
 function copyAnalysisScope() { if (!SCOPE_REPORT) return; navigator.clipboard.writeText(SCOPE_REPORT).then(function () { toast('Copiado al portapapeles', 'success'); }).catch(function () { toast('No se pudo copiar', 'error'); }); }
 function downloadAnalysisScope() { if (!SCOPE_REPORT) return; var d = new Date(); var s = d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0'); downloadFile(SCOPE_REPORT, 'indicadores-<?= (int)$selectedTenant ?>-' + s + '.md', 'text/markdown'); }

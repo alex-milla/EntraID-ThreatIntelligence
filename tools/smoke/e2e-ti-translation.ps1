@@ -123,7 +123,9 @@ try {
     Check 'E2E: perfil con ventana 2048' ($profileId -gt 0) "id=$profileId"
 
     # --- artículo largo con Markdown variado ---
-    $seed = Probe $tiProbe @('seed-article', "$tenantId", '3000')
+    # 6000 chars: con la ventana de 2048 y 900 tokens de salida, el prompt se
+    # recorta y el aviso de recorte es comprobable.
+    $seed = Probe $tiProbe @('seed-article', "$tenantId", '6000')
     $articleId = [int]$seed.article_id
     Check 'E2E: artículo sembrado' ($articleId -gt 0) "id=$articleId chars=$($seed.chars)"
 

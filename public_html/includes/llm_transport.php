@@ -963,3 +963,78 @@ if (!function_exists('llm_window_fit')) {
         return $out;
     }
 }
+
+if (!function_exists('llm_code_segment_markdown')) {
+    /**
+     * Convierte un segmento `codigo` en un bloque de código Markdown.
+     *
+     * Los artículos de Microsoft traen muchas consultas KQL como líneas
+     * sueltas entre acentos graves (`let x = ...`, `| where ...`) o indentadas,
+     * sin vallas. Copiarlas en crudo hace que Markdown interprete los guiones
+     * bajos como cursiva (`known_files` → *known files*) y colapse los saltos
+     * de línea. Aquí se desenvuelven y se envuelven en una valla real.
+     *
+     * Un bloque que ya trae valla se respeta tal cual.
+     */
+    function llm_code_segment_markdown(string $text): string
+    {
+        // Ojo: no se hace trim() completo — la indentación de la primera línea
+        // es la señal de que el segmento es código.
+        $t = str_replace(["\r\n", "\r"], "\n", $text);
+        $t = rtrim(trim($t, "\n"));
+        if (trim($t) === '') {
+            return '';
+        }
+
+        // Ya es un bloque de código: no se toca.
+        if (preg_match('/^\s*(`{3,}|~{3,})/', $t) === 1) {
+            return $t;
+        }
+
+        $lines = explode("\n", $t);
+        $plain = [];
+        $allCode = true;
+
+        foreach ($lines as $line) {
+            if (trim($line) === '') {
+                $plain[] = '';
+                continue;
+            }
+            if (llm_is_inline_code_line($line)) {
+                $plain[] = trim(preg_replace('/`([^`]*)`/', '$1', trim($line)) ?? trim($line));
+                continue;
+            }
+            if (preg_match('/^(?: {4}|\t)(.*)$/', $line, $m) === 1) {
+                $plain[] = $m[1];
+                continue;
+            }
+            // KQL/PowerShell en crudo (sin acentos graves ni indentación).
+            if (preg_match(
+                '/^\s*(?:let\s+\w+\s*=|\|\s*\w|\/\/|\$\w+\s*=|(?:Get|Set|New|Remove|Start|Stop|Invoke|Import|Export|Add|Select|Where|ForEach|Test|Write|Out|Join|Split|Convert)[A-Z]\w*-|union\s+\w+|\w+\s*=\s*(?:Device|Security|Alert|Identity|Email|CloudApp|AAD|Signin)\w*Events?\b)/',
+                $line
+            ) === 1) {
+                $plain[] = trim($line);
+                continue;
+            }
+            $allCode = false;
+            break;
+        }
+
+        if (!$allCode) {
+            return $t; // mezcla de prosa y código: no se inventa nada
+        }
+
+        $code = trim(implode("\n", $plain));
+        if ($code === '') {
+            return '';
+        }
+
+        $isKql = preg_match(
+            '/(?:^|\n)\s*(?:let\s+\w+\s*=|\|\s*(?:where|extend|project|summarize|join|union|take|top|order|distinct|render|limit)\b)'
+            . '|(?:^|\n)\s*(?:Device|Security|Alert|Identity|Email|CloudApp|AAD|Signin)\w*Events?\b/',
+            $code
+        ) === 1;
+
+        return ($isKql ? '```kql' : '```') . "\n" . $code . "\n```";
+    }
+}

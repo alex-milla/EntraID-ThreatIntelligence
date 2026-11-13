@@ -116,6 +116,18 @@ if (!empty($_GET['only_favorites'])) { $navQs .= '&only_favorites=1'; }
                 </div>
             </div>
             <div id="translation-body" class="md-body mt-3 <?= $hasTranslation ? '' : 'hidden' ?>"><?= $translationHtml ?? '' ?></div>
+            <?php if (!empty($profiles)): ?>
+                <?php $translateProfile = llm_task_profile_for('translate_article'); ?>
+                <label class="flex items-center gap-1.5 text-[11px] text-ink-muted mt-2">
+                    Modelo para traducir
+                    <select id="ti-profile" class="px-2 py-1 rounded-lg border border-line-strong bg-input text-ink text-[11px]">
+                        <option value="0" <?= $translateProfile <= 0 ? 'selected' : '' ?>>Predeterminado de la tarea</option>
+                        <?php foreach ($profiles as $p): ?>
+                            <option value="<?= (int)$p['id'] ?>" <?= $translateProfile === (int)$p['id'] ? 'selected' : '' ?>><?= e($p['name']) ?><?= !empty($p['model']) ? ' · ' . e($p['model']) : '' ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </label>
+            <?php endif; ?>
             <p id="translation-msg" class="text-xs text-ink-soft mt-2"><?= $hasTranslation ? 'Traducción guardada (se reutiliza hasta que cambie el artículo o pasen 90 días).' : '' ?></p>
         </div>
     </div>
@@ -174,9 +186,11 @@ if (!empty($_GET['only_favorites'])) { $navQs .= '&only_favorites=1'; }
             <?php if (empty($profiles)): ?>
                 <p class="text-xs text-ink-soft">No hay perfiles de IA configurados. Añádelos en <a href="<?= base_url('admin/apis') ?>" class="text-brand-500 hover:underline">Admin → APIs</a>.</p>
             <?php else: ?>
+                <?php $articleProfile = llm_task_profile_for('analyze_article'); ?>
                 <select id="ia-profile" class="w-full px-2 py-1.5 rounded-lg border border-line-strong bg-input text-sm focus:ring-2 focus:ring-brand-500 outline-none mb-3">
+                    <option value="0" <?= $articleProfile <= 0 ? 'selected' : '' ?>>Predeterminado de la tarea</option>
                     <?php foreach ($profiles as $p): ?>
-                        <option value="<?= (int)$p['id'] ?>" <?= (int)($defaultProfileId ?? 0) === (int)$p['id'] ? 'selected' : '' ?>><?= e($p['name']) ?><?= !empty($p['model']) ? ' · ' . e($p['model']) : '' ?></option>
+                        <option value="<?= (int)$p['id'] ?>" <?= $articleProfile === (int)$p['id'] ? 'selected' : '' ?>><?= e($p['name']) ?><?= !empty($p['model']) ? ' · ' . e($p['model']) : '' ?></option>
                     <?php endforeach; ?>
                 </select>
                 <?php if (!empty($actions)): ?>
@@ -203,7 +217,14 @@ if (!empty($_GET['only_favorites'])) { $navQs .= '&only_favorites=1'; }
 <script>
 function esc(s) { var d = document.createElement('div'); d.textContent = s == null ? '' : s; return d.innerHTML; }
 
-function getAiProfile() { var s = document.getElementById('ai-profile'); return s ? parseInt(s.value, 10) : 0; }
+function getAiProfile() {
+    var s = document.getElementById('ia-profile') || document.getElementById('ai-profile');
+    return s ? parseInt(s.value, 10) || 0 : 0;
+}
+function getTranslateProfile() {
+    var s = document.getElementById('ti-profile');
+    return s ? parseInt(s.value, 10) || 0 : 0;
+}
 
 /* ---- Estado de triaje: leído / favorito ---- */
 var ART_READ = <?= $unread ? 'false' : 'true' ?>;
@@ -220,7 +241,7 @@ function tiStateApply(st) {
 function tiStateSend(payload) {
     api('POST', '<?= base_url('modules/threat_intelligence/article') ?>/<?= (int)$article['id'] ?>/state', payload)
         .then(function (res) { if (res && res.success) { tiStateApply(res); } else { toast((res && res.error) ? res.error : 'Error', 'error'); } })
-        .catch(function () { toast('Error de conexión', 'error'); });
+        .catch(function (err) { toast((err && err.message) || 'Error de conexión', 'error'); });
 }
 function tiReadToggle() { tiStateSend({ is_read: ART_READ ? 0 : 1 }); }
 function tiFavToggle()  { tiStateSend({ is_favorite: ART_FAV ? 0 : 1 }); }
@@ -268,7 +289,7 @@ function tiTranslate(force) {
         toast(message, 'error');
     }
 
-    api('POST', planUrl, { force: force ? 1 : 0 })
+    api('POST', planUrl, { force: force ? 1 : 0, profile_id: getTranslateProfile() })
         .then(function (plan) {
             if (!plan || !plan.success) { fail((plan && plan.error) || 'No se pudo preparar la traducción'); return; }
             if (plan.cached && !force) {
@@ -285,13 +306,17 @@ function tiTranslate(force) {
             if (!chunks.length) { fail('El artículo no tiene contenido para traducir'); return; }
 
             var index = 0;
+            var aborted = false;
 
             function save() {
                 btn.textContent = 'Guardando…';
                 return api('POST', saveUrl, {})
                     .then(function (res) {
                         btn.disabled = false;
-                        if (!res || !res.success) { fail((res && res.error) || 'No se pudo guardar la traducción'); return; }
+                        if (!res || !res.success) {
+                            fail((res && res.error) || 'No se pudo guardar la traducción');
+                            return;
+                        }
                         ART_HAS_TRANSLATION = true;
                         box.innerHTML = res.content_html || esc(res.content || '');
                         btn.textContent = 'Ver traducción';
@@ -300,7 +325,8 @@ function tiTranslate(force) {
                         tiTranslationShow();
                         tiTranslationMsg(res.notice || 'Traducción generada y guardada.', !!res.notice);
                         if (res.notice) toast(res.notice, 'warning');
-                    });
+                    })
+                    .catch(function (err) { fail((err && err.message) || 'Error al guardar la traducción'); });
             }
 
             function postChunk(chunk, attempt) {
@@ -308,20 +334,28 @@ function tiTranslate(force) {
                     index: chunk.index,
                     text: chunk.text,
                     type: chunk.type || 'prosa',
-                    profile_id: getAiProfile()
+                    profile_id: getTranslateProfile()
                 }).then(function (res) {
                     if (!res || !res.success) {
                         if (attempt < 1) { return postChunk(chunk, attempt + 1); }
-                        return { success: false };
+                        // Se propaga el motivo real: el bucle debe parar en vez
+                        // de encadenar 14 fallos (y un timeout por cada uno).
+                        var e = new Error((res && res.error) || 'La IA no pudo traducir el bloque');
+                        e.chunk = chunk.index;
+                        throw e;
                     }
                     return res;
-                }).catch(function () {
+                }).catch(function (err) {
                     if (attempt < 1) { return postChunk(chunk, attempt + 1); }
-                    return { success: false };
+                    if (err && err.chunk !== undefined) { throw err; }
+                    var e2 = new Error((err && err.message) || 'Error de conexión con el servidor');
+                    e2.chunk = chunk.index;
+                    throw e2;
                 });
             }
 
             function next() {
+                if (aborted) { return; }
                 if (index >= chunks.length) { return save(); }
                 var chunk = chunks[index];
                 var pos = (index + 1) + '/' + chunks.length;
@@ -330,12 +364,18 @@ function tiTranslate(force) {
                 return postChunk(chunk, 0).then(function () {
                     index++;
                     return next();
+                }).catch(function (err) {
+                    // Un fallo de IA no se arregla repitiendo el resto: se para
+                    // y se dice qué bloque falló y por qué.
+                    aborted = true;
+                    var which = (err && err.chunk !== undefined) ? (' (bloque ' + (err.chunk + 1) + ')') : '';
+                    fail('No se pudo traducir' + which + ': ' + ((err && err.message) || 'error desconocido'));
                 });
             }
 
             next();
         })
-        .catch(function () { fail('Error de conexión'); });
+        .catch(function (err) { fail((err && err.message) || 'No se pudo preparar la traducción'); });
 }
 </script>
 
@@ -419,7 +459,11 @@ function analyzeArticleIA(actionId) {
             setArtActions(ART_RAW.trim() !== '');
         }
         else { box.innerHTML = '<p class="text-sm text-red-500">' + esc(res.error || 'Error') + '</p>'; toast('Error: ' + (res.error || ''), 'error'); }
-    }).catch(function () { box.innerHTML = '<p class="text-sm text-red-500">Error de conexión</p>'; });
+    }).catch(function (err) {
+        var msg = (err && err.message) ? err.message : 'Error de conexión';
+        box.innerHTML = '<p class="text-sm text-red-500">' + esc(msg) + '</p>';
+        toast(msg, 'error');
+    });
 }
 
 /* ---- Extracción estructurada de IOCs (JSON) ---- */
@@ -445,7 +489,9 @@ function analyzeAI() {
             if (p.recomendaciones) { html += '<p class="mt-3 text-ink-muted">' + esc(p.recomendaciones) + '</p>'; }
             box.innerHTML = html;
         })
-        .catch(function() { box.innerHTML = '<p class="text-sm text-red-500">Error de conexión</p>'; });
+        .catch(function (err) {
+            box.innerHTML = '<p class="text-sm text-red-500">' + esc((err && err.message) || 'Error de conexión') + '</p>';
+        });
 }
 </script>
 

@@ -153,9 +153,11 @@ $data = $report['data'] ?? [];
         </div>
         <div class="flex items-center gap-3">
             <?php if (!empty($profiles)): ?>
+                <?php $reportProfile = llm_task_profile_for('summarize_report'); ?>
                 <select id="ai-profile" class="px-2 py-1.5 rounded-lg border border-brand-200 dark:border-brand-900 bg-input text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                    <option value="0" <?= $reportProfile <= 0 ? 'selected' : '' ?>>Predeterminado de la tarea</option>
                     <?php foreach ($profiles as $p): ?>
-                        <option value="<?= (int)$p['id'] ?>" <?= (int)($defaultProfileId ?? 0) === (int)$p['id'] ? 'selected' : '' ?>><?= e($p['name']) ?><?= !empty($p['model']) ? ' · ' . e($p['model']) : '' ?></option>
+                        <option value="<?= (int)$p['id'] ?>" <?= $reportProfile === (int)$p['id'] ? 'selected' : '' ?>><?= e($p['name']) ?><?= !empty($p['model']) ? ' · ' . e($p['model']) : '' ?></option>
                     <?php endforeach; ?>
                 </select>
             <?php endif; ?>
@@ -187,7 +189,7 @@ function summarizeReport(id) {
                 container.innerHTML = '<span class="text-red-500">' + (res.error || 'Error desconocido') + '</span>';
             }
         })
-        .catch(function() { container.innerHTML = '<span class="text-red-500">Error de conexión</span>'; })
+        .catch(function (err) { container.innerHTML = '<span class="text-red-500">' + ((err && err.message) || 'Error de conexión') + '</span>'; })
         .finally(function() { btn.disabled = false; btn.innerHTML = '<i class="material-icons icon-16" aria-hidden="true">lightbulb</i> Generar resumen'; });
 }
 </script>

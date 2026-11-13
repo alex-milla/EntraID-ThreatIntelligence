@@ -367,6 +367,31 @@ try {
     check('tareas: catálogo incluye triaje', array_key_exists('incident_triage', llm_task_catalog()));
     check('tareas: catálogo incluye equipos expuestos', array_key_exists('exposed_report', llm_task_catalog()));
     check('tareas: catálogo incluye asistente', array_key_exists('remediation_assistant', llm_task_catalog()));
+
+    // ============================================================
+    // 11 - Segmentos de código y traducciones rotas
+    // ============================================================
+    $inlineKql = "`DeviceNetworkEvents`\n`| where TimeGenerated > ago(7d)`";
+    $wrappedKql = llm_code_segment_markdown($inlineKql);
+    check('código: envuelve KQL en línea', str_starts_with($wrappedKql, '```kql'), $wrappedKql);
+    check('código: conserva las líneas', substr_count($wrappedKql, "\n") >= 2);
+    check('código: quita los acentos graves sueltos', !str_contains($wrappedKql, '`DeviceNetworkEvents`'));
+    check('código: no rompe los guiones bajos', str_contains($wrappedKql, 'TimeGenerated'));
+
+    $letKql = "let known_files = DeviceNetworkEvents\n| where InitiatingProcessFileName has \"curl\"";
+    $wrappedLet = llm_code_segment_markdown($letKql);
+    check('código: detecta KQL con let', str_starts_with($wrappedLet, '```kql'), $wrappedLet);
+    check('código: conserva known_files', str_contains($wrappedLet, 'known_files'));
+
+    $fenced = "```kql\nDeviceProcessEvents\n```";
+    check('código: un bloque con valla no se toca', llm_code_segment_markdown($fenced) === $fenced);
+    check('código: la prosa no se envuelve', llm_code_segment_markdown('Texto normal en español.') === 'Texto normal en español.');
+    $indented = "    Get-ChildItem -Path C:\\Temp\n    Remove-Item C:\\Temp\\x";
+    check('código: código indentado se envuelve', str_starts_with(llm_code_segment_markdown($indented), "```\n"), llm_code_segment_markdown($indented));
+
+    check('traducción rota: detecta el cartel', ai_translation_is_broken("Hola\n\n[bloque 3 sin traducir]\n\nFin"));
+    check('traducción rota: texto normal no', !ai_translation_is_broken("Hola\n\nMundo"));
+    check('traducción rota: vacío no', !ai_translation_is_broken(''));
 } catch (Throwable $e) {
     check('excepción inesperada: ' . $e->getMessage(), false, $e->getFile() . ':' . $e->getLine());
 }

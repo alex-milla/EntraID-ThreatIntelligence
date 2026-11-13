@@ -23,8 +23,9 @@
     <?php if (count($profiles ?? []) > 1): ?>
         <label class="text-sm text-ink-muted">Modelo:</label>
         <select id="llm-profile" class="px-2 py-1 rounded-lg border border-line-strong bg-input text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+            <option value="0">Predeterminado de la tarea</option>
             <?php foreach ($profiles as $p): ?>
-                <option value="<?= (int)$p['id'] ?>" <?= (int)($defaultProfileId ?? 0) === (int)$p['id'] ? 'selected' : '' ?>><?= e($p['name']) ?><?= !empty($p['model']) ? ' · ' . e($p['model']) : '' ?></option>
+                <option value="<?= (int)$p['id'] ?>"><?= e($p['name']) ?><?= !empty($p['model']) ? ' · ' . e($p['model']) : '' ?></option>
             <?php endforeach; ?>
         </select>
     <?php else: ?>
@@ -266,7 +267,7 @@ function runAnalyze(payload) {
                 toast('Error: ' + (res.error || ''), 'error');
             }
         })
-        .catch(function() { st.textContent = ''; out.innerHTML = '<p class="text-red-500">Error de conexión</p>'; });
+        .catch(function (err) { st.textContent = ''; out.innerHTML = '<p class="text-red-500">' + ((err && err.message) || 'Error de conexión') + '</p>'; });
 }
 
 var AN_RAW = '';

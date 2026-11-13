@@ -876,8 +876,7 @@ class Module_Llm extends BaseModule
 
         $user = $ctx . "\nTAREA: Analiza este incidente y devuelve el informe según la estructura indicada.";
 
-        $maxTokens = llm_effective_max_tokens(2000, $this->cfg($profileId));
-        return $this->chat($system, $user, ['max_tokens' => $maxTokens], $profileId);
+        return $this->chat($system, $user, ['max_tokens' => 1600], $profileId);
     }
 
     /**
@@ -897,9 +896,12 @@ class Module_Llm extends BaseModule
         ) . ' ' . llm_prompt('llm.ioc.classify.format', 'Responde en formato JSON array.');
         $user = "Clasifica estos IOCs:\n" . json_encode($iocs, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
 
-        $result = $this->chat($system, $user, [], $profileId);
-        if ($result['success']) {
-            $result['classification'] = safe_json_decode($result['content'], null);
+        $result = $this->chat($system, $user, ['max_tokens' => 1400], $profileId);
+        if (!empty($result['success'])) {
+            $parsed = llm_extract_json((string)$result['content']);
+            $result['classification'] = $parsed['found']
+                ? $parsed['data']
+                : safe_json_decode($this->cleanJson((string)$result['content']), null);
         }
         return $result;
     }
@@ -917,9 +919,12 @@ class Module_Llm extends BaseModule
         );
         $user = "Analiza el siguiente contenido:\n\n" . $text;
 
-        $res = $this->chat($system, $user, [], $profileId);
+        $res = $this->chat($system, $user, ['max_tokens' => 1400], $profileId);
         if (!empty($res['success'])) {
-            $res['parsed'] = safe_json_decode($this->cleanJson((string)$res['content']), null);
+            $parsed = llm_extract_json((string)$res['content']);
+            $res['parsed'] = $parsed['found']
+                ? $parsed['data']
+                : safe_json_decode($this->cleanJson((string)$res['content']), null);
         }
         return $res;
     }
@@ -957,7 +962,7 @@ class Module_Llm extends BaseModule
         );
         $user = "Genera un resumen ejecutivo del siguiente reporte ({$report['title']}):\n" . json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
 
-        return $this->chat($system, $user, [], $profileId);
+        return $this->chat($system, $user, ['max_tokens' => 900], $profileId);
     }
 
     /**
@@ -1237,7 +1242,7 @@ class Module_Llm extends BaseModule
 
         $budget = $this->budgetContext($this->cfg($profileId), [
             'datos' => ['text' => $context, 'priority' => 1, 'min' => 2000],
-        ], 2500);
+        ], 1600);
 
         $user = "DATOS DEL TENANT «{$tenant['name']}»:\n\n" . $budget['text'] . "\n\nTAREA: {$instruction}";
         if (trim($question) !== '') {
@@ -1473,7 +1478,7 @@ class Module_Llm extends BaseModule
         );
         $budget = $this->budgetContext($this->cfg($llmProfileId), [
             'perfil' => ['text' => $ctx, 'priority' => 1, 'min' => 1200],
-        ], 2000);
+        ], 1400);
         $user = "DATOS DEL PERFIL:\n\n" . $budget['text'] . "\n\nTAREA: {$instruction}";
         if (trim($question) !== '') { $user .= "\n\nPREGUNTA DEL ANALISTA: " . trim($question); }
 
@@ -1502,7 +1507,7 @@ class Module_Llm extends BaseModule
         );
         $budget = $this->budgetContext($this->cfg($llmProfileId), [
             'indicadores' => ['text' => $ctx, 'priority' => 1, 'min' => 800],
-        ], 2000);
+        ], 1200);
         $user = "DATOS:\n\n" . $budget['text'] . "\n\nTAREA: {$instruction}";
         if (trim($question) !== '') { $user .= "\n\nPREGUNTA DEL ANALISTA: " . trim($question); }
 
@@ -1573,7 +1578,7 @@ class Module_Llm extends BaseModule
             'resumen'     => ['text' => $summaryPart ?? '', 'priority' => 2, 'min' => 400],
             'indicadores' => ['text' => $iocPart, 'priority' => 3, 'min' => 300],
             'articulo'    => ['text' => $ctx, 'priority' => 5, 'min' => 200],
-        ], 3000);
+        ], 900);
 
         $user = "DATOS DEL ARTÍCULO:\n\n" . $budget['text'] . "\n\nTAREA: {$instruction}";
         if ($defang) {
@@ -1629,7 +1634,7 @@ class Module_Llm extends BaseModule
         $fresh  = (string)($cached['source_updated'] ?? '') === (string)($a['last_updated'] ?? '');
         $ts     = strtotime((string)$cached['created_at']);
         $notOld = ($ts !== false) && (time() - $ts) < 90 * 86400;
-        if ($fresh && $notOld && trim((string)$cached['content']) !== '') {
+        if ($fresh && $notOld && trim((string)$cached['content']) !== '' && !ai_translation_is_broken((string)$cached['content'])) {
             return $cached;
         }
         return null;
@@ -1655,6 +1660,17 @@ class Module_Llm extends BaseModule
 
         $cached = $force ? null : $this->cachedTranslation($a);
         $segments = $this->articleSegments($a);
+
+        // «Retraducir» debe rehacer TODO: si se conservan los bloques de un
+        // intento anterior (posiblemente fallido), se reutilizarían tal cual.
+        if ($force) {
+            try {
+                Database::query("DELETE FROM ti_article_translation_chunks WHERE article_id = ?", [$id]);
+                Database::query("DELETE FROM ti_article_translations WHERE article_id = ? AND lang = 'es'", [$id]);
+            } catch (Throwable $e) {
+                // Si no se puede limpiar, la traducción sigue funcionando.
+            }
+        }
 
         // Progreso guardado. Si la segmentación cambió (v0.4.5 guardaba textos
         // planos sin tipo), se descarta para no mezclar contenidos.
@@ -1773,21 +1789,12 @@ class Module_Llm extends BaseModule
             return ['success' => false, 'error' => 'La IA devolvió una traducción vacía'];
         }
 
-        // Si el modelo ha añadido vallas que el original no tenía, un reintento
-        // con la instrucción más estricta (se guarda lo que devuelva igualmente:
-        // el saneado al renderizar lo deja presentable).
-        $fenceCount = static fn(string $s): int => substr_count($s, '```') + substr_count($s, '~~~');
-        if ($fenceCount($content) > $fenceCount($text)) {
-            $retry = $this->chat(
-                $system,
-                $user . "\n\nIMPORTANTE: NO rodees la respuesta con ``` ni ```markdown. Empieza directamente por el texto traducido.",
-                ['max_tokens' => $maxTokens],
-                $profileId
-            );
-            if (!empty($retry['success']) && trim((string)($retry['content'] ?? '')) !== '') {
-                $content = trim((string)$retry['content']);
-                $res = $retry;
-            }
+        // El modelo no debe envolver la prosa en vallas. Se limpia en local (0 ms)
+        // en vez de repetir la llamada: un reintento duplicaba el tiempo y
+        // provocaba timeouts en cadena con modelos locales.
+        $content = ai_clean_prose($content);
+        if ($content === '') {
+            return ['success' => false, 'error' => 'La IA devolvió una traducción vacía'];
         }
 
         $this->storeTranslationChunk($id, $index, $content, 'prosa');
@@ -1849,18 +1856,44 @@ class Module_Llm extends BaseModule
 
         $parts = [];
         $failed = 0;
+        $proseTotal = 0;
+        $proseDone = 0;
         foreach ($chunks as $index => $segment) {
             $row = $rows[$index] ?? null;
             $type = (string)($segment['type'] ?? 'prosa');
-            if ($row !== null && (string)$row['status'] === 'done' && trim((string)$row['content']) !== '') {
+            $isProse = $type !== 'codigo';
+            if ($isProse) {
+                $proseTotal++;
+            }
+
+            if ($row !== null && (string)$row['status'] === 'done' && trim((string)($row['content'] ?? '')) !== '') {
                 $text = (string)$row['content'];
-                // El código se copia literal; la prosa se sanea (vallas de
-                // envoltorio, prefijos y separadores `===`).
-                $parts[] = $type === 'codigo' ? $text : ai_clean_prose($text);
+                // El código se copia literal (envuelto si venía sin vallas); la
+                // prosa se sanea (vallas de envoltorio, prefijos y `===`).
+                $parts[] = $isProse ? ai_clean_prose($text) : llm_code_segment_markdown($text);
+                if ($isProse) {
+                    $proseDone++;
+                }
             } else {
-                $parts[] = '[bloque ' . ((int)$index + 1) . ' sin traducir]';
+                // Bloque sin traducir: se conserva el ORIGINAL en lugar de un
+                // cartel inútil. Así la lectura sigue siendo útil y el aviso
+                // explica qué faltó.
+                $parts[] = $isProse
+                    ? (string)($segment['text'] ?? '')
+                    : llm_code_segment_markdown((string)($segment['text'] ?? ''));
                 $failed++;
             }
+        }
+
+        // Nunca cachear una traducción que en realidad no tradujo nada: era lo
+        // que dejaba la vista llena de «[bloque N sin traducir]» durante 90 días.
+        if ($proseTotal > 0 && $proseDone === 0) {
+            return [
+                'success' => false,
+                'error'   => 'Ningún bloque de prosa se pudo traducir, así que no se guarda nada. '
+                    . 'Revisa el perfil de IA (Admin → APIs) y vuelve a intentarlo.',
+                'failed_chunks' => $failed,
+            ];
         }
 
         $content = implode("\n\n", $parts);

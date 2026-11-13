@@ -128,9 +128,11 @@ if (!empty($incident['recommended_actions'])) {
                 <p class="text-xs text-ink-soft">No hay perfiles de IA configurados. Añádelos en <a href="<?= base_url('admin/apis') ?>" class="text-brand-500 hover:underline">Admin → APIs</a>.</p>
             <?php else: ?>
                 <label class="block text-xs text-ink-muted mb-1">IA</label>
+                <?php $incProfile = llm_task_profile_for('analyze_incident'); ?>
                 <select id="ia-profile" class="w-full px-2 py-1.5 rounded-lg border border-line-strong bg-input text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+                    <option value="0" <?= $incProfile <= 0 ? 'selected' : '' ?>>Predeterminado de la tarea</option>
                     <?php foreach ($profiles as $p): ?>
-                        <option value="<?= (int)$p['id'] ?>" <?= (int)($defaultProfileId ?? 0) === (int)$p['id'] ? 'selected' : '' ?>><?= e($p['name']) ?><?= !empty($p['model']) ? ' · ' . e($p['model']) : '' ?></option>
+                        <option value="<?= (int)$p['id'] ?>" <?= $incProfile === (int)$p['id'] ? 'selected' : '' ?>><?= e($p['name']) ?><?= !empty($p['model']) ? ' · ' . e($p['model']) : '' ?></option>
                     <?php endforeach; ?>
                 </select>
                 <button type="button" onclick="analyzeIncidentAI()" id="btn-analyze-inc" class="w-full mt-3 btn">Analizar con IA</button>
@@ -170,7 +172,7 @@ function analyzeIncidentAI() {
                 toast('Error: ' + (res.error || ''), 'error');
             }
         })
-        .catch(function () { box.innerHTML = '<p class="text-sm text-red-500">Error de conexión</p>'; })
+        .catch(function (err) { box.innerHTML = '<p class="text-sm text-red-500">' + ((err && err.message) || 'Error de conexión') + '</p>'; })
         .finally(function () { btn.disabled = false; btn.innerHTML = prev; });
 }
 
