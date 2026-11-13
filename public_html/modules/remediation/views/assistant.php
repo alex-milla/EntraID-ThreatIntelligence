@@ -178,6 +178,25 @@ $canSavePlan = $selectedTask !== null || $planCve !== '';
                     </div>
                 <?php endforeach; ?>
             <?php endif; ?>
+
+            <?php if ($chat !== null && in_array((string)($chat['status'] ?? ''), ['pending', 'running'], true)): ?>
+                <div class="flex justify-start">
+                    <div class="max-w-[85%] rounded-xl px-3.5 py-2.5 bg-gray-50 dark:bg-gray-800/70 text-xs text-ink-muted">
+                        <span class="inline-flex items-center gap-2">
+                            <span class="spinner"></span> Pensando… <span id="pending-elapsed">0 s</span>
+                        </span>
+                        <p class="mt-1 text-[11px]">La IA está generando la respuesta en segundo plano; puedes seguir navegando.</p>
+                    </div>
+                </div>
+            <?php elseif ($chat !== null && (string)($chat['status'] ?? '') === 'error'): ?>
+                <div class="flex justify-start">
+                    <div class="max-w-[85%] rounded-xl px-3.5 py-2.5 bg-danger-bg text-xs text-danger">
+                        <strong>No se pudo generar la respuesta.</strong>
+                        <p class="mt-1 break-words"><?= e((string)($chat['last_error'] ?? 'Error desconocido.')) ?></p>
+                        <p class="mt-1 text-[11px]">Vuelve a enviar la pregunta o prueba con otro perfil de IA.</p>
+                    </div>
+                </div>
+            <?php endif; ?>
         </div>
 
         <div id="suggest-panel" class="hidden border-t border-line p-3 bg-muted/40">
@@ -278,6 +297,30 @@ $canSavePlan = $selectedTask !== null || $planCve !== '';
     var cveEl = document.getElementById('assistant-cve');
     var firstMessage = CHAT_ID === 0;
 
+    // --- Consulta en segundo plano: sondeo del estado ---
+    var CHAT_STATUS_URL = <?= json_encode($modUrl . '/ask-status/' . ($chat !== null ? (int)$chat['id'] : 0)) ?>;
+    var CHAT_PENDING = <?= ($chat !== null && in_array((string)($chat['status'] ?? ''), ['pending', 'running'], true)) ? 'true' : 'false' ?>;
+
+    if (CHAT_PENDING) {
+        var startedAt = Date.now();
+        var elapsedEl = document.getElementById('pending-elapsed');
+        var elapsedTimer = setInterval(function () {
+            if (elapsedEl) { elapsedEl.textContent = Math.round((Date.now() - startedAt) / 1000) + ' s'; }
+        }, 1000);
+        var statusTimer = setInterval(function () {
+            fetch(CHAT_STATUS_URL, { headers: { 'X-Requested-With': 'XMLHttpRequest' }, credentials: 'same-origin' })
+                .then(function (r) { return r.json(); })
+                .then(function (st) {
+                    if (st && st.success && (st.status === 'done' || st.status === 'error')) {
+                        clearInterval(statusTimer);
+                        clearInterval(elapsedTimer);
+                        window.location.reload();
+                    }
+                })
+                .catch(function () { /* se reintenta en el siguiente tick */ });
+        }, 3000);
+    }
+
     function bubble(role, text) {
         var wrap = document.createElement('div');
         wrap.className = 'flex ' + (role === 'user' ? 'justify-end' : 'justify-start');
@@ -330,7 +373,7 @@ $canSavePlan = $selectedTask !== null || $planCve !== '';
             if (!res || !res.success) {
                 throw new Error((res && res.error) ? res.error : 'Error de la IA');
             }
-            if (firstMessage) {
+            if (res.pending || firstMessage) {
                 window.location.href = CHAT_URL + '&chat=' + encodeURIComponent(res.chat_id);
                 return;
             }

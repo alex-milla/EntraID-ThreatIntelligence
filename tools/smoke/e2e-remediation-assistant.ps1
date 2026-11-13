@@ -146,24 +146,55 @@ try {
     Check 'E2E apply: versión guardada' ([string]$state.fixed_version -eq '11.0.1') ([string]$state.fixed_version)
     Check 'E2E apply: notas guardadas' (([string]$state.notes) -match 'Rollback')
 
-    # --- 502 del proxy: mensaje legible, sin HTML ---
-    $askPayload = @{ org_id = $orgId; task_id = $taskId; question = 'TRIGGER-502'; profile_id = $profileId } | ConvertTo-Json -Compress
-    try {
-        $null = Invoke-WebRequest -Uri $askUrl -Method POST -WebSession $ws -Headers $headers `
-            -ContentType 'application/json' -Body $askPayload -UseBasicParsing -TimeoutSec 90
-        Check 'E2E 502: responde con error' $false 'devolvió 200'
-    } catch {
-        $body = ''
-        if ($_.ErrorDetails -and $_.ErrorDetails.Message) {
-            $body = [string]$_.ErrorDetails.Message
-        } elseif ($_.Exception.Response) {
-            try { $body = $_.Exception.Response.Content.ReadAsStringAsync().GetAwaiter().GetResult() } catch { }
+    # --- consulta en segundo plano: encolar y resolver con el worker ---
+    function WaitChatStatus {
+        param([int]$ChatId, [string]$Want, [int]$Seconds = 25)
+        $deadline = (Get-Date).AddSeconds($Seconds)
+        $last = $null
+        while ((Get-Date) -lt $deadline) {
+            $st = Probe $remProbe @('chat-token', "$ChatId")
+            $last = $st
+            if ([string]$st.status -eq $Want) { return $st }
+            Start-Sleep -Milliseconds 700
         }
-        if ($body -eq '') { throw }
-        $ask = $body | ConvertFrom-Json
-        Check 'E2E 502: mensaje traducido' ([string]$ask.error -match '502 Bad Gateway') ([string]$ask.error)
-        Check 'E2E 502: no se muestra HTML' (-not ([string]$ask.error -match '<html')) ([string]$ask.error)
+        return $last
     }
+
+    $askPayload = @{ org_id = $orgId; task_id = $taskId; question = 'Plan de implementación paso a paso'; profile_id = $profileId } | ConvertTo-Json -Compress
+    $askRes = Invoke-WebRequest -Uri $askUrl -Method POST -WebSession $ws -Headers $headers `
+        -ContentType 'application/json' -Body $askPayload -UseBasicParsing -TimeoutSec 60
+    $ask = $askRes.Content | ConvertFrom-Json
+    Check 'E2E ask: responde encolado' ($ask.success -eq $true -and $ask.pending -eq $true) ($ask.error)
+    $chatId = [int]$ask.chat_id
+    Check 'E2E ask: devuelve chat_id' ($chatId -gt 0) "chat=$chatId"
+
+    $tok = Probe $remProbe @('chat-token', "$chatId")
+    Check 'E2E ask: token y estado pendiente' ([string]$tok.token -ne '' -and [string]$tok.status -eq 'pending') "status=$($tok.status)"
+
+    # Lanza el worker (como haría background_request) y espera el resultado.
+    $workerUrl = "$base/remediation-worker.php?token=$([uri]::EscapeDataString([string]$tok.token))"
+    $null = Invoke-WebRequest -Uri $workerUrl -UseBasicParsing -TimeoutSec 90
+    $done = WaitChatStatus -ChatId $chatId -Want 'done'
+    Check 'E2E ask: termina en done' ([string]$done.status -eq 'done') "status=$($done.status) error=$($done.error)"
+
+    $msgs = Probe $remProbe @('chat-messages', "$chatId")
+    $assistant = @($msgs.messages | Where-Object { $_.role -eq 'assistant' })
+    Check 'E2E ask: guarda la respuesta del asistente' ($assistant.Count -ge 1) "mensajes=$($assistant.Count)"
+    Check 'E2E ask: contenido del modelo' ($assistant.Count -ge 1 -and ([string]$assistant[-1].content) -match 'E2E-ORIN-OK')
+
+    # --- 502 del proxy en segundo plano: mensaje legible, sin HTML ---
+    $ask502 = @{ org_id = $orgId; task_id = $taskId; question = 'TRIGGER-502'; profile_id = $profileId } | ConvertTo-Json -Compress
+    $r502 = Invoke-WebRequest -Uri $askUrl -Method POST -WebSession $ws -Headers $headers `
+        -ContentType 'application/json' -Body $ask502 -UseBasicParsing -TimeoutSec 60
+    $a502 = $r502.Content | ConvertFrom-Json
+    Check 'E2E 502: encola' ($a502.success -eq $true -and $a502.pending -eq $true) ($a502.error)
+    $chat502 = [int]$a502.chat_id
+    $tok502 = Probe $remProbe @('chat-token', "$chat502")
+    $null = Invoke-WebRequest -Uri "$base/remediation-worker.php?token=$([uri]::EscapeDataString([string]$tok502.token))" -UseBasicParsing -TimeoutSec 90
+    $err502 = WaitChatStatus -ChatId $chat502 -Want 'error'
+    Check 'E2E 502: estado error' ([string]$err502.status -eq 'error') "status=$($err502.status)"
+    Check 'E2E 502: mensaje traducido' ([string]$err502.error -match '502 Bad Gateway') ([string]$err502.error)
+    Check 'E2E 502: no se muestra HTML' (-not ([string]$err502.error -match '<html')) ([string]$err502.error)
 }
 finally {
     if ($orgId -gt 0) { try { Probe $remProbe @('cleanup', "$orgId") | Out-Null } catch { } }

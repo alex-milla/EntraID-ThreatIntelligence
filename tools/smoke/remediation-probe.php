@@ -55,6 +55,29 @@ if ($cmd === 'task') {
     exit(0);
 }
 
+if ($cmd === 'chat-token') {
+    $id = (int)($argv[2] ?? 0);
+    $chat = $id > 0
+        ? Database::fetchOne("SELECT id, token, status, last_error FROM remediation_chats WHERE id = ?", [$id])
+        : null;
+    echo json_encode([
+        'exists' => $chat !== null,
+        'token'  => (string)($chat['token'] ?? ''),
+        'status' => (string)($chat['status'] ?? ''),
+        'error'  => (string)($chat['last_error'] ?? ''),
+    ], JSON_UNESCAPED_UNICODE);
+    exit(0);
+}
+
+if ($cmd === 'chat-messages') {
+    $id = (int)($argv[2] ?? 0);
+    $rows = $id > 0
+        ? Database::fetchAll("SELECT role, content, model FROM remediation_messages WHERE chat_id = ? ORDER BY id", [$id])
+        : [];
+    echo json_encode(['messages' => $rows], JSON_UNESCAPED_UNICODE);
+    exit(0);
+}
+
 if ($cmd === 'cleanup') {
     $orgId = (int)($argv[2] ?? 0);
     if ($orgId > 0) {

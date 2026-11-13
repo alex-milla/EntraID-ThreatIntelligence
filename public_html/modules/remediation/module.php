@@ -45,6 +45,7 @@ class Module_Remediation extends BaseModule
             ['method' => 'POST', 'pattern' => 'tasks/suggest', 'handler' => [$this, 'suggestTaskData']],
             ['method' => 'POST', 'pattern' => 'tasks/apply',   'handler' => [$this, 'applyTaskData']],
             ['method' => 'POST', 'pattern' => 'ask',           'handler' => [$this, 'ask']],
+            ['method' => 'GET',  'pattern' => 'ask-status/{id}', 'handler' => [$this, 'askStatus']],
             ['method' => 'POST', 'pattern' => 'chats/delete',  'handler' => [$this, 'deleteChat']],
             ['method' => 'POST', 'pattern' => 'settings/save', 'handler' => [$this, 'saveSettings']],
         ];
@@ -101,6 +102,9 @@ class Module_Remediation extends BaseModule
         $chat = $chatId > 0 ? $this->getChat($chatId) : null;
         if ($chat !== null && (int)($chat['org_id'] ?? 0) !== $selectedOrgId) {
             $chat = null;
+        }
+        if ($chat !== null) {
+            $chat = $this->recoverStaleChat($chat);
         }
         $messages = $chat !== null ? $this->messages((int)$chat['id']) : [];
 
@@ -574,7 +578,6 @@ class Module_Remediation extends BaseModule
             if ($cveId !== '' && !preg_match('/^CVE-\d{4}-\d{4,7}$/', $cveId)) {
                 $cveId = '';
             }
-            $cve = $cveId !== '' ? $this->cveData($cveId) : null;
 
             $chatId = (int)($input['chat_id'] ?? 0);
             $chat = $chatId > 0 ? $this->getChat($chatId) : null;
@@ -582,68 +585,207 @@ class Module_Remediation extends BaseModule
                 $chat = null;
             }
 
-            [$system, $userPrompt] = $this->buildAiPrompt($org, $task, $cve, $question);
-
-            $result = $llm->chat(
-                $system,
-                $userPrompt,
-                ['max_tokens' => 1500, 'temperature' => 0.2],
-                $profileId > 0 ? $profileId : null
-            );
-
-            if (empty($result['success'])) {
-                json_response(['success' => false, 'error' => (string)($result['error'] ?? 'Error del proveedor de IA.')], 502);
-            }
-
-            $content = trim((string)($result['content'] ?? ''));
-            if ($content === '') {
-                json_response(['success' => false, 'error' => 'La IA devolvió una respuesta vacía.'], 502);
-            }
-
+            // La conversación se crea antes de lanzar el trabajo: la respuesta
+            // llega en segundo plano y la UI la consulta.
             if ($chat === null) {
                 $chatId = Database::insert(
-                    "INSERT INTO remediation_chats (org_id, user_id, context_type, context_ref, title)
-                     VALUES (?, ?, ?, ?, ?)",
+                    "INSERT INTO remediation_chats (org_id, user_id, context_type, context_ref, title, status, ai_profile_id)
+                     VALUES (?, ?, ?, ?, ?, 'idle', ?)",
                     [
                         $orgId,
                         Auth::id(),
                         $task !== null ? 'task' : ($cveId !== '' ? 'cve' : 'general'),
                         $task !== null ? (string)$task['id'] : $cveId,
                         truncate($question, 90),
+                        $profileId > 0 ? $profileId : null,
                     ]
                 );
+            } else {
+                $chatId = (int)$chat['id'];
             }
 
             Database::insert(
                 "INSERT INTO remediation_messages (chat_id, role, content) VALUES (?, 'user', ?)",
                 [$chatId, $question]
             );
-            Database::insert(
-                "INSERT INTO remediation_messages (chat_id, role, content, model) VALUES (?, 'assistant', ?, ?)",
-                [$chatId, $content, (string)($result['model'] ?? '')]
-            );
+
+            $token = bin2hex(random_bytes(24));
             Database::update(
-                "UPDATE remediation_chats SET updated_at = datetime('now') WHERE id = ?",
-                [$chatId]
+                "UPDATE remediation_chats
+                 SET token = ?, status = 'pending', last_error = NULL, ai_profile_id = ?, updated_at = datetime('now')
+                 WHERE id = ?",
+                [$token, $profileId > 0 ? $profileId : null, $chatId]
             );
 
-            app_log('info', 'remediation', 'Consulta IA', [
+            $workerUrl = $this->absoluteUrl('remediation-worker.php') . '?token=' . rawurlencode($token);
+            $launched = function_exists('background_request') ? background_request($workerUrl) : false;
+
+            if (!$launched) {
+                // Si el hosting no permite el fire-and-forget, se resuelve aquí
+                // (comportamiento anterior) para no perder la pregunta.
+                $res = $this->processPendingChat($chatId);
+                if (empty($res['success'])) {
+                    json_response([
+                        'success' => false,
+                        'chat_id' => $chatId,
+                        'error'   => (string)($res['error'] ?? 'Error del proveedor de IA.'),
+                    ], 502);
+                }
+                json_response([
+                    'success'      => true,
+                    'chat_id'      => $chatId,
+                    'content'      => (string)($res['content'] ?? ''),
+                    'content_html' => (string)($res['content_html'] ?? ''),
+                    'model'        => (string)($res['model'] ?? ''),
+                ]);
+            }
+
+            app_log('info', 'remediation', 'Consulta IA encolada', [
                 'chat' => $chatId,
                 'org'  => $orgId,
                 'cve'  => $cveId,
             ]);
 
             json_response([
-                'success'      => true,
-                'chat_id'      => $chatId,
-                'content'      => $content,
-                'content_html' => render_ai_markdown($content),
-                'model'        => (string)($result['model'] ?? ''),
-            ]);
+                'success'  => true,
+                'pending'  => true,
+                'chat_id'  => $chatId,
+                'status'   => 'pending',
+            ], 202);
         } catch (Throwable $e) {
             app_log('error', 'remediation', 'Error en la consulta IA', ['error' => $e->getMessage()]);
             json_response(['success' => false, 'error' => $e->getMessage()], 500);
         }
+    }
+
+    /**
+     * Resuelve una consulta encolada: reconstruye el contexto desde el chat y
+     * guarda la respuesta del asistente. Lo llama el worker en segundo plano
+     * (y el fallback síncrono si no se pudo lanzar).
+     */
+    public function processPendingChat(int $chatId): array
+    {
+        $chat = $this->chatRow($chatId);
+        if ($chat === null) {
+            return ['success' => false, 'error' => 'Conversación no encontrada.'];
+        }
+        $org = $this->getOrg((int)$chat['org_id']);
+        if ($org === null) {
+            return $this->failChat($chatId, 'La organización no existe.');
+        }
+
+        $task = null;
+        $cveId = '';
+        $contextType = (string)($chat['context_type'] ?? '');
+        if ($contextType === 'task') {
+            $task = $this->getTask((int)($chat['context_ref'] ?? 0));
+            if ($task !== null) {
+                $cveId = (string)$task['cve_id'];
+            }
+        } elseif ($contextType === 'cve') {
+            $cveId = strtoupper(trim((string)($chat['context_ref'] ?? '')));
+        }
+        $cve = $cveId !== '' ? $this->cveData($cveId) : null;
+
+        $last = Database::fetchOne(
+            "SELECT content FROM remediation_messages WHERE chat_id = ? AND role = 'user' ORDER BY id DESC LIMIT 1",
+            [$chatId]
+        );
+        $question = trim((string)($last['content'] ?? ''));
+        if ($question === '') {
+            return $this->failChat($chatId, 'No hay pregunta que responder.');
+        }
+
+        if (!class_exists('Module_Llm')) {
+            return $this->failChat($chatId, 'El módulo de IA no está activo.');
+        }
+        $llm = new Module_Llm();
+        $profileId = (int)($chat['ai_profile_id'] ?? 0);
+        if ($profileId <= 0) {
+            $profileId = (int)(llm_task_profile('remediation_assistant') ?? 0);
+        }
+        if (!$llm->isConfigured($profileId > 0 ? $profileId : null)) {
+            return $this->failChat($chatId, 'La IA no está configurada. Revisa Admin → APIs.');
+        }
+
+        [$system, $userPrompt] = $this->buildAiPrompt($org, $task, $cve, $question);
+        $userPrompt .= "\n\nSé conciso: máximo 8 viñetas o 400 palabras. No repitas el contexto.";
+
+        $result = $llm->chat($system, $userPrompt, ['max_tokens' => 900, 'temperature' => 0.2], $profileId > 0 ? $profileId : null);
+        if (empty($result['success'])) {
+            return $this->failChat($chatId, (string)($result['error'] ?? 'Error del proveedor de IA.'));
+        }
+
+        $content = trim((string)($result['content'] ?? ''));
+        if ($content === '') {
+            return $this->failChat($chatId, 'La IA devolvió una respuesta vacía.');
+        }
+
+        Database::insert(
+            "INSERT INTO remediation_messages (chat_id, role, content, model) VALUES (?, 'assistant', ?, ?)",
+            [$chatId, $content, (string)($result['model'] ?? '')]
+        );
+        Database::update(
+            "UPDATE remediation_chats SET status = 'done', token = NULL, last_error = NULL, updated_at = datetime('now') WHERE id = ?",
+            [$chatId]
+        );
+
+        app_log('info', 'remediation', 'Consulta IA resuelta', ['chat' => $chatId]);
+
+        return [
+            'success'      => true,
+            'chat_id'      => $chatId,
+            'content'      => $content,
+            'content_html' => render_ai_markdown($content),
+            'model'        => (string)($result['model'] ?? ''),
+        ];
+    }
+
+    /** Marca el chat como error y devuelve el fallo. */
+    private function failChat(int $chatId, string $message): array
+    {
+        try {
+            Database::update(
+                "UPDATE remediation_chats
+                 SET status = 'error', token = NULL, last_error = ?, updated_at = datetime('now')
+                 WHERE id = ?",
+                [truncate($message, 500), $chatId]
+            );
+        } catch (Throwable $e) {
+            // Noop
+        }
+        app_log('warning', 'remediation', 'Consulta IA fallida', ['chat' => $chatId, 'error' => $message]);
+        return ['success' => false, 'chat_id' => $chatId, 'error' => $message];
+    }
+
+    /** Estado de la consulta en segundo plano (para el sondeo de la UI). */
+    public function askStatus(array $params = []): void
+    {
+        Auth::require();
+        $id = (int)($params['id'] ?? 0);
+        $chat = $id > 0 ? $this->getChat($id) : null;
+        if ($chat === null) {
+            json_response(['success' => false, 'error' => 'Conversación no encontrada.'], 404);
+        }
+        $chat = $this->recoverStaleChat($chat);
+        json_response([
+            'success' => true,
+            'chat_id' => $id,
+            'status'  => (string)($chat['status'] ?? 'idle'),
+            'error'   => (string)($chat['last_error'] ?? ''),
+        ]);
+    }
+
+    /** URL absoluta para el worker (APP_URL o el host de la petición). */
+    private function absoluteUrl(string $path): string
+    {
+        $url = base_url($path);
+        if (preg_match('#^https?://#i', $url) === 1) {
+            return $url;
+        }
+        $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+        $host = (string)($_SERVER['HTTP_HOST'] ?? 'localhost');
+        return $scheme . '://' . $host . '/' . ltrim($url, '/');
     }
 
     /**
@@ -1061,6 +1203,49 @@ class Module_Remediation extends BaseModule
             "SELECT * FROM remediation_chats WHERE id = ? AND (user_id = ? OR CAST(? AS INTEGER) = 1)",
             [$id, Auth::id(), Auth::isAdmin() ? 1 : 0]
         );
+    }
+
+    /**
+     * Chat sin filtro de propietario: lo usa el worker en segundo plano, que
+     * no tiene sesión (se autoriza con el token del propio chat).
+     */
+    private function chatRow(int $id): ?array
+    {
+        if ($id <= 0) {
+            return null;
+        }
+        return Database::fetchOne("SELECT * FROM remediation_chats WHERE id = ?", [$id]);
+    }
+
+    /**
+     * Si una consulta quedó «pendiente» o «en curso» demasiado tiempo (el
+     * worker murió o el servidor de IA no respondió), se marca como error para
+     * que la UI no se quede pensando para siempre.
+     */
+    private function recoverStaleChat(array $chat): array
+    {
+        $status = (string)($chat['status'] ?? '');
+        if (!in_array($status, ['pending', 'running'], true)) {
+            return $chat;
+        }
+        $ts = strtotime((string)($chat['updated_at'] ?? '') . ' UTC');
+        if ($ts === false || (time() - $ts) < 600) {
+            return $chat;
+        }
+        $message = 'La generación no terminó a tiempo (el servidor de IA no respondió). Vuelve a enviar la pregunta.';
+        try {
+            Database::update(
+                "UPDATE remediation_chats
+                 SET status = 'error', token = NULL, last_error = ?, updated_at = datetime('now')
+                 WHERE id = ?",
+                [$message, (int)$chat['id']]
+            );
+        } catch (Throwable $e) {
+            // Noop
+        }
+        $chat['status'] = 'error';
+        $chat['last_error'] = $message;
+        return $chat;
     }
 
     private function messages(int $chatId): array

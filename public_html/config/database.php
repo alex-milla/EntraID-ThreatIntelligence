@@ -645,6 +645,25 @@ class Database
             updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         )");
 
+        // Migración v0.4.9: ejecución en segundo plano del asistente (se hace
+        // después del CREATE TABLE para que una instalación nueva no falle).
+        $chatCols = [];
+        foreach ($db->query("PRAGMA table_info(remediation_chats)") as $c) {
+            $chatCols[$c['name']] = true;
+        }
+        if (!isset($chatCols['token'])) {
+            $db->exec("ALTER TABLE remediation_chats ADD COLUMN token TEXT");
+        }
+        if (!isset($chatCols['status'])) {
+            $db->exec("ALTER TABLE remediation_chats ADD COLUMN status TEXT NOT NULL DEFAULT 'idle'");
+        }
+        if (!isset($chatCols['last_error'])) {
+            $db->exec("ALTER TABLE remediation_chats ADD COLUMN last_error TEXT");
+        }
+        if (!isset($chatCols['ai_profile_id'])) {
+            $db->exec("ALTER TABLE remediation_chats ADD COLUMN ai_profile_id INTEGER");
+        }
+
         $db->exec("CREATE TABLE IF NOT EXISTS remediation_messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             chat_id INTEGER NOT NULL REFERENCES remediation_chats(id) ON DELETE CASCADE,
