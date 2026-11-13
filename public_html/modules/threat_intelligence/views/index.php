@@ -204,6 +204,7 @@ $sectorUrl = function (string $sec) use ($tiBaseQs): string {
                             <div class="flex items-center gap-2 min-w-0">
                                 <span data-role="new" class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-brand-500 text-white <?= $unread ? '' : 'hidden' ?>">New</span>
                                 <?php if ($isNew24): ?><span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-warning-bg text-warning shrink-0" title="Publicado en las últimas 24 h">24 h</span><?php endif; ?>
+                                <?php if (in_array($artId, $translatedIds ?? [], true)): ?><span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300 shrink-0" title="Traducción al español guardada">ES</span><?php endif; ?>
                                 <p class="text-sm font-medium truncate"><?= e($a['title']) ?></p>
                             </div>
                             <p class="text-xs text-ink-soft mt-0.5">

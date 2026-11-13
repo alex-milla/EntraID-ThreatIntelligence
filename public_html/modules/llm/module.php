@@ -196,6 +196,12 @@ class Module_Llm extends BaseModule
      */
     private function serverContext(array $cfg): int
     {
+        // Los proveedores cloud no publican /props: no se les molesta.
+        $provider = (string)($cfg['provider'] ?? '');
+        if (in_array($provider, ['openai', 'anthropic', 'azure', 'gemini', 'mistral', 'ollama_cloud'], true)) {
+            return 0;
+        }
+
         $host = $this->providerHost($cfg);
         if ($host === '') {
             return 0;
@@ -223,6 +229,38 @@ class Module_Llm extends BaseModule
         }
 
         return $cache[$host] = $ctx;
+    }
+
+    /**
+     * Ventana de contexto efectiva del perfil: la declarada o, si es 0, la
+     * que publique el servidor en /props (llama.cpp).
+     */
+    private function windowTokens(array $cfg): int
+    {
+        $declared = (int)($cfg['context_tokens'] ?? 0);
+        if ($declared > 0) {
+            return $declared;
+        }
+        return $this->serverContext($cfg);
+    }
+
+    /**
+     * Aplica el presupuesto de contexto a las partes de un prompt.
+     *
+     * @param array<string,array{text:string,priority?:int,min?:int}> $parts
+     * @return array{text:string,max_tokens:int,note:string,fits:bool,tokens:int}
+     */
+    private function budgetContext(array $cfg, array $parts, int $taskMaxTokens): array
+    {
+        $maxTokens = llm_effective_max_tokens($taskMaxTokens, $cfg);
+        $fit = llm_fit_parts($parts, $maxTokens, $this->windowTokens($cfg));
+        return [
+            'text'       => implode("\n\n", array_filter($fit['parts'], static fn($v) => $v !== '')),
+            'max_tokens' => $maxTokens,
+            'note'       => (string)$fit['note'],
+            'fits'       => (bool)$fit['fits'],
+            'tokens'     => (int)$fit['tokens'],
+        ];
     }
 
     /**
@@ -355,7 +393,7 @@ class Module_Llm extends BaseModule
                 ['role' => 'system', 'content' => $system],
                 ['role' => 'user',   'content' => $user],
             ],
-            'max_tokens'  => (int)($options['max_tokens'] ?? $cfg['max_tokens']),
+            'max_tokens'  => llm_effective_max_tokens((int)($options['max_tokens'] ?? $cfg['max_tokens']), $cfg),
             'temperature' => (float)($options['temperature'] ?? 0.3),
             'stream'      => false,
         ]);
@@ -366,7 +404,7 @@ class Module_Llm extends BaseModule
             $headers[] = 'Authorization: Bearer ' . $key;
         }
 
-        $response = $this->httpPost($url, (string)$body, $headers, (int)($options['timeout'] ?? 120));
+        $response = $this->httpPost($url, (string)$body, $headers, (int)($options['timeout'] ?? ($cfg['timeout'] ?? 120)));
         $content = $response['choices'][0]['message']['content'] ?? null;
         if ($content === null) {
             throw new RuntimeException('Respuesta vacía del modelo (' . $url . ')');
@@ -382,7 +420,7 @@ class Module_Llm extends BaseModule
 
         $body = json_encode([
             'model'       => $model,
-            'max_tokens'  => $options['max_tokens'] ?? $cfg['max_tokens'],
+            'max_tokens'  => llm_effective_max_tokens((int)($options['max_tokens'] ?? $cfg['max_tokens']), $cfg),
             'system'      => $system,
             'messages'    => [
                 ['role' => 'user', 'content' => $user],
@@ -393,7 +431,7 @@ class Module_Llm extends BaseModule
             'x-api-key: ' . $cfg['api_key'],
             'anthropic-version: 2023-06-01',
             'Content-Type: application/json',
-        ], (int)($options['timeout'] ?? 120));
+        ], (int)($options['timeout'] ?? ($cfg['timeout'] ?? 120)));
 
         $content = $response['content'][0]['text'] ?? null;
         if ($content === null) {
@@ -595,7 +633,7 @@ class Module_Llm extends BaseModule
             ],
             'stream'   => false,
             'options'  => [
-                'num_predict' => (int)($options['max_tokens'] ?? $cfg['max_tokens']),
+                'num_predict' => llm_effective_max_tokens((int)($options['max_tokens'] ?? $cfg['max_tokens']), $cfg),
             ],
         ]);
 
@@ -605,7 +643,7 @@ class Module_Llm extends BaseModule
             $headers[] = 'Authorization: Bearer ' . $key;
         }
 
-        $response = $this->httpPost($url, (string)$body, $headers, (int)($options['timeout'] ?? 120));
+        $response = $this->httpPost($url, (string)$body, $headers, (int)($options['timeout'] ?? ($cfg['timeout'] ?? 120)));
 
         $content = $response['message']['content'] ?? null;
         if ($content === null) {
@@ -624,14 +662,14 @@ class Module_Llm extends BaseModule
                 ['role' => 'system', 'content' => $system],
                 ['role' => 'user',   'content' => $user],
             ],
-            'max_tokens'  => $options['max_tokens'] ?? $cfg['max_tokens'],
+            'max_tokens'  => llm_effective_max_tokens((int)($options['max_tokens'] ?? $cfg['max_tokens']), $cfg),
             'temperature' => $options['temperature'] ?? 0.3,
         ]);
 
         $response = $this->httpPost($url, $body, [
             'api-key: ' . $cfg['api_key'],
             'Content-Type: application/json',
-        ], (int)($options['timeout'] ?? 120));
+        ], (int)($options['timeout'] ?? ($cfg['timeout'] ?? 120)));
 
         $content = $response['choices'][0]['message']['content'] ?? null;
         if ($content === null) {
@@ -715,7 +753,8 @@ class Module_Llm extends BaseModule
 
         $user = $ctx . "\nTAREA: Analiza este incidente y devuelve el informe según la estructura indicada.";
 
-        return $this->chat($system, $user, ['max_tokens' => 2000], $profileId);
+        $maxTokens = llm_effective_max_tokens(2000, $this->cfg($profileId));
+        return $this->chat($system, $user, ['max_tokens' => $maxTokens], $profileId);
     }
 
     /**
@@ -1053,12 +1092,19 @@ class Module_Llm extends BaseModule
             . 'Si falta información, dilo explícitamente. Sé concreto, prioriza y propón acciones.'
         );
 
-        $user = "DATOS DEL TENANT «{$tenant['name']}»:\n\n{$context}\n\nTAREA: {$instruction}";
+        $budget = $this->budgetContext($this->cfg($profileId), [
+            'datos' => ['text' => $context, 'priority' => 1, 'min' => 2000],
+        ], 2500);
+
+        $user = "DATOS DEL TENANT «{$tenant['name']}»:\n\n" . $budget['text'] . "\n\nTAREA: {$instruction}";
         if (trim($question) !== '') {
             $user .= "\n\nPREGUNTA DEL ANALISTA: " . trim($question);
         }
 
-        $res = $this->chat($system, $user, ['max_tokens' => 2500], $profileId);
+        $res = $this->chat($system, $user, ['max_tokens' => $budget['max_tokens']], $profileId);
+        if ($budget['note'] !== '') {
+            $res['notice'] = $budget['note'];
+        }
         if (!empty($res['success'])) {
             $res['tenant'] = $tenant['name'];
         }
@@ -1282,10 +1328,15 @@ class Module_Llm extends BaseModule
             'llm.analysis.profile.system',
             'Eres un analista de threat intelligence senior. Responde SIEMPRE en español y en Markdown, basándote EXCLUSIVAMENTE en los datos del perfil; no inventes. Sé concreto y accionable.'
         );
-        $user = "DATOS DEL PERFIL:\n\n{$ctx}\n\nTAREA: {$instruction}";
+        $budget = $this->budgetContext($this->cfg($llmProfileId), [
+            'perfil' => ['text' => $ctx, 'priority' => 1, 'min' => 1200],
+        ], 2000);
+        $user = "DATOS DEL PERFIL:\n\n" . $budget['text'] . "\n\nTAREA: {$instruction}";
         if (trim($question) !== '') { $user .= "\n\nPREGUNTA DEL ANALISTA: " . trim($question); }
 
-        return $this->chat($system, $user, ['max_tokens' => 2000], $llmProfileId);
+        $res = $this->chat($system, $user, ['max_tokens' => $budget['max_tokens']], $llmProfileId);
+        if ($budget['note'] !== '') { $res['notice'] = $budget['note']; }
+        return $res;
     }
 
     public function analyzeIndicators(int $tenantId, string $instruction, string $question = '', array $filters = [], ?int $llmProfileId = null): array
@@ -1306,10 +1357,15 @@ class Module_Llm extends BaseModule
             'llm.analysis.indicators.system',
             'Eres un analista de threat intelligence senior. Responde SIEMPRE en español y en Markdown, basándote EXCLUSIVAMENTE en los indicadores proporcionados; no inventes.'
         );
-        $user = "DATOS:\n\n{$ctx}\n\nTAREA: {$instruction}";
+        $budget = $this->budgetContext($this->cfg($llmProfileId), [
+            'indicadores' => ['text' => $ctx, 'priority' => 1, 'min' => 800],
+        ], 2000);
+        $user = "DATOS:\n\n" . $budget['text'] . "\n\nTAREA: {$instruction}";
         if (trim($question) !== '') { $user .= "\n\nPREGUNTA DEL ANALISTA: " . trim($question); }
 
-        return $this->chat($system, $user, ['max_tokens' => 2000], $llmProfileId);
+        $res = $this->chat($system, $user, ['max_tokens' => $budget['max_tokens']], $llmProfileId);
+        if ($budget['note'] !== '') { $res['notice'] = $budget['note']; }
+        return $res;
     }
 
     /**
@@ -1346,9 +1402,10 @@ class Module_Llm extends BaseModule
             if ($org) { $ctx .= 'CONTEXTO DEL CLIENTE (' . implode(' · ', $org) . ")\n"; }
         }
 
-        if (!empty($a['summary'])) { $ctx .= "\nRESUMEN:\n" . $this->ctxClip(strip_tags((string)$a['summary']), 3000) . "\n"; }
-        if (!empty($a['body']))    { $ctx .= "\nCUERPO:\n" . $this->ctxClip(strip_tags((string)$a['body']), 6000) . "\n"; }
+        if (!empty($a['summary'])) { $summaryPart = "RESUMEN:\n" . $this->ctxClip(strip_tags((string)$a['summary']), 3000); }
+        if (!empty($a['body']))    { $bodyPart    = "CUERPO:\n" . $this->ctxClip(strip_tags((string)$a['body']), 6000); }
 
+        $iocPart = '';
         $iocs = Database::fetchAll("SELECT ioc_type, ioc_value FROM ti_iocs WHERE article_id = ? ORDER BY ioc_type, ioc_value LIMIT 500", [$id]);
         if ($iocs) {
             $lines = [];
@@ -1357,7 +1414,7 @@ class Module_Llm extends BaseModule
                 if ($defang) { $val = defang_ioc($val, (string)$i['ioc_type']); }
                 $lines[] = '- [' . $i['ioc_type'] . '] ' . $this->ctxClip($val, 200);
             }
-            $ctx .= "\nINDICADORES (" . count($iocs) . "):\n" . implode("\n", $lines) . "\n";
+            $iocPart = 'INDICADORES (' . count($iocs) . "):\n" . implode("\n", $lines);
         }
 
         $instruction = trim($instruction) ?: 'Resume este artículo y destaca lo más relevante para nuestra organización.';
@@ -1365,7 +1422,17 @@ class Module_Llm extends BaseModule
             'llm.analysis.article.system',
             'Eres un analista de threat intelligence senior. Responde SIEMPRE en español y en Markdown. Usa EXCLUSIVAMENTE la información del artículo proporcionado; no inventes datos. Si algo no consta, dilo.'
         );
-        $user = "DATOS DEL ARTÍCULO:\n\n{$ctx}\n\nTAREA: {$instruction}";
+
+        // Presupuesto de contexto: el cuerpo se recorta antes que el resumen o
+        // los indicadores, y nunca se pierde la cabecera del artículo.
+        $budget = $this->budgetContext($this->cfg($llmProfileId), [
+            'cuerpo'      => ['text' => $bodyPart ?? '', 'priority' => 1, 'min' => 600],
+            'resumen'     => ['text' => $summaryPart ?? '', 'priority' => 2, 'min' => 400],
+            'indicadores' => ['text' => $iocPart, 'priority' => 3, 'min' => 300],
+            'articulo'    => ['text' => $ctx, 'priority' => 5, 'min' => 200],
+        ], 3000);
+
+        $user = "DATOS DEL ARTÍCULO:\n\n" . $budget['text'] . "\n\nTAREA: {$instruction}";
         if ($defang) {
             $user .= "\n\n" . llm_prompt(
                 'llm.analysis.article.defang',
@@ -1373,8 +1440,18 @@ class Module_Llm extends BaseModule
             );
         }
         if (trim($question) !== '') { $user .= "\n\nPREGUNTA DEL ANALISTA: " . trim($question); }
+        $user .= "\n\n" . llm_prompt(
+            'llm.analysis.article.limit',
+            'LÍMITE DE EXTENSIÓN: responde como máximo con 12 viñetas o 400 palabras (lo que sea menor). '
+            . 'Sé directo: no repitas el artículo, no añadas introducciones ni conclusiones. '
+            . 'Si la tarea pide una tabla, limita la tabla a las 10 filas más relevantes.'
+        );
 
-        return $this->chat($system, $user, ['max_tokens' => 3000], $llmProfileId);
+        $res = $this->chat($system, $user, ['max_tokens' => $budget['max_tokens']], $llmProfileId);
+        if ($budget['note'] !== '') {
+            $res['notice'] = $budget['note'];
+        }
+        return $res;
     }
 
     /**
@@ -1382,75 +1459,270 @@ class Module_Llm extends BaseModule
      * Cachea el resultado (Markdown) en ti_article_translations y lo reutiliza
      * mientras el artículo no cambie y la caché tenga menos de 90 días.
      */
+    /** Texto fuente (título + resumen + cuerpo) del artículo, sin recortar. */
+    private function articleSource(array $a): string
+    {
+        $parts = [];
+        if (!empty($a['title']))   { $parts[] = '# ' . trim((string)$a['title']); }
+        if (!empty($a['summary'])) { $parts[] = trim((string)$a['summary']); }
+        if (!empty($a['body']))    { $parts[] = trim((string)$a['body']); }
+        return trim(implode("\n\n", $parts));
+    }
+
+    /** Traducción vigente en caché (artículo sin cambios y < 90 días). */
+    private function cachedTranslation(array $a): ?array
+    {
+        try {
+            $cached = Database::fetchOne(
+                "SELECT content, source_updated, created_at FROM ti_article_translations WHERE article_id = ? AND lang = 'es'",
+                [(int)$a['id']]
+            );
+        } catch (Throwable $e) {
+            return null;
+        }
+        if (!$cached) {
+            return null;
+        }
+        $fresh  = (string)($cached['source_updated'] ?? '') === (string)($a['last_updated'] ?? '');
+        $ts     = strtotime((string)$cached['created_at']);
+        $notOld = ($ts !== false) && (time() - $ts) < 90 * 86400;
+        if ($fresh && $notOld && trim((string)$cached['content']) !== '') {
+            return $cached;
+        }
+        return null;
+    }
+
+    /** Trozos de un artículo para traducir por partes (tamaño acotado). */
+    private function articleChunks(array $a): array
+    {
+        $src = $this->articleSource($a);
+        return $src !== '' ? llm_split_markdown($src, 1400) : [];
+    }
+
+    /**
+     * Plan de traducción: bloques, progreso guardado y si ya está en caché.
+     * La UI lo usa para traducir bloque a bloque y mostrar el progreso.
+     */
+    public function translationPlan(int $id, bool $force = false): array
+    {
+        $a = Database::fetchOne("SELECT * FROM ti_articles WHERE id = ?", [$id]);
+        if (!$a) {
+            return ['success' => false, 'error' => 'Artículo no encontrado'];
+        }
+
+        $cached = $force ? null : $this->cachedTranslation($a);
+        $chunks = $this->articleChunks($a);
+
+        $done = [];
+        try {
+            foreach (Database::fetchAll(
+                "SELECT chunk_index, content FROM ti_article_translation_chunks
+                 WHERE article_id = ? AND status = 'done' ORDER BY chunk_index",
+                [$id]
+            ) as $row) {
+                $done[(int)$row['chunk_index']] = (string)$row['content'];
+            }
+        } catch (Throwable $e) {
+            $done = [];
+        }
+
+        $items = [];
+        foreach ($chunks as $index => $text) {
+            $items[] = [
+                'index'   => $index,
+                'chars'   => llm_str_len($text),
+                'text'    => $text,
+                'done'    => isset($done[$index]),
+                'content' => $done[$index] ?? null,
+            ];
+        }
+
+        return [
+            'success'     => true,
+            'article_id'  => $id,
+            'cached'      => $cached !== null,
+            'cached_html' => $cached !== null ? render_markdown((string)$cached['content']) : null,
+            'total'       => count($items),
+            'chunks'      => $items,
+        ];
+    }
+
+    /**
+     * Traduce un bloque y lo persiste (permite reanudar y consultar progreso).
+     */
+    public function translateArticleChunk(int $id, int $index, string $text, ?int $profileId = null): array
+    {
+        $a = Database::fetchOne("SELECT * FROM ti_articles WHERE id = ?", [$id]);
+        if (!$a) {
+            return ['success' => false, 'error' => 'Artículo no encontrado'];
+        }
+
+        $text = trim($text);
+        if ($index < 0 || $index > 500) {
+            return ['success' => false, 'error' => 'Bloque no válido'];
+        }
+        if ($text === '') {
+            return ['success' => false, 'error' => 'El bloque está vacío'];
+        }
+        if (llm_str_len($text) > 4000) {
+            return ['success' => false, 'error' => 'Bloque demasiado grande para traducir'];
+        }
+
+        $cfg = $this->cfg($profileId);
+        // La traducción ocupa del orden del original: se reserva ~1,8× y 200
+        // tokens de margen, sin pasarse nunca del tope del perfil.
+        $maxTokens = llm_effective_max_tokens((int)ceil(llm_estimate_tokens($text) * 1.8) + 200, $cfg);
+
+        $system = llm_prompt(
+            'llm.article.translate.system',
+            'Eres un traductor profesional especializado en ciberseguridad. Traduce al ESPAÑOL (de España) el fragmento que se te proporciona. Reglas: conserva el formato Markdown y la estructura (títulos, listas, tablas); NO traduzcas indicadores técnicos ni términos que deban permanecer literales (direcciones IP, dominios, URLs, hashes, nombres de malware/actores, comandos, código, identificadores CVE/MITRE); no añadas ni omitas información; no resumas. Devuelve ÚNICAMENTE la traducción en Markdown, sin comentarios adicionales.'
+        );
+        $user = "TEXTO ORIGINAL (Markdown):\n\n{$text}";
+
+        $res = $this->chat($system, $user, ['max_tokens' => $maxTokens], $profileId);
+        if (empty($res['success'])) {
+            return $res;
+        }
+
+        $content = trim((string)($res['content'] ?? ''));
+        if ($content === '') {
+            return ['success' => false, 'error' => 'La IA devolvió una traducción vacía'];
+        }
+
+        try {
+            Database::query(
+                "INSERT INTO ti_article_translation_chunks (article_id, chunk_index, content, status, created_at)
+                 VALUES (?, ?, ?, 'done', datetime('now'))
+                 ON CONFLICT(article_id, chunk_index) DO UPDATE SET
+                    content = excluded.content, status = 'done', created_at = datetime('now')",
+                [$id, $index, $content]
+            );
+        } catch (Throwable $e) {
+            // Si no se puede persistir el bloque, la traducción sigue siendo válida.
+        }
+
+        return [
+            'success'      => true,
+            'index'        => $index,
+            'content'      => $content,
+            'content_html' => render_markdown($content),
+            'model'        => (string)($res['model'] ?? ''),
+        ];
+    }
+
+    /**
+     * Ensambla los bloques traducidos y guarda la traducción final.
+     */
+    public function saveArticleTranslation(int $id): array
+    {
+        $a = Database::fetchOne("SELECT * FROM ti_articles WHERE id = ?", [$id]);
+        if (!$a) {
+            return ['success' => false, 'error' => 'Artículo no encontrado'];
+        }
+
+        $chunks = $this->articleChunks($a);
+        $total = count($chunks);
+        if ($total === 0) {
+            return ['success' => false, 'error' => 'El artículo no tiene contenido para traducir'];
+        }
+
+        $rows = [];
+        try {
+            foreach (Database::fetchAll(
+                "SELECT chunk_index, content, status FROM ti_article_translation_chunks WHERE article_id = ?",
+                [$id]
+            ) as $row) {
+                $rows[(int)$row['chunk_index']] = $row;
+            }
+        } catch (Throwable $e) {
+            $rows = [];
+        }
+
+        $parts = [];
+        $failed = 0;
+        for ($i = 0; $i < $total; $i++) {
+            $row = $rows[$i] ?? null;
+            if ($row !== null && (string)$row['status'] === 'done' && trim((string)$row['content']) !== '') {
+                $parts[] = trim((string)$row['content']);
+            } else {
+                $parts[] = '[bloque ' . ($i + 1) . ' sin traducir]';
+                $failed++;
+            }
+        }
+
+        $content = implode("\n\n", $parts);
+        try {
+            Database::query("DELETE FROM ti_article_translations WHERE created_at < datetime('now', '-90 days')");
+            Database::query(
+                "INSERT INTO ti_article_translations
+                    (article_id, lang, content, source_updated, chunks, failed_chunks, mode, created_at)
+                 VALUES (?, 'es', ?, ?, ?, ?, 'chunks', datetime('now'))
+                 ON CONFLICT(article_id, lang) DO UPDATE SET
+                    content = excluded.content,
+                    source_updated = excluded.source_updated,
+                    chunks = excluded.chunks,
+                    failed_chunks = excluded.failed_chunks,
+                    mode = excluded.mode,
+                    created_at = datetime('now')",
+                [$id, $content, (string)($a['last_updated'] ?? ''), $total, $failed]
+            );
+        } catch (Throwable $e) {
+            return ['success' => false, 'error' => 'No se pudo guardar la traducción: ' . $e->getMessage()];
+        }
+
+        return [
+            'success'        => true,
+            'content'        => $content,
+            'content_html'   => render_markdown($content),
+            'cached'         => false,
+            'chunks'         => $total,
+            'failed_chunks'  => $failed,
+            'notice'         => $failed > 0
+                ? $failed . ' de ' . $total . ' bloques no se pudieron traducir; el resto queda guardado.'
+                : '',
+        ];
+    }
+
+    /**
+     * Traducción completa en una sola llamada (compatibilidad con la API y
+     * con perfiles rápidos): usa la caché y, si no hay, traduce por bloques.
+     */
     public function translateArticle(int $id, ?int $profileId = null): array
     {
         $a = Database::fetchOne("SELECT * FROM ti_articles WHERE id = ?", [$id]);
         if (!$a) { return ['success' => false, 'error' => 'Artículo no encontrado']; }
 
-        // ¿Hay traducción cacheada y vigente?
-        try {
-            $cached = Database::fetchOne(
-                "SELECT content, source_updated, created_at FROM ti_article_translations WHERE article_id = ? AND lang = 'es'",
-                [$id]
-            );
-        } catch (Throwable $e) {
-            $cached = null;
+        $cached = $this->cachedTranslation($a);
+        if ($cached !== null) {
+            return [
+                'success'      => true,
+                'content'      => (string)$cached['content'],
+                'content_html' => render_markdown((string)$cached['content']),
+                'cached'       => true,
+            ];
         }
-        if ($cached) {
-            $fresh  = (string)($cached['source_updated'] ?? '') === (string)($a['last_updated'] ?? '');
-            $ts     = strtotime((string)$cached['created_at']);
-            $notOld = ($ts !== false) && (time() - $ts) < 90 * 86400;
-            if ($fresh && $notOld && trim((string)$cached['content']) !== '') {
-                return [
-                    'success'      => true,
-                    'content'      => (string)$cached['content'],
-                    'content_html' => render_markdown((string)$cached['content']),
-                    'cached'       => true,
-                ];
+
+        $chunks = $this->articleChunks($a);
+        if ($chunks === []) {
+            return ['success' => false, 'error' => 'El artículo no tiene contenido para traducir'];
+        }
+
+        $failed = 0;
+        foreach ($chunks as $index => $text) {
+            $res = $this->translateArticleChunk($id, (int)$index, $text, $profileId);
+            if (empty($res['success'])) {
+                $failed++;
+                if ($failed >= 2) {
+                    // Dos fallos seguidos: mejor parar que encadenar timeouts.
+                    return [
+                        'success' => false,
+                        'error'   => (string)($res['error'] ?? 'No se pudo traducir el artículo'),
+                    ];
+                }
             }
         }
 
-        // Texto original (Markdown) con tope prudente de longitud.
-        $parts = [];
-        if (!empty($a['title']))   { $parts[] = '# ' . trim((string)$a['title']); }
-        if (!empty($a['summary'])) { $parts[] = trim((string)$a['summary']); }
-        if (!empty($a['body']))    { $parts[] = trim((string)$a['body']); }
-        $src = trim(implode("\n\n", $parts));
-        if ($src === '') {
-            return ['success' => false, 'error' => 'El artículo no tiene contenido para traducir'];
-        }
-        $src = $this->ctxClip($src, 12000);
-
-        $system = llm_prompt(
-            'llm.article.translate.system',
-            'Eres un traductor profesional especializado en ciberseguridad. Traduce al ESPAÑOL (de España) el artículo que se te proporciona. Reglas: conserva el formato Markdown y la estructura (títulos, listas, tablas); NO traduzcas indicadores técnicos ni términos que deban permanecer literales (direcciones IP, dominios, URLs, hashes, nombres de malware/actores, comandos, código, identificadores CVE/MITRE); no añadas ni omitas información; no resumas. Devuelve ÚNICAMENTE la traducción en Markdown, sin comentarios adicionales.'
-        );
-        $user = "TEXTO ORIGINAL (Markdown):\n\n{$src}";
-
-        $res = $this->chat($system, $user, ['max_tokens' => 4000], $profileId);
-        if (empty($res['success'])) {
-            return $res;
-        }
-
-        $content = (string)($res['content'] ?? '');
-        try {
-            // Caducidad lógica de 90 días (purga oportunista).
-            Database::query("DELETE FROM ti_article_translations WHERE created_at < datetime('now', '-90 days')");
-            Database::query(
-                "INSERT INTO ti_article_translations (article_id, lang, content, source_updated, created_at)
-                 VALUES (?, 'es', ?, ?, datetime('now'))
-                 ON CONFLICT(article_id, lang) DO UPDATE SET
-                    content = excluded.content,
-                    source_updated = excluded.source_updated,
-                    created_at = datetime('now')",
-                [$id, $content, (string)($a['last_updated'] ?? '')]
-            );
-        } catch (Throwable $e) {
-            // La caché no es crítica: si falla, se devuelve la traducción igualmente.
-        }
-
-        $res['cached'] = false;
-        return $res;
+        return $this->saveArticleTranslation($id);
     }
 
     public function translateArticleEndpoint(array $params = []): void
@@ -1461,6 +1733,31 @@ class Module_Llm extends BaseModule
             (int)($params['id'] ?? 0),
             $this->resolveProfile($input, 'translate_article')
         ));
+    }
+
+    public function translatePlanEndpoint(array $params = []): void
+    {
+        Csrf::validateOrFail();
+        $input = json_decode(file_get_contents('php://input'), true) ?? $_POST;
+        json_response($this->translationPlan((int)($params['id'] ?? 0), !empty($input['force'])));
+    }
+
+    public function translateChunkEndpoint(array $params = []): void
+    {
+        Csrf::validateOrFail();
+        $input = json_decode(file_get_contents('php://input'), true) ?? $_POST;
+        json_response($this->translateArticleChunk(
+            (int)($params['id'] ?? 0),
+            (int)($input['index'] ?? -1),
+            (string)($input['text'] ?? ''),
+            $this->resolveProfile($input, 'translate_article')
+        ));
+    }
+
+    public function translateSaveEndpoint(array $params = []): void
+    {
+        Csrf::validateOrFail();
+        json_response($this->saveArticleTranslation((int)($params['id'] ?? 0)));
     }
 
     public function analyzeProfileEndpoint(array $params = []): void
@@ -1520,6 +1817,9 @@ class Module_Llm extends BaseModule
             ['method' => 'POST', 'pattern' => 'analyze-indicators',      'handler' => [$this, 'analyzeIndicatorsEndpoint']],
             ['method' => 'POST', 'pattern' => 'analyze-article/{id}',    'handler' => [$this, 'analyzeArticleEndpoint']],
             ['method' => 'POST', 'pattern' => 'translate-article/{id}',  'handler' => [$this, 'translateArticleEndpoint']],
+            ['method' => 'POST', 'pattern' => 'translate-article-plan/{id}',  'handler' => [$this, 'translatePlanEndpoint']],
+            ['method' => 'POST', 'pattern' => 'translate-article-chunk/{id}', 'handler' => [$this, 'translateChunkEndpoint']],
+            ['method' => 'POST', 'pattern' => 'translate-article-save/{id}',  'handler' => [$this, 'translateSaveEndpoint']],
             ['method' => 'POST', 'pattern' => 'actions/save',            'handler' => [$this, 'actionsSaveEndpoint']],
             ['method' => 'POST', 'pattern' => 'actions/delete',          'handler' => [$this, 'actionsDeleteEndpoint']],
             ['method' => 'POST', 'pattern' => 'actions/restore',         'handler' => [$this, 'actionsRestoreEndpoint']],

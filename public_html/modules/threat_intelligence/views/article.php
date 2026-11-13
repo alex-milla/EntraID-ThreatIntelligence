@@ -109,6 +109,8 @@ if (!empty($_GET['only_favorites'])) { $navQs .= '&only_favorites=1'; }
                             class="inline-flex items-center gap-1.5 px-3 py-1.5 border border-line text-xs font-medium rounded-lg hover:bg-muted transition-colors">
                         <?= $hasTranslation ? 'Ver traducción' : 'Traducir al español' ?>
                     </button>
+                    <button type="button" id="btn-retranslate" onclick="tiTranslate(true)"
+                            class="<?= $hasTranslation ? '' : 'hidden' ?> text-xs text-ink-soft hover:underline">Retraducir</button>
                     <button type="button" id="btn-translation-hide" onclick="tiTranslationHide()"
                             class="hidden px-3 py-1.5 border border-line text-xs font-medium rounded-lg hover:bg-muted transition-colors">Ver original</button>
                 </div>
@@ -233,32 +235,104 @@ function tiTranslationHide() {
     var box = document.getElementById('translation-body'); if (box) box.classList.add('hidden');
     var hb = document.getElementById('btn-translation-hide'); if (hb) hb.classList.add('hidden');
 }
-function tiTranslate() {
+function tiTranslationMsg(text, isError) {
+    var msg = document.getElementById('translation-msg');
+    if (!msg) return;
+    msg.textContent = text || '';
+    msg.className = 'text-xs mt-2 ' + (isError ? 'text-red-500' : 'text-ink-soft');
+}
+function tiTranslate(force) {
     var btn = document.getElementById('btn-translate');
     var box = document.getElementById('translation-body');
-    var msg = document.getElementById('translation-msg');
     if (!btn || !box) return;
-    if (ART_HAS_TRANSLATION) { tiTranslationShow(); if (msg) msg.textContent = 'Traducción guardada.'; return; }
+    if (ART_HAS_TRANSLATION && !force) {
+        tiTranslationShow();
+        tiTranslationMsg('Traducción guardada.', false);
+        return;
+    }
     var old = btn.textContent;
-    btn.disabled = true; btn.textContent = 'Traduciendo…';
-    box.classList.remove('hidden'); box.innerHTML = '<div class="spinner mx-auto"></div>'; if (msg) msg.textContent = '';
-    api('POST', '<?= base_url('modules/llm/translate-article') ?>/<?= (int)$article['id'] ?>', { profile_id: getAiProfile() })
-        .then(function (res) {
-            btn.disabled = false;
-            if (res && res.success) {
+    var planUrl  = '<?= base_url('modules/llm/translate-article-plan')  ?>/<?= (int)$article['id'] ?>';
+    var chunkUrl = '<?= base_url('modules/llm/translate-article-chunk') ?>/<?= (int)$article['id'] ?>';
+    var saveUrl  = '<?= base_url('modules/llm/translate-article-save')  ?>/<?= (int)$article['id'] ?>';
+    btn.disabled = true;
+    btn.textContent = 'Preparando…';
+    box.classList.remove('hidden');
+    box.innerHTML = '<div class="spinner mx-auto"></div>';
+    tiTranslationMsg('', false);
+
+    function fail(message) {
+        btn.disabled = false;
+        btn.textContent = old;
+        box.classList.add('hidden');
+        tiTranslationMsg(message, true);
+        toast(message, 'error');
+    }
+
+    api('POST', planUrl, { force: force ? 1 : 0 })
+        .then(function (plan) {
+            if (!plan || !plan.success) { fail((plan && plan.error) || 'No se pudo preparar la traducción'); return; }
+            if (plan.cached && !force) {
                 ART_HAS_TRANSLATION = true;
-                box.innerHTML = res.content_html || esc(res.content || '');
+                box.innerHTML = plan.cached_html || '';
+                btn.disabled = false;
                 btn.textContent = 'Ver traducción';
                 tiTranslationShow();
-                if (msg) msg.textContent = res.cached ? 'Traducción guardada.' : 'Traducción generada y guardada.';
-            } else {
-                box.classList.add('hidden');
-                btn.textContent = old;
-                if (msg) msg.textContent = '';
-                toast((res && res.error) ? res.error : 'Error al traducir', 'error');
+                tiTranslationMsg('Traducción guardada.', false);
+                return;
             }
+
+            var chunks = plan.chunks || [];
+            if (!chunks.length) { fail('El artículo no tiene contenido para traducir'); return; }
+
+            var index = 0;
+
+            function save() {
+                btn.textContent = 'Guardando…';
+                return api('POST', saveUrl, {})
+                    .then(function (res) {
+                        btn.disabled = false;
+                        if (!res || !res.success) { fail((res && res.error) || 'No se pudo guardar la traducción'); return; }
+                        ART_HAS_TRANSLATION = true;
+                        box.innerHTML = res.content_html || esc(res.content || '');
+                        btn.textContent = 'Ver traducción';
+                        var rt = document.getElementById('btn-retranslate');
+                        if (rt) rt.classList.remove('hidden');
+                        tiTranslationShow();
+                        tiTranslationMsg(res.notice || 'Traducción generada y guardada.', !!res.notice);
+                        if (res.notice) toast(res.notice, 'warning');
+                    });
+            }
+
+            function postChunk(chunk, attempt) {
+                return api('POST', chunkUrl, {
+                    index: chunk.index, text: chunk.text, profile_id: getAiProfile()
+                }).then(function (res) {
+                    if (!res || !res.success) {
+                        if (attempt < 1) { return postChunk(chunk, attempt + 1); }
+                        return { success: false };
+                    }
+                    return res;
+                }).catch(function () {
+                    if (attempt < 1) { return postChunk(chunk, attempt + 1); }
+                    return { success: false };
+                });
+            }
+
+            function next() {
+                if (index >= chunks.length) { return save(); }
+                var chunk = chunks[index];
+                var pos = (index + 1) + '/' + chunks.length;
+                btn.textContent = 'Traduciendo ' + pos + '…';
+                tiTranslationMsg('Traduciendo bloque ' + pos + '…', false);
+                return postChunk(chunk, 0).then(function () {
+                    index++;
+                    return next();
+                });
+            }
+
+            next();
         })
-        .catch(function () { btn.disabled = false; btn.textContent = old; box.classList.add('hidden'); toast('Error de conexión', 'error'); });
+        .catch(function () { fail('Error de conexión'); });
 }
 </script>
 
@@ -335,7 +409,12 @@ function analyzeArticleIA(actionId) {
         profile_id: getAiProfile(),
         defang: (df && df.checked) ? 1 : 0
     }).then(function (res) {
-        if (res.success) { ART_RAW = res.content || ''; box.innerHTML = res.content_html || esc(res.content); setArtActions(ART_RAW.trim() !== ''); }
+        if (res.success) {
+            ART_RAW = res.content || '';
+            var extra = res.notice ? '<p class="text-xs text-amber-600 dark:text-amber-400 mt-2">' + esc(res.notice) + '</p>' : '';
+            box.innerHTML = (res.content_html || esc(res.content)) + extra;
+            setArtActions(ART_RAW.trim() !== '');
+        }
         else { box.innerHTML = '<p class="text-sm text-red-500">' + esc(res.error || 'Error') + '</p>'; toast('Error: ' + (res.error || ''), 'error'); }
     }).catch(function () { box.innerHTML = '<p class="text-sm text-red-500">Error de conexión</p>'; });
 }

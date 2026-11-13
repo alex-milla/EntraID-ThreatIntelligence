@@ -2138,7 +2138,7 @@ class Module_ThreatIntelligence extends BaseModule
             ['method' => 'GET', 'pattern' => 'article/{id}',        'handler' => [$this, 'showArticlePage']],
             ['method' => 'GET', 'pattern' => 'article/{id}/data',   'handler' => [$this, 'showArticle']],
             ['method' => 'GET', 'pattern' => 'iocs',                'handler' => [$this, 'iocsPage']],
-            ['method' => 'GET', 'pattern' => 'iocs/data',           'handler' => [$this, 'listIocs']],
+            ['method' => 'GET', 'pattern' => 'translations',        'handler' => [$this, 'translationsPage']],            ['method' => 'GET', 'pattern' => 'iocs/data',           'handler' => [$this, 'listIocs']],
             ['method' => 'GET', 'pattern' => 'stats',               'handler' => [$this, 'getStats']],
             ['method' => 'GET', 'pattern' => 'profiles',            'handler' => [$this, 'profilesPage']],
             ['method' => 'GET', 'pattern' => 'profile/{id}',        'handler' => [$this, 'showProfilePage']],
@@ -2282,6 +2282,7 @@ class Module_ThreatIntelligence extends BaseModule
         $sectorStats = $selectedTenant
             ? $this->getSectorStats($selectedTenant, ['from' => $range['from'], 'to' => $range['to'], 'q' => $q, 'tag' => $tag])
             : ['total' => 0, 'sectors' => []];
+        $translatedIds = $selectedTenant ? $this->translatedArticleIds($selectedTenant) : [];
 
         echo $this->page('index', [
             'module'         => $this,
@@ -2289,6 +2290,7 @@ class Module_ThreatIntelligence extends BaseModule
             'selectedTenant' => $selectedTenant,
             'stats'          => $stats,
             'articles'       => $articles,
+            'translatedIds'  => $translatedIds,
             'dateFrom'       => $range['from'],
             'dateTo'         => $range['to'],
             'dateDefaultFrom' => $def['from'],
@@ -2308,9 +2310,73 @@ class Module_ThreatIntelligence extends BaseModule
     }
 
     /**
-     * Sector del tenant a partir del campo industry (Graph /organization).
+     * IDs de artículos del tenant con traducción vigente (badge «ES»).
+     *
+     * @return int[]
      */
-    private function tenantSectorKey(int $tenantId): ?string
+    private function translatedArticleIds(int $tenantId): array
+    {
+        try {
+            $rows = Database::fetchAll(
+                "SELECT t.article_id
+                 FROM ti_article_translations t
+                 JOIN ti_articles a ON a.id = t.article_id
+                 WHERE a.tenant_id = ? AND t.lang = 'es'
+                   AND t.created_at >= datetime('now', '-90 days')
+                   AND COALESCE(t.source_updated, '') = COALESCE(a.last_updated, '')
+                   AND TRIM(COALESCE(t.content, '')) <> ''",
+                [$tenantId]
+            );
+        } catch (Throwable $e) {
+            return [];
+        }
+        return array_map(static fn($r) => (int)$r['article_id'], $rows);
+    }
+
+    /**
+     * Página «Traducciones»: artículos traducidos del tenant, para consultarlos.
+     */
+    public function translationsPage(array $params = []): void
+    {
+        $tenants = TenantManager::getActive();
+        $selectedTenant = (int)($_GET['tenant'] ?? ($tenants[0]['id'] ?? 0));
+
+        $rows = [];
+        if ($selectedTenant) {
+            try {
+                $rows = Database::fetchAll(
+                    "SELECT t.article_id, t.created_at AS translated_at, t.chunks, t.failed_chunks, t.mode,
+                            a.title, a.article_id AS external_id, a.last_updated, a.created_date
+                     FROM ti_article_translations t
+                     JOIN ti_articles a ON a.id = t.article_id
+                     WHERE a.tenant_id = ? AND t.lang = 'es'
+                       AND t.created_at >= datetime('now', '-90 days')
+                       AND COALESCE(t.source_updated, '') = COALESCE(a.last_updated, '')
+                       AND TRIM(COALESCE(t.content, '')) <> ''
+                     ORDER BY t.created_at DESC, t.article_id DESC
+                     LIMIT 200",
+                    [$selectedTenant]
+                );
+            } catch (Throwable $e) {
+                $rows = [];
+            }
+        }
+
+        echo $this->page('translations', [
+            'module'         => $this,
+            'tenants'        => $tenants,
+            'selectedTenant' => $selectedTenant,
+            'rows'           => $rows,
+            'tiActiveTab'    => 'translations',
+            'profileCounts'  => $selectedTenant
+                ? $this->getProfileCounts($selectedTenant)
+                : ['actor' => 0, 'tool' => 0, 'other' => 0, 'total' => 0],
+        ]);
+    }
+
+    /**
+     * Sector del tenant a partir del campo industry (Graph /organization).
+     */    private function tenantSectorKey(int $tenantId): ?string
     {
         $tenant = TenantManager::getById($tenantId);
         $ind = strtolower((string)($tenant['industry'] ?? ''));

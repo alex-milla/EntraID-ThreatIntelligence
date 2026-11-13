@@ -742,6 +742,8 @@ class AdminController
             'api_url'    => trim((string)($_POST['api_url'] ?? '')),
             'model'      => trim((string)($_POST['model'] ?? '')),
             'max_tokens' => (int)($_POST['max_tokens'] ?? 2048),
+            'context_tokens' => (int)($_POST['context_tokens'] ?? 0),
+            'timeout'    => (int)($_POST['timeout'] ?? 120),
             'api_key'    => $key,
         ], $id ?: null);
 

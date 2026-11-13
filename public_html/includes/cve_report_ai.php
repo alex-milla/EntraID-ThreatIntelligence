@@ -1582,7 +1582,7 @@ TXT);
                 $result = $llm->chat(
                     self::itemSystemPrompt(),
                     self::itemPrompt($item, $defenderCve, $tags, $groupName),
-                    ['max_tokens' => 1500, 'temperature' => 0.2],
+                    ['max_tokens' => 1100, 'temperature' => 0.2],
                     $profileId > 0 ? $profileId : null
                 );
                 if (empty($result['success'])) {

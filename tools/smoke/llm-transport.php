@@ -164,6 +164,69 @@ try {
     check('props: valor inválido', llm_props_ctx(['n_ctx' => 'abc']) === 0);
 
     // ============================================================
+    // 6 ter - Presupuesto de contexto y troceado
+    // ============================================================
+    check('max_tokens: manda la tarea si el perfil es 0', llm_effective_max_tokens(3000, ['max_tokens' => 0]) === 3000);
+    check('max_tokens: el perfil recorta', llm_effective_max_tokens(3000, ['max_tokens' => 1000]) === 1000);
+    check('max_tokens: no sube el del perfil', llm_effective_max_tokens(500, ['max_tokens' => 4000]) === 500);
+
+    check('tokens: texto vacío', llm_estimate_tokens('') === 0);
+    check('tokens: ~3.600 chars ≈ 1.100', llm_estimate_tokens(str_repeat('a', 3600)) === 1100);
+
+    // Cabe: no se recorta.
+    $fit = llm_fit_parts(['a' => ['text' => str_repeat('x', 2000), 'priority' => 1]], 500, 4096);
+    check('fit: cabe sin recortar', $fit['clipped'] === false && $fit['fits'] === true && $fit['note'] === '');
+
+    // No cabe: se recorta el bloque de menor prioridad.
+    $fit = llm_fit_parts([
+        'cuerpo' => ['text' => str_repeat('c', 12000), 'priority' => 1, 'min' => 200],
+        'cabeza' => ['text' => str_repeat('h', 800), 'priority' => 5, 'min' => 800],
+    ], 1000, 4096);
+    check('fit: recorta ante exceso', $fit['clipped'] === true && $fit['fits'] === true);
+    check('fit: recorta primero el cuerpo', str_contains($fit['note'], 'cuerpo') && !str_contains($fit['note'], 'cabeza'), $fit['note']);
+    check('fit: la cabeza queda intacta', $fit['parts']['cabeza'] === str_repeat('h', 800));
+    check('fit: el cuerpo se acorta', llm_str_len($fit['parts']['cuerpo']) < 12000);
+
+    // Sin margen posible (min = longitud): no cabe y se dice.
+    $fit = llm_fit_parts(['fijo' => ['text' => str_repeat('f', 12000), 'priority' => 1, 'min' => 12000]], 1000, 2048);
+    check('fit: no cabe si no se puede recortar', $fit['fits'] === false);
+
+    // Ventana desconocida: no se toca nada (compatibilidad).
+    $fit = llm_fit_parts(['a' => ['text' => str_repeat('x', 50000), 'priority' => 1]], 1000, 0);
+    check('fit: ventana 0 no recorta', $fit['clipped'] === false && $fit['fits'] === true);
+
+    $mdShort = "# Título\n\nUn párrafo corto.";
+    check('split: texto corto en un bloque', count(llm_split_markdown($mdShort, 1400)) === 1);
+
+    $mdLong = '';
+    for ($i = 0; $i < 30; $i++) {
+        $mdLong .= "## Sección $i\n\n" . str_repeat('palabra ', 60) . "\n\n";
+    }
+    $mdLong .= "| A | B |\n|---|---|\n| 1 | 2 |\n\n```php\n\$a = 1;\n\n\$b = 2;\n```\n";
+    $chunks = llm_split_markdown($mdLong, 1400);
+    check('split: texto largo en varios bloques', count($chunks) >= 3, 'bloques=' . count($chunks));
+    $tooBig = 0;
+    foreach ($chunks as $c) {
+        if (llm_str_len($c) > 1400) { $tooBig++; }
+    }
+    check('split: bloques acotados', $tooBig === 0, 'grandes=' . $tooBig);
+
+    $joined = implode("\n\n", $chunks);
+    check('split: no pierde el título', str_contains($joined, '## Sección 0'));
+    check('split: no pierde el final', str_contains($joined, 'Final') || str_contains($joined, '$b = 2;'));
+    check('split: conserva la tabla', str_contains($joined, '| A | B |'));
+    $fences = 0;
+    foreach ($chunks as $c) {
+        $fences += substr_count($c, '```');
+    }
+    check('split: los bloques de código no se parten', $fences % 2 === 0, 'fences=' . $fences);
+
+    $probeText = str_repeat('texto de prueba ', 400);
+    $chunks2 = llm_split_markdown($probeText, 400);
+    $reconstructed = preg_replace('/\s+/u', '', implode('', $chunks2));
+    check('split: sin pérdida de contenido', $reconstructed === preg_replace('/\s+/u', '', $probeText));
+
+    // ============================================================
     // 7 - Constantes y API pública del módulo
     // ============================================================
     check('constante LLM_503_RETRY_DELAY', defined('LLM_503_RETRY_DELAY') && is_int(LLM_503_RETRY_DELAY));

@@ -30,9 +30,11 @@ if ($cmd === 'profile-create') {
     $model = arg(4);
     $key = arg(5);
     $maxTokens = (int)(arg(6) !== '' ? arg(6) : 1024);
+    $contextTokens = (int)(arg(7) !== '' ? arg(7) : 0);
+    $timeout = (int)(arg(8) !== '' ? arg(8) : 120);
 
     if ($provider === '' || $url === '') {
-        fwrite(STDERR, "Uso: profile-create <provider> <url> <model> <key|-> [max_tokens]\n");
+        fwrite(STDERR, "Uso: profile-create <provider> <url> <model> <key|-> [max_tokens] [context_tokens] [timeout]\n");
         exit(2);
     }
 
@@ -42,6 +44,8 @@ if ($cmd === 'profile-create') {
         'api_url'    => $url,
         'model'      => $model,
         'max_tokens' => $maxTokens,
+        'context_tokens' => $contextTokens,
+        'timeout'    => $timeout,
         'api_key'    => $key,
     ]);
     echo json_encode(['id' => $id], JSON_UNESCAPED_UNICODE);
@@ -66,6 +70,8 @@ if ($cmd === 'profile-state') {
         'api_url'  => $p['api_url'] ?? null,
         'model'    => $p['model'] ?? null,
         'has_key'  => $p !== null && (string)($p['api_key'] ?? '') !== '',
+        'context_tokens' => (int)($p['context_tokens'] ?? 0),
+        'timeout'  => (int)($p['timeout'] ?? 0),
     ], JSON_UNESCAPED_UNICODE);
     exit(0);
 }

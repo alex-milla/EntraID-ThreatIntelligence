@@ -39,5 +39,6 @@ $tabOff   = 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:tex
         <a href="<?= e($tiTabUrl('modules/threat_intelligence/profiles', ['kind' => 'actor'])) ?>" class="<?= $tab ?> <?= $tiActive === 'actor' ? $tabOn : $tabOff ?>">Threat actors (<?= (int)($pc['actor'] ?? 0) ?>)</a>
         <a href="<?= e($tiTabUrl('modules/threat_intelligence/profiles', ['kind' => 'tool'])) ?>" class="<?= $tab ?> <?= $tiActive === 'tool' ? $tabOn : $tabOff ?>">Tools (<?= (int)($pc['tool'] ?? 0) ?>)</a>
         <a href="<?= e($tiTabUrl('modules/threat_intelligence/iocs')) ?>" class="<?= $tab ?> <?= $tiActive === 'indicators' ? $tabOn : $tabOff ?>">Indicators</a>
+        <a href="<?= e($tiTabUrl('modules/threat_intelligence/translations')) ?>" class="<?= $tab ?> <?= $tiActive === 'translations' ? $tabOn : $tabOff ?>">Traducciones</a>
     </div>
 </div>

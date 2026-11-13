@@ -522,6 +522,43 @@ class Database
             $db->exec("ALTER TABLE llm_actions ADD COLUMN scope TEXT NOT NULL DEFAULT 'tenant'");
         }
 
+        // Migración v0.4.5: presupuesto de contexto y timeout por perfil de IA.
+        $profileCols = [];
+        foreach ($db->query("PRAGMA table_info(llm_profiles)") as $c) {
+            $profileCols[$c['name']] = true;
+        }
+        if (!isset($profileCols['context_tokens'])) {
+            $db->exec("ALTER TABLE llm_profiles ADD COLUMN context_tokens INTEGER NOT NULL DEFAULT 0");
+        }
+        if (!isset($profileCols['timeout'])) {
+            $db->exec("ALTER TABLE llm_profiles ADD COLUMN timeout INTEGER NOT NULL DEFAULT 120");
+        }
+
+        // Migración v0.4.5: metadatos de la traducción por partes.
+        $translationCols = [];
+        foreach ($db->query("PRAGMA table_info(ti_article_translations)") as $c) {
+            $translationCols[$c['name']] = true;
+        }
+        if (!isset($translationCols['chunks'])) {
+            $db->exec("ALTER TABLE ti_article_translations ADD COLUMN chunks INTEGER NOT NULL DEFAULT 0");
+        }
+        if (!isset($translationCols['failed_chunks'])) {
+            $db->exec("ALTER TABLE ti_article_translations ADD COLUMN failed_chunks INTEGER NOT NULL DEFAULT 0");
+        }
+        if (!isset($translationCols['mode'])) {
+            $db->exec("ALTER TABLE ti_article_translations ADD COLUMN mode TEXT NOT NULL DEFAULT 'whole'");
+        }
+
+        // Traducción por bloques: permite reanudar y consultar el progreso.
+        $db->exec("CREATE TABLE IF NOT EXISTS ti_article_translation_chunks (
+            article_id INTEGER NOT NULL REFERENCES ti_articles(id) ON DELETE CASCADE,
+            chunk_index INTEGER NOT NULL,
+            content TEXT,
+            status TEXT NOT NULL DEFAULT 'done',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (article_id, chunk_index)
+        )");
+
         $db->exec("CREATE TABLE IF NOT EXISTS sync_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,

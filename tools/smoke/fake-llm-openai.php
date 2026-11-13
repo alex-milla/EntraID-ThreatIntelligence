@@ -91,6 +91,19 @@ if ($method === 'POST' && $path === '/v1/chat/completions') {
         fakeOut(400, ['error' => ['message' => 'stream must be explicitly false']]);
     }
 
+    // Traducción por bloques: devuelve el bloque marcado para poder verificar
+    // el ensamblado en el E2E.
+    if (str_starts_with($prompt, 'TEXTO ORIGINAL (Markdown):')) {
+        $text = trim(substr($prompt, strlen('TEXTO ORIGINAL (Markdown):')));
+        fakeOut(200, [
+            'choices' => [[
+                'message'       => ['role' => 'assistant', 'content' => '[ES] ' . $text],
+                'finish_reason' => 'stop',
+            ]],
+            'usage' => ['prompt_tokens' => 20, 'completion_tokens' => 20, 'total_tokens' => 40],
+        ]);
+    }
+
     // Fin de contexto con el formato real de llama.cpp.
     if ($model === FAKE_CTX_MODEL || str_contains($prompt, 'TRIGGER-CTX')) {
         fakeOut(400, [

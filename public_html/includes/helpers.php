@@ -774,6 +774,10 @@ if (!function_exists('llm_profile_save')) {
         $apiUrl = trim((string)($data['api_url'] ?? ''));
         $model = trim((string)($data['model'] ?? ''));
         $maxTokens = max(1, min(128000, (int)($data['max_tokens'] ?? 2048)));
+        // Ventana de contexto del modelo (0 = desconocida / autodetectar).
+        $contextTokens = max(0, min(1048576, (int)($data['context_tokens'] ?? 0)));
+        // Timeout de cada llamada (segundos).
+        $timeout = max(10, min(3600, (int)($data['timeout'] ?? 120)));
 
         $key = trim((string)($data['api_key'] ?? ''));
         $keyEnc = null;
@@ -782,8 +786,8 @@ if (!function_exists('llm_profile_save')) {
         }
 
         if ($id && $id > 0) {
-            $sets = "name = ?, provider = ?, api_url = ?, model = ?, max_tokens = ?, updated_at = datetime('now')";
-            $params = [$name, $provider, $apiUrl, $model, $maxTokens];
+            $sets = "name = ?, provider = ?, api_url = ?, model = ?, max_tokens = ?, context_tokens = ?, timeout = ?, updated_at = datetime('now')";
+            $params = [$name, $provider, $apiUrl, $model, $maxTokens, $contextTokens, $timeout];
             if ($keyEnc !== null) {
                 $sets .= ", api_key_encrypted = ?";
                 $params[] = $keyEnc;
@@ -794,9 +798,9 @@ if (!function_exists('llm_profile_save')) {
         }
 
         return Database::insert(
-            "INSERT INTO llm_profiles (name, provider, api_url, model, max_tokens, api_key_encrypted)
-             VALUES (?, ?, ?, ?, ?, ?)",
-            [$name, $provider, $apiUrl, $model, $maxTokens, $keyEnc]
+            "INSERT INTO llm_profiles (name, provider, api_url, model, max_tokens, context_tokens, timeout, api_key_encrypted)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            [$name, $provider, $apiUrl, $model, $maxTokens, $contextTokens, $timeout, $keyEnc]
         );
     }
 }
@@ -881,6 +885,8 @@ if (!function_exists('llm_cfg_from_input')) {
                     'model'      => (string)$p['model'],
                     'api_key'    => (string)$p['api_key'],
                     'max_tokens' => (int)$p['max_tokens'],
+                    'context_tokens' => (int)($p['context_tokens'] ?? 0),
+                    'timeout'    => (int)($p['timeout'] ?? 120),
                 ];
             }
         }
@@ -893,6 +899,12 @@ if (!function_exists('llm_cfg_from_input')) {
         if ($url !== '') { $override['api_url'] = $url; }
         $key = trim((string)($input['api_key'] ?? $input['llm_api_key'] ?? ''));
         if ($key !== '') { $override['api_key'] = $key; }
+        if (isset($input['context_tokens']) && $input['context_tokens'] !== '') {
+            $override['context_tokens'] = max(0, (int)$input['context_tokens']);
+        }
+        if (isset($input['timeout']) && $input['timeout'] !== '') {
+            $override['timeout'] = max(10, min(3600, (int)$input['timeout']));
+        }
 
         return $override;
     }
@@ -981,6 +993,8 @@ if (!function_exists('llm_config')) {
                 'api_url'    => (string)$p['api_url'],
                 'model'      => (string)$p['model'],
                 'max_tokens' => (int)$p['max_tokens'],
+                'context_tokens' => (int)($p['context_tokens'] ?? 0),
+                'timeout'    => (int)($p['timeout'] ?? 120),
             ];
         }
 
@@ -991,6 +1005,8 @@ if (!function_exists('llm_config')) {
             'api_url'    => (string)(setting_get('llm_api_url') ?? LLM_API_URL),
             'model'      => (string)(setting_get('llm_model') ?? LLM_MODEL),
             'max_tokens' => (int)(setting_get('llm_max_tokens') ?? LLM_MAX_TOKENS),
+            'context_tokens' => (int)(setting_get('llm_context_tokens') ?? 0),
+            'timeout'    => (int)(setting_get('llm_timeout') ?? 120),
         ];
     }
 }

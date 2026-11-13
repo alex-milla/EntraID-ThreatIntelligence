@@ -120,7 +120,7 @@ foreach ($flashData as $type => $msg):
         <p class="text-xs text-ink-soft mt-1" id="api-url-hint">Vacío = endpoint por defecto del proveedor.</p>
     </div>
 
-    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div>
             <label class="block text-sm font-medium text-ink mb-1">Modelo</label>
             <input type="text" name="model" id="model-input" value="<?= e($editProfile['model'] ?? '') ?>" placeholder="mistral-large-latest / gpt-4o-mini" list="model-suggestions" autocomplete="off"
@@ -129,9 +129,29 @@ foreach ($flashData as $type => $msg):
             <p class="text-xs text-ink-soft mt-1">El modelo debe ser válido para el proveedor elegido. Usa «Listar modelos» para copiar el identificador exacto que sirve el servidor.</p>
         </div>
         <div>
-            <label class="block text-sm font-medium text-ink mb-1">Max tokens</label>
+            <label class="block text-sm font-medium text-ink mb-1">Max tokens (salida)</label>
             <input type="number" name="max_tokens" value="<?= (int)($editProfile['max_tokens'] ?? 2048) ?>" min="1" max="128000"
                    class="w-full px-3 py-2 rounded-lg border border-line-strong bg-surface text-ink text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+            <p class="text-xs text-ink-soft mt-1">Tope de cada respuesta. Las tareas nunca pedirán más de esto.</p>
+        </div>
+        <div>
+            <label class="block text-sm font-medium text-ink mb-1">Ventana de contexto</label>
+            <div class="flex gap-2">
+                <input type="number" name="context_tokens" id="context-tokens" value="<?= (int)($editProfile['context_tokens'] ?? 0) ?>" min="0" max="1048576"
+                       class="w-full px-3 py-2 rounded-lg border border-line-strong bg-surface text-ink text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+                <button type="button" onclick="useDetectedContext()" title="Leer la ventana real del servidor (GET /props)"
+                        class="shrink-0 px-3 py-2 bg-muted hover:bg-surface-3 text-ink text-xs font-medium rounded-lg transition-colors">Detectar</button>
+            </div>
+            <p class="text-xs text-ink-soft mt-1">0 = desconocida (se intenta leer de <code>/props</code>). Ej.: 4.096 en servidores pequeños.</p>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div>
+            <label class="block text-sm font-medium text-ink mb-1">Timeout por llamada (s)</label>
+            <input type="number" name="timeout" value="<?= (int)($editProfile['timeout'] ?? 120) ?>" min="10" max="3600"
+                   class="w-full px-3 py-2 rounded-lg border border-line-strong bg-surface text-ink text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+            <p class="text-xs text-ink-soft mt-1">Modelos locales: 300 s (120 s se queda corto).</p>
         </div>
     </div>
 
@@ -734,13 +754,32 @@ function testProfile(id) {
 }
 function formPayload() {
     var idInput = document.querySelector('input[name="id"]');
+    var ctx = document.querySelector('input[name="context_tokens"]');
+    var tmo = document.querySelector('input[name="timeout"]');
     return {
         id: idInput ? idInput.value : '0',
         provider: document.getElementById('provider').value,
         api_url: document.querySelector('input[name="api_url"]').value,
         model: document.querySelector('input[name="model"]').value,
-        api_key: document.querySelector('input[name="api_key"]').value
+        api_key: document.querySelector('input[name="api_key"]').value,
+        max_tokens: document.querySelector('input[name="max_tokens"]').value,
+        context_tokens: ctx ? ctx.value : '0',
+        timeout: tmo ? tmo.value : '120'
     };
+}
+function useDetectedContext() {
+    var input = document.getElementById('context-tokens');
+    if (!input) return;
+    api('POST', '<?= base_url('admin/apis/verify') ?>', formPayload())
+        .then(function (res) {
+            if (res && res.success && res.context > 0) {
+                input.value = String(res.context);
+                toast('Ventana detectada: ' + Number(res.context).toLocaleString('es-ES') + ' tokens. Guarda el perfil para aplicarla.', 'success');
+                return;
+            }
+            toast((res && res.error) ? res.error : 'El servidor no publica la ventana de contexto (/props).', 'warning');
+        })
+        .catch(function () { toast('Error de conexión', 'error'); });
 }
 function testForm() {
     api('POST', '<?= base_url('admin/apis/test') ?>', formPayload())

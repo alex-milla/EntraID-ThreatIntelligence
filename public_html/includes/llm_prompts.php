@@ -82,6 +82,16 @@ if (!function_exists('llm_prompts_catalog')) {
                 'default'     => 'IMPORTANTE: al listar direcciones IP y dominios, ofusca el ÚLTIMO punto como "[.]" '
                     . '(defanging) para que el texto sea seguro de publicar.',
             ],
+            'llm.analysis.article.limit' => [
+                'scope'       => 'ia',
+                'scope_label' => 'Análisis IA',
+                'label'       => 'Artículo TI · límite de extensión',
+                'description' => 'Cota de longitud del análisis de artículos (evita que un modelo local se eternice).',
+                'is_locked'   => false,
+                'default'     => 'LÍMITE DE EXTENSIÓN: responde como máximo con 12 viñetas o 400 palabras (lo que sea menor). '
+                    . 'Sé directo: no repitas el artículo, no añadas introducciones ni conclusiones. '
+                    . 'Si la tarea pide una tabla, limita la tabla a las 10 filas más relevantes.',
+            ],
             'llm.analysis.incident.system' => [
                 'scope'       => 'ia',
                 'scope_label' => 'Análisis IA',

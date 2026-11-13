@@ -303,3 +303,252 @@ if (!function_exists('llm_props_ctx')) {
         return 0;
     }
 }
+
+if (!function_exists('llm_estimate_tokens')) {
+    /**
+     * Estimación de tokens para texto técnico en español (~3,6 chars/token)
+     * con un 10 % de margen. No sustituye al tokenizador del servidor, pero
+     * sirve para no pasarse de la ventana.
+     */
+    function llm_estimate_tokens(string $text): int
+    {
+        $len = function_exists('mb_strlen') ? mb_strlen($text) : strlen($text);
+        return (int)ceil(($len / 3.6) * 1.10);
+    }
+}
+
+if (!function_exists('llm_effective_max_tokens')) {
+    /**
+     * Tope de salida efectivo: el de la tarea, recortado por el del perfil.
+     * Un perfil con max_tokens > 0 no deja pedir más de lo que admite.
+     */
+    function llm_effective_max_tokens(int $taskMax, array $cfg): int
+    {
+        $taskMax = max(1, $taskMax);
+        $profileMax = (int)($cfg['max_tokens'] ?? 0);
+        return $profileMax > 0 ? max(1, min($taskMax, $profileMax)) : $taskMax;
+    }
+}
+
+if (!function_exists('llm_str_len')) {
+    function llm_str_len(string $s): int
+    {
+        return function_exists('mb_strlen') ? mb_strlen($s) : strlen($s);
+    }
+}
+
+if (!function_exists('llm_str_cut')) {
+    function llm_str_cut(string $s, int $n): string
+    {
+        return function_exists('mb_substr') ? mb_substr($s, 0, $n) : substr($s, 0, $n);
+    }
+}
+
+if (!function_exists('llm_split_long_block')) {
+    /**
+     * Parte un bloque demasiado largo por líneas y, si una línea sigue siendo
+     * enorme, por palabras (nunca en mitad de un token).
+     *
+     * @return string[]
+     */
+    function llm_split_long_block(string $block, int $maxChars): array
+    {
+        $maxChars = max(300, $maxChars);
+        $out = [];
+        $buffer = '';
+
+        foreach (explode("\n", $block) as $line) {
+            $lineLen = llm_str_len($line);
+
+            if ($lineLen > $maxChars) {
+                if ($buffer !== '') {
+                    $out[] = $buffer;
+                    $buffer = '';
+                }
+                $piece = '';
+                foreach (preg_split('/\s+/u', $line) ?: [] as $word) {
+                    if ($piece !== '' && llm_str_len($piece) + 1 + llm_str_len($word) > $maxChars) {
+                        $out[] = $piece;
+                        $piece = $word;
+                    } else {
+                        $piece .= ($piece !== '' ? ' ' : '') . $word;
+                    }
+                }
+                if ($piece !== '') {
+                    $out[] = $piece;
+                }
+                continue;
+            }
+
+            if ($buffer !== '' && llm_str_len($buffer) + 1 + $lineLen > $maxChars) {
+                $out[] = $buffer;
+                $buffer = $line;
+            } else {
+                $buffer .= ($buffer !== '' ? "\n" : '') . $line;
+            }
+        }
+
+        if ($buffer !== '') {
+            $out[] = $buffer;
+        }
+        return $out;
+    }
+}
+
+if (!function_exists('llm_split_markdown')) {
+    /**
+     * Trocea Markdown en bloques de como máximo $maxChars para traducir por
+     * partes. Respeta tablas, listas y bloques de código (```), que nunca se
+     * parten por la mitad.
+     *
+     * @return string[]
+     */
+    function llm_split_markdown(string $text, int $maxChars = 1400): array
+    {
+        $maxChars = max(400, $maxChars);
+        $text = str_replace(["\r\n", "\r"], "\n", trim($text));
+        if ($text === '') {
+            return [];
+        }
+
+        $blocks = preg_split("/\n{2,}/", $text) ?: [];
+        $chunks = [];
+        $buffer = '';
+        $openFence = false;
+
+        foreach ($blocks as $block) {
+            $block = trim($block);
+            if ($block === '') {
+                continue;
+            }
+
+            $fences = substr_count($block, '```');
+            if ($openFence || ($fences % 2 === 1)) {
+                $buffer .= ($buffer !== '' ? "\n\n" : '') . $block;
+                if ($fences % 2 === 1) {
+                    $openFence = !$openFence;
+                }
+                continue;
+            }
+
+            if (llm_str_len($block) > $maxChars) {
+                if ($buffer !== '') {
+                    $chunks[] = $buffer;
+                    $buffer = '';
+                }
+                foreach (llm_split_long_block($block, $maxChars) as $piece) {
+                    $chunks[] = $piece;
+                }
+                continue;
+            }
+
+            if ($buffer === '') {
+                $buffer = $block;
+            } elseif (llm_str_len($buffer) + 2 + llm_str_len($block) <= $maxChars) {
+                $buffer .= "\n\n" . $block;
+            } else {
+                $chunks[] = $buffer;
+                $buffer = $block;
+            }
+        }
+
+        if ($buffer !== '') {
+            $chunks[] = $buffer;
+        }
+        return $chunks;
+    }
+}
+
+if (!function_exists('llm_fit_parts')) {
+    /**
+     * Ajusta el contexto al presupuesto del modelo.
+     *
+     * Cada parte: ['text' => string, 'priority' => int, 'min' => int].
+     * La prioridad más baja (1) se recorta primero; `min` son los caracteres
+     * que se conservan siempre de esa parte.
+     *
+     * @return array{parts: array<string,string>, clipped: bool, fits: bool, note: string, tokens: int, budget: int}
+     */
+    function llm_fit_parts(array $parts, int $maxTokens, int $window, int $reserved = 0): array
+    {
+        $texts = [];
+        foreach ($parts as $key => $part) {
+            $texts[$key] = (string)($part['text'] ?? '');
+        }
+
+        $join = static fn(array $t): string => implode("\n\n", array_filter($t, static fn($v) => $v !== ''));
+
+        if ($window <= 0) {
+            return [
+                'parts'   => $texts,
+                'clipped' => false,
+                'fits'    => true,
+                'note'    => '',
+                'tokens'  => llm_estimate_tokens($join($texts)),
+                'budget'  => 0,
+            ];
+        }
+
+        $budget = max(64, $window - max(1, $maxTokens) - max(0, $reserved));
+        $tokens = llm_estimate_tokens($join($texts));
+        if ($tokens <= $budget) {
+            return ['parts' => $texts, 'clipped' => false, 'fits' => true, 'note' => '', 'tokens' => $tokens, 'budget' => $budget];
+        }
+
+        $len  = static fn(string $s): int => llm_str_len($s);
+        $cut  = static fn(string $s, int $n): string => llm_str_cut($s, $n);
+
+        // De menor a mayor prioridad (después se recorta más si hace falta).
+        $order = array_keys($parts);
+        usort($order, static function (string $a, string $b) use ($parts): int {
+            return ((int)($parts[$a]['priority'] ?? 5)) <=> ((int)($parts[$b]['priority'] ?? 5));
+        });
+
+        $clippedKeys = [];
+        $rounds = 0;
+        while ($tokens > $budget && $rounds < 4) {
+            $rounds++;
+            $progress = false;
+            foreach ($order as $key) {
+                $tokens = llm_estimate_tokens($join($texts));
+                if ($tokens <= $budget) {
+                    break 2;
+                }
+                $current = $texts[$key];
+                $currentLen = $len($current);
+                if ($currentLen <= 200) {
+                    continue;
+                }
+                $minKeep = max(0, min($currentLen, (int)($parts[$key]['min'] ?? 200)));
+                $excess = $tokens - $budget;
+                $keep = (int)floor($currentLen - ($excess * 3.6 / max(1.0, 1.10)));
+                $keep = max($minKeep, min($currentLen, $keep));
+                if ($keep < $currentLen) {
+                    $texts[$key] = $cut($current, $keep) . '…';
+                    $clippedKeys[] = $key;
+                    $progress = true;
+                }
+            }
+            if (!$progress) {
+                break;
+            }
+        }
+
+        $finalTokens = llm_estimate_tokens($join($texts));
+        $clipped = $clippedKeys !== [];
+        $note = '';
+        if ($clipped) {
+            $note = 'Contexto recortado (' . implode(', ', array_unique($clippedKeys)) . ') para caber en la ventana de '
+                . number_format($window, 0, ',', '.') . ' tokens del modelo.';
+        }
+
+        return [
+            'parts'   => $texts,
+            'clipped' => $clipped,
+            'fits'    => $finalTokens <= $budget,
+            'note'    => $note,
+            'tokens'  => $finalTokens,
+            'budget'  => $budget,
+        ];
+    }
+}
