@@ -139,15 +139,23 @@ try {
     $totalChunks = @($plan.chunks).Count
     Check 'E2E plan: artículo troceado' ($totalChunks -ge 2) "bloques=$totalChunks"
     Check 'E2E plan: cada bloque acotado' ((@($plan.chunks) | Measure-Object -Property chars -Maximum).Maximum -le 1400)
+    $codeSegments = @($plan.chunks | Where-Object { $_.type -eq 'codigo' })
+    Check 'E2E plan: hay segmento de código' ($codeSegments.Count -ge 1) "codigo=$($codeSegments.Count)"
 
     # --- traducir todos los bloques ---
     $okChunks = 0
     foreach ($ch in @($plan.chunks)) {
-        $payload = @{ index = [int]$ch.index; text = [string]$ch.text; profile_id = $profileId } | ConvertTo-Json -Compress
+        $payload = @{ index = [int]$ch.index; text = [string]$ch.text; type = [string]$ch.type; profile_id = $profileId } | ConvertTo-Json -Compress
         $r = Invoke-WebRequest -Uri $chunkUrl -Method POST -WebSession $ws -Headers $headers `
             -ContentType 'application/json' -Body $payload -UseBasicParsing -TimeoutSec 90
         $cr = $r.Content | ConvertFrom-Json
-        if ($cr.success -and ([string]$cr.content).StartsWith('[ES]')) { $okChunks++ }
+        $content = [string]$cr.content
+        if ($ch.type -eq 'codigo') {
+            # El código se devuelve literal (byte a byte).
+            if ($cr.success -and $content -eq [string]$ch.text) { $okChunks++ }
+        } elseif ($cr.success -and ($content -match '\[ES\]')) {
+            $okChunks++
+        }
     }
     Check 'E2E chunks: todos traducidos' ($okChunks -eq $totalChunks) "$okChunks/$totalChunks"
 
@@ -158,6 +166,15 @@ try {
     Check 'E2E save: success' ($saved.success -eq $true) ($saved.error)
     Check 'E2E save: sin bloques fallidos' ([int]$saved.failed_chunks -eq 0) "failed=$($saved.failed_chunks)"
     Check 'E2E save: contenido ensamblado' (([string]$saved.content) -match '\[ES\]')
+    Check 'E2E save: el código se copia literal' (([string]$saved.content) -match 'Get-ChildItem C:\\Users') 'sin código'
+    Check 'E2E save: sin vallas crudas en el HTML' (-not (([string]$saved.content_html) -match '```'))
+    Check 'E2E save: encabezados renderizados' (([string]$saved.content_html) -match '<h2')
+    Check 'E2E save: bloque de código renderizado' (([string]$saved.content_html) -match 'language-powershell') 'sin bloque de código'
+
+    # El segmento de código no debe haberse enviado al modelo.
+    $fakeLog = Join-Path (& php -r 'echo sys_get_temp_dir();') 'entraid-fake-llm-openai.log'
+    $logText = if (Test-Path $fakeLog) { Get-Content $fakeLog -Raw } else { '' }
+    Check 'E2E: el código no se envió al modelo' (-not ($logText -match 'Get-ChildItem')) 'se envió al modelo'
 
     $state = Probe $tiProbe @('translation-state', "$articleId")
     Check 'E2E estado: traducción guardada' ($state.exists -eq $true)

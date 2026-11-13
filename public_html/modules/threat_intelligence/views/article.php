@@ -305,7 +305,10 @@ function tiTranslate(force) {
 
             function postChunk(chunk, attempt) {
                 return api('POST', chunkUrl, {
-                    index: chunk.index, text: chunk.text, profile_id: getAiProfile()
+                    index: chunk.index,
+                    text: chunk.text,
+                    type: chunk.type || 'prosa',
+                    profile_id: getAiProfile()
                 }).then(function (res) {
                     if (!res || !res.success) {
                         if (attempt < 1) { return postChunk(chunk, attempt + 1); }

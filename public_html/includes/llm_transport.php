@@ -459,6 +459,108 @@ if (!function_exists('llm_split_markdown')) {
     }
 }
 
+if (!function_exists('llm_split_markdown_segments')) {
+    /**
+     * Trocea Markdown en segmentos tipados para traducir SOLO la prosa.
+     *
+     * Los bloques de código (```…``` o ~~~) y su contenido se devuelven como
+     * `codigo`: la aplicación los copia literalmente, así el original queda
+     * byte a byte y no se descuadran las vallas.
+     *
+     * @return array<int,array{type:string,text:string}> type = prosa|codigo
+     */
+    function llm_split_markdown_segments(string $text, int $maxChars = 1400): array
+    {
+        $maxChars = max(400, $maxChars);
+        $text = str_replace(["\r\n", "\r"], "\n", trim($text));
+        if ($text === '') {
+            return [];
+        }
+
+        $lines = explode("\n", $text);
+        $blocks = [];
+        $prosa = [];
+        $code = [];
+        $inFence = false;
+
+        $flushProsa = static function () use (&$prosa, &$blocks): void {
+            if ($prosa === []) {
+                return;
+            }
+            $joined = implode("\n", $prosa);
+            $prosa = [];
+            if (trim($joined) !== '') {
+                $blocks[] = ['type' => 'prosa', 'text' => trim($joined)];
+            }
+        };
+
+        foreach ($lines as $line) {
+            $isFence = preg_match('/^\s*(`{3,}|~{3,})/', $line) === 1;
+
+            if ($inFence) {
+                $code[] = $line;
+                if ($isFence) {
+                    $inFence = false;
+                    $blocks[] = ['type' => 'codigo', 'text' => implode("\n", $code)];
+                    $code = [];
+                }
+                continue;
+            }
+
+            if ($isFence) {
+                $flushProsa();
+                $inFence = true;
+                $code = [$line];
+                continue;
+            }
+
+            $prosa[] = $line;
+        }
+
+        $flushProsa();
+        if ($code !== []) {
+            // Bloque sin cerrar en el original: se cierra para no romper el
+            // documento ensamblado.
+            $blocks[] = ['type' => 'codigo', 'text' => implode("\n", $code) . "\n```"];
+        }
+
+        // Agrupar la prosa en segmentos acotados, respetando el orden.
+        $segments = [];
+        $current = '';
+        foreach ($blocks as $block) {
+            if ($block['type'] === 'codigo') {
+                if (trim($current) !== '') {
+                    $segments[] = ['type' => 'prosa', 'text' => trim($current)];
+                    $current = '';
+                }
+                $segments[] = $block;
+                continue;
+            }
+
+            $piece = $block['text'];
+            if ($current !== '' && llm_str_len($current) + 2 + llm_str_len($piece) > $maxChars) {
+                $segments[] = ['type' => 'prosa', 'text' => trim($current)];
+                $current = '';
+            }
+            $current .= ($current !== '' ? "\n\n" : '') . $piece;
+
+            if (llm_str_len($current) > $maxChars) {
+                foreach (llm_split_long_block($current, $maxChars) as $part) {
+                    if (trim($part) !== '') {
+                        $segments[] = ['type' => 'prosa', 'text' => trim($part)];
+                    }
+                }
+                $current = '';
+            }
+        }
+        if (trim($current) !== '') {
+            $segments[] = ['type' => 'prosa', 'text' => trim($current)];
+        }
+
+        return $segments;
+    }
+}
+
 if (!function_exists('llm_fit_parts')) {
     /**
      * Ajusta el contexto al presupuesto del modelo.

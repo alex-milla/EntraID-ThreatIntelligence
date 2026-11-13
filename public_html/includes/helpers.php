@@ -1052,8 +1052,9 @@ if (!function_exists('normalize_ai_markdown')) {
      *
      * Algunos modelos envuelven todo el informe en un fence ```markdown ... ```
      * y Parsedown lo pinta como bloque de código: el usuario ve el Markdown sin
-     * procesar. Aquí se elimina únicamente el fence que envuelve TODO el texto;
-     * los bloques de código internos se conservan.
+     * procesar. Aquí se elimina el fence que envuelve TODO el texto y se
+     * equilibran los fences sueltos; los bloques de código internos se
+     * conservan.
      */
     function normalize_ai_markdown(?string $markdown): string
     {
@@ -1063,17 +1064,215 @@ if (!function_exists('normalize_ai_markdown')) {
             return '';
         }
 
-        $fencePatterns = [
-            '/^(`{3,})[ \t]*[a-zA-Z0-9_+.\-]*[ \t]*\n(.*?)\n?\1[ \t]*$/us',
-            '/^(~{3,})[ \t]*[a-zA-Z0-9_+.\-]*[ \t]*\n(.*?)\n?\1[ \t]*$/us',
-        ];
-        foreach ($fencePatterns as $pattern) {
-            if (preg_match($pattern, $md, $m) === 1) {
-                return trim((string)$m[2]);
+        // 1) Envoltorio de todo el texto. Solo se considera envoltorio si la
+        //    etiqueta es markdown/md, o si no hay etiqueta y el contenido
+        //    parece un documento (un ```kql es un bloque de código real).
+        if (preg_match('/^(`{3,}|~{3,})[ \t]*([a-zA-Z0-9_+.\-]*)[ \t]*\n(.*?)\n?\1[ \t]*$/usi', $md, $m) === 1) {
+            $info  = strtolower((string)$m[2]);
+            $inner = (string)$m[3];
+            $docish = preg_match('/^#{1,6}\s/m', $inner) === 1
+                || preg_match('/^(?:[-*+]\s|\|[^|\n]*\|[^|\n]*\|)/m', $inner) === 1
+                || str_contains($inner, '```');
+            if (in_array($info, ['markdown', 'md'], true) || ($info === '' && $docish)) {
+                $md = trim($inner);
             }
         }
 
-        return $md;
+        // 2) Fence de apertura al principio (envoltorio sin cerrar): se quita
+        //    con el mismo criterio que el punto 1.
+        $lines = explode("\n", $md);
+        if ($lines !== [] && preg_match('/^\s*(`{3,}|~{3,})[ \t]*([a-zA-Z0-9_+.\-]*)[ \t]*$/', $lines[0], $fm) === 1) {
+            $info = strtolower((string)$fm[2]);
+            $rest = implode("\n", array_slice($lines, 1));
+            $docish = preg_match('/^#{1,6}\s/m', $rest) === 1
+                || preg_match('/^(?:[-*+]\s|\|[^|\n]*\|[^|\n]*\|)/m', $rest) === 1;
+            $isWrapper = in_array($info, ['markdown', 'md'], true)
+                || ($info === '' && $docish);
+            if ($isWrapper) {
+                array_shift($lines);
+            }
+        }
+
+        // 3) Equilibrado: si un tipo de fence queda con una apertura sin
+        //    pareja, se quita la última línea de ese tipo (si era el cierre del
+        //    envoltorio, se descarta; si era una apertura, evita que el resto
+        //    del texto quede dentro de un bloque de código).
+        foreach (['`', '~'] as $marker) {
+            $positions = [];
+            foreach ($lines as $i => $line) {
+                if (preg_match('/^\s*' . preg_quote($marker, '/') . '{3,}/', $line) === 1) {
+                    $positions[] = $i;
+                }
+            }
+            if (count($positions) % 2 === 1) {
+                $last = (int)array_pop($positions);
+                unset($lines[$last]);
+                $lines = array_values($lines);
+            }
+        }
+
+        return trim(implode("\n", $lines));
+    }
+}
+
+if (!function_exists('ai_balance_fences')) {
+    /**
+     * Equilibra los bloques de código de un documento largo (típico de una
+     * traducción por partes: un bloque mal cerrado se traga lo que viene
+     * después). Una apertura sin cierre se elimina; un cierre sin apertura se
+     * descarta. Los bloques de código legítimos (apertura + cierre) no se tocan.
+     */
+    function ai_balance_fences(?string $markdown): string
+    {
+        $md = str_replace(["\r\n", "\r"], "\n", (string)($markdown ?? ''));
+        if (trim($md) === '') {
+            return '';
+        }
+
+        $lines = explode("\n", $md);
+        $out = [];
+        $open = null;
+
+        foreach ($lines as $line) {
+            if (preg_match('/^\s*(`{3,}|~{3,})/', $line, $m) === 1) {
+                $marker = substr($m[1], 0, 1);
+                if ($open === null) {
+                    $open = $marker;
+                    $out[] = $line;
+                    continue;
+                }
+                if ($open === $marker) {
+                    $open = null;
+                    $out[] = $line;
+                    continue;
+                }
+                // Cierre de otro tipo: se descarta.
+                continue;
+            }
+            $out[] = $line;
+        }
+
+        // Queda una apertura sin cerrar: se elimina su línea.
+        if ($open !== null) {
+            for ($i = count($out) - 1; $i >= 0; $i--) {
+                if (preg_match('/^\s*(`{3,}|~{3,})/', $out[$i]) === 1) {
+                    array_splice($out, $i, 1);
+                    break;
+                }
+            }
+        }
+
+        return implode("\n", $out);
+    }
+}
+
+if (!function_exists('ai_strip_residues')) {
+    /**
+     * Limpia los residuos que dejan los modelos pequeños: prefijos de
+     * «Aquí tienes la traducción…», vallas sueltas y separadores `===` (que en
+     * Markdown convertirían el párrafo anterior en un título gigante).
+     */
+    function ai_strip_residues(?string $markdown): string
+    {
+        $md = str_replace(["\r\n", "\r"], "\n", (string)($markdown ?? ''));
+        $md = trim($md);
+        if ($md === '') {
+            return '';
+        }
+
+        // Prefijos típicos en la primera línea («Aquí tienes la traducción…»).
+        $lines = explode("\n", $md);
+        if ($lines !== []) {
+            $first = trim((string)$lines[0]);
+            $probe = trim((string)(preg_replace('/[*_`#>\s]+/u', ' ', $first) ?? $first));
+            $isPrefix = preg_match('/^(?:aqu[ií]|here|traducci[óo]n|translation|versi[óo]n\s+traducida)\b/iu', $probe) === 1
+                && (str_ends_with($probe, ':') || preg_match('/^(?:aqu[ií]|here)\b/iu', $probe) === 1);
+            if ($isPrefix) {
+                array_shift($lines);
+                if (isset($lines[0]) && trim((string)$lines[0]) === '') {
+                    array_shift($lines);
+                }
+                $md = implode("\n", $lines);
+            }
+        }
+
+        // Vallas sueltas de envoltorio al principio: solo si son explícitas
+        // (```markdown / ```md) o si el contenido es claramente un documento.
+        // Así no se toca un bloque de código que empiece el texto.
+        if (preg_match('/^(`{3,}|~{3,})[ \t]*([a-zA-Z0-9_+.\-]*)[ \t]*\n/', $md, $m) === 1) {
+            $info = strtolower((string)$m[2]);
+            $rest = (string)substr($md, strlen($m[0]));
+            $isExplicit = in_array($info, ['markdown', 'md'], true);
+            $looksDoc = preg_match('/^#{1,6}\s/m', $rest) === 1
+                || preg_match('/^(?:[-*+]\s|\|[^|\n]*\|[^|\n]*\|)/m', $rest) === 1;
+            if ($isExplicit || $looksDoc) {
+                $md = $rest;
+                $md = preg_replace('/\n+`{3,}[ \t]*$/', '', $md) ?? $md;
+                $md = preg_replace('/\n+~{3,}[ \t]*$/', '', $md) ?? $md;
+            }
+        }
+
+        // Separadores `===` → `---` (con línea en blanco delante para que sea
+        // una regla horizontal y no un título).
+        $lines = explode("\n", $md);
+        $out = [];
+        foreach ($lines as $line) {
+            if (preg_match('/^[ \t]*={3,}[ \t]*$/', $line) === 1) {
+                if ($out !== [] && trim((string)end($out)) !== '') {
+                    $out[] = '';
+                }
+                $out[] = '---';
+                continue;
+            }
+            $out[] = $line;
+        }
+
+        return trim(implode("\n", $out));
+    }
+}
+
+if (!function_exists('ai_clean_prose')) {
+    /**
+     * Saneado de un fragmento de PROSA traducido por la IA.
+     *
+     * Un fragmento de prosa no puede contener bloques de código (van aparte),
+     * así que si el modelo lo ha envuelto en vallas se quitan sin riesgo.
+     * No se usa con bloques de código reales.
+     */
+    function ai_clean_prose(?string $markdown): string
+    {
+        $md = str_replace(["\r\n", "\r"], "\n", (string)($markdown ?? ''));
+        $md = trim($md);
+        if ($md === '') {
+            return '';
+        }
+
+        // Valla de apertura (cualquiera) y su cierre.
+        if (preg_match('/^(`{3,}|~{3,})[^\n]*\n/', $md, $m) === 1) {
+            $md = (string)substr($md, strlen($m[0]));
+        }
+        $md = preg_replace('/\n?(`{3,}|~{3,})[ \t]*$/', '', $md) ?? $md;
+
+        $md = ai_strip_residues($md);
+        return trim($md);
+    }
+}
+
+if (!function_exists('ai_clean_markdown')) {
+    /**
+     * Saneado completo del Markdown devuelto por una IA: desenvuelve el
+     * fence global, equilibra los bloques de código y quita los residuos
+     * típicos de los modelos pequeños.
+     */
+    function ai_clean_markdown(?string $markdown): string
+    {
+        $md = normalize_ai_markdown((string)($markdown ?? ''));
+        if (trim($md) === '') {
+            return '';
+        }
+        $md = ai_balance_fences($md);
+        $md = ai_strip_residues($md);
+        return trim($md);
     }
 }
 
@@ -1083,16 +1282,35 @@ if (!function_exists('render_ai_markdown')) {
      */
     function render_ai_markdown(?string $markdown): string
     {
-        $normalized = normalize_ai_markdown($markdown);
+        $normalized = ai_clean_markdown($markdown);
+        if ($normalized === '') {
+            return '';
+        }
         $html = render_markdown($normalized);
 
-        // Si el modelo añadió una introducción y luego envolvió el informe en
-        // un fence ```markdown, Parsedown deja un bloque de código. Cuando ese
-        // bloque contiene encabezados Markdown, es el informe: se renderiza.
-        if (preg_match('/<pre><code class="language-(?:markdown|md)">(.*?)<\/code><\/pre>/is', $html, $m) === 1) {
-            $inner = html_entity_decode((string)$m[1], ENT_QUOTES | ENT_HTML5, 'UTF-8');
-            if (preg_match('/^#{1,6}\s/m', $inner) === 1) {
-                $html = str_replace($m[0], render_markdown($inner), $html);
+        // Red de seguridad: si aún queda un bloque de código cuyo contenido es
+        // claramente un documento Markdown, se renderiza como Markdown.
+        //  - Fence explícito ```markdown: basta con un encabezado.
+        //  - Bloque sin etiqueta: se exige un documento claro (varios
+        //    encabezados, listas/tabla y tamaño), para no tocar código real.
+        if (preg_match_all(
+            '/<pre><code(?: class="language-(markdown|md)")?>(.*?)<\/code><\/pre>/is',
+            $html,
+            $blocks,
+            PREG_SET_ORDER
+        ) > 0) {
+            foreach ($blocks as $block) {
+                $explicit = !empty($block[1]);
+                $inner = html_entity_decode((string)($block[2] ?? ''), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+                $len = function_exists('mb_strlen') ? mb_strlen($inner) : strlen($inner);
+                $headings = preg_match_all('/^#{1,6}\s/m', $inner);
+                $hasListOrTable = preg_match('/^(?:[-*+]\s|\|[^|\n]*\|[^|\n]*\|)/m', $inner) === 1;
+                $looksDoc = $explicit
+                    ? $headings >= 1
+                    : ($headings >= 2 && $len > 500 && $hasListOrTable);
+                if ($looksDoc) {
+                    $html = str_replace((string)$block[0], render_markdown($inner), $html);
+                }
             }
         }
 

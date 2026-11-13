@@ -227,6 +227,44 @@ try {
     check('split: sin pérdida de contenido', $reconstructed === preg_replace('/\s+/u', '', $probeText));
 
     // ============================================================
+    // 6 quater - Saneado del Markdown de IA y segmentos
+    // ============================================================
+    $wrapped = "```markdown\n## Snapshot\n\nTexto.\n\n```kql\nDeviceProcessEvents\n| where X == 1\n```\n\n## Fin\n```";
+    $norm = normalize_ai_markdown($wrapped);
+    check('normalize: desenvuelve el envoltorio', !str_starts_with($norm, '```markdown'));
+    check('normalize: conserva el bloque interno', substr_count($norm, '```') === 2);
+    check('normalize: el kql intacto', normalize_ai_markdown("```kql\nq\n```") === "```kql\nq\n```");
+    check('normalize: envoltorio sin cerrar', !str_starts_with(normalize_ai_markdown("```markdown\n## A\n\ntexto\n"), '```'));
+
+    $balanced = ai_balance_fences("## A\n\n```\ncodigo suelto\n\n## B\n\nprosa");
+    check('balance: quita la apertura sin cierre', substr_count($balanced, '```') === 0);
+    $okCode = "## A\n\n```kql\nq\n```\n\n## B";
+    check('balance: no toca un bloque correcto', ai_balance_fences($okCode) === $okCode);
+
+    $resid = ai_strip_residues("Aquí tienes la traducción:\n\n## T\n\nprosa\n===\nfin");
+    check('residuos: quita el prefijo', !str_contains($resid, 'Aquí tienes'));
+    check('residuos: === → ---', str_contains($resid, '---') && !str_contains($resid, '==='));
+
+    $proseWrapped = ai_clean_prose("```markdown\n## T\n\nprosa traducida\n```");
+    check('clean_prose: quita el envoltorio', !str_contains($proseWrapped, '```'));
+    check('clean_prose: conserva el texto', str_contains($proseWrapped, 'prosa traducida'));
+
+    $htmlWrapped = render_ai_markdown($wrapped);
+    check('render_ai: el documento se pinta como Markdown', str_contains($htmlWrapped, '<h2>Snapshot</h2>'), substr($htmlWrapped, 0, 120));
+    check('render_ai: el kql sigue siendo código', str_contains($htmlWrapped, 'language-kql') || str_contains($htmlWrapped, '<pre><code'));
+
+    $segments = llm_split_markdown_segments(
+        "# Titulo\n\nParrafo uno.\n\n```kql\nDeviceProcessEvents\n\n| where X == 1\n```\n\nMas prosa.",
+        1400
+    );
+    $types = array_map(static fn($s) => $s['type'], $segments);
+    check('segmentos: prosa/código/prosa', $types === ['prosa', 'codigo', 'prosa'], implode(',', $types));
+    check('segmentos: el código va byte a byte', $segments[1]['text'] === "```kql\nDeviceProcessEvents\n\n| where X == 1\n```");
+    $segJoin = '';
+    foreach ($segments as $s) { $segJoin .= $s['text']; }
+    check('segmentos: sin pérdida de contenido', preg_replace('/\s+/u', '', $segJoin) === preg_replace('/\s+/u', '', "# Titulo\n\nParrafo uno.\n\n```kql\nDeviceProcessEvents\n\n| where X == 1\n```\n\nMas prosa."));
+
+    // ============================================================
     // 7 - Constantes y API pública del módulo
     // ============================================================
     check('constante LLM_503_RETRY_DELAY', defined('LLM_503_RETRY_DELAY') && is_int(LLM_503_RETRY_DELAY));

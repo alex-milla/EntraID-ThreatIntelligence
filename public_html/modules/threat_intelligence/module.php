@@ -2192,7 +2192,7 @@ class Module_ThreatIntelligence extends BaseModule
             $notOld = ($ts !== false) && (time() - $ts) < 90 * 86400;
             if ($fresh && $notOld && trim((string)$cached['content']) !== '') {
                 $hasTranslation  = true;
-                $translationHtml = render_markdown((string)$cached['content']);
+                $translationHtml = render_ai_markdown((string)$cached['content']);
             }
         }
 

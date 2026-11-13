@@ -555,9 +555,20 @@ class Database
             chunk_index INTEGER NOT NULL,
             content TEXT,
             status TEXT NOT NULL DEFAULT 'done',
+            kind TEXT NOT NULL DEFAULT 'prosa',
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             PRIMARY KEY (article_id, chunk_index)
         )");
+
+        // Migración v0.4.6: tipo de segmento (prosa|codigo) para los bloques
+        // guardados por la versión anterior.
+        $chunkCols = [];
+        foreach ($db->query("PRAGMA table_info(ti_article_translation_chunks)") as $c) {
+            $chunkCols[$c['name']] = true;
+        }
+        if (!isset($chunkCols['kind'])) {
+            $db->exec("ALTER TABLE ti_article_translation_chunks ADD COLUMN kind TEXT NOT NULL DEFAULT 'prosa'");
+        }
 
         $db->exec("CREATE TABLE IF NOT EXISTS sync_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,

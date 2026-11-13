@@ -104,7 +104,7 @@ class Module_Llm extends BaseModule
             $res = $this->dispatch($cfg, $systemPrompt, $userPrompt, $options);
             if (!empty($res['success']) && isset($res['content'])) {
                 // HTML renderizado (Markdown seguro) para pintarlo como los artículos
-                $res['content_html'] = render_markdown((string)$res['content']);
+                $res['content_html'] = render_ai_markdown((string)$res['content']);
             }
             return $res;
         } catch (Throwable $e) {
@@ -1492,16 +1492,16 @@ class Module_Llm extends BaseModule
         return null;
     }
 
-    /** Trozos de un artículo para traducir por partes (tamaño acotado). */
-    private function articleChunks(array $a): array
+    /** Segmentos tipados (prosa/código) de un artículo para traducirlo. */
+    private function articleSegments(array $a): array
     {
         $src = $this->articleSource($a);
-        return $src !== '' ? llm_split_markdown($src, 1400) : [];
+        return $src !== '' ? llm_split_markdown_segments($src, 1400) : [];
     }
 
     /**
-     * Plan de traducción: bloques, progreso guardado y si ya está en caché.
-     * La UI lo usa para traducir bloque a bloque y mostrar el progreso.
+     * Plan de traducción: segmentos (prosa/código), progreso guardado y si ya
+     * está en caché. La UI lo usa para traducir segmento a segmento.
      */
     public function translationPlan(int $id, bool $force = false): array
     {
@@ -1511,27 +1511,49 @@ class Module_Llm extends BaseModule
         }
 
         $cached = $force ? null : $this->cachedTranslation($a);
-        $chunks = $this->articleChunks($a);
+        $segments = $this->articleSegments($a);
 
+        // Progreso guardado. Si la segmentación cambió (v0.4.5 guardaba textos
+        // planos sin tipo), se descarta para no mezclar contenidos.
         $done = [];
         try {
-            foreach (Database::fetchAll(
-                "SELECT chunk_index, content FROM ti_article_translation_chunks
-                 WHERE article_id = ? AND status = 'done' ORDER BY chunk_index",
+            $stored = Database::fetchAll(
+                "SELECT chunk_index, content, kind FROM ti_article_translation_chunks
+                 WHERE article_id = ? ORDER BY chunk_index",
                 [$id]
-            ) as $row) {
-                $done[(int)$row['chunk_index']] = (string)$row['content'];
+            );
+            $stale = false;
+            if ($stored !== []) {
+                if (count($stored) !== count($segments)) {
+                    $stale = true;
+                } else {
+                    foreach ($stored as $pos => $row) {
+                        $rowType = (string)($row['kind'] ?? '');
+                        if ($rowType !== '' && $rowType !== (string)($segments[$pos]['type'] ?? '')) {
+                            $stale = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            if ($stale) {
+                Database::query("DELETE FROM ti_article_translation_chunks WHERE article_id = ?", [$id]);
+            } else {
+                foreach ($stored as $row) {
+                    $done[(int)$row['chunk_index']] = (string)$row['content'];
+                }
             }
         } catch (Throwable $e) {
             $done = [];
         }
 
         $items = [];
-        foreach ($chunks as $index => $text) {
+        foreach ($segments as $index => $segment) {
             $items[] = [
                 'index'   => $index,
-                'chars'   => llm_str_len($text),
-                'text'    => $text,
+                'type'    => (string)$segment['type'],
+                'chars'   => llm_str_len((string)$segment['text']),
+                'text'    => (string)$segment['text'],
                 'done'    => isset($done[$index]),
                 'content' => $done[$index] ?? null,
             ];
@@ -1541,16 +1563,21 @@ class Module_Llm extends BaseModule
             'success'     => true,
             'article_id'  => $id,
             'cached'      => $cached !== null,
-            'cached_html' => $cached !== null ? render_markdown((string)$cached['content']) : null,
+            'cached_html' => $cached !== null ? render_ai_markdown((string)$cached['content']) : null,
             'total'       => count($items),
             'chunks'      => $items,
         ];
     }
 
     /**
-     * Traduce un bloque y lo persiste (permite reanudar y consultar progreso).
+     * Traduce un segmento y lo persiste.
+     *
+     * - `codigo`: no se llama a la IA; se copia literal (el KQL/comandos del
+     *   original quedan byte a byte y no se descuadran las vallas).
+     * - `prosa`: se traduce; si la respuesta trae vallas que el original no
+     *   tenía, se reintenta una vez con la instrucción estricta.
      */
-    public function translateArticleChunk(int $id, int $index, string $text, ?int $profileId = null): array
+    public function translateArticleChunk(int $id, int $index, string $text, string $type = 'prosa', ?int $profileId = null): array
     {
         $a = Database::fetchOne("SELECT * FROM ti_articles WHERE id = ?", [$id]);
         if (!$a) {
@@ -1558,6 +1585,7 @@ class Module_Llm extends BaseModule
         }
 
         $text = trim($text);
+        $type = $type === 'codigo' ? 'codigo' : 'prosa';
         if ($index < 0 || $index > 500) {
             return ['success' => false, 'error' => 'Bloque no válido'];
         }
@@ -1568,6 +1596,19 @@ class Module_Llm extends BaseModule
             return ['success' => false, 'error' => 'Bloque demasiado grande para traducir'];
         }
 
+        if ($type === 'codigo') {
+            // Copia literal: nada de IA.
+            $this->storeTranslationChunk($id, $index, $text, 'codigo');
+            return [
+                'success'      => true,
+                'index'        => $index,
+                'type'         => 'codigo',
+                'content'      => $text,
+                'content_html' => '',
+                'model'        => 'literal',
+            ];
+        }
+
         $cfg = $this->cfg($profileId);
         // La traducción ocupa del orden del original: se reserva ~1,8× y 200
         // tokens de margen, sin pasarse nunca del tope del perfil.
@@ -1575,9 +1616,9 @@ class Module_Llm extends BaseModule
 
         $system = llm_prompt(
             'llm.article.translate.system',
-            'Eres un traductor profesional especializado en ciberseguridad. Traduce al ESPAÑOL (de España) el fragmento que se te proporciona. Reglas: conserva el formato Markdown y la estructura (títulos, listas, tablas); NO traduzcas indicadores técnicos ni términos que deban permanecer literales (direcciones IP, dominios, URLs, hashes, nombres de malware/actores, comandos, código, identificadores CVE/MITRE); no añadas ni omitas información; no resumas. Devuelve ÚNICAMENTE la traducción en Markdown, sin comentarios adicionales.'
+            'Eres un traductor profesional especializado en ciberseguridad. Traduce al ESPAÑOL (de España) el fragmento que se te proporciona. Reglas: devuelve SOLO la traducción del fragmento, sin introducciones ni comentarios; NO uses vallas de código (```) ni ```markdown; conserva el formato Markdown (títulos, listas, tablas) y los acentos graves de las expresiones `código`; NO traduzcas indicadores técnicos ni términos que deban permanecer literales (direcciones IP, dominios, URLs, hashes, nombres de malware/actores, comandos, identificadores CVE/MITRE); no añadas ni omitas información; no resumas. Si el fragmento empieza a mitad de frase, tradúcelo tal cual.'
         );
-        $user = "TEXTO ORIGINAL (Markdown):\n\n{$text}";
+        $user = "FRAGMENTO A TRADUCIR (Markdown):\n\n{$text}";
 
         $res = $this->chat($system, $user, ['max_tokens' => $maxTokens], $profileId);
         if (empty($res['success'])) {
@@ -1589,25 +1630,50 @@ class Module_Llm extends BaseModule
             return ['success' => false, 'error' => 'La IA devolvió una traducción vacía'];
         }
 
-        try {
-            Database::query(
-                "INSERT INTO ti_article_translation_chunks (article_id, chunk_index, content, status, created_at)
-                 VALUES (?, ?, ?, 'done', datetime('now'))
-                 ON CONFLICT(article_id, chunk_index) DO UPDATE SET
-                    content = excluded.content, status = 'done', created_at = datetime('now')",
-                [$id, $index, $content]
+        // Si el modelo ha añadido vallas que el original no tenía, un reintento
+        // con la instrucción más estricta (se guarda lo que devuelva igualmente:
+        // el saneado al renderizar lo deja presentable).
+        $fenceCount = static fn(string $s): int => substr_count($s, '```') + substr_count($s, '~~~');
+        if ($fenceCount($content) > $fenceCount($text)) {
+            $retry = $this->chat(
+                $system,
+                $user . "\n\nIMPORTANTE: NO rodees la respuesta con ``` ni ```markdown. Empieza directamente por el texto traducido.",
+                ['max_tokens' => $maxTokens],
+                $profileId
             );
-        } catch (Throwable $e) {
-            // Si no se puede persistir el bloque, la traducción sigue siendo válida.
+            if (!empty($retry['success']) && trim((string)($retry['content'] ?? '')) !== '') {
+                $content = trim((string)$retry['content']);
+                $res = $retry;
+            }
         }
+
+        $this->storeTranslationChunk($id, $index, $content, 'prosa');
 
         return [
             'success'      => true,
             'index'        => $index,
+            'type'         => 'prosa',
             'content'      => $content,
-            'content_html' => render_markdown($content),
+            'content_html' => render_ai_markdown($content),
             'model'        => (string)($res['model'] ?? ''),
         ];
+    }
+
+    /** Guarda el contenido de un segmento (crudo) con su tipo. */
+    private function storeTranslationChunk(int $reportId, int $index, string $content, string $kind): void
+    {
+        try {
+            Database::query(
+                "INSERT INTO ti_article_translation_chunks (article_id, chunk_index, content, status, kind, created_at)
+                 VALUES (?, ?, ?, 'done', ?, datetime('now'))
+                 ON CONFLICT(article_id, chunk_index) DO UPDATE SET
+                    content = excluded.content, status = 'done', kind = excluded.kind,
+                    created_at = datetime('now')",
+                [$reportId, $index, $content, $kind]
+            );
+        } catch (Throwable $e) {
+            // Si no se puede persistir el bloque, la traducción sigue siendo válida.
+        }
     }
 
     /**
@@ -1620,7 +1686,7 @@ class Module_Llm extends BaseModule
             return ['success' => false, 'error' => 'Artículo no encontrado'];
         }
 
-        $chunks = $this->articleChunks($a);
+        $chunks = $this->articleSegments($a);
         $total = count($chunks);
         if ($total === 0) {
             return ['success' => false, 'error' => 'El artículo no tiene contenido para traducir'];
@@ -1640,12 +1706,16 @@ class Module_Llm extends BaseModule
 
         $parts = [];
         $failed = 0;
-        for ($i = 0; $i < $total; $i++) {
-            $row = $rows[$i] ?? null;
+        foreach ($chunks as $index => $segment) {
+            $row = $rows[$index] ?? null;
+            $type = (string)($segment['type'] ?? 'prosa');
             if ($row !== null && (string)$row['status'] === 'done' && trim((string)$row['content']) !== '') {
-                $parts[] = trim((string)$row['content']);
+                $text = (string)$row['content'];
+                // El código se copia literal; la prosa se sanea (vallas de
+                // envoltorio, prefijos y separadores `===`).
+                $parts[] = $type === 'codigo' ? $text : ai_clean_prose($text);
             } else {
-                $parts[] = '[bloque ' . ($i + 1) . ' sin traducir]';
+                $parts[] = '[bloque ' . ((int)$index + 1) . ' sin traducir]';
                 $failed++;
             }
         }
@@ -1673,7 +1743,7 @@ class Module_Llm extends BaseModule
         return [
             'success'        => true,
             'content'        => $content,
-            'content_html'   => render_markdown($content),
+            'content_html'   => render_ai_markdown($content),
             'cached'         => false,
             'chunks'         => $total,
             'failed_chunks'  => $failed,
@@ -1697,19 +1767,25 @@ class Module_Llm extends BaseModule
             return [
                 'success'      => true,
                 'content'      => (string)$cached['content'],
-                'content_html' => render_markdown((string)$cached['content']),
+                'content_html' => render_ai_markdown((string)$cached['content']),
                 'cached'       => true,
             ];
         }
 
-        $chunks = $this->articleChunks($a);
+        $chunks = $this->articleSegments($a);
         if ($chunks === []) {
             return ['success' => false, 'error' => 'El artículo no tiene contenido para traducir'];
         }
 
         $failed = 0;
-        foreach ($chunks as $index => $text) {
-            $res = $this->translateArticleChunk($id, (int)$index, $text, $profileId);
+        foreach ($chunks as $index => $segment) {
+            $res = $this->translateArticleChunk(
+                $id,
+                (int)$index,
+                (string)($segment['text'] ?? ''),
+                (string)($segment['type'] ?? 'prosa'),
+                $profileId
+            );
             if (empty($res['success'])) {
                 $failed++;
                 if ($failed >= 2) {
@@ -1750,6 +1826,7 @@ class Module_Llm extends BaseModule
             (int)($params['id'] ?? 0),
             (int)($input['index'] ?? -1),
             (string)($input['text'] ?? ''),
+            (string)($input['type'] ?? 'prosa'),
             $this->resolveProfile($input, 'translate_article')
         ));
     }
