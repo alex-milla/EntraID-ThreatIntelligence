@@ -133,6 +133,10 @@ class Module_Llm extends BaseModule
             return 'El servidor de ' . $who . ' está ocupado (503): el modelo se está cargando. '
                  . 'Espera 15-30 s y reinténtalo.';
         }
+        if (llm_err_is_gateway($msg) || llm_err_has_html($msg)) {
+            return 'El servidor de IA no respondió (502 Bad Gateway). Puede que el modelo esté cargando '
+                 . 'o que el relé/proxy esté caído: reintenta en 15-30 s.';
+        }
         if (llm_err_is_timeout($msg)) {
             return 'Tiempo de espera agotado con ' . $who . '. La generación es larga (modelo local): '
                  . 'reduce el tamaño de la petición o vuelve a intentarlo.';
@@ -1023,6 +1027,17 @@ class Module_Llm extends BaseModule
         $msg = '';
         $extra = [];
 
+        // Página HTML de un proxy (502/504): nunca se muestra el HTML.
+        $trimmed = ltrim($raw);
+        if (stripos($trimmed, '<!doctype') === 0 || stripos($trimmed, '<html') === 0) {
+            $title = '';
+            if (preg_match('/<title>(.*?)<\/title>/is', $raw, $tm) === 1) {
+                $title = trim(strip_tags((string)$tm[1]));
+            }
+            return 'LLM API Error (' . $code . '): el proxy devolvió una página HTML'
+                . ($title !== '' ? ' (' . $title . ')' : '') . '.';
+        }
+
         if (is_array($decoded)) {
             $err = $decoded['error'] ?? null;
             if (is_array($err)) {
@@ -1048,6 +1063,13 @@ class Module_Llm extends BaseModule
 
         if ($msg === '') {
             $msg = trim(strip_tags($raw));
+            if (strlen($msg) > 300) {
+                $msg = substr($msg, 0, 300) . '…';
+            }
+        }
+        // Nunca dejar pasar HTML en el mensaje final.
+        if (str_contains($msg, '<')) {
+            $msg = trim(preg_replace('/\s+/u', ' ', strip_tags($msg)) ?? $msg);
             if (strlen($msg) > 300) {
                 $msg = substr($msg, 0, 300) . '…';
             }

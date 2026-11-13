@@ -110,6 +110,14 @@
                 try {
                     payload = text ? JSON.parse(text) : {};
                 } catch (e) {
+                    var raw = (text || '').trim();
+                    // Página HTML de un proxy (502/504): mensaje claro, sin HTML.
+                    if (/^<!doctype/i.test(raw) || /^<html/i.test(raw)) {
+                        var errHtml = new Error('El servidor no respondió (' + res.status + '). Reintenta en unos segundos.');
+                        errHtml.httpStatus = res.status;
+                        errHtml.body = text || '';
+                        throw errHtml;
+                    }
                     var snippet = (text || '').replace(/\s+/g, ' ').trim().slice(0, 200);
                     var err = new Error('HTTP ' + res.status + (snippet ? ' · ' + snippet : ''));
                     err.httpStatus = res.status;

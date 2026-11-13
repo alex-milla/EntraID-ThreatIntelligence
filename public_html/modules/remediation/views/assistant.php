@@ -48,6 +48,8 @@ $canSavePlan = $selectedTask !== null || $planCve !== '';
                     <p class="text-[11px] text-ink-muted truncate mt-0.5"><?= e((string)($selectedTask['title'] ?? '')) ?></p>
                     <a href="<?= e($modUrl . '?tab=tasks&org=' . $selectedOrgId . '&task=' . (int)$selectedTask['id']) ?>"
                        class="inline-block mt-1 text-[11px] text-primary hover:underline">Ver tarea</a>
+                    <button type="button" id="btn-suggest"
+                            class="block mt-1 text-[11px] text-primary hover:underline text-left">Proponer datos (KB, versión, verificación)</button>
                 </div>
             <?php elseif ($cveQuery !== ''): ?>
                 <div class="mt-3 px-3 py-2 rounded-lg bg-muted/60">
@@ -176,6 +178,34 @@ $canSavePlan = $selectedTask !== null || $planCve !== '';
                     </div>
                 <?php endforeach; ?>
             <?php endif; ?>
+        </div>
+
+        <div id="suggest-panel" class="hidden border-t border-line p-3 bg-muted/40">
+            <p class="text-xs font-semibold">Datos propuestos por la IA
+                <span class="font-normal text-ink-soft">(revísalos antes de guardar; no se escribe nada sin tu confirmación)</span>
+            </p>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
+                <label class="block text-[11px] text-ink-muted">KB/parche
+                    <input type="text" id="sug-kb" autocomplete="off"
+                           class="mt-1 w-full px-2 py-1.5 rounded-lg border border-line-strong bg-surface text-xs font-mono">
+                </label>
+                <label class="block text-[11px] text-ink-muted">Versión corregida
+                    <input type="text" id="sug-version" autocomplete="off"
+                           class="mt-1 w-full px-2 py-1.5 rounded-lg border border-line-strong bg-surface text-xs font-mono">
+                </label>
+            </div>
+            <label class="block text-[11px] text-ink-muted mt-2">Notas (verificación y rollback)
+                <textarea id="sug-notes" rows="4"
+                          class="mt-1 w-full px-2 py-1.5 rounded-lg border border-line-strong bg-surface text-xs"></textarea>
+            </label>
+            <p id="sug-missing" class="text-[11px] text-amber-600 dark:text-amber-400 mt-2"></p>
+            <div class="flex items-center gap-2 mt-2">
+                <button type="button" id="sug-save"
+                        class="px-3 py-1.5 bg-brand-500 hover:bg-brand-600 text-white text-xs font-medium rounded-lg">Guardar en la tarea</button>
+                <button type="button" id="sug-cancel"
+                        class="px-3 py-1.5 border border-line text-xs rounded-lg hover:bg-muted">Cancelar</button>
+                <span id="sug-status" class="text-[11px] text-ink-soft"></span>
+            </div>
         </div>
 
         <div class="border-t border-line p-3">
@@ -386,6 +416,89 @@ $canSavePlan = $selectedTask !== null || $planCve !== '';
         }
         copyFallback(text, btn);
     });
+
+    // --- Proponer y guardar los datos que faltan de la tarea (con revisión) ---
+    var SUGGEST_URL = <?= json_encode($modUrl . '/tasks/suggest') ?>;
+    var APPLY_URL = <?= json_encode($modUrl . '/tasks/apply') ?>;
+    var TASK_NOTES = <?= json_encode((string)($selectedTask['notes'] ?? '')) ?>;
+    var sugPanel = document.getElementById('suggest-panel');
+    var sugStatus = document.getElementById('sug-status');
+
+    function setSugStatus(text) {
+        if (sugStatus) { sugStatus.textContent = text || ''; }
+    }
+
+    function suggestTaskData() {
+        if (!sugPanel) { return; }
+        sugPanel.classList.remove('hidden');
+        setSugStatus('Consultando a la IA…');
+        api('POST', SUGGEST_URL, {
+            org_id: ORG_ID,
+            task_id: TASK_ID,
+            profile_id: profileEl ? parseInt(profileEl.value || '0', 10) : 0
+        }).then(function (res) {
+            if (!res || !res.success) {
+                setSugStatus((res && res.error) ? res.error : 'No se pudieron proponer los datos.');
+                return;
+            }
+            var f = res.fields || {};
+            var kb = document.getElementById('sug-kb');
+            var ver = document.getElementById('sug-version');
+            var notes = document.getElementById('sug-notes');
+            var missing = document.getElementById('sug-missing');
+            if (kb) { kb.value = f.patch_kb || ''; }
+            if (ver) { ver.value = f.fixed_version || ''; }
+            var lines = [];
+            if (f.verification) { lines.push('Verificación: ' + f.verification); }
+            if (f.rollback) { lines.push('Rollback: ' + f.rollback); }
+            if (notes) {
+                notes.value = (TASK_NOTES ? TASK_NOTES + "\n\n" : '') + lines.join("\n");
+            }
+            if (missing) {
+                missing.textContent = (f.missing && f.missing.length)
+                    ? 'La IA no pudo confirmar: ' + f.missing.join(', ') + '.'
+                    : '';
+            }
+            setSugStatus('Revisa y guarda lo que confirmes.');
+        }).catch(function (err) {
+            setSugStatus(err && err.message ? err.message : 'Error de conexión');
+        });
+    }
+
+    function saveTaskData() {
+        var kb = document.getElementById('sug-kb');
+        var ver = document.getElementById('sug-version');
+        var notes = document.getElementById('sug-notes');
+        setSugStatus('Guardando…');
+        api('POST', APPLY_URL, {
+            org_id: ORG_ID,
+            task_id: TASK_ID,
+            patch_kb: kb ? kb.value : '',
+            fixed_version: ver ? ver.value : '',
+            notes: notes ? notes.value : ''
+        }).then(function (res) {
+            if (!res || !res.success) {
+                setSugStatus((res && res.error) ? res.error : 'No se pudo guardar.');
+                return;
+            }
+            toast(res.message || 'Datos guardados', 'success');
+            window.location.reload();
+        }).catch(function (err) {
+            setSugStatus(err && err.message ? err.message : 'Error de conexión');
+        });
+    }
+
+    var btnSuggest = document.getElementById('btn-suggest');
+    if (btnSuggest) { btnSuggest.addEventListener('click', suggestTaskData); }
+    var sugSave = document.getElementById('sug-save');
+    if (sugSave) { sugSave.addEventListener('click', saveTaskData); }
+    var sugCancel = document.getElementById('sug-cancel');
+    if (sugCancel) {
+        sugCancel.addEventListener('click', function () {
+            if (sugPanel) { sugPanel.classList.add('hidden'); }
+            setSugStatus('');
+        });
+    }
 
     sendEl.addEventListener('click', send);
     inputEl.addEventListener('keydown', function (e) {

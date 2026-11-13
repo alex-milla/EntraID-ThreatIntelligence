@@ -64,6 +64,15 @@ if (!$authOk) {
     fakeOut(401, ['error' => ['message' => 'unauthorized: Invalid API Key']]);
 }
 
+// Simula un proxy que devuelve 502 con una página HTML (para el asistente).
+if (str_contains($prompt, 'TRIGGER-502')) {
+    http_response_code(502);
+    header('Content-Type: text/html; charset=utf-8');
+    echo '<!DOCTYPE html><html lang="en-US"><head><title>502 Bad Gateway</title></head>'
+        . '<body><h1>502 Bad Gateway</h1></body></html>';
+    exit;
+}
+
 if ($method === 'GET' && $path === '/v1/models') {
     fakeOut(200, [
         'object' => 'list',
@@ -89,6 +98,23 @@ if ($method === 'POST' && $path === '/v1/chat/completions') {
     }
     if (($body['stream'] ?? null) !== false) {
         fakeOut(400, ['error' => ['message' => 'stream must be explicitly false']]);
+    }
+
+    // Asistente de remediación: datos de tarea en JSON.
+    if (str_contains($prompt, 'patch_kb') && str_contains($prompt, 'fixed_version')) {
+        fakeOut(200, [
+            'choices' => [[
+                'message'       => ['role' => 'assistant', 'content' => json_encode([
+                    'patch_kb'      => 'KB5040442',
+                    'fixed_version' => '11.0.1',
+                    'verification'  => 'Comprobar que el build es 11.0.1 en los equipos afectados.',
+                    'rollback'      => 'Desinstalar KB5040442 y reiniciar el servicio.',
+                    'missing'       => ['productos afectados'],
+                ], JSON_UNESCAPED_UNICODE)],
+                'finish_reason' => 'stop',
+            ]],
+            'usage' => ['prompt_tokens' => 30, 'completion_tokens' => 40, 'total_tokens' => 70],
+        ]);
     }
 
     // Traducción por segmentos: devuelve el texto marcado y ENVUELTO en un

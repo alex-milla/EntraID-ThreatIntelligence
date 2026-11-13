@@ -305,8 +305,18 @@ TXT,
                     . 'verificación y rollback. Mantén en inglés los términos técnicos habituales (RCE, KB, GPO, WAF, etc.). '
                     . 'No inventes versiones, KB ni URLs: si falta información, dilo. No repitas el contexto; ve al grano.',
             ],
-            'remediation.quick.1' => [
+            'remediation.taskdata.system' => [
                 'scope'       => 'remediation',
+                'scope_label' => 'Remediación',
+                'label'       => 'Asistente · datos de tarea (JSON)',
+                'description' => 'Instrucción para proponer KB, versión, verificación y rollback en JSON (revisión humana).',
+                'is_locked'   => false,
+                'default'     => 'Eres un ingeniero sénior de vulnerabilidades y gestión de parches. Devuelves SOLO un objeto JSON válido, '
+                    . 'sin texto alrededor, con estas claves: patch_kb (texto), fixed_version (texto), verification (texto), '
+                    . 'rollback (texto), missing (lista de textos). Usa "" cuando no puedas afirmar un dato con certeza y '
+                    . 'añádelo a missing. NO inventes números de KB, versiones ni URLs.',
+            ],
+            'remediation.quick.1' => [                'scope'       => 'remediation',
                 'scope_label' => 'Remediación',
                 'label'       => 'Pregunta rápida 1',
                 'description' => 'Botón de pregunta rápida del asistente de remediación.',

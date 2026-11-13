@@ -164,6 +164,18 @@ try {
     check('props: valor inválido', llm_props_ctx(['n_ctx' => 'abc']) === 0);
 
     // ============================================================
+    // 6 bis2 - Errores de proxy (502/504) y HTML
+    // ============================================================
+    check('gateway: 502', llm_err_is_gateway('LLM API Error (502): el proxy devolvió una página HTML'));
+    check('gateway: Bad Gateway', llm_err_is_gateway('502 Bad Gateway'));
+    check('gateway: 504', llm_err_is_gateway('Gateway Time-out (504)'));
+    check('gateway: 503 no es gateway', !llm_err_is_gateway('LLM API Error (503): el modelo se está cargando'));
+    check('gateway: 401 no es gateway', !llm_err_is_gateway('LLM API Error (401): unauthorized'));
+    check('html: doctype', llm_err_has_html("<!DOCTYPE html>\n<html lang=\"en\">"));
+    check('html: head/title', llm_err_has_html('<head><title>502 Bad Gateway</title></head>'));
+    check('html: texto normal no', !llm_err_has_html('LLM API Error (404): File Not Found'));
+
+    // ============================================================
     // 6 ter - Presupuesto de contexto y troceado
     // ============================================================
     check('max_tokens: manda la tarea si el perfil es 0', llm_effective_max_tokens(3000, ['max_tokens' => 0]) === 3000);

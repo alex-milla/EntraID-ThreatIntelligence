@@ -42,6 +42,8 @@ class Module_Remediation extends BaseModule
             ['method' => 'POST', 'pattern' => 'tasks/delete',  'handler' => [$this, 'deleteTask']],
             ['method' => 'POST', 'pattern' => 'tasks/import',  'handler' => [$this, 'importTasks']],
             ['method' => 'POST', 'pattern' => 'tasks/plan',    'handler' => [$this, 'savePlan']],
+            ['method' => 'POST', 'pattern' => 'tasks/suggest', 'handler' => [$this, 'suggestTaskData']],
+            ['method' => 'POST', 'pattern' => 'tasks/apply',   'handler' => [$this, 'applyTaskData']],
             ['method' => 'POST', 'pattern' => 'ask',           'handler' => [$this, 'ask']],
             ['method' => 'POST', 'pattern' => 'chats/delete',  'handler' => [$this, 'deleteChat']],
             ['method' => 'POST', 'pattern' => 'settings/save', 'handler' => [$this, 'saveSettings']],
@@ -551,7 +553,8 @@ class Module_Remediation extends BaseModule
             }
 
             $question = trim((string)($input['question'] ?? ''));
-            if ($question === '' || mb_strlen($question, 'UTF-8') > 4000) {
+            $questionLen = function_exists('mb_strlen') ? mb_strlen($question, 'UTF-8') : strlen($question);
+            if ($question === '' || $questionLen > 4000) {
                 json_response(['success' => false, 'error' => 'La pregunta está vacía o supera los 4.000 caracteres.'], 400);
             }
 
@@ -641,6 +644,194 @@ class Module_Remediation extends BaseModule
             app_log('error', 'remediation', 'Error en la consulta IA', ['error' => $e->getMessage()]);
             json_response(['success' => false, 'error' => $e->getMessage()], 500);
         }
+    }
+
+    /**
+     * Propone los datos que faltan de una tarea (KB, versión, verificación y
+     * rollback) a partir del contexto del CVE. El analista revisa antes de
+     * guardar; la IA no escribe directamente en la tarea.
+     */
+    public function suggestTaskData(array $params = []): void
+    {
+        Auth::require();
+        Csrf::validateOrFail();
+
+        try {
+            $input = json_decode((string)file_get_contents('php://input'), true);
+            if (!is_array($input)) {
+                $input = $_POST;
+            }
+
+            if (!class_exists('Module_Llm')) {
+                json_response(['success' => false, 'error' => 'El módulo de IA no está activo.'], 400);
+            }
+            $llm = new Module_Llm();
+            $profileId = (int)($input['profile_id'] ?? 0);
+            if ($profileId <= 0) {
+                $profileId = (int)(llm_task_profile('remediation_assistant') ?? 0);
+            }
+            if (!$llm->isConfigured($profileId > 0 ? $profileId : null)) {
+                json_response(['success' => false, 'error' => 'La IA no está configurada. Revisa Admin → APIs.'], 400);
+            }
+
+            $orgId = (int)($input['org_id'] ?? 0);
+            $org = $this->getOrg($orgId);
+            if ($org === null) {
+                json_response(['success' => false, 'error' => 'Selecciona una organización.'], 400);
+            }
+            $task = $this->getTask((int)($input['task_id'] ?? 0));
+            if ($task === null || (int)$task['org_id'] !== $orgId) {
+                json_response(['success' => false, 'error' => 'Selecciona una tarea de la organización.'], 400);
+            }
+            $cve = $this->cveData((string)$task['cve_id']);
+
+            $system = llm_prompt(
+                'remediation.taskdata.system',
+                'Eres un ingeniero sénior de vulnerabilidades y gestión de parches. Devuelves SOLO un objeto JSON válido, '
+                . 'sin texto alrededor, con estas claves: patch_kb (texto), fixed_version (texto), verification (texto), '
+                . 'rollback (texto), missing (lista de textos). Usa "" cuando no puedas afirmar un dato con certeza y '
+                . 'añádelo a missing. NO inventes números de KB, versiones ni URLs.'
+            );
+
+            [, $userBase] = $this->buildAiPrompt($org, $task, $cve, 'Completa los datos de la tarea.');
+            $user = $userBase . "\n\nTAREA: devuelve SOLO el JSON con patch_kb, fixed_version, verification, rollback y missing. "
+                . 'Si no puedes afirmar la KB o la versión, déjalas vacías y añádelas a missing. No inventes datos.';
+
+            $result = $llm->chat($system, $user, ['max_tokens' => 800, 'temperature' => 0.1], $profileId > 0 ? $profileId : null);
+            if (empty($result['success'])) {
+                json_response(['success' => false, 'error' => (string)($result['error'] ?? 'Error del proveedor de IA.')], 502);
+            }
+
+            $raw = trim((string)($result['content'] ?? ''));
+            $fields = $this->parseTaskDataJson($raw);
+            if ($fields === null) {
+                json_response([
+                    'success' => false,
+                    'error'   => 'La IA no devolvió datos estructurados. Prueba con otro modelo o vuelve a intentarlo.',
+                    'raw'     => truncate($raw, 1200),
+                ], 422);
+            }
+
+            app_log('info', 'remediation', 'Datos de tarea propuestos', [
+                'task' => (int)$task['id'],
+                'cve'  => (string)$task['cve_id'],
+            ]);
+
+            json_response([
+                'success' => true,
+                'fields'  => $fields,
+                'model'   => (string)($result['model'] ?? ''),
+                'raw'     => truncate($raw, 1200),
+            ]);
+        } catch (Throwable $e) {
+            app_log('error', 'remediation', 'Error proponiendo datos de tarea', ['error' => $e->getMessage()]);
+            json_response(['success' => false, 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Guarda en la tarea los datos que el analista ha revisado y confirmado.
+     */
+    public function applyTaskData(array $params = []): void
+    {
+        Auth::require();
+        Csrf::validateOrFail();
+
+        try {
+            $input = json_decode((string)file_get_contents('php://input'), true);
+            if (!is_array($input)) {
+                $input = $_POST;
+            }
+
+            $orgId = (int)($input['org_id'] ?? 0);
+            $org = $this->getOrg($orgId);
+            if ($org === null) {
+                json_response(['success' => false, 'error' => 'La organización no existe.'], 400);
+            }
+            $task = $this->getTask((int)($input['task_id'] ?? 0));
+            if ($task === null || (int)$task['org_id'] !== $orgId) {
+                json_response(['success' => false, 'error' => 'La tarea no existe.'], 404);
+            }
+
+            $patchKb = trim((string)($input['patch_kb'] ?? ''));
+            $fixedVersion = trim((string)($input['fixed_version'] ?? ''));
+            $notes = trim((string)($input['notes'] ?? ''));
+            if (strlen($patchKb) > 200 || strlen($fixedVersion) > 200 || strlen($notes) > 8000) {
+                json_response(['success' => false, 'error' => 'Los datos son demasiado largos.'], 400);
+            }
+
+            Database::update(
+                "UPDATE remediation_tasks
+                 SET patch_kb = ?, fixed_version = ?, notes = ?, updated_at = datetime('now')
+                 WHERE id = ? AND org_id = ?",
+                [
+                    $patchKb !== '' ? $patchKb : null,
+                    $fixedVersion !== '' ? $fixedVersion : null,
+                    $notes !== '' ? $notes : null,
+                    (int)$task['id'],
+                    $orgId,
+                ]
+            );
+
+            log_activity('remediation.task_data_filled', [
+                'id'  => (int)$task['id'],
+                'cve' => (string)$task['cve_id'],
+            ]);
+
+            json_response(['success' => true, 'message' => 'Datos guardados en la tarea.']);
+        } catch (Throwable $e) {
+            app_log('error', 'remediation', 'Error guardando datos de tarea', ['error' => $e->getMessage()]);
+            json_response(['success' => false, 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Interpreta el JSON de datos de tarea. Si el modelo no devuelve JSON
+     * válido, se intenta rescatar la KB y la versión del texto.
+     *
+     * @return array{patch_kb:string,fixed_version:string,verification:string,rollback:string,missing:string[]}|null
+     */
+    private function parseTaskDataJson(string $raw): ?array
+    {
+        $decoded = null;
+        if (preg_match('/\{.*\}/s', $raw, $m) === 1) {
+            $decoded = json_decode((string)$m[0], true);
+        }
+
+        if (is_array($decoded)) {
+            $str = static function (string $key) use ($decoded): string {
+                return isset($decoded[$key]) && is_scalar($decoded[$key]) ? trim((string)$decoded[$key]) : '';
+            };
+            $missing = [];
+            if (isset($decoded['missing']) && is_array($decoded['missing'])) {
+                foreach ($decoded['missing'] as $item) {
+                    if (is_scalar($item) && trim((string)$item) !== '') {
+                        $missing[] = trim((string)$item);
+                    }
+                }
+            }
+            return [
+                'patch_kb'      => $str('patch_kb'),
+                'fixed_version' => $str('fixed_version'),
+                'verification'  => $str('verification'),
+                'rollback'      => $str('rollback'),
+                'missing'       => array_slice($missing, 0, 10),
+            ];
+        }
+
+        // Rescate: al menos la KB y la versión si aparecen en el texto.
+        $patchKb = preg_match('/\bKB\d{6,8}\b/i', $raw, $kb) === 1 ? strtoupper($kb[0]) : '';
+        $version = preg_match('/\b\d+\.\d+(?:\.\d+){0,2}\b/', $raw, $ver) === 1 ? $ver[0] : '';
+        if ($patchKb === '' && $version === '') {
+            return null;
+        }
+        return [
+            'patch_kb'      => $patchKb,
+            'fixed_version' => $version,
+            'verification'  => '',
+            'rollback'      => '',
+            'missing'       => ['verificación', 'rollback'],
+        ];
     }
 
     public function savePlan(array $params = []): void
@@ -967,7 +1158,27 @@ class Module_Remediation extends BaseModule
             }
         }
 
-        $user = "CONTEXTO:\n" . implode("\n", $lines) . "\n\nPREGUNTA:\n" . $question;
+        // Datos que la aplicación NO tiene: se le dicen al modelo para que no
+        // los invente y pida la fuente.
+        $missing = [];
+        if ($task === null || trim((string)($task['patch_kb'] ?? '')) === '') {
+            $missing[] = 'KB/parche';
+        }
+        if ($task === null || trim((string)($task['fixed_version'] ?? '')) === '') {
+            $missing[] = 'versión corregida';
+        }
+        if ($cve === null || trim((string)($cve['catalog']['products_json'] ?? '')) === '') {
+            $missing[] = 'productos y versiones afectadas';
+        }
+        if ((string)($org['kind'] ?? '') !== 'tenant') {
+            $missing[] = 'exposición real en el tenant (organización manual, sin Graph)';
+        } elseif ($task !== null && (int)($task['machine_count'] ?? 0) <= 0) {
+            $missing[] = 'equipos afectados';
+        }
+        $lines[] = 'DATOS QUE NO CONSTAN: ' . ($missing !== [] ? implode(', ', $missing) : 'ninguno relevante');
+
+        $user = "CONTEXTO:\n" . implode("\n", $lines) . "\n\nPREGUNTA:\n" . $question
+            . "\n\nREGLA: si falta alguno de los datos anteriores, dilo explícitamente y explica qué boletín, KB o comando lo aporta. No inventes números, versiones ni URLs.";
 
         return [$system, $user];
     }

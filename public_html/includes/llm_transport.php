@@ -213,6 +213,37 @@ if (!function_exists('llm_err_is_timeout')) {
     }
 }
 
+if (!function_exists('llm_err_is_gateway')) {
+    /**
+     * ¿El error viene de un proxy/gateway (502/504) y no del modelo?
+     */
+    function llm_err_is_gateway(string $msg): bool
+    {
+        if (preg_match('/\(\s*50[24]\s*\)|\bhttp\s*50[24]\b|\b50[24]\b/i', $msg) === 1) {
+            return true;
+        }
+        $low = strtolower($msg);
+        foreach (['bad gateway', 'gateway time-out', 'gateway timeout', 'bad gateway error'] as $needle) {
+            if (str_contains($low, $needle)) {
+                return true;
+            }
+        }
+        return false;
+    }
+}
+
+if (!function_exists('llm_err_has_html')) {
+    /** ¿El mensaje de error trae una página HTML (proxy) en vez de un texto? */
+    function llm_err_has_html(string $msg): bool
+    {
+        $low = strtolower(ltrim($msg));
+        return str_starts_with($low, '<!doctype')
+            || str_starts_with($low, '<html')
+            || str_contains($low, '<head>')
+            || str_contains($low, '</title>');
+    }
+}
+
 if (!function_exists('llm_err_is_context_overflow')) {
     /**
      * ¿El error es que el prompt no cabe en la ventana de contexto?
