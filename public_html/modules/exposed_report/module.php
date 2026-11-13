@@ -194,10 +194,11 @@ class Module_ExposedReport extends BaseModule
         );
 
         $startedAt = microtime(true);
-        $res = $llm->chat($system, $user, [
+        $res = llm_run('exposed_report', $system, $user, [
+            'profile_id'  => $profileId,
             'max_tokens'  => $maxTokens,
             'temperature' => 0.15,
-        ], $profileId > 0 ? $profileId : null);
+        ]);
         $elapsedMs = (int)round((microtime(true) - $startedAt) * 1000);
 
         $warnings = $parsed['warnings'];
@@ -365,26 +366,43 @@ class Module_ExposedReport extends BaseModule
 
             CveReportAi::ensureReportItems($reportId);
 
-            $workerUrl = rtrim((string)APP_URL, '/') . '/cve-worker.php?ai_token=' . rawurlencode($token);
-            $started = background_request($workerUrl);
+            $useFpm = function_exists('fastcgi_finish_request');
 
             log_activity('exposed_report.analyses_queued', [
                 'report'  => $reportId,
                 'cves'    => count($queue),
                 'skipped' => count($skipped),
-                'worker'  => $started,
+                'mode'    => $useFpm ? 'fpm-inline' : 'inline',
             ]);
 
             $notice = count($queue) . ' análisis por CVE en cola (informe IA #' . $reportId . '). '
-                . ($started
+                . ($useFpm
                     ? 'Se generan en segundo plano; vuelve a generar este informe en unos minutos para adjuntarlos.'
-                    : 'El proceso se ha registrado pero el servidor no pudo lanzarlo; se ejecutará con '
-                        . '«Generar pendientes» en el módulo CVE.')
+                    : 'Se están generando ahora mismo en esta petición.')
                 . ($skipped !== []
                     ? ' ' . count($skipped) . ' CVE no están en el catálogo local y se han omitido.'
                     : '');
 
             $this->renderPage(['queueNotice' => $notice]);
+
+            // Sin petición HTTP a uno mismo: con FPM se cierra la respuesta y el
+            // trabajo continúa en este proceso; sin FPM se resuelve en línea.
+            if ($useFpm) {
+                @ignore_user_abort(true);
+                @set_time_limit(0);
+                finish_response();
+            }
+            try {
+                CveReportAi::runPending($token);
+            } catch (Throwable $e) {
+                app_log('error', 'exposed_report', 'Análisis por CVE fallido', [
+                    'report' => $reportId,
+                    'error'  => $e->getMessage(),
+                ]);
+            }
+            if ($useFpm) {
+                exit;
+            }
         } catch (Throwable $e) {
             $this->renderPage(['error' => 'No se pudieron encolar los análisis: ' . $e->getMessage()]);
         }

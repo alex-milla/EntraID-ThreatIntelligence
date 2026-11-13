@@ -747,7 +747,11 @@ class Module_Remediation extends BaseModule
         [$system, $userPrompt] = $this->buildAiPrompt($org, $task, $cve, $question);
         $userPrompt .= "\n\nSé conciso: máximo 8 viñetas o 400 palabras. No repitas el contexto.";
 
-        $result = $llm->chat($system, $userPrompt, ['max_tokens' => 900, 'temperature' => 0.2], $profileId > 0 ? $profileId : null);
+        $result = llm_run('remediation_assistant', $system, $userPrompt, [
+            'profile_id'  => $profileId,
+            'max_tokens'  => 900,
+            'temperature' => 0.2,
+        ]);
         if (empty($result['success'])) {
             return $this->failChat($chatId, (string)($result['error'] ?? 'Error del proveedor de IA.'));
         }
@@ -863,13 +867,20 @@ class Module_Remediation extends BaseModule
             $user = $userBase . "\n\nTAREA: devuelve SOLO el JSON con patch_kb, fixed_version, verification, rollback y missing. "
                 . 'Si no puedes afirmar la KB o la versión, déjalas vacías y añádelas a missing. No inventes datos.';
 
-            $result = $llm->chat($system, $user, ['max_tokens' => 800, 'temperature' => 0.1], $profileId > 0 ? $profileId : null);
+            $result = llm_run_json('remediation_assistant', $system, $user, [
+                'profile_id'  => $profileId,
+                'max_tokens'  => 800,
+                'temperature' => 0.1,
+            ]);
             if (empty($result['success'])) {
                 json_response(['success' => false, 'error' => (string)($result['error'] ?? 'Error del proveedor de IA.')], 502);
             }
 
             $raw = trim((string)($result['content'] ?? ''));
             $fields = $this->parseTaskDataJson($raw);
+            if ($fields === null && is_array($result['data'] ?? null)) {
+                $fields = $this->parseTaskDataJson((string)json_encode($result['data'], JSON_UNESCAPED_UNICODE));
+            }
             if ($fields === null) {
                 json_response([
                     'success' => false,

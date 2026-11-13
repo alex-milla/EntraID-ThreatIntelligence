@@ -599,18 +599,7 @@ class AdminController
         $editId = (int)($_GET['edit'] ?? 0);
         $editProfile = $editId ? llm_profile_get($editId) : null;
 
-        $tasks = [
-            'summarize_report' => 'Resumen de reporte',
-            'classify_iocs'    => 'Clasificar IOCs',
-            'extract_iocs'     => 'Extraer IOCs',
-            'analyze_incident' => 'Analizar incidente',
-            'analyze_tenant'   => 'Analizar tenant (Análisis IA)',
-            'analyze_article'  => 'Analizar artículo (Threat Intel)',
-            'translate_article'=> 'Traducir artículo (Threat Intel)',
-            'cve_report'       => 'Informe de CVE con IA',
-            'remediation_assistant' => 'Asistente de remediación',
-            'chat'             => 'Chat / Análisis IA',
-        ];
+        $tasks = llm_task_catalog();
         $taskProfiles = [];
         foreach (array_keys($tasks) as $t) {
             $taskProfiles[$t] = llm_task_profile($t);

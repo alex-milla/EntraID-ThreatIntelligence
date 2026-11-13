@@ -87,6 +87,11 @@ class Module_Llm extends BaseModule
 
     /**
      * Envía un prompt al proveedor LLM configurado (perfil opcional).
+     *
+     * Es la ÚNICA puerta al proveedor: aquí se garantiza el tiempo de
+     * ejecución (un modelo local puede tardar minutos), se ajusta el prompt a
+     * la ventana de contexto del modelo y se limpia el razonamiento (think).
+     * Los módulos no deben repetir estas reglas.
      */
     public function chat(string $systemPrompt, string $userPrompt, array $options = [], ?int $profileId = null): array
     {
@@ -100,15 +105,109 @@ class Module_Llm extends BaseModule
 
         $cfg = $this->cfg($profileId);
 
+        // El reloj de PHP no debe cortar la llamada antes que el timeout del
+        // perfil: era la causa de que la misma consulta funcionara desde unos
+        // módulos y fallara desde otros.
+        $this->guardRuntime((int)($options['timeout'] ?? ($cfg['timeout'] ?? 120)));
+
+        // Ventana de contexto: ningún módulo debe reventar por pedir más salida
+        // de la que cabe junto al prompt. Se ajusta aquí, en un único sitio.
+        $taskMax = (int)($options['max_tokens'] ?? 0);
+        if ($taskMax <= 0) {
+            $taskMax = (int)($cfg['max_tokens'] ?? 0);
+        }
+        if ($taskMax <= 0) {
+            $taskMax = 1200;
+        }
+        $fit = llm_window_fit(
+            $systemPrompt,
+            $userPrompt,
+            llm_effective_max_tokens($taskMax, $cfg),
+            $this->windowTokens($cfg)
+        );
+        if ($fit['clipped']) {
+            $systemPrompt = $fit['system'];
+            $userPrompt = $fit['user'];
+            $options['max_tokens'] = $fit['max_tokens'];
+        } elseif (isset($options['max_tokens'])) {
+            $options['max_tokens'] = llm_effective_max_tokens((int)$options['max_tokens'], $cfg);
+        }
+
+        $started = microtime(true);
         try {
             $res = $this->dispatch($cfg, $systemPrompt, $userPrompt, $options);
+
             if (!empty($res['success']) && isset($res['content'])) {
-                // HTML renderizado (Markdown seguro) para pintarlo como los artículos
-                $res['content_html'] = render_ai_markdown((string)$res['content']);
+                $split = llm_strip_thinking((string)$res['content']);
+                $thinking = trim((string)($res['thinking'] ?? $res['reasoning'] ?? ''));
+                if ($thinking === '' && $split['thinking'] !== '') {
+                    $thinking = $split['thinking'];
+                }
+                if ($thinking !== '') {
+                    $res['thinking'] = $thinking;
+                }
+                if ($split['content'] === '' && $thinking !== '') {
+                    // El modelo gastó toda la salida razonando: es un fallo
+                    // explicable, no una respuesta vacía sin motivo.
+                    $res = [
+                        'success' => false,
+                        'error'   => 'El modelo agotó la salida razonando y no llegó a responder. '
+                            . 'Sube el límite de salida del perfil o usa un modelo sin razonamiento.',
+                    ];
+                } else {
+                    $res['content'] = $split['content'];
+                    // HTML renderizado (Markdown seguro) para pintarlo como los artículos
+                    $res['content_html'] = render_ai_markdown((string)$res['content']);
+                }
             }
+
+            $this->logCall($cfg, $res, $options, $profileId, $fit, $started);
+
             return $res;
         } catch (Throwable $e) {
-            return ['success' => false, 'error' => $this->friendlyError($e->getMessage(), $cfg)];
+            $res = ['success' => false, 'error' => $this->friendlyError($e->getMessage(), $cfg)];
+            $this->logCall($cfg, $res, $options, $profileId, $fit, $started);
+            return $res;
+        }
+    }
+
+    /**
+     * Garantiza que PHP no corte la llamada antes que el timeout del perfil.
+     * En CLI (max_execution_time=0) no hace nada.
+     */
+    private function guardRuntime(int $timeout): void
+    {
+        @ignore_user_abort(true);
+        $timeout = max(10, $timeout);
+        $limit = $timeout + 30;
+        $current = (int)ini_get('max_execution_time');
+        if ($current > 0 && $current < $limit) {
+            @set_time_limit($limit);
+        }
+    }
+
+    /**
+     * Telemetría única de todas las llamadas a IA: mismo formato venga de
+     * donde venga la llamada, para poder diagnosticar el comportamiento
+     * errático de un servidor local.
+     */
+    private function logCall(array $cfg, array $res, array $options, ?int $profileId, array $fit, float $started): void
+    {
+        try {
+            app_log(empty($res['success']) ? 'warning' : 'info', 'llm', 'Llamada IA', [
+                'task'      => (string)($options['task'] ?? ''),
+                'profile'   => $profileId,
+                'provider'  => (string)($cfg['provider'] ?? ''),
+                'model'     => (string)($res['model'] ?? ($cfg['model'] ?? '')),
+                'ms'        => (int)round((microtime(true) - $started) * 1000),
+                'prompt_tokens_est' => (int)($fit['prompt_tokens'] ?? 0),
+                'max_tokens' => (int)($options['max_tokens'] ?? 0),
+                'clipped'   => (bool)($fit['clipped'] ?? false),
+                'ok'        => !empty($res['success']),
+                'error'     => empty($res['success']) ? (string)($res['error'] ?? '') : null,
+            ]);
+        } catch (Throwable $e) {
+            // La telemetría nunca debe romper la llamada.
         }
     }
 
@@ -233,6 +332,15 @@ class Module_Llm extends BaseModule
         }
 
         return $cache[$host] = $ctx;
+    }
+
+    /**
+     * Ventana de contexto efectiva del perfil (pública para las fachadas
+     * llm_run*): la declarada o la que publique el servidor en /props.
+     */
+    public function contextWindow(?int $profileId = null): int
+    {
+        return $this->windowTokens($this->cfg($profileId));
     }
 
     /**
@@ -414,7 +522,13 @@ class Module_Llm extends BaseModule
             throw new RuntimeException('Respuesta vacía del modelo (' . $url . ')');
         }
 
-        return ['success' => true, 'content' => $content, 'model' => $model];
+        // Razonamiento separado (DeepSeek/OpenAI-compatibles con reasoning).
+        $reasoning = (string)($response['choices'][0]['message']['reasoning_content'] ?? '');
+        $out = ['success' => true, 'content' => $content, 'model' => $model];
+        if ($reasoning !== '') {
+            $out['thinking'] = $reasoning;
+        }
+        return $out;
     }
 
     private function callAnthropic(array $cfg, string $system, string $user, array $options): array
@@ -654,7 +768,12 @@ class Module_Llm extends BaseModule
             return ['success' => false, 'error' => 'Respuesta vacía del modelo', 'raw' => $response];
         }
 
-        return ['success' => true, 'content' => $content, 'model' => $model];
+        $out = ['success' => true, 'content' => $content, 'model' => $model];
+        $thinking = trim((string)($response['message']['thinking'] ?? ''));
+        if ($thinking !== '') {
+            $out['thinking'] = $thinking;
+        }
+        return $out;
     }
 
     private function callAzure(array $cfg, string $system, string $user, array $options): array
@@ -874,8 +993,9 @@ class Module_Llm extends BaseModule
                     }
                 }
 
-                // 503 = el modelo se está cargando: un reintento con espera.
-                if ($httpCode === 503 && $attempt === 1) {
+                // 503 = el modelo se está cargando; 502/504 = proxy/relevo aún
+                // levantando el modelo local. Un reintento con espera corta.
+                if (in_array($httpCode, [502, 503, 504], true) && $attempt === 1) {
                     $wait = $this->retryDelay();
                     if ($wait > 0) {
                         sleep($wait);
@@ -913,8 +1033,9 @@ class Module_Llm extends BaseModule
                 throw new RuntimeException("Error cURL: $error");
             }
 
-            // 503 = el modelo se está cargando: un reintento con espera.
-            if ($httpCode === 503 && $attempt === 1) {
+            // 503 = el modelo se está cargando; 502/504 = proxy/relevo aún
+            // levantando el modelo local. Un reintento con espera corta.
+            if (in_array($httpCode, [502, 503, 504], true) && $attempt === 1) {
                 $wait = $this->retryDelay();
                 if ($wait > 0) {
                     sleep($wait);

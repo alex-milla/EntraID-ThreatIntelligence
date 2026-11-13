@@ -57,14 +57,25 @@ check('justo detrás de Remediación', $remediationAt !== false && $exposedAt ==
 
 $header = implode(',', ExposedReportParser::COLUMNS);
 
+// Fechas relativas a hoy: el parser avisa si DiasSinParchear no cuadra con
+// SinParchearDesde, así que un fixture con fechas fijas caduca con el tiempo.
+// A medianoche el cálculo de días es estable a cualquier hora de ejecución.
+$days1 = 64;
+$days2 = 1;
+$oldestTs = strtotime('-' . $days1 . ' days');
+$patchDate1 = date('M j, Y', $oldestTs) . ' 12:00:00 AM';
+$patchDate2 = date('M j, Y', strtotime('-' . $days2 . ' days')) . ' 12:00:00 AM';
+$expectedOldest = date('Y-m-d', $oldestTs) . ' 00:00:00';
+$expectedOldestLabel = date('d/m/Y', $oldestTs);
+
 $csv = implode("\r\n", [
     $header,
     'srv01.contoso.com,High,WindowsServer2019,203.0.113.10,12,'
         . '"[""October 2026 Security Updates"",""October 2026 Security Updates (Last updated at Nov 1, 2026)"",""November 2026 Security Updates""]",'
-        . '240,18,3,"[""CVE-2026-1111"",""CVE-2026-2222"",""CVE-2026-3333""]","Sep 8, 2026 10:00:00 PM",'
+        . '240,18,3,"[""CVE-2026-1111"",""CVE-2026-2222"",""CVE-2026-3333""]","' . $patchDate1 . '",'
         . '"October 2026 Security Updates (Last updated at Nov 1, 2026)",64,1',
     'srv02.contoso.com,Medium,WindowsServer2022,203.0.113.11,2,'
-        . '"[""November 2026 Security Updates"",""""]",30,1,0,"[]","Nov 10, 2026 6:30:00 PM",'
+        . '"[""November 2026 Security Updates"",""""]",30,1,0,"[]","' . $patchDate2 . '",'
         . '"November 2026 Security Updates",1,0',
     '',
 ]);
@@ -79,9 +90,9 @@ check('csv: con exploit', (int)$out['stats']['with_exploit'] === 1);
 check('csv: CVEs totales', (int)$out['stats']['cves_total'] === 270);
 check('csv: críticos totales', (int)$out['stats']['critical_total'] === 19);
 check('csv: días máximos', (int)$out['stats']['max_days'] === 64);
-check('csv: fecha más antigua', ($out['stats']['oldest'] ?? '') === '2026-09-08 22:00:00',
+check('csv: fecha más antigua', ($out['stats']['oldest'] ?? '') === $expectedOldest,
     (string)($out['stats']['oldest'] ?? ''));
-check('csv: fecha legible', ($out['stats']['oldest_label'] ?? '') === '08/09/2026');
+check('csv: fecha legible', ($out['stats']['oldest_label'] ?? '') === $expectedOldestLabel);
 
 $first = $out['rows'][0] ?? [];
 check('csv: dispositivo', ($first['device'] ?? '') === 'srv01.contoso.com');
@@ -89,7 +100,7 @@ check('csv: exposición', ($first['exposure'] ?? '') === 'High');
 check('csv: KBs enteros', ($first['kbs'] ?? null) === 12);
 check('csv: CVEs con exploit', ($first['exploit_cves'] ?? []) === ['CVE-2026-1111', 'CVE-2026-2222', 'CVE-2026-3333']);
 check('csv: TieneExploit booleano', ($first['has_exploit'] ?? null) === true);
-check('csv: fecha ISO', ($first['since'] ?? '') === '2026-09-08 22:00:00');
+check('csv: fecha ISO', ($first['since'] ?? '') === $expectedOldest);
 check('csv: paquetes deduplicados', ($first['packages'] ?? []) === ['October 2026 Security Updates', 'November 2026 Security Updates'],
     json_encode($first['packages'] ?? []));
 check('csv: paquete más antiguo limpio', ($first['oldest_package'] ?? '') === 'October 2026 Security Updates');
@@ -320,10 +331,12 @@ try {
 } finally {
     if ($seeded) {
         try {
-            CveDatabase::query("DELETE FROM cve_catalog WHERE cve_id = ?", [$testCve]);
+            // Los hijos primero: si cve_catalog tiene FK desde estas tablas,
+            // borrarlo antes aborta la limpieza y deja datos para la próxima.
+            CveDatabase::query("DELETE FROM cve_exploit WHERE cve_id = ?", [$testCve]);
             CveDatabase::query("DELETE FROM cve_epss WHERE cve_id = ?", [$testCve]);
             CveDatabase::query("DELETE FROM cve_kev WHERE cve_id = ?", [$testCve]);
-            CveDatabase::query("DELETE FROM cve_exploit WHERE cve_id = ?", [$testCve]);
+            CveDatabase::query("DELETE FROM cve_catalog WHERE cve_id = ?", [$testCve]);
         } catch (Throwable $e) {
             // nada que limpiar
         }

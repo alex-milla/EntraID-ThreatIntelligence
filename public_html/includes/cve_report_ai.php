@@ -780,13 +780,11 @@ final class CveReportAi
         $started = microtime(true);
 
         try {
-            $llm = new Module_Llm();
-            $result = $llm->chat(
-                $system,
-                $prompt,
-                ['max_tokens' => $maxTokens, 'temperature' => 0.1],
-                $profileId
-            );
+            $result = llm_run('cve_report', $system, $prompt, [
+                'profile_id'  => $profileId,
+                'max_tokens'  => $maxTokens,
+                'temperature' => 0.1,
+            ]);
         } catch (Throwable $e) {
             app_log('warning', 'cve_ai', 'No se pudieron traducir los textos', ['error' => $e->getMessage()]);
             return;
@@ -1559,9 +1557,7 @@ TXT);
                 if (!class_exists('Module_Llm')) {
                     throw new RuntimeException('El módulo de IA no está activo. Actívalo en Admin → Módulos.');
                 }
-                if ($llm === null) {
-                    $llm = new Module_Llm();
-                }
+                $llm = $llm ?? new Module_Llm();
                 if (!$llm->isConfigured($profileId > 0 ? $profileId : null)) {
                     throw new RuntimeException('La IA no está configurada. Revisa Admin → APIs.');
                 }
@@ -1579,12 +1575,11 @@ TXT);
                     ? $defender['cves'][$cveId]
                     : null;
 
-                $result = $llm->chat(
-                    self::itemSystemPrompt(),
-                    self::itemPrompt($item, $defenderCve, $tags, $groupName),
-                    ['max_tokens' => 1100, 'temperature' => 0.2],
-                    $profileId > 0 ? $profileId : null
-                );
+                $result = llm_run('cve_report', self::itemSystemPrompt(), self::itemPrompt($item, $defenderCve, $tags, $groupName), [
+                    'profile_id'  => $profileId,
+                    'max_tokens'  => 1100,
+                    'temperature' => 0.2,
+                ]);
                 if (empty($result['success'])) {
                     throw new RuntimeException((string)($result['error'] ?? 'Error desconocido del proveedor de IA.'));
                 }
@@ -1832,13 +1827,11 @@ TXT);
                             $defender = $decodedDefender;
                         }
                     }
-                    $llm = new Module_Llm();
-                    $result = $llm->chat(
-                        self::systemPrompt(),
-                        self::userPrompt($items, $defender),
-                        ['max_tokens' => 1200, 'temperature' => 0.2],
-                        $profileId > 0 ? $profileId : null
-                    );
+                    $result = llm_run('cve_report', self::systemPrompt(), self::userPrompt($items, $defender), [
+                        'profile_id'  => $profileId,
+                        'max_tokens'  => 1200,
+                        'temperature' => 0.2,
+                    ]);
                     if (!empty($result['success'])) {
                         $aiText = trim((string)($result['content'] ?? ''));
                         $model = (string)($result['model'] ?? '');

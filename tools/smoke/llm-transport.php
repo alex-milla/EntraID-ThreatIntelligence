@@ -315,6 +315,58 @@ try {
     check('Module_Llm::listModels existe', method_exists('Module_Llm', 'listModels'));
     check('Module_Llm::verifyOllama existe', method_exists('Module_Llm', 'verifyOllama'));
     check('Module_Llm::testConnection existe', method_exists('Module_Llm', 'testConnection'));
+    check('Module_Llm::contextWindow existe', method_exists('Module_Llm', 'contextWindow'));
+
+    // ============================================================
+    // 8 - Razonamiento (think) y JSON de los modelos locales
+    // ============================================================
+    $tOpen = '<' . 'think>';
+    $tClose = '<' . '/think>';
+    $think = llm_strip_thinking($tOpen . "\nrazono paso a paso\n" . $tClose . "\n\n## Informe\n\nTexto final.");
+    check('think: separa el razonamiento', $think['thinking'] === 'razono paso a paso', $think['thinking']);
+    check('think: deja el contenido limpio', $think['content'] === "## Informe\n\nTexto final.", $think['content']);
+    $thinkOpen = llm_strip_thinking($tOpen . "sin cerrar\nmás razonamiento");
+    check('think: bloque sin cerrar se descarta', $thinkOpen['content'] === '' && $thinkOpen['thinking'] !== '');
+    check('think: texto normal intacto', llm_strip_thinking('Solo respuesta')['content'] === 'Solo respuesta');
+    check('think: sin etiquetas no inventa razonamiento', llm_strip_thinking('Solo respuesta')['thinking'] === '');
+
+    $jsonPlain = llm_extract_json('{"a":1,"b":[1,2]}');
+    check('json: objeto directo', $jsonPlain['found'] && $jsonPlain['data']['a'] === 1);
+    $jsonFence = llm_extract_json("Aquí tienes:\n```json\n{\"veredicto\":\"ataque\"}\n```\nFin.");
+    check('json: tolera vallas y texto', $jsonFence['found'] && $jsonFence['data']['veredicto'] === 'ataque');
+    $jsonNested = llm_extract_json('bla {"a":{"b":[{"c":"}"}]}} bla');
+    check('json: objeto anidado equilibrado', $jsonNested['found'] && $jsonNested['data']['a']['b'][0]['c'] === '}');
+    check('json: lista', llm_extract_json('[1,2,3]')['data'] === [1, 2, 3]);
+    check('json: sin JSON', !llm_extract_json('No hay datos estructurados')['found']);
+    check('json: vacío', !llm_extract_json('   ')['found']);
+
+    // ============================================================
+    // 9 - Ajuste universal a la ventana del modelo
+    // ============================================================
+    $fitNoWindow = llm_window_fit('sys', 'user', 500, 0);
+    check('ventana: sin ventana no recorta', !$fitNoWindow['clipped'] && $fitNoWindow['max_tokens'] === 500);
+    check('ventana: estima el prompt', $fitNoWindow['prompt_tokens'] > 0);
+
+    $fitOut = llm_window_fit('sys', str_repeat('x', 200), 2000, 1000);
+    check('ventana: recorta la salida', $fitOut['clipped'] && $fitOut['max_tokens'] < 2000, 'max=' . $fitOut['max_tokens']);
+    check('ventana: prompt + salida cabe', $fitOut['prompt_tokens'] + $fitOut['max_tokens'] <= 1000);
+    check('ventana: avisa del ajuste', $fitOut['notice'] !== '');
+
+    $fitBody = llm_window_fit('sys', str_repeat('palabra ', 2000), 800, 600);
+    check('ventana: recorta el cuerpo', $fitBody['clipped'] && llm_str_len($fitBody['user']) < 8000, 'len=' . llm_str_len($fitBody['user']));
+    check('ventana: marca el recorte en el texto', str_contains($fitBody['user'], 'contexto recortado'));
+    check('ventana: el system no se toca', $fitBody['system'] === 'sys');
+
+    // ============================================================
+    // 10 - Fachadas comunes (llm_run / llm_run_json / llm_run_detached)
+    // ============================================================
+    check('fachada: llm_run existe', function_exists('llm_run'));
+    check('fachada: llm_run_json existe', function_exists('llm_run_json'));
+    check('fachada: llm_run_detached existe', function_exists('llm_run_detached'));
+    check('fachada: finish_response existe', function_exists('finish_response'));
+    check('tareas: catálogo incluye triaje', array_key_exists('incident_triage', llm_task_catalog()));
+    check('tareas: catálogo incluye equipos expuestos', array_key_exists('exposed_report', llm_task_catalog()));
+    check('tareas: catálogo incluye asistente', array_key_exists('remediation_assistant', llm_task_catalog()));
 } catch (Throwable $e) {
     check('excepción inesperada: ' . $e->getMessage(), false, $e->getFile() . ':' . $e->getLine());
 }

@@ -51,6 +51,25 @@ if (!function_exists('json_response')) {
     }
 }
 
+if (!function_exists('finish_response')) {
+    /**
+     * Cierra la respuesta al cliente sin terminar el script: el trabajo pesado
+     * puede seguir en este mismo proceso (patrón de cve-worker.php). Con FPM
+     * se usa fastcgi_finish_request(); sin FPM se vacían los búferes.
+     */
+    function finish_response(): void
+    {
+        if (function_exists('fastcgi_finish_request')) {
+            fastcgi_finish_request();
+            return;
+        }
+        while (ob_get_level() > 0) {
+            @ob_end_flush();
+        }
+        @flush();
+    }
+}
+
 if (!function_exists('json_response_continue')) {
     /**
      * Envía una respuesta JSON y **cierra la respuesta al cliente** sin
@@ -70,14 +89,7 @@ if (!function_exists('json_response_continue')) {
         );
         echo $json === false ? '{"success":false,"error":"No se pudo serializar la respuesta"}' : $json;
 
-        if (function_exists('fastcgi_finish_request')) {
-            fastcgi_finish_request();
-            return;
-        }
-        while (ob_get_level() > 0) {
-            @ob_end_flush();
-        }
-        @flush();
+        finish_response();
     }
 }
 
@@ -915,6 +927,194 @@ if (!function_exists('llm_task_profile')) {
     {
         $id = (int)(setting_get('llm_task_' . $task) ?? 0);
         return $id > 0 ? $id : null;
+    }
+}
+
+if (!function_exists('llm_task_catalog')) {
+    /**
+     * Tareas con perfil de IA asignable (Admin → APIs → Modelo por tarea).
+     * Es la única lista: la usa la pantalla de administración y las fachadas
+     * llm_run y llm_run_json para resolver el perfil.
+     *
+     * @return array<string,string> clave => etiqueta
+     */
+    function llm_task_catalog(): array
+    {
+        return [
+            'summarize_report'      => 'Resumen de reporte',
+            'classify_iocs'         => 'Clasificar IOCs',
+            'extract_iocs'          => 'Extraer IOCs',
+            'analyze_incident'      => 'Analizar incidente',
+            'analyze_tenant'        => 'Analizar tenant (Análisis IA)',
+            'analyze_article'       => 'Analizar artículo (Threat Intel)',
+            'translate_article'     => 'Traducir artículo (Threat Intel)',
+            'cve_report'            => 'Informe de CVE con IA',
+            'remediation_assistant' => 'Asistente de remediación',
+            'incident_triage'       => 'Triaje de incidentes (Incident Story)',
+            'exposed_report'        => 'Informe de equipos expuestos',
+            'chat'                  => 'Chat / Análisis IA',
+        ];
+    }
+}
+
+if (!function_exists('llm_run')) {
+    /**
+     * Puerta de entrada única a la IA.
+     *
+     * Resuelve el perfil (perfil indicado → tarea → predeterminado), ajusta el
+     * prompt a la ventana del modelo y llama a Module_Llm::chat(), que ya
+     * garantiza el tiempo de ejecución y limpia el razonamiento.
+     *
+     * `$userOrParts` admite un string o un array de bloques con prioridad
+     * (['text'=>string,'priority'=>int,'min'=>int]) como llm_fit_parts.
+     *
+     * @param string|array $userOrParts
+     * @return array{success:bool,content?:string,content_html?:string,model?:string,profile_id?:int|null,clipped?:bool,notice?:string,elapsed_ms?:int,error?:string}
+     */
+    function llm_run(string $task, string $system, string|array $userOrParts, array $options = []): array
+    {
+        $started = microtime(true);
+
+        $profileId = (int)($options['profile_id'] ?? 0);
+        if ($profileId <= 0) {
+            $profileId = (int)(llm_task_profile($task) ?? 0);
+        }
+        $useProfile = $profileId > 0 ? $profileId : null;
+
+        if (!class_exists('Module_Llm')) {
+            return ['success' => false, 'error' => 'El módulo de IA no está activo. Actívalo en Admin → Módulos.'];
+        }
+        $llm = new Module_Llm();
+        if (!$llm->isConfigured($useProfile)) {
+            return ['success' => false, 'error' => 'La IA no está configurada. Revisa Admin → APIs.'];
+        }
+
+        $cfg = llm_config($useProfile);
+        $taskMax = (int)($options['max_tokens'] ?? 0);
+        if ($taskMax <= 0) {
+            $taskMax = (int)($cfg['max_tokens'] ?? 0);
+        }
+        if ($taskMax <= 0) {
+            $taskMax = 1200;
+        }
+        $taskMax = llm_effective_max_tokens($taskMax, $cfg);
+
+        $window = (int)($cfg['context_tokens'] ?? 0);
+        if ($window <= 0) {
+            // Sin ventana declarada: se pregunta al servidor (llama.cpp /props).
+            $window = $llm->contextWindow($useProfile);
+        }
+
+        $clipped = false;
+        $notice = '';
+        if (is_array($userOrParts)) {
+            $fit = llm_fit_parts($userOrParts, $taskMax, $window);
+            $user = implode("\n\n", array_filter($fit['parts'], static fn($v) => $v !== ''));
+            $maxTokens = $taskMax;
+            $clipped = (bool)($fit['clipped'] ?? false);
+            $notice = (string)($fit['note'] ?? '');
+        } else {
+            $fit = llm_window_fit($system, (string)$userOrParts, $taskMax, $window);
+            $user = $fit['user'];
+            $maxTokens = $fit['max_tokens'];
+            $clipped = $fit['clipped'];
+            $notice = $fit['notice'];
+        }
+
+        $chatOptions = [
+            'max_tokens'  => $maxTokens,
+            'temperature' => $options['temperature'] ?? 0.2,
+            'task'        => $task,
+        ];
+        if (isset($options['timeout'])) {
+            $chatOptions['timeout'] = (int)$options['timeout'];
+        }
+
+        $res = $llm->chat($system, $user, $chatOptions, $useProfile);
+
+        $res['profile_id'] = $useProfile;
+        $res['clipped'] = $clipped;
+        if ($notice !== '') {
+            $res['notice'] = trim((string)($res['notice'] ?? '') . ' ' . $notice);
+        }
+        $res['elapsed_ms'] = (int)round((microtime(true) - $started) * 1000);
+
+        return $res;
+    }
+}
+
+if (!function_exists('llm_run_json')) {
+    /**
+     * Como llm_run(), pero devuelve `data` ya decodificado (objeto o lista).
+     * Tolera vallas, texto envolvente y `…`; si el modelo no devuelve JSON
+     * válido, hace un único reintento de reparación.
+     *
+     * @param string|array $userOrParts
+     */
+    function llm_run_json(string $task, string $system, string|array $userOrParts, array $options = []): array
+    {
+        $res = llm_run($task, $system, $userOrParts, $options);
+        if (empty($res['success'])) {
+            return $res;
+        }
+
+        $parsed = llm_extract_json((string)($res['content'] ?? ''));
+        if ($parsed['found']) {
+            $res['data'] = $parsed['data'];
+            return $res;
+        }
+
+        $raw = (string)($res['content'] ?? '');
+        $retry = llm_run(
+            $task,
+            $system . ' Responde SOLO con JSON válido: sin texto alrededor ni vallas Markdown.',
+            "Devuelve el mismo contenido como JSON válido. Si no hay datos, responde {}.\n\n"
+                . llm_str_cut($raw, 6000),
+            array_merge($options, ['temperature' => 0.0])
+        );
+        if (!empty($retry['success'])) {
+            $parsed2 = llm_extract_json((string)($retry['content'] ?? ''));
+            if ($parsed2['found']) {
+                $retry['data'] = $parsed2['data'];
+                $retry['repaired'] = true;
+                return $retry;
+            }
+        }
+
+        $res['data'] = null;
+        $res['json_error'] = 'La IA no devolvió JSON válido.';
+        return $res;
+    }
+}
+
+if (!function_exists('llm_run_detached')) {
+    /**
+     * Ejecuta un trabajo largo sin que el navegador espere.
+     *
+     * Con PHP-FPM: responde 202, cierra la conexión y sigue en ESTE proceso
+     * (patrón de cve-worker.php), sin peticiones HTTP a uno mismo. Sin FPM:
+     * ejecuta en línea, como el análisis por CVE.
+     *
+     * @param callable():void $job
+     */
+    function llm_run_detached(callable $job, array $ack = ['success' => true, 'pending' => true], int $status = 202): void
+    {
+        if (function_exists('fastcgi_finish_request')) {
+            @ignore_user_abort(true);
+            @set_time_limit(0);
+            release_session_lock();
+            if (function_exists('json_response_continue')) {
+                json_response_continue($ack, $status);
+            }
+            try {
+                $job();
+            } catch (Throwable $e) {
+                app_log('error', 'llm', 'Trabajo en segundo plano fallido', ['error' => $e->getMessage()]);
+            }
+            exit;
+        }
+
+        $job();
     }
 }
 

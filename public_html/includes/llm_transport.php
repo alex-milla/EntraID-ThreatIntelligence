@@ -791,3 +791,175 @@ if (!function_exists('llm_fit_parts')) {
         ];
     }
 }
+
+if (!function_exists('llm_strip_thinking')) {
+    /**
+     * Separa el bloque de razonamiento del texto final.
+     *
+     * Los modelos locales (Qwen, DeepSeek, LFM, gpt-oss…) emiten el
+     * razonamiento dentro de `content` como `…` o `<thinking>…</thinking>`.
+     * El usuario no debe verlo y, si el modelo se queda sin tokens mientras
+     * razona, `content` llega vacío: hay que poder detectarlo.
+     *
+     * @return array{content:string,thinking:string}
+     */
+    function llm_strip_thinking(string $text): array
+    {
+        $thinking = '';
+        $clean = $text;
+
+        // Pares completos (varias vueltas de razonamiento).
+        if (preg_match_all('/<think(?:ing)?>\s*(.*?)\s*<\/think(?:ing)?>/is', $clean, $m) && !empty($m[1])) {
+            $thinking = trim(implode("\n\n", $m[1]));
+            $clean = preg_replace('/<think(?:ing)?>.*?<\/think(?:ing)?>/is', '', $clean) ?? $clean;
+        }
+
+        // Bloque abierto sin cerrar (el modelo agotó max_tokens razonando).
+        if (preg_match('/<think(?:ing)?>\s*(.*)$/is', $clean, $m)) {
+            $tail = trim((string)($m[1] ?? ''));
+            if ($tail !== '') {
+                $thinking = trim($thinking . "\n\n" . $tail);
+            }
+            $clean = preg_replace('/<think(?:ing)?>.*$/is', '', $clean) ?? $clean;
+        }
+
+        return ['content' => trim($clean), 'thinking' => $thinking];
+    }
+}
+
+if (!function_exists('llm_extract_json')) {
+    /**
+     * Extrae el primer objeto/lista JSON válido de una respuesta de modelo.
+     * Tolera vallas Markdown, texto envolvente y razonamiento previo.
+     *
+     * @return array{data:mixed,found:bool}
+     */
+    function llm_extract_json(string $text): array
+    {
+        $s = trim($text);
+        if ($s === '') {
+            return ['data' => null, 'found' => false];
+        }
+
+        // Vallas ```json … ``` (y variantes sin lenguaje).
+        if (preg_match('/```(?:json|JSON)?\s*(.*?)```/s', $s, $m)) {
+            $decoded = json_decode(trim((string)$m[1]), true);
+            if (json_last_error() === JSON_ERROR_NONE) {
+                return ['data' => $decoded, 'found' => true];
+            }
+        }
+
+        $decoded = json_decode($s, true);
+        if (json_last_error() === JSON_ERROR_NONE) {
+            return ['data' => $decoded, 'found' => true];
+        }
+
+        // Primer bloque equilibrado que empiece por { o [.
+        $len = strlen($s);
+        for ($i = 0; $i < $len; $i++) {
+            $open = $s[$i];
+            if ($open !== '{' && $open !== '[') {
+                continue;
+            }
+            $close = $open === '{' ? '}' : ']';
+            $depth = 0;
+            $inString = false;
+            $escaped = false;
+            for ($j = $i; $j < $len; $j++) {
+                $c = $s[$j];
+                if ($inString) {
+                    if ($escaped) {
+                        $escaped = false;
+                    } elseif ($c === '\\') {
+                        $escaped = true;
+                    } elseif ($c === '"') {
+                        $inString = false;
+                    }
+                    continue;
+                }
+                if ($c === '"') {
+                    $inString = true;
+                    continue;
+                }
+                if ($c === $open) {
+                    $depth++;
+                    continue;
+                }
+                if ($c === $close) {
+                    $depth--;
+                    if ($depth === 0) {
+                        $decoded = json_decode(substr($s, $i, $j - $i + 1), true);
+                        if (json_last_error() === JSON_ERROR_NONE) {
+                            return ['data' => $decoded, 'found' => true];
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+
+        return ['data' => null, 'found' => false];
+    }
+}
+
+if (!function_exists('llm_window_fit')) {
+    /**
+     * Ajusta system+user a la ventana del modelo.
+     *
+     * Un servidor local rechaza la petición entera (HTTP 400) si
+     * prompt + max_tokens > n_ctx, aunque la respuesta real fuera corta. Aquí
+     * se recorta primero la salida y, si aún no cabe, el cuerpo del prompt.
+     *
+     * @return array{system:string,user:string,max_tokens:int,clipped:bool,notice:string,prompt_tokens:int,window:int}
+     */
+    function llm_window_fit(string $system, string $user, int $maxTokens, int $window, int $reserve = 64): array
+    {
+        $maxTokens = max(1, $maxTokens);
+        $out = [
+            'system'        => $system,
+            'user'          => $user,
+            'max_tokens'    => $maxTokens,
+            'clipped'       => false,
+            'notice'        => '',
+            'prompt_tokens' => 0,
+            'window'        => $window,
+        ];
+
+        $promptTokens = llm_estimate_tokens($system . "\n\n" . $user);
+        if ($window <= 0) {
+            $out['prompt_tokens'] = $promptTokens;
+            return $out;
+        }
+
+        $budget = max(64, $window - max(0, $reserve));
+        $minOut = min($maxTokens, 256);
+
+        // 1) La salida se queda con el hueco real que deja el prompt.
+        $maxOut = max($minOut, $budget - $promptTokens);
+        if ($maxOut < $maxTokens) {
+            $out['max_tokens'] = $maxOut;
+            $out['clipped'] = true;
+        }
+
+        // 2) Si aun así no cabe, se recorta el cuerpo (no la instrucción).
+        if ($promptTokens + $out['max_tokens'] > $budget) {
+            $allowedPrompt = max(64, $budget - $out['max_tokens']);
+            $allowedChars = (int)floor($allowedPrompt * 3.6 / 1.10);
+            if (llm_str_len($user) > $allowedChars) {
+                $out['user'] = rtrim(llm_str_cut($user, $allowedChars))
+                    . "\n\n[contexto recortado para no exceder la ventana del modelo]";
+                $out['clipped'] = true;
+                $promptTokens = llm_estimate_tokens($system . "\n\n" . $out['user']);
+            }
+        }
+
+        if ($out['clipped']) {
+            $out['notice'] = 'Ajustado a la ventana del modelo ('
+                . number_format($window, 0, ',', '.') . ' tokens): salida '
+                . number_format($out['max_tokens'], 0, ',', '.') . ' tokens.';
+        }
+
+        $out['prompt_tokens'] = $promptTokens;
+        return $out;
+    }
+}

@@ -569,14 +569,17 @@ class Module_IncidentStory extends BaseModule
         $userPrompt = "CASO ANONIMIZADO (JSON):\n" . $payload
             . "\n\nTAREA: Analiza esta incidencia y devuelve únicamente el JSON indicado.";
 
-        $res = $llm->chat($system . ' ' . $format, $userPrompt, ['max_tokens' => 2500], $profileId);
+        $res = llm_run_json('incident_triage', $system . ' ' . $format, $userPrompt, [
+            'profile_id'  => $profileId ?? 0,
+            'max_tokens'  => 2500,
+        ]);
         $baseCaso = base_url('modules/incident_story/case/' . (int)$case['id']);
         if (empty($res['success'])) {
             redirect($baseCaso . '?triage_error=' . rawurlencode(self::clip((string)($res['error'] ?? 'error desconocido'), 500)) . '#triaje');
         }
 
         $rawContent = (string)($res['content'] ?? '');
-        $parsed = self::parseAiJson($rawContent);
+        $parsed = is_array($res['data'] ?? null) ? $res['data'] : self::parseAiJson($rawContent);
         if ($parsed === null) {
             $parsed = [
                 'veredicto_asistido' => null,
