@@ -78,6 +78,32 @@ if ($cmd === 'chat-messages') {
     exit(0);
 }
 
+if ($cmd === 'seed-chat') {
+    $orgId = (int)($argv[2] ?? 0);
+    $taskId = (int)($argv[3] ?? 0);
+    $status = (string)($argv[4] ?? 'pending');
+    if ($orgId <= 0 || $taskId <= 0) {
+        fwrite(STDERR, "Uso: seed-chat <org_id> <task_id> <pending|running>\n");
+        exit(2);
+    }
+    $chatId = Database::insert(
+        "INSERT INTO remediation_chats (org_id, user_id, context_type, context_ref, title, status)
+         VALUES (?, 1, 'task', ?, ?, ?)",
+        [$orgId, (string)$taskId, 'E2E chat colgado', $status]
+    );
+    Database::insert(
+        "INSERT INTO remediation_messages (chat_id, role, content) VALUES (?, 'user', '¿Cómo aplico el parche?')",
+        [$chatId]
+    );
+    // Envejecer la fila para que la app la considere colgada (> 10 min).
+    Database::update(
+        "UPDATE remediation_chats SET updated_at = datetime('now', '-20 minutes') WHERE id = ?",
+        [$chatId]
+    );
+    echo json_encode(['chat_id' => $chatId, 'status' => $status], JSON_UNESCAPED_UNICODE);
+    exit(0);
+}
+
 if ($cmd === 'cleanup') {
     $orgId = (int)($argv[2] ?? 0);
     if ($orgId > 0) {

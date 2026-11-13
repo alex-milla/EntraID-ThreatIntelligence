@@ -169,13 +169,20 @@ try {
     Check 'E2E ask: devuelve chat_id' ($chatId -gt 0) "chat=$chatId"
 
     $tok = Probe $remProbe @('chat-token', "$chatId")
-    Check 'E2E ask: token y estado pendiente' ([string]$tok.token -ne '' -and [string]$tok.status -eq 'pending') "status=$($tok.status)"
+    # El worker puede haber terminado ya (es rápido): se acepta pending/running/done.
+    Check 'E2E ask: estado inicial coherente' (@('pending', 'running', 'done') -contains [string]$tok.status) "status=$($tok.status)"
 
-    # Lanza el worker (como haría background_request) y espera el resultado.
-    $workerUrl = "$base/remediation-worker.php?token=$([uri]::EscapeDataString([string]$tok.token))"
-    $null = Invoke-WebRequest -Uri $workerUrl -UseBasicParsing -TimeoutSec 90
-    $done = WaitChatStatus -ChatId $chatId -Want 'done'
-    Check 'E2E ask: termina en done' ([string]$done.status -eq 'done') "status=$($done.status) error=$($done.error)"
+    # El worker lo debe lanzar la propia aplicación (background_request).
+    # NO se llama a mano: así se detecta un fallo de URL o de permisos.
+    $done = WaitChatStatus -ChatId $chatId -Want 'done' -Seconds 40
+    Check 'E2E ask: termina en done (worker automático)' ([string]$done.status -eq 'done') "status=$($done.status) error=$($done.error)"
+
+    $logText = ''
+    if (Test-Path (Join-Path $storage 'app.log')) {
+        $logText = Get-Content (Join-Path $storage 'app.log') -Raw
+    }
+    Check 'E2E ask: URL del worker es la del fichero raíz' ($logText -match '"worker":"[^"]*/remediation-worker\.php"') 'sin URL correcta en app.log'
+    Check 'E2E ask: la URL no pasa por index.php' (-not ($logText -match '"worker":"[^"]*/index\.php/remediation-worker\.php"'))
 
     $msgs = Probe $remProbe @('chat-messages', "$chatId")
     $assistant = @($msgs.messages | Where-Object { $_.role -eq 'assistant' })
@@ -189,12 +196,19 @@ try {
     $a502 = $r502.Content | ConvertFrom-Json
     Check 'E2E 502: encola' ($a502.success -eq $true -and $a502.pending -eq $true) ($a502.error)
     $chat502 = [int]$a502.chat_id
-    $tok502 = Probe $remProbe @('chat-token', "$chat502")
-    $null = Invoke-WebRequest -Uri "$base/remediation-worker.php?token=$([uri]::EscapeDataString([string]$tok502.token))" -UseBasicParsing -TimeoutSec 90
-    $err502 = WaitChatStatus -ChatId $chat502 -Want 'error'
+    $err502 = WaitChatStatus -ChatId $chat502 -Want 'error' -Seconds 40
     Check 'E2E 502: estado error' ([string]$err502.status -eq 'error') "status=$($err502.status)"
     Check 'E2E 502: mensaje traducido' ([string]$err502.error -match '502 Bad Gateway') ([string]$err502.error)
     Check 'E2E 502: no se muestra HTML' (-not ([string]$err502.error -match '<html')) ([string]$err502.error)
+
+    # --- consultas colgadas: mensaje distinto según el estado ---
+    $stuckPending = Probe $remProbe @('seed-chat', "$orgId", "$taskId", 'pending')
+    $pagePending = Invoke-WebRequest -Uri "$base/index.php/modules/remediation?tab=assistant&org=$orgId&chat=$($stuckPending.chat_id)" -WebSession $ws -UseBasicParsing -TimeoutSec 30
+    Check 'E2E colgado: pending avisa del lanzamiento' ($pagePending.Content -match 'no pudo lanzar el trabajo en segundo plano') 'sin aviso de lanzamiento'
+
+    $stuckRunning = Probe $remProbe @('seed-chat', "$orgId", "$taskId", 'running')
+    $pageRunning = Invoke-WebRequest -Uri "$base/index.php/modules/remediation?tab=assistant&org=$orgId&chat=$($stuckRunning.chat_id)" -WebSession $ws -UseBasicParsing -TimeoutSec 30
+    Check 'E2E colgado: running avisa del modelo' ($pageRunning.Content -match 'El modelo no respondió a tiempo') 'sin aviso del modelo'
 }
 finally {
     if ($orgId -gt 0) { try { Probe $remProbe @('cleanup', "$orgId") | Out-Null } catch { } }

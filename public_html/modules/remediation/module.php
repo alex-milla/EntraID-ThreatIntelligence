@@ -641,9 +641,10 @@ class Module_Remediation extends BaseModule
             }
 
             app_log('info', 'remediation', 'Consulta IA encolada', [
-                'chat' => $chatId,
-                'org'  => $orgId,
-                'cve'  => $cveId,
+                'chat'   => $chatId,
+                'org'    => $orgId,
+                'cve'    => $cveId,
+                'worker' => $this->absoluteUrl('remediation-worker.php'),
             ]);
 
             json_response([
@@ -776,16 +777,22 @@ class Module_Remediation extends BaseModule
         ]);
     }
 
-    /** URL absoluta para el worker (APP_URL o el host de la petición). */
+    /**
+     * URL absoluta de un fichero raíz del proyecto (worker, etc.).
+     *
+     * IMPORTANTE: no usar base_url() aquí — mete «/index.php/» delante de todo
+     * lo que no sea admin/ o api/ (estilo PATH_INFO) y el worker acabaría en el
+     * front controller (404). Es el mismo patrón que cve-worker.php y
+     * sync-worker.php: rtrim(APP_URL) . '/fichero.php'.
+     */
     private function absoluteUrl(string $path): string
     {
-        $url = base_url($path);
-        if (preg_match('#^https?://#i', $url) === 1) {
-            return $url;
+        $base = rtrim((string)APP_URL, '/');
+        if ($base === '') {
+            $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+            $base = $scheme . '://' . (string)($_SERVER['HTTP_HOST'] ?? 'localhost');
         }
-        $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
-        $host = (string)($_SERVER['HTTP_HOST'] ?? 'localhost');
-        return $scheme . '://' . $host . '/' . ltrim($url, '/');
+        return $base . '/' . ltrim($path, '/');
     }
 
     /**
@@ -1232,7 +1239,9 @@ class Module_Remediation extends BaseModule
         if ($ts === false || (time() - $ts) < 600) {
             return $chat;
         }
-        $message = 'La generación no terminó a tiempo (el servidor de IA no respondió). Vuelve a enviar la pregunta.';
+        $message = $status === 'pending'
+            ? 'El servidor no pudo lanzar el trabajo en segundo plano. Vuelve a enviar la pregunta.'
+            : 'El modelo no respondió a tiempo. Vuelve a enviar la pregunta o usa otro perfil de IA.';
         try {
             Database::update(
                 "UPDATE remediation_chats

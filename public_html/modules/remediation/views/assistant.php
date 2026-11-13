@@ -31,6 +31,14 @@ $chatCve = ($chat !== null && (string)($chat['context_type'] ?? '') === 'cve')
     : '';
 $planCve = $chatCve !== '' ? $chatCve : $cveQuery;
 $canSavePlan = $selectedTask !== null || $planCve !== '';
+// Última pregunta del usuario (para el botón «Reintentar» del error).
+$lastQuestion = '';
+foreach (array_reverse($messages ?? []) as $msg) {
+    if (($msg['role'] ?? '') === 'user') {
+        $lastQuestion = (string)($msg['content'] ?? '');
+        break;
+    }
+}
 ?>
 <div class="grid grid-cols-1 lg:grid-cols-4 gap-5">
 
@@ -185,7 +193,7 @@ $canSavePlan = $selectedTask !== null || $planCve !== '';
                         <span class="inline-flex items-center gap-2">
                             <span class="spinner"></span> Pensando… <span id="pending-elapsed">0 s</span>
                         </span>
-                        <p class="mt-1 text-[11px]">La IA está generando la respuesta en segundo plano; puedes seguir navegando.</p>
+                        <p class="mt-1 text-[11px]" id="pending-note">La IA está generando la respuesta en segundo plano; puedes seguir navegando.</p>
                     </div>
                 </div>
             <?php elseif ($chat !== null && (string)($chat['status'] ?? '') === 'error'): ?>
@@ -193,7 +201,13 @@ $canSavePlan = $selectedTask !== null || $planCve !== '';
                     <div class="max-w-[85%] rounded-xl px-3.5 py-2.5 bg-danger-bg text-xs text-danger">
                         <strong>No se pudo generar la respuesta.</strong>
                         <p class="mt-1 break-words"><?= e((string)($chat['last_error'] ?? 'Error desconocido.')) ?></p>
-                        <p class="mt-1 text-[11px]">Vuelve a enviar la pregunta o prueba con otro perfil de IA.</p>
+                        <div class="mt-2 flex items-center gap-3">
+                            <?php if ($lastQuestion !== ''): ?>
+                                <button type="button" id="retry-ask" data-question="<?= e($lastQuestion) ?>"
+                                        class="px-3 py-1.5 bg-brand-500 hover:bg-brand-600 text-white text-[11px] font-medium rounded-lg">Reintentar</button>
+                            <?php endif; ?>
+                            <span class="text-[11px]">o prueba con otro perfil de IA.</span>
+                        </div>
                     </div>
                 </div>
             <?php endif; ?>
@@ -303,6 +317,7 @@ $canSavePlan = $selectedTask !== null || $planCve !== '';
 
     if (CHAT_PENDING) {
         var startedAt = Date.now();
+        var pendingWarned = false;
         var elapsedEl = document.getElementById('pending-elapsed');
         var elapsedTimer = setInterval(function () {
             if (elapsedEl) { elapsedEl.textContent = Math.round((Date.now() - startedAt) / 1000) + ' s'; }
@@ -311,14 +326,35 @@ $canSavePlan = $selectedTask !== null || $planCve !== '';
             fetch(CHAT_STATUS_URL, { headers: { 'X-Requested-With': 'XMLHttpRequest' }, credentials: 'same-origin' })
                 .then(function (r) { return r.json(); })
                 .then(function (st) {
-                    if (st && st.success && (st.status === 'done' || st.status === 'error')) {
+                    if (!st || !st.success) { return; }
+                    if (st.status === 'done' || st.status === 'error') {
                         clearInterval(statusTimer);
                         clearInterval(elapsedTimer);
                         window.location.reload();
+                        return;
+                    }
+                    // Watchdog: si a los 20 s sigue «pending», el worker no arrancó.
+                    if (!pendingWarned && st.status === 'pending' && (Date.now() - startedAt) > 20000) {
+                        pendingWarned = true;
+                        var note = document.getElementById('pending-note');
+                        if (note) {
+                            note.textContent = 'El servidor no parece haber lanzado el trabajo en segundo plano. '
+                                + 'Si sigue así, vuelve a enviar la pregunta.';
+                            note.classList.add('text-amber-600', 'dark:text-amber-400');
+                        }
                     }
                 })
                 .catch(function () { /* se reintenta en el siguiente tick */ });
         }, 3000);
+    }
+
+    var retryAskEl = document.getElementById('retry-ask');
+    if (retryAskEl) {
+        retryAskEl.addEventListener('click', function () {
+            var q = retryAskEl.getAttribute('data-question') || '';
+            if (q !== '') { inputEl.value = q; }
+            send();
+        });
     }
 
     function bubble(role, text) {
