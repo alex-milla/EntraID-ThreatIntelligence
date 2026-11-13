@@ -119,6 +119,14 @@ try {
     $applyUrl   = "$base/index.php/modules/remediation/tasks/apply"
     $askUrl     = "$base/index.php/modules/remediation/ask"
 
+    # --- aviso de modelo local pequeño (perfil de la tarea) ---
+    $smallProfile = Probe $llmProbe @('profile-create', 'custom', "$fakeBase/v1", 'Ministral-3B-Instruct-Q4_K_M', $fakeKey, '2048', '4096', '60')
+    $null = Probe $llmProbe @('assistant-task', "$([int]$smallProfile.id)")
+    $pageNote = Invoke-WebRequest -Uri "$base/index.php/modules/remediation?tab=assistant&org=$orgId" -WebSession $ws -UseBasicParsing -TimeoutSec 30
+    Check 'E2E modelo: avisa del modelo pequeño' ($pageNote.Content -match 'un modelo pequeño') 'sin aviso'
+    Check 'E2E modelo: enlaza a Admin → APIs' ($pageNote.Content -match 'Cambiar el perfil de la tarea')
+    $null = Probe $llmProbe @('assistant-task', '0')
+
     # --- proponer datos ---
     $payload = @{ org_id = $orgId; task_id = $taskId; profile_id = $profileId } | ConvertTo-Json -Compress
     $r = Invoke-WebRequest -Uri $suggestUrl -Method POST -WebSession $ws -Headers $headers `
@@ -162,44 +170,53 @@ try {
 
     $askPayload = @{ org_id = $orgId; task_id = $taskId; question = 'Plan de implementación paso a paso'; profile_id = $profileId } | ConvertTo-Json -Compress
     $askRes = Invoke-WebRequest -Uri $askUrl -Method POST -WebSession $ws -Headers $headers `
-        -ContentType 'application/json' -Body $askPayload -UseBasicParsing -TimeoutSec 60
+        -ContentType 'application/json' -Body $askPayload -UseBasicParsing -TimeoutSec 90
     $ask = $askRes.Content | ConvertFrom-Json
-    Check 'E2E ask: responde encolado' ($ask.success -eq $true -and $ask.pending -eq $true) ($ask.error)
     $chatId = [int]$ask.chat_id
     Check 'E2E ask: devuelve chat_id' ($chatId -gt 0) "chat=$chatId"
 
-    $tok = Probe $remProbe @('chat-token', "$chatId")
-    # El worker puede haber terminado ya (es rápido): se acepta pending/running/done.
-    Check 'E2E ask: estado inicial coherente' (@('pending', 'running', 'done') -contains [string]$tok.status) "status=$($tok.status)"
-
-    # El worker lo debe lanzar la propia aplicación (background_request).
-    # NO se llama a mano: así se detecta un fallo de URL o de permisos.
-    $done = WaitChatStatus -ChatId $chatId -Want 'done' -Seconds 40
-    Check 'E2E ask: termina en done (worker automático)' ([string]$done.status -eq 'done') "status=$($done.status) error=$($done.error)"
-
-    $logText = ''
-    if (Test-Path (Join-Path $storage 'app.log')) {
-        $logText = Get-Content (Join-Path $storage 'app.log') -Raw
+    if ($ask.pending -eq $true) {
+        # Con PHP-FPM: 202 + trabajo en el mismo proceso (se sondea).
+        Check 'E2E ask: responde encolado (FPM)' ($ask.success -eq $true) ($ask.error)
+        $tok = Probe $remProbe @('chat-token', "$chatId")
+        Check 'E2E ask: estado inicial coherente' (@('pending', 'running', 'done') -contains [string]$tok.status) "status=$($tok.status)"
+        $done = WaitChatStatus -ChatId $chatId -Want 'done' -Seconds 40
+        Check 'E2E ask: termina en done (sin petición a sí mismo)' ([string]$done.status -eq 'done') "status=$($done.status) error=$($done.error)"
+    } else {
+        # Sin FPM (php -S): se resuelve en línea, como el análisis por CVE.
+        Check 'E2E ask: responde en línea' ($ask.success -eq $true) ($ask.error)
+        Check 'E2E ask: devuelve contenido en línea' (([string]$ask.content) -match 'E2E-ORIN-OK') ([string]$ask.content)
     }
-    Check 'E2E ask: URL del worker es la del fichero raíz' ($logText -match '"worker":"[^"]*/remediation-worker\.php"') 'sin URL correcta en app.log'
-    Check 'E2E ask: la URL no pasa por index.php' (-not ($logText -match '"worker":"[^"]*/index\.php/remediation-worker\.php"'))
 
     $msgs = Probe $remProbe @('chat-messages', "$chatId")
     $assistant = @($msgs.messages | Where-Object { $_.role -eq 'assistant' })
     Check 'E2E ask: guarda la respuesta del asistente' ($assistant.Count -ge 1) "mensajes=$($assistant.Count)"
     Check 'E2E ask: contenido del modelo' ($assistant.Count -ge 1 -and ([string]$assistant[-1].content) -match 'E2E-ORIN-OK')
 
-    # --- 502 del proxy en segundo plano: mensaje legible, sin HTML ---
+    # --- 502 del proxy: mensaje legible, sin HTML ---
     $ask502 = @{ org_id = $orgId; task_id = $taskId; question = 'TRIGGER-502'; profile_id = $profileId } | ConvertTo-Json -Compress
-    $r502 = Invoke-WebRequest -Uri $askUrl -Method POST -WebSession $ws -Headers $headers `
-        -ContentType 'application/json' -Body $ask502 -UseBasicParsing -TimeoutSec 60
-    $a502 = $r502.Content | ConvertFrom-Json
-    Check 'E2E 502: encola' ($a502.success -eq $true -and $a502.pending -eq $true) ($a502.error)
-    $chat502 = [int]$a502.chat_id
-    $err502 = WaitChatStatus -ChatId $chat502 -Want 'error' -Seconds 40
-    Check 'E2E 502: estado error' ([string]$err502.status -eq 'error') "status=$($err502.status)"
-    Check 'E2E 502: mensaje traducido' ([string]$err502.error -match '502 Bad Gateway') ([string]$err502.error)
-    Check 'E2E 502: no se muestra HTML' (-not ([string]$err502.error -match '<html')) ([string]$err502.error)
+    $a502 = $null
+    try {
+        $r502 = Invoke-WebRequest -Uri $askUrl -Method POST -WebSession $ws -Headers $headers `
+            -ContentType 'application/json' -Body $ask502 -UseBasicParsing -TimeoutSec 90
+        $a502 = $r502.Content | ConvertFrom-Json
+    } catch {
+        $body = ''
+        if ($_.ErrorDetails -and $_.ErrorDetails.Message) { $body = [string]$_.ErrorDetails.Message }
+        if ($body -eq '') { throw }
+        $a502 = $body | ConvertFrom-Json
+    }
+
+    if ($a502 -and $a502.pending -eq $true) {
+        $err502 = WaitChatStatus -ChatId ([int]$a502.chat_id) -Want 'error' -Seconds 40
+        Check 'E2E 502: estado error' ([string]$err502.status -eq 'error') "status=$($err502.status)"
+        Check 'E2E 502: mensaje traducido' ([string]$err502.error -match '502 Bad Gateway') ([string]$err502.error)
+        Check 'E2E 502: no se muestra HTML' (-not ([string]$err502.error -match '<html')) ([string]$err502.error)
+    } else {
+        Check 'E2E 502: falla en línea' ($a502.success -eq $false) ([string]$a502.error)
+        Check 'E2E 502: mensaje traducido' ([string]$a502.error -match '502 Bad Gateway') ([string]$a502.error)
+        Check 'E2E 502: no se muestra HTML' (-not ([string]$a502.error -match '<html')) ([string]$a502.error)
+    }
 
     # --- consultas colgadas: mensaje distinto según el estado ---
     $stuckPending = Probe $remProbe @('seed-chat', "$orgId", "$taskId", 'pending')

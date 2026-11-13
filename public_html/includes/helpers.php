@@ -51,6 +51,36 @@ if (!function_exists('json_response')) {
     }
 }
 
+if (!function_exists('json_response_continue')) {
+    /**
+     * Envía una respuesta JSON y **cierra la respuesta al cliente** sin
+     * terminar el script (fastcgi_finish_request o flush). El trabajo pesado
+     * puede seguir en este mismo proceso: es el patrón de cve-worker.php y
+     * evita depender de una petición HTTP a uno mismo.
+     */
+    function json_response_continue(mixed $data, int $status = 200): void
+    {
+        http_response_code($status);
+        header('Content-Type: application/json; charset=utf-8');
+        header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+
+        $json = json_encode(
+            $data,
+            JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE
+        );
+        echo $json === false ? '{"success":false,"error":"No se pudo serializar la respuesta"}' : $json;
+
+        if (function_exists('fastcgi_finish_request')) {
+            fastcgi_finish_request();
+            return;
+        }
+        while (ob_get_level() > 0) {
+            @ob_end_flush();
+        }
+        @flush();
+    }
+}
+
 if (!function_exists('redirect')) {
     /**
      * Redirige a una URL.
@@ -744,6 +774,32 @@ if (!function_exists('llm_profile_get')) {
             }
         }
         return $p;
+    }
+}
+
+if (!function_exists('llm_profile_is_small')) {
+    /**
+     * ¿El perfil es un modelo local pequeño (≤ 4B)? Se usa para avisar de que
+     * ciertas tareas (planes de remediación) piden más capacidad.
+     */
+    function llm_profile_is_small(?array $profile): bool
+    {
+        if ($profile === null) {
+            return false;
+        }
+        $provider = strtolower((string)($profile['provider'] ?? ''));
+        if (!in_array($provider, ['ollama', 'ollama_cloud', 'custom'], true)) {
+            return false;
+        }
+        $model = strtolower(trim((string)($profile['model'] ?? '')));
+        if ($model === '') {
+            return false;
+        }
+        // 1b, 1.7b, 2b, 3b, 4b… (no confundir con q4_k_m ni con 20b)
+        if (preg_match('/(?:^|[^0-9.])(\d+(?:\.\d+)?)\s*b(?:[^a-z0-9]|$)/i', $model, $m) === 1) {
+            return (float)$m[1] <= 4.0;
+        }
+        return false;
     }
 }
 

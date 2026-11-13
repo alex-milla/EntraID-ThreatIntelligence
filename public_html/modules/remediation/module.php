@@ -112,6 +112,14 @@ class Module_Remediation extends BaseModule
         $sla = $this->slaSettings();
         $llmConfigured = class_exists('Module_Llm') && (new Module_Llm())->isConfigured();
         $profiles = llm_profile_list();
+        // Perfil del asistente (tarea remediation_assistant o el predeterminado)
+        // y aviso si es un modelo local pequeño.
+        $assistantProfileId = (int)(llm_task_profile('remediation_assistant') ?? 0);
+        $assistantProfile = $assistantProfileId > 0
+            ? llm_profile_get($assistantProfileId)
+            : llm_profile_default();
+        $assistantSmall = llm_profile_is_small($assistantProfile);
+        $assistantProfileName = $assistantProfile !== null ? (string)($assistantProfile['name'] ?? '') : '';
         $cveQuery = strtoupper(trim((string)($_GET['cve'] ?? '')));
         if (!preg_match('/^CVE-\d{4}-\d{4,7}$/', $cveQuery)) {
             $cveQuery = '';
@@ -147,6 +155,8 @@ class Module_Remediation extends BaseModule
             'orgs'           => $orgs,
             'org'            => $org,
             'selectedOrgId'  => $selectedOrgId,
+            'assistantSmall' => $assistantSmall,
+            'assistantProfileName' => $assistantProfileName,
             'tenants'        => Database::fetchAll("SELECT id, name FROM tenants ORDER BY name"),
             'cveCompanies'   => $cveCompanies,
             'tasks'          => $tasks,
@@ -617,42 +627,67 @@ class Module_Remediation extends BaseModule
                 [$token, $profileId > 0 ? $profileId : null, $chatId]
             );
 
-            $workerUrl = $this->absoluteUrl('remediation-worker.php') . '?token=' . rawurlencode($token);
-            $launched = function_exists('background_request') ? background_request($workerUrl) : false;
-
-            if (!$launched) {
-                // Si el hosting no permite el fire-and-forget, se resuelve aquí
-                // (comportamiento anterior) para no perder la pregunta.
-                $res = $this->processPendingChat($chatId);
-                if (empty($res['success'])) {
-                    json_response([
-                        'success' => false,
-                        'chat_id' => $chatId,
-                        'error'   => (string)($res['error'] ?? 'Error del proveedor de IA.'),
-                    ], 502);
+            // A) Con PHP-FPM: se responde 202, se cierra la conexión y el
+            // trabajo continúa EN ESTE MISMO PROCESO (patrón de cve-worker.php).
+            // Sin peticiones HTTP a uno mismo: no hay nada que el servidor web
+            // pueda descartar.
+            if (function_exists('fastcgi_finish_request')) {
+                @ignore_user_abort(true);
+                @set_time_limit(0);
+                if (function_exists('release_session_lock')) {
+                    release_session_lock();
                 }
-                json_response([
-                    'success'      => true,
-                    'chat_id'      => $chatId,
-                    'content'      => (string)($res['content'] ?? ''),
-                    'content_html' => (string)($res['content_html'] ?? ''),
-                    'model'        => (string)($res['model'] ?? ''),
+                app_log('info', 'remediation', 'Consulta IA encolada (en proceso)', [
+                    'chat' => $chatId,
+                    'org'  => $orgId,
+                    'cve'  => $cveId,
                 ]);
+                json_response_continue([
+                    'success' => true,
+                    'pending' => true,
+                    'chat_id' => $chatId,
+                    'status'  => 'pending',
+                ], 202);
+
+                // La respuesta ya está enviada: esto puede tardar minutos.
+                try {
+                    Database::update(
+                        "UPDATE remediation_chats SET status = 'running' WHERE id = ? AND status = 'pending'",
+                        [$chatId]
+                    );
+                    $this->processPendingChat($chatId);
+                } catch (Throwable $e) {
+                    $this->failChat($chatId, $e->getMessage());
+                }
+                exit;
             }
 
-            app_log('info', 'remediation', 'Consulta IA encolada', [
-                'chat'   => $chatId,
-                'org'    => $orgId,
-                'cve'    => $cveId,
-                'worker' => $this->absoluteUrl('remediation-worker.php'),
+            // B) Sin FPM: se resuelve en la misma petición (como el análisis
+            // por CVE). Nunca se lanza una petición HTTP a uno mismo.
+            app_log('info', 'remediation', 'Consulta IA en línea', [
+                'chat' => $chatId,
+                'org'  => $orgId,
+                'cve'  => $cveId,
             ]);
-
+            Database::update(
+                "UPDATE remediation_chats SET status = 'running' WHERE id = ? AND status = 'pending'",
+                [$chatId]
+            );
+            $res = $this->processPendingChat($chatId);
+            if (empty($res['success'])) {
+                json_response([
+                    'success' => false,
+                    'chat_id' => $chatId,
+                    'error'   => (string)($res['error'] ?? 'Error del proveedor de IA.'),
+                ], 502);
+            }
             json_response([
-                'success'  => true,
-                'pending'  => true,
-                'chat_id'  => $chatId,
-                'status'   => 'pending',
-            ], 202);
+                'success'      => true,
+                'chat_id'      => $chatId,
+                'content'      => (string)($res['content'] ?? ''),
+                'content_html' => (string)($res['content_html'] ?? ''),
+                'model'        => (string)($res['model'] ?? ''),
+            ]);
         } catch (Throwable $e) {
             app_log('error', 'remediation', 'Error en la consulta IA', ['error' => $e->getMessage()]);
             json_response(['success' => false, 'error' => $e->getMessage()], 500);
@@ -775,24 +810,6 @@ class Module_Remediation extends BaseModule
             'status'  => (string)($chat['status'] ?? 'idle'),
             'error'   => (string)($chat['last_error'] ?? ''),
         ]);
-    }
-
-    /**
-     * URL absoluta de un fichero raíz del proyecto (worker, etc.).
-     *
-     * IMPORTANTE: no usar base_url() aquí — mete «/index.php/» delante de todo
-     * lo que no sea admin/ o api/ (estilo PATH_INFO) y el worker acabaría en el
-     * front controller (404). Es el mismo patrón que cve-worker.php y
-     * sync-worker.php: rtrim(APP_URL) . '/fichero.php'.
-     */
-    private function absoluteUrl(string $path): string
-    {
-        $base = rtrim((string)APP_URL, '/');
-        if ($base === '') {
-            $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
-            $base = $scheme . '://' . (string)($_SERVER['HTTP_HOST'] ?? 'localhost');
-        }
-        return $base . '/' . ltrim($path, '/');
     }
 
     /**

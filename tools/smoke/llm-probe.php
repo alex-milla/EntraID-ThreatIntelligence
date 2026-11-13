@@ -52,6 +52,13 @@ if ($cmd === 'profile-create') {
     exit(0);
 }
 
+if ($cmd === 'assistant-task') {
+    $id = (int)($argv[2] ?? 0);
+    setting_set('llm_task_remediation_assistant', (string)$id);
+    echo json_encode(['id' => $id], JSON_UNESCAPED_UNICODE);
+    exit(0);
+}
+
 if ($cmd === 'profile-delete') {
     $id = (int)($argv[2] ?? 0);
     if ($id > 0) {

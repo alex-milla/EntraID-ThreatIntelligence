@@ -144,6 +144,19 @@ foreach (array_reverse($messages ?? []) as $msg) {
             <?php endif; ?>
         </div>
 
+        <?php if (!empty($assistantSmall)): ?>
+            <div class="px-4 py-2 border-b border-line bg-warning-bg text-[11px] text-warning flex items-start gap-2">
+                <i class="material-icons icon-14 shrink-0" aria-hidden="true">info</i>
+                <span>
+                    El perfil de la tarea es <strong><?= e((string)($assistantProfileName ?: 'un modelo local pequeño')) ?></strong>,
+                    un modelo pequeño: sirve para resumir o extraer datos, pero para <strong>planes de remediación</strong>
+                    conviene un perfil con más capacidad.
+                    <a href="<?= base_url('admin/apis') ?>" class="underline">Cambiar el perfil de la tarea</a>
+                    o elige otro en el desplegable de arriba.
+                </span>
+            </div>
+        <?php endif; ?>
+
         <div id="chat-messages" class="flex-1 overflow-y-auto px-4 py-4 space-y-4">
             <?php if ($messages === []): ?>
                 <div class="max-w-xl mx-auto text-center py-8">

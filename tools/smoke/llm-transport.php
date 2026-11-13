@@ -176,6 +176,17 @@ try {
     check('html: texto normal no', !llm_err_has_html('LLM API Error (404): File Not Found'));
 
     // ============================================================
+    // 6 bis3 - Modelo local pequeño
+    // ============================================================
+    check('modelo pequeño: Ministral-3B', llm_profile_is_small(['provider' => 'ollama', 'model' => 'Ministral-3B-Instruct-2512-Q4_K_M']));
+    check('modelo pequeño: LFM3-1.7B', llm_profile_is_small(['provider' => 'custom', 'model' => 'LFM3-1.7B-Q4_K_M']));
+    check('modelo pequeño: qwen 4b', llm_profile_is_small(['provider' => 'custom', 'model' => 'qwen3.8-4b-q4_k_m']));
+    check('modelo pequeño: gpt-oss 20b no', !llm_profile_is_small(['provider' => 'ollama_cloud', 'model' => 'gpt-oss:20b']));
+    check('modelo pequeño: openai no aplica', !llm_profile_is_small(['provider' => 'openai', 'model' => 'gpt-4o-mini']));
+    check('modelo pequeño: sin tamaño no se asume', !llm_profile_is_small(['provider' => 'ollama', 'model' => 'llama3.1']));
+    check('modelo pequeño: perfil nulo', !llm_profile_is_small(null));
+
+    // ============================================================
     // 6 ter - Presupuesto de contexto y troceado
     // ============================================================
     check('max_tokens: manda la tarea si el perfil es 0', llm_effective_max_tokens(3000, ['max_tokens' => 0]) === 3000);
