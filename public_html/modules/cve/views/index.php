@@ -193,6 +193,16 @@ foreach ($companyGroups as $companyRow) {
                             class="<?= $syncRunning ? 'hidden' : 'inline-flex' ?> items-center px-2 py-2 text-xs text-gray-400 hover:text-brand-500 transition-colors">
                         CVE.org
                     </button>
+                    <button type="button" id="cve-revalidate-btn" onclick="refreshFromCveList(this)"
+                            title="Revalida el catálogo contra CVE.org: vuelve a pedir cada CVE y CVE.org manda en los datos."
+                            class="<?= $syncRunning ? 'hidden' : 'inline-flex' ?> items-center px-2 py-2 text-xs text-gray-400 hover:text-brand-500 transition-colors">
+                        Revalidar
+                    </button>
+                    <button type="button" id="cve-enrich-btn" onclick="enrichFromCveList(this)"
+                            title="Completa desde CVE.org los CVEs a los que les falta descripción, CVSS o CWE."
+                            class="<?= $syncRunning ? 'hidden' : 'inline-flex' ?> items-center px-2 py-2 text-xs text-gray-400 hover:text-brand-500 transition-colors">
+                        Enriquecer (<?= number_format((int)($incompleteCves ?? 0)) ?>)
+                    </button>
                     <button type="button" id="cve-cancel-btn" onclick="cancelCveSync()"
                             class="<?= $syncRunning ? 'inline-flex' : 'hidden' ?> items-center gap-2 px-3 py-2 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-300 hover:bg-red-100 dark:hover:bg-red-900/40 text-sm font-medium rounded-lg transition-colors">
                         Detener
@@ -519,6 +529,8 @@ foreach ($companyGroups as $companyRow) {
         var STATUS_URL = '<?= base_url('modules/cve/active') ?>';
         var SYNC_URL = '<?= base_url('modules/cve/sync') ?>';
         var CVE_LIST_URL = '<?= base_url('modules/cve/cve-list-update') ?>';
+        var CVE_LIST_REFRESH_URL = '<?= base_url('modules/cve/cve-list-refresh') ?>';
+        var CVE_LIST_ENRICH_URL = '<?= base_url('modules/cve/cve-list-enrich') ?>';
         var STREAM_URL = '<?= base_url('modules/cve/stream') ?>';
         var CANCEL_URL = '<?= base_url('modules/cve/cancel') ?>';
         var STEP_URL = '<?= base_url('modules/cve/step') ?>';
@@ -707,6 +719,56 @@ foreach ($companyGroups as $companyRow) {
                 toast(text, 'error');
                 if (msg) { msg.textContent = text; }
                 if (badge) { badge.textContent = 'Error'; }
+            }).then(function () {
+                if (button) { button.disabled = false; }
+            });
+        };
+
+        window.refreshFromCveList = function (button) {
+            if (button) { button.disabled = true; }
+            var msg = document.getElementById('cve-sync-message');
+            var badge = document.getElementById('cve-sync-status');
+            if (msg) { msg.textContent = 'Revalidando CVEs contra CVE.org…'; }
+            if (badge) { badge.textContent = 'CVE.org'; }
+
+            api('POST', CVE_LIST_REFRESH_URL, { limit: 200 }).then(function (res) {
+                if (!res || !res.success) {
+                    var err = (res && res.error) ? String(res.error) : 'No se pudo revalidar.';
+                    toast(err, 'error');
+                    if (msg) { msg.textContent = err; }
+                    if (badge) { badge.textContent = 'Error'; }
+                    return;
+                }
+                toast(res.message || 'Revalidado', 'success');
+                if (msg) { msg.textContent = res.message || ''; }
+                if (badge) { badge.textContent = 'Revalidado'; }
+            }).catch(function (err) {
+                toast((err && err.message) || 'Error de conexión', 'error');
+            }).then(function () {
+                if (button) { button.disabled = false; }
+            });
+        };
+
+        window.enrichFromCveList = function (button) {
+            if (button) { button.disabled = true; }
+            var msg = document.getElementById('cve-sync-message');
+            var badge = document.getElementById('cve-sync-status');
+            if (msg) { msg.textContent = 'Completando CVEs incompletos desde CVE.org…'; }
+            if (badge) { badge.textContent = 'CVE.org'; }
+
+            api('POST', CVE_LIST_ENRICH_URL, { limit: 200 }).then(function (res) {
+                if (!res || !res.success) {
+                    var err = (res && res.error) ? String(res.error) : 'No se pudo enriquecer.';
+                    toast(err, 'error');
+                    if (msg) { msg.textContent = err; }
+                    if (badge) { badge.textContent = 'Error'; }
+                    return;
+                }
+                toast(res.message || 'Enriquecido', 'success');
+                if (msg) { msg.textContent = res.message || ''; }
+                if (badge) { badge.textContent = 'Actualizado'; }
+            }).catch(function (err) {
+                toast((err && err.message) || 'Error de conexión', 'error');
             }).then(function () {
                 if (button) { button.disabled = false; }
             });

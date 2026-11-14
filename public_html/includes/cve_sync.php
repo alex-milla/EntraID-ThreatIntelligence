@@ -1853,15 +1853,20 @@ class CveSync
     }
 
     /**
-     * Fusiona el registro de CVE.org (primario) con el de NVD (respaldo).
-     * CVE.org manda en descripción y productos; NVD aporta sus CPEs y sus
-     * métricas normalizadas cuando existen.
+     * Fusiona el registro de CVE.org con el que ya había.
+     *
+     * Dos políticas:
+     *  - `fill` (por defecto): CVE.org solo rellena huecos (delta diario,
+     *    enriquecimiento). Se conserva lo que ya hubiera.
+     *  - `refresh` (revalidación): CVE.org **manda** en descripción, severidad,
+     *    CVSS, estado, fechas, CWE, referencias y productos. NVD solo aporta
+     *    lo que CVE.org no trae (p. ej. sus CPEs para el matching).
      *
      * @param array<string,mixed>|null $org
      * @param array<string,mixed>|null $nvd
      * @return array<string,mixed>|null
      */
-    private function mergeCveSources(?array $org, ?array $nvd): ?array
+    private function mergeCveSources(?array $org, ?array $nvd, string $policy = 'fill'): ?array
     {
         if ($org === null) {
             return $nvd;
@@ -1870,39 +1875,58 @@ class CveSync
             return $org;
         }
 
+        $refresh = ($policy === 'refresh');
         $out = $nvd;
+
         if (trim((string)($org['description'] ?? '')) !== '') {
             $out['description'] = (string)$org['description'];
             $out['description_lang'] = (string)($org['description_lang'] ?? 'en');
         }
-        if (($out['cvss_v3_score'] ?? null) === null && ($org['cvss_v3_score'] ?? null) !== null) {
-            $out['cvss_v3_score'] = $org['cvss_v3_score'];
+
+        $orgScore = $org['cvss_v3_score'] ?? null;
+        if ($orgScore !== null && ($refresh || ($out['cvss_v3_score'] ?? null) === null)) {
+            $out['cvss_v3_score'] = $orgScore;
             $out['cvss_v3_vector'] = $org['cvss_v3_vector'];
         }
-        if (trim((string)($out['severity'] ?? '')) === '' && trim((string)($org['severity'] ?? '')) !== '') {
-            $out['severity'] = $org['severity'];
-        }
-        if (trim((string)($out['published_at'] ?? '')) === '' && !empty($org['published_at'])) {
-            $out['published_at'] = $org['published_at'];
-        }
-        if (trim((string)($out['last_modified_at'] ?? '')) === '' && !empty($org['last_modified_at'])) {
-            $out['last_modified_at'] = $org['last_modified_at'];
+        $orgV2 = $org['cvss_v2_score'] ?? null;
+        if ($orgV2 !== null && ($refresh || ($out['cvss_v2_score'] ?? null) === null)) {
+            $out['cvss_v2_score'] = $orgV2;
         }
 
-        $cwes = array_values(array_unique(array_merge(
-            (array)json_decode((string)($out['cwe_ids'] ?? '[]'), true),
-            (array)json_decode((string)($org['cwe_ids'] ?? '[]'), true)
-        )));
-        $out['cwe_ids'] = json_encode($cwes, JSON_UNESCAPED_SLASHES);
+        $orgSeverity = trim((string)($org['severity'] ?? ''));
+        if ($orgSeverity !== '' && ($refresh || trim((string)($out['severity'] ?? '')) === '')) {
+            $out['severity'] = $orgSeverity;
+        }
 
-        $refs = array_values(array_unique(array_merge(
-            (array)json_decode((string)($out['references_json'] ?? '[]'), true),
-            (array)json_decode((string)($org['references_json'] ?? '[]'), true)
-        )));
-        $out['references_json'] = json_encode(array_slice($refs, 0, 10), JSON_UNESCAPED_SLASHES);
+        if ($refresh && trim((string)($org['vuln_status'] ?? '')) !== '') {
+            $out['vuln_status'] = (string)$org['vuln_status'];
+        }
+        if ($refresh && trim((string)($org['source_identifier'] ?? '')) !== '') {
+            $out['source_identifier'] = (string)$org['source_identifier'];
+        }
+
+        foreach (['published_at', 'last_modified_at'] as $dateKey) {
+            if ($refresh && !empty($org[$dateKey])) {
+                $out[$dateKey] = $org[$dateKey];
+            } elseif (trim((string)($out[$dateKey] ?? '')) === '' && !empty($org[$dateKey])) {
+                $out[$dateKey] = $org[$dateKey];
+            }
+        }
+
+        $orgCwes = (array)json_decode((string)($org['cwe_ids'] ?? '[]'), true);
+        $dbCwes = (array)json_decode((string)($out['cwe_ids'] ?? '[]'), true);
+        $cwes = $refresh ? array_merge($orgCwes, $dbCwes) : array_merge($dbCwes, $orgCwes);
+        $out['cwe_ids'] = json_encode(array_values(array_unique($cwes)), JSON_UNESCAPED_SLASHES);
+
+        $orgRefs = (array)json_decode((string)($org['references_json'] ?? '[]'), true);
+        $dbRefs = (array)json_decode((string)($out['references_json'] ?? '[]'), true);
+        $refs = $refresh ? array_merge($orgRefs, $dbRefs) : array_merge($dbRefs, $orgRefs);
+        $out['references_json'] = json_encode(array_slice(array_values(array_unique($refs)), 0, 10), JSON_UNESCAPED_SLASHES);
 
         $products = [];
-        foreach (array_merge((array)($out['products'] ?? []), (array)($org['products'] ?? [])) as $product) {
+        $orgProducts = (array)($org['products'] ?? []);
+        $dbProducts = (array)($out['products'] ?? []);
+        foreach (array_merge($orgProducts, $dbProducts) as $product) {
             if (!is_array($product) || trim((string)($product['product'] ?? '')) === '') {
                 continue;
             }
@@ -1922,20 +1946,17 @@ class CveSync
     /**
      * Aplica registros CVE JSON 5.1 (CVE List V5 / CVE.org) al catálogo.
      *
-     * Fusiona con lo que ya hubiera de NVD: CVE.org manda en descripción,
-     * métricas y productos; los productos/CPEs previos se conservan. El
-     * upsert es por cve_id, así que aplicar el mismo delta dos veces no
-     * duplica ni pierde nada.
+     * Con `$policy = 'fill'` solo rellena huecos (delta diario); con
+     * `'refresh'` CVE.org manda en los datos (revalidación). El upsert es por
+     * cve_id, así que aplicar el mismo delta dos veces no duplica nada.
      *
-     * @param array<int,array<string,mixed>> $records
+     * @param iterable<array<string,mixed>> $records
      * @return array{checked:int,inserted:int,updated:int,skipped:int,errors:int,ids:string[]}
      */
-    public function applyCveListRecords(array $records, ?callable $onProgress = null): array
+    public function applyCveListRecords(iterable $records, ?callable $onProgress = null, string $policy = 'fill'): array
     {
+        $policy = $policy === 'refresh' ? 'refresh' : 'fill';
         $result = ['checked' => 0, 'inserted' => 0, 'updated' => 0, 'skipped' => 0, 'errors' => 0, 'ids' => []];
-        if ($records === []) {
-            return $result;
-        }
 
         if ($this->watchlistMap === null) {
             $this->watchlistMap = $this->watchlistCpeMap();
@@ -1957,7 +1978,7 @@ class CveSync
                 $id = (string)$parsed['cve_id'];
                 $existing = $this->existingParsedRow($id);
                 if ($existing !== null) {
-                    $parsed = $this->mergeCveSources($parsed, $existing) ?? $parsed;
+                    $parsed = $this->mergeCveSources($parsed, $existing, $policy) ?? $parsed;
                 }
                 $outcome = $this->storeParsed($db, $parsed, $stmts, true);
                 if ($outcome === 'inserted') {
@@ -1998,9 +2019,8 @@ class CveSync
         $rows = CveDatabase::fetchAll(
             "SELECT cve_id FROM cve_catalog
              WHERE description IS NULL OR TRIM(description) = ''
-                OR (COALESCE(TRIM(severity), '') = ''
-                    AND cvss_v3_score IS NULL
-                    AND cvss_v2_score IS NULL)
+                OR (cvss_v3_score IS NULL AND cvss_v2_score IS NULL)
+                OR cwe_ids IS NULL OR TRIM(cwe_ids) IN ('', '[]')
              ORDER BY COALESCE(last_modified_at, published_at, '') DESC
              LIMIT ?",
             [$limit]
@@ -2036,7 +2056,7 @@ class CveSync
             }
             $existing = $this->existingParsedRow($cveId);
             if ($existing !== null) {
-                $parsed = $this->mergeCveSources($parsed, $existing) ?? $parsed;
+                $parsed = $this->mergeCveSources($parsed, $existing, 'refresh') ?? $parsed;
             }
             try {
                 $this->storeParsed($db, $parsed, $stmts, true);
@@ -2046,6 +2066,83 @@ class CveSync
             }
         }
 
+        return $result;
+    }
+
+    /**
+     * Revalida el catálogo contra CVE.org: vuelve a pedir cada CVE (API
+     * cveawg) y aplica la política `refresh` (CVE.org manda).
+     *
+     * Reanudable: guarda el último cve_id procesado en `cve_refresh_cursor`.
+     * Pensado para cron/CLI con tandas (`--refresh-all=200`).
+     *
+     * @return array{checked:int,updated:int,missing:int,errors:int,cursor:string,done:bool}
+     */
+    public function refreshAll(int $limit = 200, bool $reset = false, ?callable $onProgress = null): array
+    {
+        $limit = max(1, min(5000, $limit));
+        $cursor = $reset ? '' : (string)setting_get('cve_refresh_cursor', '');
+        if ($reset) {
+            setting_set('cve_refresh_cursor', '');
+        }
+
+        $rows = CveDatabase::fetchAll(
+            "SELECT cve_id FROM cve_catalog WHERE cve_id > ? ORDER BY cve_id LIMIT ?",
+            [$cursor, $limit]
+        );
+
+        $result = ['checked' => 0, 'updated' => 0, 'missing' => 0, 'errors' => 0, 'cursor' => $cursor, 'done' => false];
+        if ($rows === []) {
+            $result['done'] = true;
+            return $result;
+        }
+
+        if ($this->watchlistMap === null) {
+            $this->watchlistMap = $this->watchlistCpeMap();
+        }
+        $client = $this->client();
+        $db = CveDatabase::getInstance();
+        $stmts = $this->prepareStatements($db);
+
+        foreach ($rows as $row) {
+            $cveId = strtoupper((string)($row['cve_id'] ?? ''));
+            if (!preg_match('/^CVE-\d{4}-\d{4,}$/', $cveId)) {
+                $cursor = $cveId !== '' ? $cveId : $cursor;
+                continue;
+            }
+            $result['checked']++;
+
+            $org = $client->fetchCveOrg($cveId);
+            if ($org === null) {
+                $result['missing']++;
+                $cursor = $cveId;
+                continue;
+            }
+            $parsed = $this->parseCveOrgRecord($org);
+            if ($parsed === null) {
+                $result['missing']++;
+                $cursor = $cveId;
+                continue;
+            }
+            $existing = $this->existingParsedRow($cveId);
+            if ($existing !== null) {
+                $parsed = $this->mergeCveSources($parsed, $existing, 'refresh') ?? $parsed;
+            }
+            try {
+                $this->storeParsed($db, $parsed, $stmts, true);
+                $result['updated']++;
+            } catch (Throwable $e) {
+                $result['errors']++;
+            }
+            $cursor = $cveId;
+            if ($onProgress !== null) {
+                $onProgress($result);
+            }
+        }
+
+        setting_set('cve_refresh_cursor', $cursor);
+        $result['cursor'] = $cursor;
+        $result['done'] = count($rows) < $limit;
         return $result;
     }
 

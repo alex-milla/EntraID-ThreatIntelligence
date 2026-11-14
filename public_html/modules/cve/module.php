@@ -73,6 +73,7 @@ class Module_Cve extends BaseModule
             ['method' => 'POST', 'pattern' => 'sync',            'handler' => [$this, 'triggerSync']],
             ['method' => 'POST', 'pattern' => 'cve-list/update', 'handler' => [$this, 'updateFromCveList']],
             ['method' => 'POST', 'pattern' => 'cve-list/enrich', 'handler' => [$this, 'enrichCatalog']],
+            ['method' => 'POST', 'pattern' => 'cve-list/refresh', 'handler' => [$this, 'refreshFromCveList']],
             ['method' => 'POST', 'pattern' => 'stream',          'handler' => [$this, 'streamSync']],
             ['method' => 'POST', 'pattern' => 'step',            'handler' => [$this, 'stepSync']],
             ['method' => 'POST', 'pattern' => 'cancel',          'handler' => [$this, 'cancelSync']],
@@ -317,8 +318,23 @@ class Module_Cve extends BaseModule
             $dbError = $e->getMessage();
         }
 
+        // CVEs del catálogo a los que les falta algo (descripción, métricas o
+        // CWE): candidatos a «Enriquecer desde CVE.org».
+        $incompleteCves = 0;
+        try {
+            $incompleteCves = (int)(CveDatabase::fetchOne(
+                "SELECT COUNT(*) AS c FROM cve_catalog
+                 WHERE description IS NULL OR TRIM(description) = ''
+                    OR (cvss_v3_score IS NULL AND cvss_v2_score IS NULL)
+                    OR cwe_ids IS NULL OR TRIM(cwe_ids) IN ('', '[]')"
+            )['c'] ?? 0);
+        } catch (Throwable $e) {
+            $incompleteCves = 0;
+        }
+
         echo $this->page('index', [
             'isAdmin'       => $isAdmin,
+            'incompleteCves'=> $incompleteCves,
             'tab'           => $tab,
             'groups'        => $groups,
             'software'      => $software,
@@ -4631,6 +4647,54 @@ class Module_Cve extends BaseModule
                 'counts'  => $res,
             ]);
         } catch (Throwable $e) {
+            json_response(['success' => false, 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Revalida el catálogo contra CVE.org (re-fetch por CVE, política
+     * «refresh»: CVE.org manda en descripción, CVSS, CWE, referencias y
+     * productos). Reanudable por cursor.
+     */
+    public function refreshFromCveList(array $params = []): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        if (function_exists('release_session_lock')) {
+            release_session_lock();
+        }
+        @set_time_limit(0);
+        @ignore_user_abort(true);
+
+        $raw = file_get_contents('php://input');
+        $input = json_decode((string)$raw, true);
+        if (!is_array($input)) {
+            $input = $_POST;
+        }
+        $limit = max(1, min(1000, (int)($input['limit'] ?? 200)));
+        $reset = !empty($input['reset']);
+
+        try {
+            $res = (new CveSync())->refreshAll($limit, $reset);
+            app_log('info', 'cve', 'Revalidación desde CVE.org', [
+                'checked' => (int)$res['checked'],
+                'updated' => (int)$res['updated'],
+                'missing' => (int)$res['missing'],
+                'errors'  => (int)$res['errors'],
+                'cursor'  => (string)$res['cursor'],
+                'done'    => (bool)$res['done'],
+            ]);
+            json_response([
+                'success' => true,
+                'message' => 'Revalidados ' . (int)$res['updated'] . ' de ' . (int)$res['checked']
+                    . ' CVEs desde CVE.org' . ((int)$res['missing'] > 0 ? ' (' . (int)$res['missing'] . ' sin datos)' : '')
+                    . ((int)$res['errors'] > 0 ? ' (' . (int)$res['errors'] . ' con error)' : '')
+                    . ($res['done'] ? '. Catálogo completo.' : '. Pulsa otra vez para seguir por donde iba.'),
+                'counts'  => $res,
+            ]);
+        } catch (Throwable $e) {
+            app_log('error', 'cve', 'Error revalidando desde CVE.org', ['error' => $e->getMessage()]);
             json_response(['success' => false, 'error' => $e->getMessage()], 500);
         }
     }

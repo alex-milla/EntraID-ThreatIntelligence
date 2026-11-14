@@ -21,6 +21,257 @@ if (!class_exists('CveZipReader')) {
     final class CveZipReader
     {
         /**
+         * Nombres de las entradas del ZIP (solo el directorio central, sin
+         * leer contenido). Útil para detectar el ZIP anidado del snapshot.
+         *
+         * @return string[]
+         */
+        public static function listNames(string $path): array
+        {
+            if (!is_file($path)) {
+                return [];
+            }
+            if (class_exists('ZipArchive')) {
+                $zip = new ZipArchive();
+                if ($zip->open($path) === true) {
+                    $names = [];
+                    for ($i = 0; $i < $zip->numFiles; $i++) {
+                        $name = $zip->getNameIndex($i);
+                        if (is_string($name) && $name !== '' && !str_ends_with($name, '/')) {
+                            $names[] = $name;
+                        }
+                    }
+                    $zip->close();
+                    if ($names !== []) {
+                        return $names;
+                    }
+                }
+            }
+
+            $fh = @fopen($path, 'rb');
+            if ($fh === false) {
+                return [];
+            }
+            $names = [];
+            $cd = self::centralDirectory($fh);
+            if ($cd !== null) {
+                fseek($fh, $cd['offset']);
+                for ($i = 0; $i < $cd['count']; $i++) {
+                    $h = fread($fh, 46);
+                    if (strlen($h) !== 46 || substr($h, 0, 4) !== "PK\x01\x02") {
+                        break;
+                    }
+                    $nlen = unpack('v', substr($h, 28, 2))[1];
+                    $elen = unpack('v', substr($h, 30, 2))[1];
+                    $clen = unpack('v', substr($h, 32, 2))[1];
+                    $name = $nlen > 0 ? (string)fread($fh, $nlen) : '';
+                    if ($elen + $clen > 0) {
+                        fseek($fh, $elen + $clen, SEEK_CUR);
+                    }
+                    if ($name !== '' && !str_ends_with($name, '/')) {
+                        $names[] = $name;
+                    }
+                }
+            }
+            fclose($fh);
+            return $names;
+        }
+
+        /**
+         * Recorre las entradas una a una (memoria acotada). Para ficheros
+         * grandes: solo se carga en memoria el contenido de cada entrada.
+         *
+         * @return Generator<string,string>
+         */
+        public static function streamEntries(string $path): Generator
+        {
+            if (!is_file($path)) {
+                return;
+            }
+            $fh = @fopen($path, 'rb');
+            if ($fh === false) {
+                return;
+            }
+            $cd = self::centralDirectory($fh);
+            if ($cd === null) {
+                fclose($fh);
+                return;
+            }
+
+            $cdOffset = $cd['offset'];
+            for ($i = 0; $i < $cd['count']; $i++) {
+                fseek($fh, $cdOffset);
+                $h = fread($fh, 46);
+                if (strlen($h) !== 46 || substr($h, 0, 4) !== "PK\x01\x02") {
+                    break;
+                }
+                $method = unpack('v', substr($h, 10, 2))[1];
+                $csize  = unpack('V', substr($h, 20, 4))[1];
+                $nlen   = unpack('v', substr($h, 28, 2))[1];
+                $elen   = unpack('v', substr($h, 30, 2))[1];
+                $clen   = unpack('v', substr($h, 32, 2))[1];
+                $lho    = unpack('V', substr($h, 42, 4))[1];
+                $name   = $nlen > 0 ? (string)fread($fh, $nlen) : '';
+                $cdOffset += 46 + $nlen + $elen + $clen;
+
+                if ($name === '' || str_ends_with($name, '/')) {
+                    continue;
+                }
+
+                fseek($fh, $lho);
+                $lh = fread($fh, 30);
+                if (strlen($lh) !== 30 || substr($lh, 0, 4) !== "PK\x03\x04") {
+                    continue;
+                }
+                $lNlen = unpack('v', substr($lh, 26, 2))[1];
+                $lElen = unpack('v', substr($lh, 28, 2))[1];
+                fseek($fh, $lho + 30 + $lNlen + $lElen);
+                $raw = $csize > 0 ? (string)fread($fh, $csize) : '';
+
+                if ($method === 0) {
+                    yield $name => $raw;
+                } elseif ($method === 8) {
+                    $inflated = @gzinflate($raw);
+                    if (is_string($inflated)) {
+                        yield $name => $inflated;
+                    }
+                }
+            }
+            fclose($fh);
+        }
+
+        /**
+         * Extrae una entrada a un fichero por streaming (sin cargarla entera
+         * en memoria). Necesario para el ZIP anidado del snapshot.
+         */
+        public static function extractEntryTo(string $zipPath, string $entryName, string $dest): bool
+        {
+            if (!is_file($zipPath)) {
+                return false;
+            }
+            $in = @fopen($zipPath, 'rb');
+            if ($in === false) {
+                return false;
+            }
+            $cd = self::centralDirectory($in);
+            if ($cd === null) {
+                fclose($in);
+                return false;
+            }
+
+            $found = null;
+            $cdOffset = $cd['offset'];
+            for ($i = 0; $i < $cd['count']; $i++) {
+                fseek($in, $cdOffset);
+                $h = fread($in, 46);
+                if (strlen($h) !== 46 || substr($h, 0, 4) !== "PK\x01\x02") {
+                    break;
+                }
+                $method = unpack('v', substr($h, 10, 2))[1];
+                $csize  = unpack('V', substr($h, 20, 4))[1];
+                $nlen   = unpack('v', substr($h, 28, 2))[1];
+                $elen   = unpack('v', substr($h, 30, 2))[1];
+                $clen   = unpack('v', substr($h, 32, 2))[1];
+                $lho    = unpack('V', substr($h, 42, 4))[1];
+                $name   = $nlen > 0 ? (string)fread($in, $nlen) : '';
+                $cdOffset += 46 + $nlen + $elen + $clen;
+                if ($name === $entryName) {
+                    $found = ['method' => $method, 'csize' => $csize, 'lho' => $lho];
+                    break;
+                }
+            }
+            if ($found === null) {
+                fclose($in);
+                return false;
+            }
+
+            fseek($in, $found['lho']);
+            $lh = fread($in, 30);
+            if (strlen($lh) !== 30 || substr($lh, 0, 4) !== "PK\x03\x04") {
+                fclose($in);
+                return false;
+            }
+            $lNlen = unpack('v', substr($lh, 26, 2))[1];
+            $lElen = unpack('v', substr($lh, 28, 2))[1];
+            fseek($in, $found['lho'] + 30 + $lNlen + $lElen);
+
+            $out = @fopen($dest, 'wb');
+            if ($out === false) {
+                fclose($in);
+                return false;
+            }
+
+            $ok = true;
+            if ($found['method'] === 0) {
+                $left = $found['csize'];
+                while ($left > 0) {
+                    $chunk = fread($in, min(262144, $left));
+                    if ($chunk === false || $chunk === '') {
+                        $ok = false;
+                        break;
+                    }
+                    $left -= strlen($chunk);
+                    fwrite($out, $chunk);
+                }
+            } elseif ($found['method'] === 8 && function_exists('inflate_init')) {
+                $ctx = inflate_init(ZLIB_ENCODING_RAW);
+                $left = $found['csize'];
+                while ($left > 0) {
+                    $chunk = fread($in, min(262144, $left));
+                    if ($chunk === false || $chunk === '') {
+                        $ok = false;
+                        break;
+                    }
+                    $left -= strlen($chunk);
+                    $inflated = @inflate_add($ctx, $chunk, ZLIB_SYNC_FLUSH);
+                    if ($inflated === false) {
+                        $ok = false;
+                        break;
+                    }
+                    fwrite($out, $inflated);
+                }
+            } else {
+                $ok = false;
+            }
+
+            fclose($out);
+            fclose($in);
+            if (!$ok) {
+                @unlink($dest);
+            }
+            return $ok;
+        }
+
+        /**
+         * Localiza el directorio central (EOCD) y devuelve offset y nº de
+         * entradas.
+         *
+         * @param resource $fh
+         * @return array{offset:int,count:int}|null
+         */
+        private static function centralDirectory($fh): ?array
+        {
+            $stat = fstat($fh);
+            $size = (int)($stat['size'] ?? 0);
+            if ($size < 22) {
+                return null;
+            }
+            $tailLen = min($size, 65557);
+            fseek($fh, $size - $tailLen);
+            $tail = (string)fread($fh, $tailLen);
+            $eocd = strrpos($tail, "PK\x05\x06");
+            if ($eocd === false || $eocd + 22 > strlen($tail)) {
+                return null;
+            }
+            $count  = unpack('v', substr($tail, $eocd + 10, 2))[1];
+            $offset = unpack('V', substr($tail, $eocd + 16, 4))[1];
+            if ($count <= 0 || $offset <= 0 || $offset >= $size) {
+                return null;
+            }
+            return ['offset' => $offset, 'count' => $count];
+        }
+
+        /**
          * Entradas del ZIP (nombre => contenido). Solo ficheros de texto/JSON.
          *
          * @return array<string,string>
@@ -240,24 +491,59 @@ if (!class_exists('CveListFeed')) {
         }
 
         /**
-         * Registros CVE JSON 5.1 de un ZIP de la release.
+         * Registros CVE JSON 5.1 de un ZIP de la release, uno a uno (memoria
+         * acotada). Soporta el snapshot, que es un ZIP dentro de otro ZIP.
          *
-         * @return array<int,array<string,mixed>>
+         * @return Generator<int,array<string,mixed>>
          */
-        public static function recordsFromZip(string $path, int $limit = 0): array
+        public static function iterateRecords(string $zipPath): Generator
         {
-            $entries = CveZipReader::entries($path);
-            $records = [];
-            foreach ($entries as $name => $content) {
+            $names = CveZipReader::listNames($zipPath);
+            if ($names === []) {
+                return;
+            }
+
+            // Snapshot: un único .zip anidado (663 MB). Se extrae en streaming
+            // a un temporal y se recorre; nunca se carga entero en memoria.
+            if (count($names) === 1 && str_ends_with(strtolower($names[0]), '.zip')) {
+                $tmp = tempnam(sys_get_temp_dir(), 'cvelist');
+                if ($tmp === false) {
+                    return;
+                }
+                try {
+                    if (CveZipReader::extractEntryTo($zipPath, $names[0], $tmp)) {
+                        yield from self::iterateRecords($tmp);
+                    }
+                } finally {
+                    @unlink($tmp);
+                }
+                return;
+            }
+
+            foreach (CveZipReader::streamEntries($zipPath) as $name => $content) {
                 if (!str_ends_with(strtolower((string)$name), '.json')) {
                     continue;
                 }
                 $decoded = json_decode((string)$content, true);
                 if (is_array($decoded) && isset($decoded['cveMetadata'])) {
-                    $records[] = $decoded;
-                    if ($limit > 0 && count($records) >= $limit) {
-                        break;
-                    }
+                    yield $decoded;
+                }
+            }
+        }
+
+        /**
+         * Registros CVE JSON 5.1 de un ZIP de la release (array). Para ficheros
+         * grandes usa iterateRecords().
+         *
+         * @return array<int,array<string,mixed>>
+         */
+        public static function recordsFromZip(string $path, int $limit = 0): array
+        {
+            $records = [];
+            foreach (self::iterateRecords($path) as $record) {
+                $records[] = $record;
+                if ($limit > 0 && count($records) >= $limit) {
+                    break;
                 }
             }
             return $records;
