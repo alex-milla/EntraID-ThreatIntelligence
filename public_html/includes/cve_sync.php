@@ -2205,6 +2205,33 @@ class CveSync
     }
 
     /**
+     * Revalida los CVEs que importan ahora: los de informes IA y los que casan
+     * con el inventario (y no se han tocado en el último día). Es la tanda
+     * corta que ejecuta «Actualizar catálogo» para responder rápido.
+     *
+     * @return array{checked:int,updated:int,missing:int,errors:int}
+     */
+    public function refreshPriority(int $limit = 15): array
+    {
+        $limit = max(1, min(100, $limit));
+        $rows = CveDatabase::fetchAll(
+            "SELECT c.cve_id
+             FROM cve_catalog c
+             WHERE (c.updated_at IS NULL OR c.updated_at < datetime('now', '-1 day'))
+               AND (c.cve_id IN (SELECT cve_id FROM cve_ai_report_items)
+                    OR c.cve_id IN (SELECT cve_id FROM cve_watchlist_match))
+             ORDER BY COALESCE(c.updated_at, '') ASC
+             LIMIT ?",
+            [$limit]
+        );
+        $ids = [];
+        foreach ($rows as $row) {
+            $ids[] = (string)$row['cve_id'];
+        }
+        return $this->refreshCves($ids);
+    }
+
+    /**
      * Fila actual del catálogo con la forma que espera mergeCveSources().
      *
      * @return array<string,mixed>|null

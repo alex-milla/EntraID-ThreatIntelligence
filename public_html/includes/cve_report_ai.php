@@ -1820,6 +1820,18 @@ TXT);
                 throw new RuntimeException('La lista de CVEs del informe está vacía.');
             }
 
+            // Datos frescos de CVE.org ANTES de generar: el informe usa lo que
+            // hay ahora en el catálogo (CVE.org manda), no lo que hubiera al
+            // crearse. La mayoría de informes tiene 1 CVE; se acota a 25.
+            try {
+                (new CveSync())->refreshCves(array_slice(array_values($ids), 0, 25));
+            } catch (Throwable $e) {
+                app_log('warning', 'cve_ai', 'No se pudieron refrescar los CVEs antes de generar', [
+                    'id'    => $id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+
             // Exploits públicos: solo los CVEs del informe, con caché y presupuesto.
             try {
                 $exploitStats = CveExploit::enrich($ids);

@@ -45,6 +45,7 @@ class Module_Cve extends BaseModule
             ['method' => 'POST', 'pattern' => 'reports/ai-start', 'handler' => [$this, 'startAiReport']],
             ['method' => 'POST', 'pattern' => 'reports/ai-run/{id}', 'handler' => [$this, 'runAiReport']],
             ['method' => 'POST', 'pattern' => 'reports/ai-run-queue', 'handler' => [$this, 'runAiQueue']],
+            ['method' => 'POST', 'pattern' => 'reports/ai-recreate-bulk', 'handler' => [$this, 'recreateAiReportsBulk']],
             ['method' => 'POST', 'pattern' => 'reports/ai-cancel/{id}', 'handler' => [$this, 'cancelAiReport']],
             ['method' => 'POST', 'pattern' => 'reports/ai-delete/{id}', 'handler' => [$this, 'deleteAiReport']],
             ['method' => 'POST', 'pattern' => 'reports/ai-delete-bulk', 'handler' => [$this, 'deleteAiReportsBulk']],
@@ -4601,22 +4602,36 @@ class Module_Cve extends BaseModule
             : 'CVE.org: ' . (string)($delta['error'] ?? 'no se pudo descargar el delta');
 
         if ($source !== 'nvd') {
-            $reval = $sync->refreshAll(200);
+            // Tanda corta y prioritaria (informes + inventario): la petición
+            // debe responder en segundos, no en minutos.
+            $reval = $sync->refreshPriority(15);
             if ((int)$reval['checked'] > 0) {
-                $parts[] = 'Revalidados ' . (int)$reval['updated'] . '/' . (int)$reval['checked']
-                    . ' CVEs' . (!empty($reval['done']) ? ' (fin)' : ' (sigue en la próxima actualización)');
+                $parts[] = 'Revalidados ' . (int)$reval['updated'] . '/' . (int)$reval['checked'] . ' CVEs prioritarios';
             }
-            $enrich = $sync->enrichIncomplete(200);
+            $enrich = $sync->enrichIncomplete(15);
             if ((int)$enrich['updated'] > 0) {
                 $parts[] = 'Completados ' . (int)$enrich['updated'] . ' CVEs incompletos';
             }
+        }
+
+        $message = implode('. ', array_filter($parts)) . '.';
+        setting_set('cve_list_last_run', gmdate('Y-m-d H:i:s'));
+        try {
+            CveDatabase::query(
+                "UPDATE cve_sync_state
+                 SET status = 'idle', message = ?, last_success_at = datetime('now'), updated_at = datetime('now')
+                 WHERE id = 1",
+                [mb_substr($message, 0, 500)]
+            );
+        } catch (Throwable $e) {
+            // El estado es informativo; no impide la actualización.
         }
 
         return [
             'success'  => true,
             'done_now' => true,
             'source'   => $source,
-            'message'  => implode('. ', array_filter($parts)) . '.',
+            'message'  => $message,
         ];
     }
 
@@ -5243,6 +5258,111 @@ class Module_Cve extends BaseModule
         } catch (Throwable $e) {
             return 0;
         }
+    }
+
+    /**
+     * Recrea en lote los informes seleccionados: los reencola (pending), los
+     * marca para regeneración completa y drena la cola en el servidor.
+     *
+     * Una sola petición para N informes; se procesan 1 a 1 en la cola. Con
+     * FPM responde 202 y sigue trabajando en su proceso; sin FPM el navegador
+     * pide el drenado (cada llamada es corta).
+     */
+    public function recreateAiReportsBulk(array $params = []): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        $raw = file_get_contents('php://input');
+        $input = json_decode((string)$raw, true);
+        if (!is_array($input)) {
+            $input = $_POST;
+        }
+
+        $ids = [];
+        foreach ((array)($input['ids'] ?? []) as $id) {
+            $id = (int)$id;
+            if ($id > 0) {
+                $ids[$id] = true;
+            }
+        }
+        $ids = array_slice(array_keys($ids), 0, 200);
+        if ($ids === []) {
+            json_response(['success' => false, 'error' => 'Selecciona al menos un informe.'], 400);
+        }
+
+        $profileId = max(0, (int)($input['profile_id'] ?? 0));
+        $regenerateAll = !array_key_exists('regenerate_all', $input) || !empty($input['regenerate_all']);
+
+        $queued = 0;
+        $skipped = 0;
+        foreach ($ids as $id) {
+            $row = CveDatabase::fetchOne("SELECT id, status FROM cve_ai_reports WHERE id = ?", [$id]);
+            if ($row === null || in_array((string)$row['status'], ['pending', 'running'], true)) {
+                $skipped++;
+                continue;
+            }
+
+            $token = bin2hex(random_bytes(24));
+            CveDatabase::update(
+                "UPDATE cve_ai_reports
+                 SET status = 'pending', token = ?, ai_profile_id = ?, ai_error = NULL, ai_model = NULL,
+                     ai_text = NULL, content_text = NULL, finished_at = NULL, started_at = NULL,
+                     processed_items = 0, updated_at = datetime('now')
+                 WHERE id = ?",
+                [$token, $profileId > 0 ? $profileId : null, $id]
+            );
+            CveDatabase::query(
+                $regenerateAll
+                    ? "UPDATE cve_ai_report_items
+                       SET status = 'pending', ai_error = NULL, ai_text = NULL, sections_json = NULL,
+                           ai_model = NULL, started_at = NULL, finished_at = NULL
+                       WHERE report_id = ?"
+                    : "UPDATE cve_ai_report_items
+                       SET status = 'pending', ai_error = NULL, ai_text = NULL, sections_json = NULL,
+                           ai_model = NULL, started_at = NULL, finished_at = NULL
+                       WHERE report_id = ? AND status IN ('error','running','pending')",
+                [$id]
+            );
+            $queued++;
+        }
+
+        app_log('info', 'cve_ai', 'Informes reencolados en lote', [
+            'selected' => count($ids),
+            'queued'   => $queued,
+            'skipped'  => $skipped,
+            'profile'  => $profileId,
+        ]);
+        log_activity('cve.ai_reports_recreated', [
+            'selected' => count($ids),
+            'queued'   => $queued,
+            'profile_id' => $profileId,
+        ]);
+
+        $ack = [
+            'success' => true,
+            'queued'  => $queued,
+            'skipped' => $skipped,
+            'pending' => $queued,
+            'worker'  => function_exists('fastcgi_finish_request') ? 'fpm' : 'none',
+        ];
+
+        if (function_exists('fastcgi_finish_request')) {
+            @ignore_user_abort(true);
+            @set_time_limit(0);
+            if (function_exists('release_session_lock')) {
+                release_session_lock();
+            }
+            json_response_continue($ack, 202);
+            try {
+                CveReportAi::runQueue('cve-queue');
+            } catch (Throwable $e) {
+                app_log('error', 'cve_ai', 'Error drenando la cola de informes', ['error' => $e->getMessage()]);
+            }
+            exit;
+        }
+
+        json_response($ack);
     }
 
     /**

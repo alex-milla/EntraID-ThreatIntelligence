@@ -635,6 +635,26 @@ foreach ($companyGroups as $companyRow) {
         };
 
         function startCveSyncNow(mode) {
+            var startBtn = document.getElementById('cve-start-btn');
+            var badgeEl = document.getElementById('cve-sync-status');
+            var msgEl = document.getElementById('cve-sync-message');
+            var prevLabel = startBtn ? startBtn.innerHTML : '';
+
+            // Feedback inmediato: el botón no puede quedarse «muerto».
+            if (startBtn) {
+                startBtn.disabled = true;
+                startBtn.innerHTML = '<span class="inline-block w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></span> Actualizando…';
+            }
+            if (badgeEl) { badgeEl.textContent = 'Sincronizando'; }
+            if (msgEl) { msgEl.textContent = 'Consultando CVE.org y actualizando el catálogo…'; }
+
+            function restore() {
+                if (startBtn) {
+                    startBtn.disabled = false;
+                    startBtn.innerHTML = prevLabel;
+                }
+            }
+
             api('POST', SYNC_URL, { mode: mode, stream: true }).then(function(res) {
                 if (!res || !res.success) {
                     // Si ya había un job activo, lo retomamos en vez de fallar.
@@ -644,17 +664,19 @@ foreach ($companyGroups as $companyRow) {
                         streamLoop();
                         return;
                     }
+                    restore();
                     toast(err || 'No se pudo iniciar', 'error');
+                    if (msgEl) { msgEl.textContent = err || 'No se pudo iniciar la actualización.'; }
+                    if (badgeEl) { badgeEl.textContent = 'Error'; }
                     return;
                 }
                 // Fuente CVE.org: el delta se aplica en el servidor y la
                 // petición vuelve con el resultado (no hay job que seguir).
                 if (res.done_now) {
                     toast(res.message || 'Catálogo actualizado', 'success');
-                    var stEl = document.getElementById('cve-sync-status');
-                    if (stEl) { stEl.textContent = 'Actualizado'; }
-                    var mEl = document.getElementById('cve-sync-message');
-                    if (mEl) { mEl.textContent = res.message || ''; }
+                    if (badgeEl) { badgeEl.textContent = 'Actualizado'; }
+                    if (msgEl) { msgEl.textContent = res.message || ''; }
+                    restore();
                     setTimeout(function () { location.reload(); }, 900);
                     return;
                 }
@@ -662,13 +684,13 @@ foreach ($companyGroups as $companyRow) {
                 // no se ha descargado nada y no hay job que seguir.
                 if (res.skipped) {
                     toast(res.message || 'No hay CVEs nuevos desde la última sincronización.', 'info');
-                    var statusEl = document.getElementById('cve-sync-status');
-                    if (statusEl) { statusEl.textContent = 'Sin novedades'; }
-                    var msgEl = document.getElementById('cve-sync-message');
+                    if (badgeEl) { badgeEl.textContent = 'Sin novedades'; }
                     if (msgEl) { msgEl.textContent = res.message || ''; }
+                    restore();
                     return;
                 }
                 toast(res.message || 'Sincronización iniciada', 'success');
+                restore();
                 setRunningUi(true);
                 var step = document.getElementById('cve-step-btn');
                 if (step) {
@@ -679,7 +701,11 @@ foreach ($companyGroups as $companyRow) {
                 stopped = false;
                 streamRetries = 0;
                 streamLoop();
-            }).catch(function() { toast('Error de conexión', 'error'); });
+            }).catch(function() {
+                restore();
+                toast('Error de conexión', 'error');
+                if (badgeEl) { badgeEl.textContent = 'Error'; }
+            });
         }
 
         window.resumeCveSync = function() {
@@ -1997,6 +2023,7 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
     var DUPLICATES_URL = <?= json_encode(base_url('modules/cve/reports/ai-duplicates')) ?>;
     var RUN_URL    = <?= json_encode(base_url('modules/cve/reports/ai-run')) ?>;
     var RUN_QUEUE_URL = <?= json_encode(base_url('modules/cve/reports/ai-run-queue')) ?>;
+    var RECREATE_BULK_URL = <?= json_encode(base_url('modules/cve/reports/ai-recreate-bulk')) ?>;
     var RETRY_URL  = <?= json_encode(base_url('modules/cve/reports/ai-retry')) ?>;
     var CANCEL_URL = <?= json_encode(base_url('modules/cve/reports/ai-cancel')) ?>;
     var DELETE_URL = <?= json_encode(base_url('modules/cve/reports/ai-delete')) ?>;
@@ -2589,7 +2616,7 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
 
     window.cveAiBulkRetryOpen = function () {
         if (batchRunning) {
-            appAlert('Espera a que termine la generación actual antes de reintentar.', { title: 'Cola activa' });
+            appAlert('Espera a que termine la generación actual antes de recrear.', { title: 'Cola activa' });
             return;
         }
         if (!list) {
@@ -2598,7 +2625,7 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
         var selectedCount = list.querySelectorAll('.ai-report-check:checked').length;
         var reports = selectedRetryableReports();
         if (!reports.length) {
-            appAlert('Selecciona informes en estado Error o Cancelado.', { title: 'Sin informes reintentables' });
+            appAlert('Selecciona informes que no estén ya en cola.', { title: 'Sin informes que recrear' });
             return;
         }
         openRetryModal(reports, selectedCount - reports.length, true);
@@ -2664,57 +2691,46 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
             button.disabled = false;
         }
 
-        var successIds = [];
-        var failures = 0;
-        setBatchBanner('Reencolando 0/' + ids.length + '…');
+        setBatchBanner('Recreando ' + ids.length + ' informe(s)…');
         if (statusFilter) {
             statusFilter.value = '';
         }
         applyReportFilters();
-        var chain = Promise.resolve();
-        ids.forEach(function (id, index) {
-            chain = chain.then(function () {
-                return postJson(RETRY_URL + '/' + id, {
-                    profile_id: profileId,
-                    regenerate_all: regenerateAll
-                }).then(function (res) {
-                    if (res && res.success) {
-                        successIds.push(id);
-                        setReportRowStatus(id, 'pending', 0, 1);
-                    } else {
-                        failures++;
-                    }
-                }).catch(function () {
-                    failures++;
-                }).then(function () {
-                    setBatchBanner('Reencolando ' + (index + 1) + '/' + ids.length + '…');
-                });
-            });
-        });
 
-        chain.then(function () {
-            if (statusFilter) {
-                statusFilter.value = '';
+        // Una sola petición: el servidor reencola todos y drena la cola
+        // (con FPM responde 202 y sigue trabajando en su proceso).
+        postJson(RECREATE_BULK_URL, {
+            ids: ids,
+            profile_id: profileId,
+            regenerate_all: regenerateAll
+        }).then(function (res) {
+            if (!res || !res.success) {
+                setBatchBanner('', false);
+                appAlert((res && res.error) || 'No se pudo recrear el lote.', { title: 'No se pudo recrear' });
+                return;
             }
-            applyReportFilters();
+            var queued = parseInt(res.queued, 10) || 0;
+            var skipped = parseInt(res.skipped, 10) || 0;
+            ids.forEach(function (id) { setReportRowStatus(id, 'pending', 0, 1); });
+            setBatchBanner('En cola: ' + queued + '. Generando en el servidor…');
+            startListReconcile();
+
             return refreshReportList().catch(function () {}).then(function () {
-                if (successIds.length === 0) {
-                    setBatchBanner('', false);
-                    appAlert('No se pudo reencolar ningún informe.', { title: 'Sin cambios' });
-                    return;
+                // Sin FPM el servidor no puede seguir tras responder: se pide
+                // el drenado (cada llamada es corta y encadena).
+                if (res.worker === 'none') {
+                    return drainQueueLoop(30);
                 }
-                setBatchBanner('Reencolados ' + successIds.length + '. Generando en el servidor…');
-                startListReconcile();
-                return drainQueueLoop(30).then(function () {
-                    if (failures > 0) {
-                        appAlert('Se reintentaron ' + successIds.length + ' informes; ' + failures
-                            + ' no se pudieron reencolar.', { title: 'Reintento parcial' });
-                    }
-                });
+                return res;
+            }).then(function () {
+                if (skipped > 0) {
+                    appAlert('Se recrearon ' + queued + ' informes; ' + skipped
+                        + ' se omitieron (ya estaban en cola o no existen).', { title: 'Recreación parcial' });
+                }
             });
         }).catch(function (err) {
             setBatchBanner('', false);
-            appAlert('No se pudo reintentar el lote: ' + errorText(err), { title: 'Error' });
+            appAlert('No se pudo recrear el lote: ' + errorText(err), { title: 'Error' });
         });
     };
 
@@ -3546,6 +3562,8 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
         if (!list) {
             return [];
         }
+        // Cualquier informe seleccionado se puede recrear (Listo, Error o
+        // Cancelado): «Recrear» regenera con los datos actuales del catálogo.
         return Array.prototype.slice.call(list.querySelectorAll('.ai-report-check:checked'))
             .map(function (checkbox) {
                 var row = checkbox.closest('.ai-report-item');
@@ -3553,8 +3571,8 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
                     return null;
                 }
                 var status = row.dataset.status || '';
-                if (status !== 'error' && status !== 'canceled') {
-                    return null;
+                if (status === 'pending' || status === 'running') {
+                    return null; // ya está en cola
                 }
                 return {
                     id: parseInt(row.dataset.id, 10) || 0,
@@ -3587,8 +3605,8 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
         if (reportsBulkRetry) {
             reportsBulkRetry.classList.toggle('hidden', retryableCount === 0);
             reportsBulkRetry.textContent = retryableCount > 0
-                ? 'Reintentar (' + retryableCount + ')'
-                : 'Reintentar';
+                ? 'Recrear / Reintentar (' + retryableCount + ')'
+                : 'Recrear / Reintentar';
         }
         if (reportsBulkGroup) {
             reportsBulkGroup.classList.toggle('hidden', ids.length === 0);
