@@ -16,6 +16,9 @@ class CveSync
     private ?array $watchlistMap = null;
     private float $minCvss = 0.0;
 
+    /** Catálogo KEV completo, cacheado una vez por proceso. */
+    private static ?array $kevCatalogCache = null;
+
     public function __construct(?CveClient $client = null)
     {
         $this->client = $client;
@@ -1283,10 +1286,13 @@ class CveSync
     }
 
     /**
-     * Descarga y guarda un CVE concreto desde NVD (bajo demanda).
-     * Pensado para CVEs que solo existen en Defender.
+     * Descarga y guarda un CVE concreto bajo demanda.
+     *
+     * CVE.org es la fuente primaria (datos del fabricante + ADP de CISA) y NVD
+     * se usa como respaldo/complemento (CPEs y métricas normalizadas). Así un
+     * CVE recién publicado funciona aunque NVD aún no lo haya analizado.
      */
-    public function fetchAndStoreCve(string $cveId): array
+    public function fetchAndStoreCve(string $cveId, bool $withEnrichment = true): array
     {
         $cveId = strtoupper(trim($cveId));
         if (!preg_match('/^CVE-\d{4}-\d{4,7}$/', $cveId)) {
@@ -1294,19 +1300,68 @@ class CveSync
         }
 
         $client = CveClient::fromSettings();
-        $raw = $client->fetchCve($cveId);
-        if ($raw === null) {
-            throw new RuntimeException('NVD no devolvió datos para ' . $cveId . '.');
+
+        $orgParsed = null;
+        $orgError = '';
+        try {
+            $orgRaw = $client->fetchCveOrg($cveId);
+            if ($orgRaw !== null) {
+                $orgParsed = $this->parseCveOrgRecord($orgRaw);
+            }
+        } catch (Throwable $e) {
+            $orgError = $e->getMessage();
+        }
+
+        $nvdParsed = null;
+        $nvdError = '';
+        try {
+            $nvdRaw = $client->fetchCve($cveId);
+            if ($nvdRaw !== null) {
+                $nvdParsed = $this->parseCve($nvdRaw);
+            }
+        } catch (Throwable $e) {
+            $nvdError = $e->getMessage();
+        }
+
+        $merged = $this->mergeCveSources($orgParsed, $nvdParsed);
+        if ($merged === null) {
+            $detail = trim(implode(' | ', array_filter([$orgError, $nvdError])));
+            throw new RuntimeException(
+                'Ni CVE.org ni NVD devolvieron datos utilizables para ' . $cveId . '.'
+                . ($detail !== '' ? ' (' . $detail . ')' : '')
+            );
         }
 
         $db = CveDatabase::getInstance();
         $stmts = $this->prepareStatements($db);
-        $result = $this->upsertCve($db, $raw, $stmts, true);
+        $result = $this->storeParsed($db, $merged, $stmts, true);
         if ($result === 'skipped') {
-            throw new RuntimeException('NVD no tiene datos utilizables para ' . $cveId . ' (rechazado o sin métricas).');
+            throw new RuntimeException('Los datos de ' . $cveId . ' no son utilizables (rechazado o sin métricas).');
         }
 
         $hasEpss = false;
+        $hasKev = false;
+
+        // El enriquecimiento (EPSS + KEV) es opcional: al completar muchos CVEs
+        // de golpe se omite para no encadenar peticiones ni descargar el KEV
+        // entero varias veces.
+        if (!$withEnrichment) {
+            app_log('info', 'cve', 'CVE descargado bajo demanda', [
+                'cve'      => $cveId,
+                'result'   => $result,
+                'has_epss' => false,
+                'has_kev'  => false,
+                'source'   => 'cve.org',
+            ]);
+            return [
+                'success'  => true,
+                'cve_id'   => $cveId,
+                'result'   => $result,
+                'has_epss' => false,
+                'has_kev'  => false,
+            ];
+        }
+
         $epss = $client->fetchEpss($cveId);
         if ($epss !== null) {
             CveDatabase::query(
@@ -1316,11 +1371,14 @@ class CveSync
             $hasEpss = true;
         }
 
-        $hasKev = false;
         try {
             $already = CveDatabase::fetchOne("SELECT cve_id FROM cve_kev WHERE cve_id = ?", [$cveId]);
             if ($already === null) {
-                $kev = $client->fetchKevCatalog();
+                // El catálogo KEV completo se descarga una sola vez por proceso.
+                if (self::$kevCatalogCache === null) {
+                    self::$kevCatalogCache = $client->fetchKevCatalog();
+                }
+                $kev = self::$kevCatalogCache;
                 foreach ((array)($kev['data']['vulnerabilities'] ?? []) as $entry) {
                     if (!is_array($entry) || strcasecmp((string)($entry['cveID'] ?? ''), $cveId) !== 0) {
                         continue;
@@ -1374,12 +1432,67 @@ class CveSync
         ];
     }
 
+    /**
+     * Asegura que un CVE esté en el catálogo con datos utilizables.
+     *
+     * Si no existe, o existe pero llegó incompleto de NVD (sin descripción, sin
+     * severidad y sin CVSS), se descarga desde CVE.org (con NVD de respaldo).
+     * Devuelve true si queda utilizable.
+     */
+    public function ensureCve(string $cveId, bool $allowNetwork = true): bool
+    {
+        $cveId = strtoupper(trim($cveId));
+        if (!preg_match('/^CVE-\d{4}-\d{4,}$/', $cveId)) {
+            return false;
+        }
+
+        $row = CveDatabase::fetchOne(
+            "SELECT description, severity, cvss_v3_score, cvss_v2_score FROM cve_catalog WHERE cve_id = ?",
+            [$cveId]
+        );
+        $complete = $row !== null
+            && trim((string)($row['description'] ?? '')) !== ''
+            && (trim((string)($row['severity'] ?? '')) !== '' || $row['cvss_v3_score'] !== null || $row['cvss_v2_score'] !== null);
+        if ($complete) {
+            return true;
+        }
+        if (!$allowNetwork) {
+            return $row !== null;
+        }
+
+        try {
+            $this->fetchAndStoreCve($cveId, false);
+        } catch (Throwable $e) {
+            app_log('warning', 'cve', 'No se pudo completar el CVE desde CVE.org', [
+                'cve'   => $cveId,
+                'error' => $e->getMessage(),
+            ]);
+            return $row !== null;
+        }
+
+        $after = CveDatabase::fetchOne(
+            "SELECT description FROM cve_catalog WHERE cve_id = ?",
+            [$cveId]
+        );
+        return $after !== null && trim((string)($after['description'] ?? '')) !== '';
+    }
+
     private function upsertCve(PDO $db, array $cve, array $stmts, bool $force = false): string
     {
         $parsed = $this->parseCve($cve);
         if ($parsed === null) {
             return 'skipped';
         }
+        return $this->storeParsed($db, $parsed, $stmts, $force);
+    }
+
+    /**
+     * Guarda un CVE ya parseado (NVD o CVE.org). Idempotente.
+     *
+     * @param array<string,mixed> $parsed
+     */
+    private function storeParsed(PDO $db, array $parsed, array $stmts, bool $force = false): string
+    {
         if (!$force && $this->minCvss > 0) {
             $score = $parsed['cvss_v3_score'] ?? $parsed['cvss_v2_score'];
             if ($score !== null && (float)$score < $this->minCvss) {
@@ -1560,6 +1673,250 @@ class CveSync
             'cpe_matches'       => $cpeMatches,
             'products'          => array_values($products),
         ];
+    }
+
+    /**
+     * Parsea un registro oficial de CVE.org (CVE JSON 5.1).
+     *
+     * Fuente primaria por CVE: el contenedor `cna` lo publica el fabricante y
+     * el `adp` de CISA Vulnrichment añade CVSS/CWE/CPE cuando el CNA no los
+     * incluye. Devuelve la misma forma que parseCve() para poder guardarlo con
+     * el mismo upsert.
+     *
+     * @param array<string,mixed> $record
+     * @return array<string,mixed>|null
+     */
+    public function parseCveOrgRecord(array $record): ?array
+    {
+        $meta = is_array($record['cveMetadata'] ?? null) ? $record['cveMetadata'] : [];
+        $id = strtoupper(trim((string)($meta['cveId'] ?? '')));
+        if (!preg_match('/^CVE-\d{4}-\d{4,}$/', $id)) {
+            return null;
+        }
+        $state = strtoupper(trim((string)($meta['state'] ?? 'PUBLISHED')));
+        if ($state === 'REJECTED') {
+            return null;
+        }
+
+        $cna = is_array($record['containers']['cna'] ?? null) ? $record['containers']['cna'] : [];
+        $adp = [];
+        foreach ((array)($record['containers']['adp'] ?? []) as $container) {
+            if (is_array($container)) {
+                $adp[] = $container;
+            }
+        }
+        $containers = array_merge([$cna], $adp);
+
+        // Descripción: español si existe; si no, inglés del CNA y del ADP.
+        // Los idiomas reales llegan como `en-US`, `es-ES`, etc.
+        $description = '';
+        $descriptionLang = 'en';
+        foreach (['es', 'en'] as $wanted) {
+            foreach ($containers as $container) {
+                foreach ((array)($container['descriptions'] ?? []) as $desc) {
+                    if (!is_array($desc)) {
+                        continue;
+                    }
+                    $lang = strtolower(trim((string)($desc['lang'] ?? '')));
+                    if ($lang !== $wanted && !str_starts_with($lang, $wanted . '-')) {
+                        continue;
+                    }
+                    $value = trim((string)($desc['value'] ?? ''));
+                    if ($value !== '') {
+                        $description = $value;
+                        $descriptionLang = $wanted;
+                        break 3;
+                    }
+                }
+            }
+        }
+
+        // CVSS: se prefiere v3.1 → v3.0 → v4.0 → v2.0.
+        $scores = ['v31' => null, 'v30' => null, 'v4' => null, 'v2' => null];
+        $metricKeys = ['cvssV3_1' => 'v31', 'cvssV3_0' => 'v30', 'cvssV4_0' => 'v4', 'cvssV2_0' => 'v2'];
+        foreach ($containers as $container) {
+            foreach ((array)($container['metrics'] ?? []) as $metric) {
+                if (!is_array($metric)) {
+                    continue;
+                }
+                foreach ($metricKeys as $key => $slot) {
+                    if ($scores[$slot] !== null || !is_array($metric[$key] ?? null)) {
+                        continue;
+                    }
+                    $data = $metric[$key];
+                    $scores[$slot] = [
+                        'score'    => isset($data['baseScore']) ? (float)$data['baseScore'] : null,
+                        'vector'   => (string)($data['vectorString'] ?? ''),
+                        'severity' => (string)($data['baseSeverity'] ?? ''),
+                    ];
+                }
+            }
+        }
+
+        $primary = $scores['v31'] ?? $scores['v30'] ?? $scores['v4'];
+        $cvssV3Score = $primary['score'] ?? null;
+        $cvssV3Vector = $primary['vector'] ?? null;
+        $cvssV2Score = $scores['v2']['score'] ?? null;
+        $severity = (string)($primary['severity'] ?? ($scores['v2']['severity'] ?? ''));
+        $severity = $severity !== '' ? ucfirst(strtolower($severity)) : null;
+        $scoreForSeverity = $cvssV3Score ?? $cvssV2Score;
+        if ($severity === null && $scoreForSeverity !== null) {
+            $severity = $scoreForSeverity >= 9.0 ? 'Critical' : ($scoreForSeverity >= 7.0 ? 'High' : ($scoreForSeverity >= 4.0 ? 'Medium' : 'Low'));
+        }
+
+        // CWE (CNA + ADP).
+        $cwes = [];
+        foreach ($containers as $container) {
+            foreach ((array)($container['problemTypes'] ?? []) as $problemType) {
+                foreach ((array)($problemType['descriptions'] ?? []) as $desc) {
+                    $value = (string)($desc['cweId'] ?? ($desc['description'] ?? ''));
+                    if (preg_match('/CWE-\d+/i', $value, $m) === 1) {
+                        $cwes[strtoupper($m[0])] = true;
+                    }
+                }
+            }
+        }
+
+        // Referencias.
+        $references = [];
+        foreach ($containers as $container) {
+            foreach ((array)($container['references'] ?? []) as $ref) {
+                $url = trim((string)($ref['url'] ?? ''));
+                if ($url !== '' && filter_var($url, FILTER_VALIDATE_URL)) {
+                    $references[$url] = true;
+                }
+                if (count($references) >= 10) {
+                    break 2;
+                }
+            }
+        }
+
+        // Productos y versiones afectadas (fabricante + producto) y CPEs del ADP.
+        $products = [];
+        $cpeMatches = [];
+        foreach ($containers as $container) {
+            foreach ((array)($container['affected'] ?? []) as $affected) {
+                if (!is_array($affected)) {
+                    continue;
+                }
+                $vendor = trim((string)($affected['vendor'] ?? ''));
+                $product = trim((string)($affected['product'] ?? ''));
+                if ($product !== '') {
+                    $key = ($vendor !== '' ? $vendor : '?') . ':' . $product;
+                    $products[$key] = ['vendor' => $vendor, 'product' => $product];
+                }
+                foreach ((array)($affected['cpes'] ?? []) as $cpe) {
+                    if (is_string($cpe) && str_starts_with($cpe, 'cpe:2.3:')) {
+                        $cpeMatches[] = ['criteria' => $cpe, 'vulnerable' => true, 'matchCriteriaId' => ''];
+                    }
+                }
+            }
+        }
+
+        $published = isset($meta['datePublished']) ? (string)$meta['datePublished'] : null;
+        $modified = isset($meta['dateUpdated']) ? (string)$meta['dateUpdated'] : null;
+        if ($modified === null) {
+            foreach ($containers as $container) {
+                $stamp = (string)($container['providerMetadata']['dateUpdated'] ?? '');
+                if ($stamp !== '') {
+                    $modified = $stamp;
+                    break;
+                }
+            }
+        }
+
+        $assigner = trim((string)($meta['assignerShortName'] ?? ''));
+
+        return [
+            'cve_id'            => $id,
+            'description'       => $description,
+            'description_lang'  => $descriptionLang,
+            'published_at'      => $published,
+            'last_modified_at'  => $modified,
+            'vuln_status'       => $state !== '' ? ucfirst(strtolower($state)) : null,
+            'source_identifier' => $assigner !== '' ? $assigner : null,
+            'severity'          => $severity,
+            'cvss_v3_score'     => $cvssV3Score,
+            'cvss_v3_vector'    => $cvssV3Vector,
+            'cvss_v2_score'     => $cvssV2Score,
+            'cwe_ids'           => json_encode(array_keys($cwes), JSON_UNESCAPED_SLASHES),
+            'references_json'   => json_encode(array_keys($references), JSON_UNESCAPED_SLASHES),
+            'products_json'     => json_encode(array_values($products), JSON_UNESCAPED_SLASHES),
+            'nvd_url'           => 'https://nvd.nist.gov/vuln/detail/' . $id,
+            'kev_date'          => null,
+            'kev_due_date'      => null,
+            'kev_action'        => null,
+            'kev_name'          => null,
+            'cpe_matches'       => $cpeMatches,
+            'products'          => array_values($products),
+        ];
+    }
+
+    /**
+     * Fusiona el registro de CVE.org (primario) con el de NVD (respaldo).
+     * CVE.org manda en descripción y productos; NVD aporta sus CPEs y sus
+     * métricas normalizadas cuando existen.
+     *
+     * @param array<string,mixed>|null $org
+     * @param array<string,mixed>|null $nvd
+     * @return array<string,mixed>|null
+     */
+    private function mergeCveSources(?array $org, ?array $nvd): ?array
+    {
+        if ($org === null) {
+            return $nvd;
+        }
+        if ($nvd === null) {
+            return $org;
+        }
+
+        $out = $nvd;
+        if (trim((string)($org['description'] ?? '')) !== '') {
+            $out['description'] = (string)$org['description'];
+            $out['description_lang'] = (string)($org['description_lang'] ?? 'en');
+        }
+        if (($out['cvss_v3_score'] ?? null) === null && ($org['cvss_v3_score'] ?? null) !== null) {
+            $out['cvss_v3_score'] = $org['cvss_v3_score'];
+            $out['cvss_v3_vector'] = $org['cvss_v3_vector'];
+        }
+        if (trim((string)($out['severity'] ?? '')) === '' && trim((string)($org['severity'] ?? '')) !== '') {
+            $out['severity'] = $org['severity'];
+        }
+        if (trim((string)($out['published_at'] ?? '')) === '' && !empty($org['published_at'])) {
+            $out['published_at'] = $org['published_at'];
+        }
+        if (trim((string)($out['last_modified_at'] ?? '')) === '' && !empty($org['last_modified_at'])) {
+            $out['last_modified_at'] = $org['last_modified_at'];
+        }
+
+        $cwes = array_values(array_unique(array_merge(
+            (array)json_decode((string)($out['cwe_ids'] ?? '[]'), true),
+            (array)json_decode((string)($org['cwe_ids'] ?? '[]'), true)
+        )));
+        $out['cwe_ids'] = json_encode($cwes, JSON_UNESCAPED_SLASHES);
+
+        $refs = array_values(array_unique(array_merge(
+            (array)json_decode((string)($out['references_json'] ?? '[]'), true),
+            (array)json_decode((string)($org['references_json'] ?? '[]'), true)
+        )));
+        $out['references_json'] = json_encode(array_slice($refs, 0, 10), JSON_UNESCAPED_SLASHES);
+
+        $products = [];
+        foreach (array_merge((array)($out['products'] ?? []), (array)($org['products'] ?? [])) as $product) {
+            if (!is_array($product) || trim((string)($product['product'] ?? '')) === '') {
+                continue;
+            }
+            $key = (string)($product['vendor'] ?? '') . ':' . (string)$product['product'];
+            $products[$key] = ['vendor' => (string)($product['vendor'] ?? ''), 'product' => (string)$product['product']];
+        }
+        $out['products'] = array_slice(array_values($products), 0, 200);
+        $out['products_json'] = json_encode($out['products'], JSON_UNESCAPED_SLASHES);
+
+        if (empty($out['cpe_matches']) && !empty($org['cpe_matches'])) {
+            $out['cpe_matches'] = $org['cpe_matches'];
+        }
+
+        return $out;
     }
 
     private function pickMetric(array $metrics): ?array

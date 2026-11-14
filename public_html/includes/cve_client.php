@@ -486,6 +486,72 @@ class CveClient
     }
 
     /**
+     * Descarga el registro oficial de CVE.org (CVE Services 2.1, CVE JSON 5.1).
+     *
+     * Es la fuente primaria por CVE: incluye el contenedor del CNA (fabricante)
+     * y el ADP de CISA Vulnrichment, con descripción, CVSS, CWE, referencias y
+     * productos/versiones afectadas aunque NVD aún no lo haya analizado.
+     *
+     * @return array<string,mixed>|null Registro completo o null si no existe.
+     */
+    public function fetchCveOrg(string $cveId): ?array
+    {
+        $cveId = strtoupper(trim($cveId));
+        if (!preg_match('/^CVE-\d{4}-\d{4,7}$/', $cveId)) {
+            return null;
+        }
+        $base = defined('CVE_ORG_API_URL') ? (string)CVE_ORG_API_URL : 'https://cveawg.mitre.org/api/cve';
+        $url = rtrim($base, '/') . '/' . rawurlencode($cveId);
+        if (!self::isSafeUrl($url)) {
+            return null;
+        }
+        $timeout = defined('CVE_ORG_TIMEOUT') ? max(5, (int)CVE_ORG_TIMEOUT) : 20;
+
+        // Sin cURL (algunos hostings/CLI): wrapper HTTP de PHP.
+        if (!function_exists('curl_init')) {
+            $ctx = stream_context_create([
+                'http' => [
+                    'method'        => 'GET',
+                    'header'        => "Accept: application/json\r\n",
+                    'timeout'       => $timeout,
+                    'ignore_errors' => true,
+                ],
+                'ssl' => ['verify_peer' => true, 'verify_peer_name' => true],
+            ]);
+            $body = @file_get_contents($url, false, $ctx);
+            if ($body === false) {
+                return null;
+            }
+            $http = 0;
+            foreach ($http_response_header ?? [] as $line) {
+                if (preg_match('#^HTTP/\S+\s+(\d{3})#', (string)$line, $m) === 1) {
+                    $http = (int)$m[1];
+                }
+            }
+            if ($http !== 0 && $http !== 200) {
+                return null;
+            }
+            $data = json_decode($body, true);
+            return is_array($data) ? $data : null;
+        }
+
+        try {
+            $res = $this->httpGet($url, ['Accept: application/json'], $timeout);
+        } catch (Throwable $e) {
+            app_log('warning', 'cve', 'CVE.org no respondió', [
+                'cve'   => $cveId,
+                'error' => $e->getMessage(),
+            ]);
+            return null;
+        }
+        if (($res['http'] ?? 0) !== 200) {
+            return null;
+        }
+        $data = json_decode((string)($res['body'] ?? ''), true);
+        return is_array($data) ? $data : null;
+    }
+
+    /**
      * Consulta la puntuación EPSS de un único CVE (FIRST.org, sin key).
      */
     public function fetchEpss(string $cveId): ?array

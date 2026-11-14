@@ -81,6 +81,11 @@ try {
                     Preguntar a la IA
                 </a>
             <?php endif; ?>
+            <a href="https://www.cve.org/CVERecord?id=<?= e(rawurlencode((string)$cve['cve_id'])) ?>"
+               target="_blank" rel="noopener noreferrer"
+               class="inline-flex items-center gap-1.5 px-3 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors">
+                Ver en CVE.org ↗
+            </a>
             <a href="<?= e((string)($cve['nvd_url'] ?? ('https://nvd.nist.gov/vuln/detail/' . $cve['cve_id']))) ?>"
                target="_blank" rel="noopener noreferrer"
                class="inline-flex items-center gap-1.5 px-3 py-2 border border-line text-sm font-medium rounded-lg hover:bg-muted transition-colors">
@@ -104,7 +109,7 @@ try {
                     <p class="text-xs text-ink-soft mt-3">Descripción original en inglés; se traducirá al generar un informe con IA.</p>
                 <?php endif; ?>
             <?php else: ?>
-                <p class="text-sm text-ink-muted">NVD no devolvió descripción para este CVE.</p>
+                <p class="text-sm text-ink-muted">CVE.org y NVD no devolvieron descripción para este CVE.</p>
             <?php endif; ?>
         </div>
 

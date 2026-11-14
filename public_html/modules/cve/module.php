@@ -4886,8 +4886,37 @@ class Module_Cve extends BaseModule
 
             $found = [];
             $missing = [];
+            $sync = null;
+            $enriched = 0;
+            $enrichLimit = defined('CVE_ORG_ENRICH_LIMIT') ? max(1, (int)CVE_ORG_ENRICH_LIMIT) : 25;
             foreach ($ids as $cveId) {
-                $row = CveDatabase::fetchOne("SELECT cve_id FROM cve_catalog WHERE cve_id = ?", [$cveId]);
+                $row = CveDatabase::fetchOne(
+                    "SELECT cve_id, description, severity, cvss_v3_score, cvss_v2_score
+                     FROM cve_catalog WHERE cve_id = ?",
+                    [$cveId]
+                );
+                // Falta o llegó incompleto de NVD (sin descripción o sin nota):
+                // se completa desde CVE.org, que sí tiene los datos del CNA.
+                $needsData = $row === null
+                    || trim((string)($row['description'] ?? '')) === ''
+                    || (trim((string)($row['severity'] ?? '')) === ''
+                        && $row['cvss_v3_score'] === null
+                        && $row['cvss_v2_score'] === null);
+                if ($needsData && $enriched < $enrichLimit) {
+                    try {
+                        if ($sync === null) {
+                            $sync = new CveSync();
+                        }
+                        $sync->ensureCve($cveId, true);
+                        $enriched++;
+                    } catch (Throwable $e) {
+                        app_log('warning', 'cve_ai', 'No se pudo completar el CVE desde CVE.org', [
+                            'cve'   => $cveId,
+                            'error' => $e->getMessage(),
+                        ]);
+                    }
+                    $row = CveDatabase::fetchOne("SELECT cve_id FROM cve_catalog WHERE cve_id = ?", [$cveId]);
+                }
                 if ($row === null) {
                     $missing[] = $cveId;
                 } else {
@@ -4897,8 +4926,8 @@ class Module_Cve extends BaseModule
             if ($missing !== []) {
                 json_response([
                     'success' => false,
-                    'error'   => 'No están en el catálogo local: ' . implode(', ', $missing)
-                        . '. Sincroniza el catálogo NVD o revisa los identificadores.',
+                    'error'   => 'No se pudieron obtener de CVE.org ni del catálogo local: ' . implode(', ', $missing)
+                        . '. Revisa el identificador o inténtalo de nuevo en unos minutos.',
                 ], 400);
             }
 
