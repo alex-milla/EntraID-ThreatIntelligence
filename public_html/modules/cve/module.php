@@ -71,6 +71,8 @@ class Module_Cve extends BaseModule
             ['method' => 'GET',  'pattern' => 'report-ai/{id}',   'handler' => [$this, 'aiReportView']],
             ['method' => 'GET',  'pattern' => 'report/{id}',      'handler' => [$this, 'reportView']],
             ['method' => 'POST', 'pattern' => 'sync',            'handler' => [$this, 'triggerSync']],
+            ['method' => 'POST', 'pattern' => 'cve-list/update', 'handler' => [$this, 'updateFromCveList']],
+            ['method' => 'POST', 'pattern' => 'cve-list/enrich', 'handler' => [$this, 'enrichCatalog']],
             ['method' => 'POST', 'pattern' => 'stream',          'handler' => [$this, 'streamSync']],
             ['method' => 'POST', 'pattern' => 'step',            'handler' => [$this, 'stepSync']],
             ['method' => 'POST', 'pattern' => 'cancel',          'handler' => [$this, 'cancelSync']],
@@ -4482,12 +4484,41 @@ class Module_Cve extends BaseModule
             // compitiendo por el mismo token.
             $stream = (is_array($input) && !empty($input['stream'])) || !empty($_POST['stream']);
 
+            // Fuente CVE.org: el catálogo se actualiza con el delta diario de
+            // CVE List V5 (no depende de NVD). «both» aplica el delta y luego
+            // intenta NVD como respaldo.
+            $source = strtolower((string)setting_get('cve_source', 'cvelist'));
+            $catalogMode = ($mode === null || $mode === '' || $mode === 'auto' || $mode === 'full');
+            $listNote = '';
+            if ($catalogMode && $source !== 'nvd') {
+                $list = $this->applyCveListDelta();
+                if ($source === 'cvelist') {
+                    json_response([
+                        'success'  => !empty($list['ok']),
+                        'done_now' => true,
+                        'source'   => 'cvelist',
+                        'message'  => (string)($list['message'] ?? ''),
+                        'counts'   => $list['counts'] ?? [],
+                    ] + (empty($list['ok']) ? ['error' => (string)($list['error'] ?? 'Error al aplicar el delta de CVE.org.')] : []));
+                }
+                $listNote = (string)($list['message'] ?? '');
+            }
+
             // Sondeo rápido a NVD antes de crear el job: si la API externa no
             // responde (caída o saturación), avisamos de inmediato sin tocar
             // el estado de la sincronización en vez de morir en el primer
             // tramo con un timeout poco claro.
             $probe = CveClient::fromSettings()->probeNvd();
             if (empty($probe['ok'])) {
+                if ($catalogMode && $source === 'both') {
+                    json_response([
+                        'success'  => true,
+                        'done_now' => true,
+                        'source'   => 'cvelist',
+                        'message'  => trim(($listNote !== '' ? $listNote . ' ' : '')
+                            . 'NVD no responde (' . (string)$probe['error'] . '); se ha aplicado el delta de CVE.org.'),
+                    ]);
+                }
                 json_response([
                     'success' => false,
                     'error'   => 'NVD no responde en este momento (' . (string)$probe['error']
@@ -4496,6 +4527,109 @@ class Module_Cve extends BaseModule
             }
 
             json_response((new CveSync())->start($mode, !$stream));
+        } catch (Throwable $e) {
+            json_response(['success' => false, 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Aplica el delta diario de CVE List V5 (CVE.org) al catálogo.
+     * No depende de NVD y no necesita API key.
+     */
+    private function applyCveListDelta(): array
+    {
+        try {
+            $dl = CveListFeed::downloadDelta();
+            if (empty($dl['ok'])) {
+                return [
+                    'ok'    => false,
+                    'error' => (string)($dl['error'] ?? 'No se pudo descargar el delta de CVE List V5.'),
+                ];
+            }
+            $records = CveListFeed::recordsFromZip((string)($dl['path'] ?? ''));
+            $res = (new CveSync())->applyCveListRecords($records);
+
+            setting_set('cve_list_last_release', (string)($dl['release'] ?? ''));
+            setting_set('cve_list_last_run', gmdate('Y-m-d H:i:s'));
+
+            $message = 'CVE.org: ' . count($records) . ' CVEs en el delta ('
+                . (int)$res['inserted'] . ' nuevos, ' . (int)$res['updated'] . ' actualizados'
+                . ((int)$res['errors'] > 0 ? ', ' . (int)$res['errors'] . ' con error' : '') . ').';
+
+            app_log('info', 'cve', 'Delta de CVE List V5 aplicado', [
+                'checked'  => (int)$res['checked'],
+                'inserted' => (int)$res['inserted'],
+                'updated'  => (int)$res['updated'],
+                'skipped'  => (int)$res['skipped'],
+                'errors'   => (int)$res['errors'],
+                'release'  => (string)($dl['release'] ?? ''),
+                'records'  => count($records),
+            ]);
+
+            return ['ok' => true, 'message' => $message, 'counts' => $res];
+        } catch (Throwable $e) {
+            app_log('error', 'cve', 'Error aplicando el delta de CVE List V5', ['error' => $e->getMessage()]);
+            return ['ok' => false, 'error' => $e->getMessage()];
+        }
+    }
+
+    /**
+     * Botón «Actualizar desde CVE.org»: aplica el delta aunque la fuente
+     * configurada sea NVD.
+     */
+    public function updateFromCveList(array $params = []): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        if (function_exists('release_session_lock')) {
+            release_session_lock();
+        }
+        @set_time_limit(0);
+        @ignore_user_abort(true);
+
+        $res = $this->applyCveListDelta();
+        if (empty($res['ok'])) {
+            json_response(['success' => false, 'error' => (string)($res['error'] ?? 'Error.')], 502);
+        }
+        json_response([
+            'success' => true,
+            'message' => (string)($res['message'] ?? ''),
+            'counts'  => $res['counts'] ?? [],
+        ]);
+    }
+
+    /**
+     * Completa desde CVE.org los CVEs del catálogo que llegaron incompletos
+     * de NVD (sin descripción o sin nota).
+     */
+    public function enrichCatalog(array $params = []): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        if (function_exists('release_session_lock')) {
+            release_session_lock();
+        }
+        @set_time_limit(0);
+        @ignore_user_abort(true);
+
+        $raw = file_get_contents('php://input');
+        $input = json_decode((string)$raw, true);
+        if (!is_array($input)) {
+            $input = $_POST;
+        }
+        $limit = max(1, min(500, (int)($input['limit'] ?? 100)));
+
+        try {
+            $res = (new CveSync())->enrichIncomplete($limit);
+            app_log('info', 'cve', 'Enriquecimiento desde CVE.org', $res);
+            json_response([
+                'success' => true,
+                'message' => 'Enriquecidos ' . (int)$res['updated'] . ' de ' . (int)$res['checked']
+                    . ' CVEs incompletos (' . (int)$res['missing'] . ' sin datos en CVE.org).',
+                'counts'  => $res,
+            ]);
         } catch (Throwable $e) {
             json_response(['success' => false, 'error' => $e->getMessage()], 500);
         }

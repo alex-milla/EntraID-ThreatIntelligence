@@ -1919,6 +1919,180 @@ class CveSync
         return $out;
     }
 
+    /**
+     * Aplica registros CVE JSON 5.1 (CVE List V5 / CVE.org) al catálogo.
+     *
+     * Fusiona con lo que ya hubiera de NVD: CVE.org manda en descripción,
+     * métricas y productos; los productos/CPEs previos se conservan. El
+     * upsert es por cve_id, así que aplicar el mismo delta dos veces no
+     * duplica ni pierde nada.
+     *
+     * @param array<int,array<string,mixed>> $records
+     * @return array{checked:int,inserted:int,updated:int,skipped:int,errors:int,ids:string[]}
+     */
+    public function applyCveListRecords(array $records, ?callable $onProgress = null): array
+    {
+        $result = ['checked' => 0, 'inserted' => 0, 'updated' => 0, 'skipped' => 0, 'errors' => 0, 'ids' => []];
+        if ($records === []) {
+            return $result;
+        }
+
+        if ($this->watchlistMap === null) {
+            $this->watchlistMap = $this->watchlistCpeMap();
+        }
+        $db = CveDatabase::getInstance();
+        $stmts = $this->prepareStatements($db);
+
+        foreach ($records as $record) {
+            if (!is_array($record)) {
+                continue;
+            }
+            $result['checked']++;
+            try {
+                $parsed = $this->parseCveOrgRecord($record);
+                if ($parsed === null) {
+                    $result['skipped']++;
+                    continue;
+                }
+                $id = (string)$parsed['cve_id'];
+                $existing = $this->existingParsedRow($id);
+                if ($existing !== null) {
+                    $parsed = $this->mergeCveSources($parsed, $existing) ?? $parsed;
+                }
+                $outcome = $this->storeParsed($db, $parsed, $stmts, true);
+                if ($outcome === 'inserted') {
+                    $result['inserted']++;
+                } elseif ($outcome === 'updated') {
+                    $result['updated']++;
+                } else {
+                    $result['skipped']++;
+                }
+                // La lista de ids es para depurar; se acota para no inflar
+                // respuestas ni logs con el snapshot completo.
+                if (count($result['ids']) < 200) {
+                    $result['ids'][] = $id;
+                }
+                if ($onProgress !== null) {
+                    $onProgress($result);
+                }
+            } catch (Throwable $e) {
+                $result['errors']++;
+                app_log('warning', 'cve', 'No se pudo aplicar un CVE de CVE List V5', [
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        return $result;
+    }
+
+    /**
+     * Completa desde CVE.org los CVEs del catálogo que llegaron incompletos de
+     * NVD (sin descripción o sin nota). Pensado para cron/tandas acotadas.
+     *
+     * @return array{checked:int,updated:int,missing:int,errors:int}
+     */
+    public function enrichIncomplete(int $limit = 200): array
+    {
+        $limit = max(1, min(2000, $limit));
+        $rows = CveDatabase::fetchAll(
+            "SELECT cve_id FROM cve_catalog
+             WHERE description IS NULL OR TRIM(description) = ''
+                OR (COALESCE(TRIM(severity), '') = ''
+                    AND cvss_v3_score IS NULL
+                    AND cvss_v2_score IS NULL)
+             ORDER BY COALESCE(last_modified_at, published_at, '') DESC
+             LIMIT ?",
+            [$limit]
+        );
+
+        $result = ['checked' => 0, 'updated' => 0, 'missing' => 0, 'errors' => 0];
+        if ($rows === []) {
+            return $result;
+        }
+
+        if ($this->watchlistMap === null) {
+            $this->watchlistMap = $this->watchlistCpeMap();
+        }
+        $client = $this->client();
+        $db = CveDatabase::getInstance();
+        $stmts = $this->prepareStatements($db);
+
+        foreach ($rows as $row) {
+            $cveId = strtoupper((string)($row['cve_id'] ?? ''));
+            if (!preg_match('/^CVE-\d{4}-\d{4,}$/', $cveId)) {
+                continue;
+            }
+            $result['checked']++;
+            $org = $client->fetchCveOrg($cveId);
+            if ($org === null) {
+                $result['missing']++;
+                continue;
+            }
+            $parsed = $this->parseCveOrgRecord($org);
+            if ($parsed === null) {
+                $result['missing']++;
+                continue;
+            }
+            $existing = $this->existingParsedRow($cveId);
+            if ($existing !== null) {
+                $parsed = $this->mergeCveSources($parsed, $existing) ?? $parsed;
+            }
+            try {
+                $this->storeParsed($db, $parsed, $stmts, true);
+                $result['updated']++;
+            } catch (Throwable $e) {
+                $result['errors']++;
+            }
+        }
+
+        return $result;
+    }
+
+    /**
+     * Fila actual del catálogo con la forma que espera mergeCveSources().
+     *
+     * @return array<string,mixed>|null
+     */
+    private function existingParsedRow(string $cveId): ?array
+    {
+        $row = CveDatabase::fetchOne(
+            "SELECT description, description_lang, published_at, last_modified_at, vuln_status,
+                    source_identifier, severity, cvss_v3_score, cvss_v3_vector, cvss_v2_score,
+                    cwe_ids, references_json, products_json, nvd_url
+             FROM cve_catalog WHERE cve_id = ?",
+            [$cveId]
+        );
+        if ($row === null) {
+            return null;
+        }
+        $products = json_decode((string)($row['products_json'] ?? '[]'), true);
+
+        return [
+            'cve_id'            => $cveId,
+            'description'       => (string)($row['description'] ?? ''),
+            'description_lang'  => (string)($row['description_lang'] ?? 'en'),
+            'published_at'      => $row['published_at'] ?? null,
+            'last_modified_at'  => $row['last_modified_at'] ?? null,
+            'vuln_status'       => $row['vuln_status'] ?? null,
+            'source_identifier' => $row['source_identifier'] ?? null,
+            'severity'          => $row['severity'] ?? null,
+            'cvss_v3_score'     => $row['cvss_v3_score'],
+            'cvss_v3_vector'    => $row['cvss_v3_vector'] ?? null,
+            'cvss_v2_score'     => $row['cvss_v2_score'],
+            'cwe_ids'           => (string)($row['cwe_ids'] ?? '[]'),
+            'references_json'   => (string)($row['references_json'] ?? '[]'),
+            'products_json'     => (string)($row['products_json'] ?? '[]'),
+            'products'          => is_array($products) ? $products : [],
+            'nvd_url'           => (string)($row['nvd_url'] ?? ('https://nvd.nist.gov/vuln/detail/' . $cveId)),
+            'kev_date'          => null,
+            'kev_due_date'      => null,
+            'kev_action'        => null,
+            'kev_name'          => null,
+            'cpe_matches'       => [],
+        ];
+    }
+
     private function pickMetric(array $metrics): ?array
     {
         if (empty($metrics)) {

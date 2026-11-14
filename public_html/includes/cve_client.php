@@ -46,6 +46,7 @@ class CveClient
     public static function config(): array
     {
         return [
+            'source'          => (string)setting_get('cve_source', 'cvelist'),
             'nvd_url'         => (string)setting_get('cve_nvd_url', CVE_NVD_URL),
             'cpe_url'         => (string)setting_get('cve_cpe_url', CVE_CPE_URL),
             'nvd_api_key'     => (string)setting_get('cve_nvd_api_key', CVE_NVD_API_KEY),

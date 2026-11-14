@@ -103,9 +103,9 @@ try {
             $entry.Status = [int]$res.StatusCode
             $entry.Len = $res.Content.Length
 
-            $errs = [regex]::Matches($res.Content, '(Fatal error|Parse error|Uncaught|Warning: [a-zA-Z_]+\(\))')
+            $errs = [regex]::Matches($res.Content, '(Fatal error|Parse error|Uncaught (?:Error|Exception|TypeError|ValueError|RuntimeException|ErrorException)|Warning: [a-zA-Z_]+\(\))')
             if ($errs.Count -gt 0) {
-                $entry.Problem = 'PHP: ' + (([regex]::Match($res.Content, '(Fatal error|Parse error|Uncaught|Warning:)[^<]{0,160}')).Value)
+                $entry.Problem = 'PHP: ' + (([regex]::Match($res.Content, '(Fatal error|Parse error|Uncaught (?:Error|Exception|TypeError|ValueError|RuntimeException|ErrorException)|Warning:)[^<]{0,160}')).Value)
             }
 
             if ($entry.Status -ge 400) { $entry.Problem = "HTTP $($entry.Status)" }

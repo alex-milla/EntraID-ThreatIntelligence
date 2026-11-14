@@ -188,6 +188,11 @@ foreach ($companyGroups as $companyRow) {
                             class="<?= $syncRunning ? 'hidden' : 'inline-flex' ?> items-center px-2 py-2 text-xs text-gray-400 hover:text-brand-500 transition-colors">
                         KEV / EPSS
                     </button>
+                    <button type="button" id="cve-cvelist-btn" onclick="updateFromCveList(this)"
+                            title="Aplica el delta diario de CVE.org (CVE List V5). No usa NVD."
+                            class="<?= $syncRunning ? 'hidden' : 'inline-flex' ?> items-center px-2 py-2 text-xs text-gray-400 hover:text-brand-500 transition-colors">
+                        CVE.org
+                    </button>
                     <button type="button" id="cve-cancel-btn" onclick="cancelCveSync()"
                             class="<?= $syncRunning ? 'inline-flex' : 'hidden' ?> items-center gap-2 px-3 py-2 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-300 hover:bg-red-100 dark:hover:bg-red-900/40 text-sm font-medium rounded-lg transition-colors">
                         Detener
@@ -513,6 +518,7 @@ foreach ($companyGroups as $companyRow) {
     (function() {
         var STATUS_URL = '<?= base_url('modules/cve/active') ?>';
         var SYNC_URL = '<?= base_url('modules/cve/sync') ?>';
+        var CVE_LIST_URL = '<?= base_url('modules/cve/cve-list-update') ?>';
         var STREAM_URL = '<?= base_url('modules/cve/stream') ?>';
         var CANCEL_URL = '<?= base_url('modules/cve/cancel') ?>';
         var STEP_URL = '<?= base_url('modules/cve/step') ?>';
@@ -642,6 +648,17 @@ foreach ($companyGroups as $companyRow) {
                     toast(err || 'No se pudo iniciar', 'error');
                     return;
                 }
+                // Fuente CVE.org: el delta se aplica en el servidor y la
+                // petición vuelve con el resultado (no hay job que seguir).
+                if (res.done_now) {
+                    toast(res.message || 'Catálogo actualizado', 'success');
+                    var stEl = document.getElementById('cve-sync-status');
+                    if (stEl) { stEl.textContent = 'Actualizado'; }
+                    var mEl = document.getElementById('cve-sync-message');
+                    if (mEl) { mEl.textContent = res.message || ''; }
+                    setTimeout(function () { location.reload(); }, 900);
+                    return;
+                }
                 // La sonda de novedades no encontró CVEs modificados:
                 // no se ha descargado nada y no hay job que seguir.
                 if (res.skipped) {
@@ -665,6 +682,35 @@ foreach ($companyGroups as $companyRow) {
                 streamLoop();
             }).catch(function() { toast('Error de conexión', 'error'); });
         }
+
+        window.updateFromCveList = function (button) {
+            if (button) { button.disabled = true; }
+            var msg = document.getElementById('cve-sync-message');
+            var badge = document.getElementById('cve-sync-status');
+            if (msg) { msg.textContent = 'Aplicando el delta diario de CVE.org…'; }
+            if (badge) { badge.textContent = 'CVE.org'; }
+
+            api('POST', CVE_LIST_URL, {}).then(function (res) {
+                if (!res || !res.success) {
+                    var err = (res && res.error) ? String(res.error) : 'No se pudo aplicar el delta de CVE.org.';
+                    toast(err, 'error');
+                    if (msg) { msg.textContent = err; }
+                    if (badge) { badge.textContent = 'Error'; }
+                    return;
+                }
+                toast(res.message || 'Catálogo actualizado desde CVE.org', 'success');
+                if (msg) { msg.textContent = res.message || ''; }
+                if (badge) { badge.textContent = 'Actualizado'; }
+                setTimeout(function () { location.reload(); }, 900);
+            }).catch(function (err) {
+                var text = (err && err.message) ? err.message : 'Error de conexión';
+                toast(text, 'error');
+                if (msg) { msg.textContent = text; }
+                if (badge) { badge.textContent = 'Error'; }
+            }).then(function () {
+                if (button) { button.disabled = false; }
+            });
+        };
 
         window.resumeCveSync = function() {
             stopped = false;

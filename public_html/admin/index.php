@@ -832,12 +832,17 @@ class AdminController
         if (!in_array($scope, ['full', 'recent', 'kev'], true)) {
             $scope = 'full';
         }
+        $cveSource = (string)($_POST['source'] ?? 'cvelist');
+        if (!in_array($cveSource, ['cvelist', 'both', 'nvd'], true)) {
+            $cveSource = 'cvelist';
+        }
         $recentYears = max(1, min(10, (int)($_POST['recent_years'] ?? 3)));
         $minCvss = max(0.0, min(10.0, (float)($_POST['min_cvss'] ?? 0)));
         $autoSync = !empty($_POST['auto_sync']) ? 1 : 0;
         $interval = max(1, min(168, (int)($_POST['interval_hours'] ?? 24)));
 
         setting_set('cve_nvd_url', $nvdUrl);
+        setting_set('cve_source', $cveSource);
         setting_set('cve_kev_url', $kevUrl);
         setting_set('cve_kev_fallback_url', $kevFallbackUrl);
         setting_set('cve_epss_url', $epssUrl);

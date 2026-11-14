@@ -29,3 +29,6 @@ SploitScan-main/
 
 # Exportaciones de vulnerabilidades de clientes (datos sensibles)
 Vulnerabilidades/
+
+# Descargas de feeds de CVEs (NVD/CVE.org) y bases de datos locales
+public_html/storage/

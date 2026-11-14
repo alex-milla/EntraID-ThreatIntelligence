@@ -226,6 +226,19 @@ $cveScope = (string)($cve['scope'] ?? 'full');
 
     <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
+            <label class="block text-sm font-medium text-ink mb-1">Fuente del catálogo</label>
+            <?php $cveSource = (string)($cve['source'] ?? 'cvelist'); ?>
+            <select name="source" class="w-full px-3 py-2 rounded-lg border border-line-strong bg-input text-ink text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+                <option value="cvelist" <?= $cveSource === 'cvelist' ? 'selected' : '' ?>>CVE.org (CVE List V5) — recomendado</option>
+                <option value="both" <?= $cveSource === 'both' ? 'selected' : '' ?>>CVE.org + NVD (respaldo)</option>
+                <option value="nvd" <?= $cveSource === 'nvd' ? 'selected' : '' ?>>Solo NVD</option>
+            </select>
+            <p class="text-xs text-ink-soft mt-1">
+                CVE.org publica los datos del fabricante (CVSS, CWE, referencias y productos) sin clave ni
+                límites de peticiones. NVD se usa como respaldo y para los CPEs del inventario.
+            </p>
+        </div>
+        <div>
             <label class="block text-sm font-medium text-ink mb-1">NVD API Key</label>
             <input type="password" name="nvd_api_key" autocomplete="new-password"
                    placeholder="<?= !empty($cve['nvd_key_set']) ? '•••••••• (ya configurada — deja vacío para mantenerla)' : 'Pega aquí tu API key de NVD' ?>"
