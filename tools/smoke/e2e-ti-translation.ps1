@@ -197,6 +197,11 @@ try {
         Check 'E2E ficha: 200' ([int]$page.StatusCode -eq 200) $articleUrl
         Check 'E2E ficha: muestra la traducción' ($page.Content -match '\[ES\]')
         Check 'E2E ficha: botón «Ver traducción»' ($page.Content -match 'Ver traducción')
+        # El selector de modelo debe estar ANTES del botón: si no, se puede
+        # traducir sin haber elegido modelo (queja real de uso).
+        $selPos = $page.Content.IndexOf('id="ti-profile"')
+        $btnPos = $page.Content.IndexOf('id="btn-translate"')
+        Check 'E2E ficha: selector de modelo antes del botón' ($selPos -ge 0 -and $btnPos -gt $selPos) "selector=$selPos boton=$btnPos"
     } catch {
         Check 'E2E ficha: responde' $false "$articleUrl -> $($_.Exception.Message)"
     }

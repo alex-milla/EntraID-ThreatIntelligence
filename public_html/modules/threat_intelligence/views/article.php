@@ -102,9 +102,22 @@ if (!empty($_GET['only_favorites'])) { $navQs .= '&only_favorites=1'; }
 
         <!-- Traducción IA al español -->
         <div class="card p-5">
-            <div class="flex items-center justify-between gap-3">
+            <div class="flex items-center justify-between gap-3 flex-wrap">
                 <h2 class="text-sm font-semibold">Traducción al español (IA)</h2>
-                <div class="flex items-center gap-2">
+                <div class="flex items-center gap-2 flex-wrap">
+                    <?php if (!empty($profiles)): ?>
+                        <?php $translateProfile = llm_task_profile_for('translate_article'); ?>
+                        <label class="flex items-center gap-1.5 text-[11px] text-ink-muted"
+                               title="Elige el modelo ANTES de traducir o retraducir: la traducción usa el que esté seleccionado aquí">
+                            Modelo para traducir
+                            <select id="ti-profile" class="px-2 py-1 rounded-lg border border-line-strong bg-input text-ink text-[11px] max-w-[16rem]">
+                                <option value="0" <?= $translateProfile <= 0 ? 'selected' : '' ?>>Predeterminado de la tarea</option>
+                                <?php foreach ($profiles as $p): ?>
+                                    <option value="<?= (int)$p['id'] ?>" <?= $translateProfile === (int)$p['id'] ? 'selected' : '' ?>><?= e($p['name']) ?><?= !empty($p['model']) ? ' · ' . e($p['model']) : '' ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </label>
+                    <?php endif; ?>
                     <button type="button" id="btn-translate" onclick="tiTranslate()"
                             class="inline-flex items-center gap-1.5 px-3 py-1.5 border border-line text-xs font-medium rounded-lg hover:bg-muted transition-colors">
                         <?= $hasTranslation ? 'Ver traducción' : 'Traducir al español' ?>
@@ -116,18 +129,6 @@ if (!empty($_GET['only_favorites'])) { $navQs .= '&only_favorites=1'; }
                 </div>
             </div>
             <div id="translation-body" class="md-body mt-3 <?= $hasTranslation ? '' : 'hidden' ?>"><?= $translationHtml ?? '' ?></div>
-            <?php if (!empty($profiles)): ?>
-                <?php $translateProfile = llm_task_profile_for('translate_article'); ?>
-                <label class="flex items-center gap-1.5 text-[11px] text-ink-muted mt-2">
-                    Modelo para traducir
-                    <select id="ti-profile" class="px-2 py-1 rounded-lg border border-line-strong bg-input text-ink text-[11px]">
-                        <option value="0" <?= $translateProfile <= 0 ? 'selected' : '' ?>>Predeterminado de la tarea</option>
-                        <?php foreach ($profiles as $p): ?>
-                            <option value="<?= (int)$p['id'] ?>" <?= $translateProfile === (int)$p['id'] ? 'selected' : '' ?>><?= e($p['name']) ?><?= !empty($p['model']) ? ' · ' . e($p['model']) : '' ?></option>
-                        <?php endforeach; ?>
-                    </select>
-                </label>
-            <?php endif; ?>
             <p id="translation-msg" class="text-xs text-ink-soft mt-2"><?= $hasTranslation ? 'Traducción guardada (se reutiliza hasta que cambie el artículo o pasen 90 días).' : '' ?></p>
         </div>
     </div>
