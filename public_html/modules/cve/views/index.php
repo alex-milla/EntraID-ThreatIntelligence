@@ -1984,6 +1984,7 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
     var START_URL  = <?= json_encode(base_url('modules/cve/reports/ai-start')) ?>;
     var DUPLICATES_URL = <?= json_encode(base_url('modules/cve/reports/ai-duplicates')) ?>;
     var RUN_URL    = <?= json_encode(base_url('modules/cve/reports/ai-run')) ?>;
+    var RUN_QUEUE_URL = <?= json_encode(base_url('modules/cve/reports/ai-run-queue')) ?>;
     var RETRY_URL  = <?= json_encode(base_url('modules/cve/reports/ai-retry')) ?>;
     var CANCEL_URL = <?= json_encode(base_url('modules/cve/reports/ai-cancel')) ?>;
     var DELETE_URL = <?= json_encode(base_url('modules/cve/reports/ai-delete')) ?>;
@@ -3066,60 +3067,62 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
             if (!ids.length) {
                 throw new Error('No se creó ningún informe.');
             }
-            return ids;
+            return { ids: ids, worker: (res && res.worker) ? String(res.worker) : 'none' };
         });
     }
 
-    function startCreatedReports(ids, button, message, assignment) {
+    function startCreatedReports(ids, worker, button, message, assignment) {
         if (message) {
-            message.textContent = 'Informes creados. Iniciando generación…';
+            message.textContent = 'Informes creados. Generando en el servidor…';
             message.className = 'text-xs text-gray-500';
         }
         if (newForm) {
             newForm.classList.add('hidden');
         }
         if (detail) {
-            detail.innerHTML = '<div class="h-full flex items-center justify-center"><p class="text-sm text-ink-muted">Generando informes individuales…</p></div>';
+            detail.innerHTML = '<div class="h-full flex items-center justify-center"><p class="text-sm text-ink-muted">Generando informes en el servidor…</p></div>';
         }
         if (titleEl) {
             titleEl.textContent = 'Informes en cola';
         }
-        if (!beginBatch(ids)) {
-            if (message) {
-                message.textContent = 'Ya hay una generación en curso.';
-                message.className = 'text-xs text-amber-600 dark:text-amber-400';
-            }
-            if (button) {
-                button.disabled = false;
-            }
-            return Promise.resolve({ failures: 0 });
+        // La cola vive en el servidor: si se cierra la pestaña, sigue.
+        setBatchBanner('Informes en cola (' + ids.length + '). Generando en el servidor…');
+        startListReconcile();
+        if (pendingButton) {
+            pendingButton.disabled = true;
         }
-        setBatchBanner('Actualizando lista…');
 
         return refreshReportList(assignment).catch(function () {
             // La cola sigue aunque falle el refresco de la lista.
         }).then(function () {
-            return executeBatch(ids);
-        }).then(function (result) {
-            if (result.failures > 0) {
-                appAlert('Se crearon ' + ids.length + ' informes, pero ' + result.failures
-                    + ' no se pudieron generar.' + batchFailureDetail(result)
-                    + ' Puedes reintentarlos con «Generar pendientes».',
-                    { title: 'Generación parcial' });
-            } else if (result.errors && result.errors.length) {
-                appAlert('Informes creados con avisos:' + batchFailureDetail(result),
-                    { title: 'Generación parcial' });
+            // Sin PHP-FPM el servidor no puede continuar tras responder: se
+            // pide el drenado explícito. La petición sigue trabajando aunque
+            // se cierre la pestaña (ignore_user_abort + set_time_limit).
+            if (worker === 'none') {
+                return postJson(RUN_QUEUE_URL, {}).catch(function () {
+                    return {};
+                });
             }
+            return {};
+        }).then(function () {
+            return refreshReportList(assignment).catch(function () {
+                // Las filas se actualizan igualmente con el sondeo periódico.
+            });
+        }).then(function () {
             if (button) {
                 button.disabled = false;
             }
-            return result;
+            if (pendingButton) {
+                pendingButton.disabled = false;
+            }
+            updatePendingButton();
+            return { failures: 0 };
         });
     }
 
     function createReportsFromPayload(payload, button, message, assignment) {
-        return requestCreateReports(payload).then(function (ids) {
-            return startCreatedReports(ids, button, message, assignment);
+        return requestCreateReports(payload).then(function (res) {
+            return startCreatedReports(res.ids, res.worker, button, message, assignment);
         }).catch(function (err) {
             if (message) {
                 message.textContent = 'No se pudo crear: ' + errorText(err);
@@ -3287,14 +3290,14 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
             duplicates.forEach(function (dup) { duplicateSet[dup.cve_id] = true; });
             var newCves = allCves.filter(function (cve) { return !duplicateSet[cve]; });
             if (newCves.length === 0) {
-                return { ids: duplicateIds, failures: failures };
+                return { ids: duplicateIds, failures: failures, worker: 'none' };
             }
             return requestCreateReports(Object.assign({}, payload, {
                 cve_ids: newCves.join(',')
-            })).then(function (ids) {
-                return { ids: duplicateIds.concat(ids), failures: failures };
+            })).then(function (res) {
+                return { ids: duplicateIds.concat(res.ids), failures: failures, worker: res.worker };
             }).catch(function () {
-                return { ids: duplicateIds, failures: failures + 1 };
+                return { ids: duplicateIds, failures: failures + 1, worker: 'none' };
             });
         }).then(function (result) {
             if (result.ids.length === 0) {
@@ -3308,7 +3311,7 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
                 appAlert('Algunos informes no se pudieron actualizar. Se generarán los que sí se prepararon.',
                     { title: 'Actualización parcial' });
             }
-            startCreatedReports(result.ids, createButton, message, 'all');
+            startCreatedReports(result.ids, result.worker || 'none', createButton, message, 'all');
         }).catch(function (err) {
             if (createButton) {
                 createButton.disabled = false;
@@ -3395,7 +3398,8 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
             appAlert('No hay informes pendientes.', { title: 'Sin pendientes' });
             return;
         }
-        appConfirm('¿Generar ' + ids.length + (ids.length === 1 ? ' informe pendiente' : ' informes pendientes') + '?',
+        appConfirm('¿Generar ' + ids.length + (ids.length === 1 ? ' informe pendiente' : ' informes pendientes')
+                + '? Se procesarán en el servidor, así que puedes cerrar la pestaña.',
             { title: 'Generar pendientes', confirmText: 'Generar' }).then(function (ok) {
             if (!ok) {
                 return;
@@ -3403,18 +3407,30 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
             if (button) {
                 button.disabled = true;
             }
-            runBatch(ids).then(function (result) {
+            setBatchBanner('Generando ' + ids.length + ' informe(s) en el servidor…');
+            startListReconcile();
+
+            postJson(RUN_QUEUE_URL, {}).then(function (res) {
+                if (res && res.locked) {
+                    appAlert('Hay otro trabajo de IA en curso. La cola se reintentará en el próximo barrido.',
+                        { title: 'Cola en espera' });
+                } else if (res && (res.failed || 0) > 0) {
+                    appAlert('Se procesaron ' + (res.done || 0) + '; ' + (res.failed || 0)
+                        + ' siguen con error.' + ' Revisa la lista para ver el motivo.',
+                        { title: 'Generación parcial' });
+                }
+                return refreshReportList().catch(function () {
+                    // La lista se refresca igualmente con el sondeo.
+                });
+            }).catch(function (err) {
+                appAlert('No se pudo generar la cola: ' + errorText(err), { title: 'Error' });
+            }).then(function () {
                 if (button) {
                     button.disabled = false;
                 }
-                if (result.failures > 0) {
-                    appAlert('Se procesaron ' + ids.length + ' informes; ' + result.failures
-                        + ' siguen con error o pendientes.' + batchFailureDetail(result),
-                        { title: 'Generación parcial' });
-                } else if (result.errors && result.errors.length) {
-                    appAlert('Informes procesados con avisos:' + batchFailureDetail(result),
-                        { title: 'Generación parcial' });
-                }
+                stopListReconcile();
+                updatePendingButton();
+                setBatchBanner('', false);
             });
         });
     };

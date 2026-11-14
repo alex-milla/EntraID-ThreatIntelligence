@@ -282,6 +282,19 @@ class Database
             UNIQUE(article_id, lang)
         )");
 
+        // v0.4.15: cerrojo único para trabajos de IA de larga duración (cola de
+        // informes CVE, equipos expuestos, traducción, asistente). Una sola
+        // fila: el trabajo que lo tiene puede seguir; el resto espera. Si el
+        // proceso muere, expires_at caduca solo y la cola continúa.
+        $db->exec("CREATE TABLE IF NOT EXISTS llm_job_lock (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            owner TEXT NOT NULL DEFAULT '',
+            task TEXT NOT NULL DEFAULT '',
+            started_at TEXT NOT NULL DEFAULT (datetime('now')),
+            expires_at INTEGER NOT NULL DEFAULT 0
+        )");
+        $db->exec("INSERT OR IGNORE INTO llm_job_lock (id, owner, task, expires_at) VALUES (1, '', '', 0)");
+
         // Sincronizaciones en segundo plano (job encadenado vía PHP-FPM).
         $db->exec("CREATE TABLE IF NOT EXISTS sync_jobs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,

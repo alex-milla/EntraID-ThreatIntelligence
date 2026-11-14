@@ -974,6 +974,91 @@ if (!function_exists('llm_task_profile_for')) {
     }
 }
 
+if (!function_exists('llm_job_acquire')) {
+    /**
+     * Toma el cerrojo único de trabajos de IA (una sola fila en llm_job_lock).
+     *
+     * Devuelve true si se puede trabajar: estaba libre, había caducado o ya
+     * era nuestro. Devuelve false si otro trabajo lo tiene vigente.
+     */
+    function llm_job_acquire(string $owner, string $task = '', int $ttl = 1800): bool
+    {
+        $now = time();
+        $ttl = max(60, $ttl);
+        try {
+            $updated = Database::update(
+                "UPDATE llm_job_lock
+                 SET owner = ?, task = ?, started_at = datetime('now'), expires_at = ?
+                 WHERE id = 1 AND (owner = '' OR owner = ? OR expires_at < ?)",
+                [$owner, $task, $now + $ttl, $owner, $now]
+            );
+            return $updated > 0;
+        } catch (Throwable $e) {
+            // Sin tabla/BD disponible no se bloquea la aplicación.
+            return true;
+        }
+    }
+}
+
+if (!function_exists('llm_job_renew')) {
+    /** Renueva el TTL del cerrojo si sigue siendo nuestro. */
+    function llm_job_renew(string $owner, int $ttl = 1800): bool
+    {
+        try {
+            return Database::update(
+                "UPDATE llm_job_lock SET expires_at = ? WHERE id = 1 AND owner = ?",
+                [time() + max(60, $ttl), $owner]
+            ) > 0;
+        } catch (Throwable $e) {
+            return false;
+        }
+    }
+}
+
+if (!function_exists('llm_job_release')) {
+    /** Libera el cerrojo solo si es nuestro (nunca el de otro). */
+    function llm_job_release(string $owner): void
+    {
+        try {
+            Database::update(
+                "UPDATE llm_job_lock SET owner = '', task = '', expires_at = 0 WHERE id = 1 AND owner = ?",
+                [$owner]
+            );
+        } catch (Throwable $e) {
+            // Noop
+        }
+    }
+}
+
+if (!function_exists('llm_job_status')) {
+    /**
+     * Estado del cerrojo. `busy` solo si hay dueño y no ha caducado.
+     *
+     * @return array{busy:bool,owner:string,task:string,started_at:string,expires_at:int,seconds_left:int}
+     */
+    function llm_job_status(): array
+    {
+        $out = ['busy' => false, 'owner' => '', 'task' => '', 'started_at' => '', 'expires_at' => 0, 'seconds_left' => 0];
+        try {
+            $row = Database::fetchOne("SELECT owner, task, started_at, expires_at FROM llm_job_lock WHERE id = 1");
+        } catch (Throwable $e) {
+            return $out;
+        }
+        if (!is_array($row)) {
+            return $out;
+        }
+        $expires = (int)($row['expires_at'] ?? 0);
+        $owner = (string)($row['owner'] ?? '');
+        $out['owner'] = $owner;
+        $out['task'] = (string)($row['task'] ?? '');
+        $out['started_at'] = (string)($row['started_at'] ?? '');
+        $out['expires_at'] = $expires;
+        $out['seconds_left'] = max(0, $expires - time());
+        $out['busy'] = $owner !== '' && $expires >= time();
+        return $out;
+    }
+}
+
 if (!function_exists('llm_run')) {
     /**
      * Puerta de entrada única a la IA.

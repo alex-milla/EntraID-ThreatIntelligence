@@ -4,17 +4,20 @@
  * Variable: $tab (vm | software | catalog | reports | import).
  *
  * v0.3.21 — navegación minimalista: la mesa de trabajo es la primera pestaña
- * y las vistas ocasionales (informes e importación) viven en «Más». Las claves
- * y las URLs no cambian: cualquier enlace antiguo sigue funcionando.
+ * y las vistas ocasionales viven en «Más». Las claves y las URLs no cambian:
+ * cualquier enlace antiguo sigue funcionando.
+ *
+ * v0.4.15 — «Informes» pasa a pestaña visible (estaba escondido en «Más» y no
+ * se encontraba). «Importar CSV» sigue en «Más».
  */
 
 $cveTabs = [
     'vm'       => 'Mesa de trabajo',
     'software' => 'Mis CVE',
     'catalog'  => 'Catálogo',
+    'reports'  => 'Informes',
 ];
 $cveMoreTabs = [
-    'reports' => 'Informes',
     'import'  => 'Importar CSV',
 ];
 $currentTab = (isset($tab) && (isset($cveTabs[$tab]) || isset($cveMoreTabs[$tab]))) ? $tab : 'catalog';

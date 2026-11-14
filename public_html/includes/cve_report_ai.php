@@ -1359,6 +1359,74 @@ TXT);
     }
 
     /**
+     * Drena la cola de informes pendientes, uno a uno, respetando el cerrojo
+     * único de trabajos de IA (llm_job_lock).
+     *
+     * Un informe 'running' que lleva más de 10 minutos se considera huérfano
+     * (el proceso murió) y se retoma.
+     *
+     * @return array{success:bool,processed:int,done:int,failed:int,ids:int[],locked:bool,error?:string}
+     */
+    public static function runQueue(string $owner = 'cve-queue', int $max = 100): array
+    {
+        $out = [
+            'success'   => true,
+            'processed' => 0,
+            'done'      => 0,
+            'failed'    => 0,
+            'ids'       => [],
+            'locked'    => false,
+        ];
+
+        if (!llm_job_acquire($owner, 'Informes CVE', 1800)) {
+            $out['locked'] = true;
+            $out['success'] = false;
+            $out['error'] = 'Otro trabajo de IA está en curso; la cola esperará.';
+            return $out;
+        }
+
+        try {
+            $rows = CveDatabase::fetchAll(
+                "SELECT id FROM cve_ai_reports
+                 WHERE status = 'pending'
+                    OR (status = 'running' AND updated_at < datetime('now', '-10 minutes'))
+                 ORDER BY id ASC
+                 LIMIT ?",
+                [max(1, min(500, $max))]
+            );
+
+            foreach ($rows as $row) {
+                // Si otro proceso nos quitó el cerrojo (o caducó), se para.
+                if (!llm_job_renew($owner, 1800)) {
+                    $out['error'] = 'El cerrojo de IA se perdió; la cola se detiene.';
+                    break;
+                }
+
+                $id = (int)($row['id'] ?? 0);
+                if ($id <= 0) {
+                    continue;
+                }
+                $res = self::runById($id);
+                $out['processed']++;
+                $out['ids'][] = $id;
+                if (!empty($res['success'])) {
+                    $out['done']++;
+                } else {
+                    $out['failed']++;
+                }
+            }
+
+            return $out;
+        } catch (Throwable $e) {
+            $out['success'] = false;
+            $out['error'] = $e->getMessage();
+            return $out;
+        } finally {
+            llm_job_release($owner);
+        }
+    }
+
+    /**
      * Reconstruye las filas por CVE de un informe antiguo o incompleto.
      * Usa data_json y, si no hay datos, la lista cve_ids. Es idempotente.
      *

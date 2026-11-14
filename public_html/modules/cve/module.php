@@ -44,6 +44,7 @@ class Module_Cve extends BaseModule
             ['method' => 'POST', 'pattern' => 'reports/generate', 'handler' => [$this, 'generateReport']],
             ['method' => 'POST', 'pattern' => 'reports/ai-start', 'handler' => [$this, 'startAiReport']],
             ['method' => 'POST', 'pattern' => 'reports/ai-run/{id}', 'handler' => [$this, 'runAiReport']],
+            ['method' => 'POST', 'pattern' => 'reports/ai-run-queue', 'handler' => [$this, 'runAiQueue']],
             ['method' => 'POST', 'pattern' => 'reports/ai-cancel/{id}', 'handler' => [$this, 'cancelAiReport']],
             ['method' => 'POST', 'pattern' => 'reports/ai-delete/{id}', 'handler' => [$this, 'deleteAiReport']],
             ['method' => 'POST', 'pattern' => 'reports/ai-delete-bulk', 'handler' => [$this, 'deleteAiReportsBulk']],
@@ -4929,6 +4930,7 @@ class Module_Cve extends BaseModule
                 return $ids;
             });
             $firstId = (int)($reportIds[0] ?? 0);
+            $useFpm = function_exists('fastcgi_finish_request');
             $result = [
                 'success'    => true,
                 'report_id'  => $firstId,
@@ -4937,6 +4939,8 @@ class Module_Cve extends BaseModule
                 'status'     => 'pending',
                 'no_ai'      => $noAi,
                 'defender'   => false,
+                'queued'     => !$noAi,
+                'worker'     => $useFpm ? 'fpm' : 'none',
                 'url'        => base_url('modules/cve/report-ai/' . $firstId),
             ];
             app_log('info', 'cve_ai', 'Informes individuales creados', [
@@ -4950,6 +4954,26 @@ class Module_Cve extends BaseModule
                 'report_ids' => $reportIds,
                 'cves'       => $found,
             ]);
+
+            // La cola se drena en el SERVIDOR: el navegador solo observa. Con
+            // PHP-FPM se responde 202 y se sigue trabajando en este proceso
+            // (si se cierra la pestaña, la cola continúa). Sin FPM queda para
+            // el worker/cron y el botón «Generar pendientes».
+            if (!$noAi && $useFpm) {
+                @ignore_user_abort(true);
+                @set_time_limit(0);
+                if (function_exists('release_session_lock')) {
+                    release_session_lock();
+                }
+                json_response_continue($result, 202);
+                try {
+                    CveReportAi::runQueue('cve-queue');
+                } catch (Throwable $e) {
+                    app_log('error', 'cve_ai', 'Error drenando la cola de informes', ['error' => $e->getMessage()]);
+                }
+                exit;
+            }
+
             json_response($result);
         } catch (Throwable $e) {
             app_log('error', 'cve_ai', 'Error creando el informe', ['error' => $e->getMessage()]);
@@ -5000,6 +5024,44 @@ class Module_Cve extends BaseModule
                 'item_errors' => [],
                 'url'         => base_url('modules/cve/report-ai/' . $id),
             ], 500);
+        }
+    }
+
+    /**
+     * Drena la cola de informes pendientes en el servidor (botón «Generar
+     * pendientes» y worker/cron). Respeta el cerrojo único de IA.
+     */
+    public function runAiQueue(array $params = []): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        if (function_exists('release_session_lock')) {
+            release_session_lock();
+        }
+        @set_time_limit(0);
+        @ignore_user_abort(true);
+
+        try {
+            $res = CveReportAi::runQueue('cve-queue');
+            $res['pending'] = $this->countPendingAiReports();
+            json_response($res);
+        } catch (Throwable $e) {
+            app_log('error', 'cve_ai', 'Error drenando la cola de informes', ['error' => $e->getMessage()]);
+            json_response(['success' => false, 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    /** Informes todavía en cola (para el botón y el estado del cerrojo). */
+    private function countPendingAiReports(): int
+    {
+        try {
+            $row = CveDatabase::fetchOne(
+                "SELECT COUNT(*) AS c FROM cve_ai_reports WHERE status IN ('pending','running')"
+            );
+            return (int)($row['c'] ?? 0);
+        } catch (Throwable $e) {
+            return 0;
         }
     }
 
