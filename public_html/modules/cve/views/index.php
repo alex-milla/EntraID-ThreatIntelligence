@@ -2098,6 +2098,29 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
         return (err && err.message) ? err.message : 'error de red';
     }
 
+    /**
+     * Pide al servidor que drene la cola. Con PHP-FPM la respuesta es 202 y el
+     * trabajo sigue en el servidor; sin FPM se procesan 2 por petición y se
+     * vuelve a pedir. Un 5xx/524 NO es un fallo para el usuario: el servidor
+     * puede seguir trabajando.
+     */
+    function drainQueueLoop(maxCalls) {
+        var left = (typeof maxCalls === 'number') ? maxCalls : 30;
+        return postJson(RUN_QUEUE_URL, {}).then(function (res) {
+            if (!res || res.worker === 'fpm' || res.locked) {
+                return res;
+            }
+            if ((res.pending || 0) > 0 && left > 0) {
+                return new Promise(function (resolve) { setTimeout(resolve, 800); })
+                    .then(function () { return drainQueueLoop(left - 1); });
+            }
+            return res;
+        }).catch(function (err) {
+            // 524/502/504 o corte de red: el trabajo puede seguir en servidor.
+            return { success: true, tolerated: true, error: errorText(err) };
+        });
+    }
+
     function setBanner(text) {
         var el = document.getElementById('ai-processing-text');
         if (el) {
@@ -2606,7 +2629,12 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
                     return;
                 }
                 window.cveAiRetryClose();
-                window.location.href = PAGE_URL + '&report=' + ids[0];
+                // El reencolado deja el informe en `pending`: se pide al
+                // servidor que drene la cola (nada de ejecutarlo aquí, que es
+                // lo que provocaba los 524 del proxy).
+                drainQueueLoop(1).then(function () {
+                    window.location.href = PAGE_URL + '&report=' + ids[0];
+                });
             }).catch(function (err) {
                 appAlert('No se pudo reintentar: ' + errorText(err), { title: 'No se pudo reintentar' });
                 if (button) {
@@ -2663,7 +2691,9 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
                     appAlert('No se pudo reencolar ningún informe.', { title: 'Sin cambios' });
                     return;
                 }
-                return runBatch(successIds).then(function () {
+                setBatchBanner('Reencolados ' + successIds.length + '. Generando en el servidor…');
+                startListReconcile();
+                return drainQueueLoop(30).then(function () {
                     if (failures > 0) {
                         appAlert('Se reintentaron ' + successIds.length + ' informes; ' + failures
                             + ' no se pudieron reencolar.', { title: 'Reintento parcial' });
@@ -2957,12 +2987,22 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
 
     var listReconcileTimer = null;
 
+    /** ¿Queda trabajo en la lista (en cola o generándose)? */
+    function hasActiveReports() {
+        if (!list) {
+            return false;
+        }
+        return !!list.querySelector('.ai-report-item[data-status="pending"], .ai-report-item[data-status="running"]');
+    }
+
     function startListReconcile() {
         if (listReconcileTimer) {
             return;
         }
         listReconcileTimer = setInterval(function () {
-            if (!batchRunning) {
+            // La cola puede estar trabajando en el servidor (sin batch local):
+            // se sigue refrescando mientras haya informes en cola o en curso.
+            if (!batchRunning && !hasActiveReports()) {
                 stopListReconcile();
                 return;
             }
@@ -3407,30 +3447,36 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
             if (button) {
                 button.disabled = true;
             }
-            setBatchBanner('Generando ' + ids.length + ' informe(s) en el servidor…');
+            setBatchBanner('Cola en el servidor: ' + ids.length + ' informe(s)…');
             startListReconcile();
 
-            postJson(RUN_QUEUE_URL, {}).then(function (res) {
+            drainQueueLoop(30).then(function (res) {
                 if (res && res.locked) {
                     appAlert('Hay otro trabajo de IA en curso. La cola se reintentará en el próximo barrido.',
                         { title: 'Cola en espera' });
+                } else if (res && res.tolerated) {
+                    // 524/502/504: el proxy cortó la espera, pero el servidor
+                    // sigue trabajando. No es un error para el usuario.
+                    toast('La cola sigue trabajando en el servidor. La lista se actualizará sola.', 'info');
                 } else if (res && (res.failed || 0) > 0) {
                     appAlert('Se procesaron ' + (res.done || 0) + '; ' + (res.failed || 0)
-                        + ' siguen con error.' + ' Revisa la lista para ver el motivo.',
+                        + ' siguen con error. Revisa la lista para ver el motivo.',
                         { title: 'Generación parcial' });
                 }
                 return refreshReportList().catch(function () {
                     // La lista se refresca igualmente con el sondeo.
                 });
-            }).catch(function (err) {
-                appAlert('No se pudo generar la cola: ' + errorText(err), { title: 'Error' });
             }).then(function () {
                 if (button) {
                     button.disabled = false;
                 }
-                stopListReconcile();
                 updatePendingButton();
-                setBatchBanner('', false);
+                if (hasActiveReports()) {
+                    setBatchBanner('Generando en el servidor… la lista se actualiza sola.');
+                } else {
+                    stopListReconcile();
+                    setBatchBanner('', false);
+                }
             });
         });
     };

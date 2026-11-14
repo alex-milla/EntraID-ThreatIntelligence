@@ -5030,11 +5030,41 @@ class Module_Cve extends BaseModule
     /**
      * Drena la cola de informes pendientes en el servidor (botón «Generar
      * pendientes» y worker/cron). Respeta el cerrojo único de IA.
+     *
+     * Con PHP-FPM responde 202 al instante y sigue trabajando en este mismo
+     * proceso: un drenado largo ya no provoca un 524 del proxy. Sin FPM se
+     * procesa un lote pequeño por petición y el navegador vuelve a pedir.
      */
     public function runAiQueue(array $params = []): void
     {
         Auth::requireAdmin();
         Csrf::validateOrFail();
+
+        $useFpm = function_exists('fastcgi_finish_request');
+        $pending = $this->countPendingAiReports();
+
+        if ($useFpm) {
+            @ignore_user_abort(true);
+            @set_time_limit(0);
+            if (function_exists('release_session_lock')) {
+                release_session_lock();
+            }
+
+            // La respuesta sale ya: el proxy no espera al drenado.
+            json_response_continue([
+                'success' => true,
+                'queued'  => true,
+                'worker'  => 'fpm',
+                'pending' => $pending,
+            ], 202);
+
+            try {
+                CveReportAi::runQueue('cve-queue');
+            } catch (Throwable $e) {
+                app_log('error', 'cve_ai', 'Error drenando la cola de informes', ['error' => $e->getMessage()]);
+            }
+            exit;
+        }
 
         if (function_exists('release_session_lock')) {
             release_session_lock();
@@ -5043,8 +5073,11 @@ class Module_Cve extends BaseModule
         @ignore_user_abort(true);
 
         try {
-            $res = CveReportAi::runQueue('cve-queue');
+            // Sin FPM el trabajo no puede continuar tras la respuesta: lote
+            // acotado para no superar el tiempo del proxy.
+            $res = CveReportAi::runQueue('cve-queue', 2);
             $res['pending'] = $this->countPendingAiReports();
+            $res['worker'] = 'inline';
             json_response($res);
         } catch (Throwable $e) {
             app_log('error', 'cve_ai', 'Error drenando la cola de informes', ['error' => $e->getMessage()]);
