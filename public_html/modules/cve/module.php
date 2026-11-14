@@ -71,9 +71,6 @@ class Module_Cve extends BaseModule
             ['method' => 'GET',  'pattern' => 'report-ai/{id}',   'handler' => [$this, 'aiReportView']],
             ['method' => 'GET',  'pattern' => 'report/{id}',      'handler' => [$this, 'reportView']],
             ['method' => 'POST', 'pattern' => 'sync',            'handler' => [$this, 'triggerSync']],
-            ['method' => 'POST', 'pattern' => 'cve-list/update', 'handler' => [$this, 'updateFromCveList']],
-            ['method' => 'POST', 'pattern' => 'cve-list/enrich', 'handler' => [$this, 'enrichCatalog']],
-            ['method' => 'POST', 'pattern' => 'cve-list/refresh', 'handler' => [$this, 'refreshFromCveList']],
             ['method' => 'POST', 'pattern' => 'stream',          'handler' => [$this, 'streamSync']],
             ['method' => 'POST', 'pattern' => 'step',            'handler' => [$this, 'stepSync']],
             ['method' => 'POST', 'pattern' => 'cancel',          'handler' => [$this, 'cancelSync']],
@@ -4500,45 +4497,34 @@ class Module_Cve extends BaseModule
             // compitiendo por el mismo token.
             $stream = (is_array($input) && !empty($input['stream'])) || !empty($_POST['stream']);
 
-            // Fuente CVE.org: el catálogo se actualiza con el delta diario de
-            // CVE List V5 (no depende de NVD). «both» aplica el delta y luego
-            // intenta NVD como respaldo.
-            $source = strtolower((string)setting_get('cve_source', 'cvelist'));
-            $catalogMode = ($mode === null || $mode === '' || $mode === 'auto' || $mode === 'full');
-            $listNote = '';
-            if ($catalogMode && $source !== 'nvd') {
-                $list = $this->applyCveListDelta();
-                if ($source === 'cvelist') {
-                    json_response([
-                        'success'  => !empty($list['ok']),
-                        'done_now' => true,
-                        'source'   => 'cvelist',
-                        'message'  => (string)($list['message'] ?? ''),
-                        'counts'   => $list['counts'] ?? [],
-                    ] + (empty($list['ok']) ? ['error' => (string)($list['error'] ?? 'Error al aplicar el delta de CVE.org.')] : []));
-                }
-                $listNote = (string)($list['message'] ?? '');
+            $mode = in_array($mode, ['auto', 'full', 'kev', 'nvd'], true) ? $mode : 'auto';
+
+            // Acción normal y única: CVE.org (delta + revalidación + completar).
+            if ($mode === 'auto') {
+                json_response($this->runCatalogUpdate());
             }
 
-            // Sondeo rápido a NVD antes de crear el job: si la API externa no
-            // responde (caída o saturación), avisamos de inmediato sin tocar
-            // el estado de la sincronización en vez de morir en el primer
-            // tramo con un timeout poco claro.
+            // KEV / EPSS directos: sin job ni NVD.
+            if ($mode === 'kev') {
+                $sync = new CveSync();
+                $kev = $sync->syncKev();
+                $epss = $sync->syncEpss();
+                json_response([
+                    'success'  => true,
+                    'done_now' => true,
+                    'source'   => 'kev',
+                    'message'  => 'CISA KEV y EPSS actualizados.',
+                    'counts'   => ['kev' => $kev, 'epss' => $epss],
+                ]);
+            }
+
+            // Modos NVD (sincronización clásica o reconstrucción).
             $probe = CveClient::fromSettings()->probeNvd();
             if (empty($probe['ok'])) {
-                if ($catalogMode && $source === 'both') {
-                    json_response([
-                        'success'  => true,
-                        'done_now' => true,
-                        'source'   => 'cvelist',
-                        'message'  => trim(($listNote !== '' ? $listNote . ' ' : '')
-                            . 'NVD no responde (' . (string)$probe['error'] . '); se ha aplicado el delta de CVE.org.'),
-                    ]);
-                }
                 json_response([
                     'success' => false,
-                    'error'   => 'NVD no responde en este momento (' . (string)$probe['error']
-                        . '). La sincronización no se ha iniciado; reintenta en unos minutos.',
+                    'error'   => 'NVD no responde (' . (string)$probe['error']
+                        . '). Usa «Actualizar catálogo» (CVE.org) o reintenta en unos minutos.',
                 ]);
             }
 
@@ -4590,113 +4576,48 @@ class Module_Cve extends BaseModule
     }
 
     /**
-     * Botón «Actualizar desde CVE.org»: aplica el delta aunque la fuente
-     * configurada sea NVD.
+     * Actualización unificada del catálogo desde CVE.org.
+     *
+     * Es la ÚNICA acción de actualización normal: aplica el delta diario,
+     * revalida una tanda del catálogo (CVE.org manda) y completa los CVEs
+     * incompletos. Devuelve siempre un resumen, nunca deja la UI sin saber
+     * qué ha pasado.
      */
-    public function updateFromCveList(array $params = []): void
+    private function runCatalogUpdate(): array
     {
-        Auth::requireAdmin();
-        Csrf::validateOrFail();
-
         if (function_exists('release_session_lock')) {
             release_session_lock();
         }
         @set_time_limit(0);
         @ignore_user_abort(true);
 
-        $res = $this->applyCveListDelta();
-        if (empty($res['ok'])) {
-            json_response(['success' => false, 'error' => (string)($res['error'] ?? 'Error.')], 502);
+        $source = strtolower((string)setting_get('cve_source', 'cvelist'));
+        $parts = [];
+        $sync = new CveSync();
+
+        $delta = $this->applyCveListDelta();
+        $parts[] = !empty($delta['ok'])
+            ? (string)($delta['message'] ?? '')
+            : 'CVE.org: ' . (string)($delta['error'] ?? 'no se pudo descargar el delta');
+
+        if ($source !== 'nvd') {
+            $reval = $sync->refreshAll(200);
+            if ((int)$reval['checked'] > 0) {
+                $parts[] = 'Revalidados ' . (int)$reval['updated'] . '/' . (int)$reval['checked']
+                    . ' CVEs' . (!empty($reval['done']) ? ' (fin)' : ' (sigue en la próxima actualización)');
+            }
+            $enrich = $sync->enrichIncomplete(200);
+            if ((int)$enrich['updated'] > 0) {
+                $parts[] = 'Completados ' . (int)$enrich['updated'] . ' CVEs incompletos';
+            }
         }
-        json_response([
-            'success' => true,
-            'message' => (string)($res['message'] ?? ''),
-            'counts'  => $res['counts'] ?? [],
-        ]);
-    }
 
-    /**
-     * Completa desde CVE.org los CVEs del catálogo que llegaron incompletos
-     * de NVD (sin descripción o sin nota).
-     */
-    public function enrichCatalog(array $params = []): void
-    {
-        Auth::requireAdmin();
-        Csrf::validateOrFail();
-
-        if (function_exists('release_session_lock')) {
-            release_session_lock();
-        }
-        @set_time_limit(0);
-        @ignore_user_abort(true);
-
-        $raw = file_get_contents('php://input');
-        $input = json_decode((string)$raw, true);
-        if (!is_array($input)) {
-            $input = $_POST;
-        }
-        $limit = max(1, min(500, (int)($input['limit'] ?? 100)));
-
-        try {
-            $res = (new CveSync())->enrichIncomplete($limit);
-            app_log('info', 'cve', 'Enriquecimiento desde CVE.org', $res);
-            json_response([
-                'success' => true,
-                'message' => 'Enriquecidos ' . (int)$res['updated'] . ' de ' . (int)$res['checked']
-                    . ' CVEs incompletos (' . (int)$res['missing'] . ' sin datos en CVE.org).',
-                'counts'  => $res,
-            ]);
-        } catch (Throwable $e) {
-            json_response(['success' => false, 'error' => $e->getMessage()], 500);
-        }
-    }
-
-    /**
-     * Revalida el catálogo contra CVE.org (re-fetch por CVE, política
-     * «refresh»: CVE.org manda en descripción, CVSS, CWE, referencias y
-     * productos). Reanudable por cursor.
-     */
-    public function refreshFromCveList(array $params = []): void
-    {
-        Auth::requireAdmin();
-        Csrf::validateOrFail();
-
-        if (function_exists('release_session_lock')) {
-            release_session_lock();
-        }
-        @set_time_limit(0);
-        @ignore_user_abort(true);
-
-        $raw = file_get_contents('php://input');
-        $input = json_decode((string)$raw, true);
-        if (!is_array($input)) {
-            $input = $_POST;
-        }
-        $limit = max(1, min(1000, (int)($input['limit'] ?? 200)));
-        $reset = !empty($input['reset']);
-
-        try {
-            $res = (new CveSync())->refreshAll($limit, $reset);
-            app_log('info', 'cve', 'Revalidación desde CVE.org', [
-                'checked' => (int)$res['checked'],
-                'updated' => (int)$res['updated'],
-                'missing' => (int)$res['missing'],
-                'errors'  => (int)$res['errors'],
-                'cursor'  => (string)$res['cursor'],
-                'done'    => (bool)$res['done'],
-            ]);
-            json_response([
-                'success' => true,
-                'message' => 'Revalidados ' . (int)$res['updated'] . ' de ' . (int)$res['checked']
-                    . ' CVEs desde CVE.org' . ((int)$res['missing'] > 0 ? ' (' . (int)$res['missing'] . ' sin datos)' : '')
-                    . ((int)$res['errors'] > 0 ? ' (' . (int)$res['errors'] . ' con error)' : '')
-                    . ($res['done'] ? '. Catálogo completo.' : '. Pulsa otra vez para seguir por donde iba.'),
-                'counts'  => $res,
-            ]);
-        } catch (Throwable $e) {
-            app_log('error', 'cve', 'Error revalidando desde CVE.org', ['error' => $e->getMessage()]);
-            json_response(['success' => false, 'error' => $e->getMessage()], 500);
-        }
+        return [
+            'success'  => true,
+            'done_now' => true,
+            'source'   => $source,
+            'message'  => implode('. ', array_filter($parts)) . '.',
+        ];
     }
 
     /**
@@ -5082,39 +5003,38 @@ class Module_Cve extends BaseModule
                 ], 400);
             }
 
+            // Datos del CVE siempre desde CVE.org: se completa lo que falte y,
+            // si el CVE no existe, se crea. Una sola ruta para todo.
             $found = [];
             $missing = [];
-            $sync = null;
-            $enriched = 0;
-            $enrichLimit = defined('CVE_ORG_ENRICH_LIMIT') ? max(1, (int)CVE_ORG_ENRICH_LIMIT) : 25;
+            $toRefresh = [];
+            $limit = defined('CVE_ORG_ENRICH_LIMIT') ? max(1, (int)CVE_ORG_ENRICH_LIMIT) : 10;
             foreach ($ids as $cveId) {
                 $row = CveDatabase::fetchOne(
-                    "SELECT cve_id, description, severity, cvss_v3_score, cvss_v2_score
+                    "SELECT cve_id, description, severity, cvss_v3_score, cvss_v2_score, cwe_ids
                      FROM cve_catalog WHERE cve_id = ?",
                     [$cveId]
                 );
-                // Falta o llegó incompleto de NVD (sin descripción o sin nota):
-                // se completa desde CVE.org, que sí tiene los datos del CNA.
-                $needsData = $row === null
+                $incomplete = $row === null
                     || trim((string)($row['description'] ?? '')) === ''
-                    || (trim((string)($row['severity'] ?? '')) === ''
-                        && $row['cvss_v3_score'] === null
-                        && $row['cvss_v2_score'] === null);
-                if ($needsData && $enriched < $enrichLimit) {
-                    try {
-                        if ($sync === null) {
-                            $sync = new CveSync();
-                        }
-                        $sync->ensureCve($cveId, true);
-                        $enriched++;
-                    } catch (Throwable $e) {
-                        app_log('warning', 'cve_ai', 'No se pudo completar el CVE desde CVE.org', [
-                            'cve'   => $cveId,
-                            'error' => $e->getMessage(),
-                        ]);
-                    }
-                    $row = CveDatabase::fetchOne("SELECT cve_id FROM cve_catalog WHERE cve_id = ?", [$cveId]);
+                    || ($row['cvss_v3_score'] === null && $row['cvss_v2_score'] === null)
+                    || trim((string)($row['cwe_ids'] ?? '[]')) === '[]';
+                if ($incomplete && count($toRefresh) < $limit) {
+                    $toRefresh[] = $cveId;
                 }
+            }
+            if ($toRefresh !== []) {
+                try {
+                    (new CveSync())->refreshCves($toRefresh);
+                } catch (Throwable $e) {
+                    app_log('warning', 'cve_ai', 'No se pudieron completar CVEs desde CVE.org', [
+                        'cves'  => $toRefresh,
+                        'error' => $e->getMessage(),
+                    ]);
+                }
+            }
+            foreach ($ids as $cveId) {
+                $row = CveDatabase::fetchOne("SELECT cve_id FROM cve_catalog WHERE cve_id = ?", [$cveId]);
                 if ($row === null) {
                     $missing[] = $cveId;
                 } else {
@@ -5748,6 +5668,17 @@ class Module_Cve extends BaseModule
             $ids = safe_json_decode((string)($row['cve_ids'] ?? ''), []);
             if (!is_array($ids) || $ids === []) {
                 json_response(['success' => false, 'error' => 'El informe no tiene CVEs válidos.'], 400);
+            }
+
+            // Datos frescos de CVE.org para los CVEs del informe (máx. 25 para
+            // no eternizar la actualización): CVE.org manda en los datos.
+            try {
+                (new CveSync())->refreshCves(array_slice(array_values($ids), 0, 25));
+            } catch (Throwable $e) {
+                app_log('warning', 'cve_ai', 'No se pudieron refrescar los CVEs del informe', [
+                    'id'    => $id,
+                    'error' => $e->getMessage(),
+                ]);
             }
 
             try {

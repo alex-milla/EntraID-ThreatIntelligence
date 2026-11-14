@@ -2147,6 +2147,64 @@ class CveSync
     }
 
     /**
+     * Revalida un conjunto concreto de CVEs contra CVE.org (una petición por
+     * CVE). Es la función que usan los informes al crearse o actualizarse y la
+     * ficha del CVE: siempre parte de los datos oficiales actuales.
+     *
+     * @param string[] $cveIds
+     * @return array{checked:int,updated:int,missing:int,errors:int}
+     */
+    public function refreshCves(array $cveIds, string $policy = 'refresh'): array
+    {
+        $policy = $policy === 'fill' ? 'fill' : 'refresh';
+        $ids = [];
+        foreach ($cveIds as $id) {
+            $id = strtoupper(trim((string)$id));
+            if (preg_match('/^CVE-\d{4}-\d{4,}$/', $id)) {
+                $ids[$id] = true;
+            }
+        }
+
+        $result = ['checked' => 0, 'updated' => 0, 'missing' => 0, 'errors' => 0];
+        if ($ids === []) {
+            return $result;
+        }
+
+        if ($this->watchlistMap === null) {
+            $this->watchlistMap = $this->watchlistCpeMap();
+        }
+        $client = $this->client();
+        $db = CveDatabase::getInstance();
+        $stmts = $this->prepareStatements($db);
+
+        foreach (array_keys($ids) as $cveId) {
+            $result['checked']++;
+            $org = $client->fetchCveOrg($cveId);
+            if ($org === null) {
+                $result['missing']++;
+                continue;
+            }
+            $parsed = $this->parseCveOrgRecord($org);
+            if ($parsed === null) {
+                $result['missing']++;
+                continue;
+            }
+            $existing = $this->existingParsedRow($cveId);
+            if ($existing !== null) {
+                $parsed = $this->mergeCveSources($parsed, $existing, $policy) ?? $parsed;
+            }
+            try {
+                $this->storeParsed($db, $parsed, $stmts, true);
+                $result['updated']++;
+            } catch (Throwable $e) {
+                $result['errors']++;
+            }
+        }
+
+        return $result;
+    }
+
+    /**
      * Fila actual del catálogo con la forma que espera mergeCveSources().
      *
      * @return array<string,mixed>|null
