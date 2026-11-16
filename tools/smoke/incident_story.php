@@ -407,12 +407,20 @@ try {
     check('store: nº de partes', (int)($estado['triage_partes'] ?? 0) === 3);
     check('store: job guardado', (int)($estado['triage_job'] ?? 0) === 7);
 
-    $store->saveTriagePart($saved['id'], '0', 'done', (string)json_encode(['resumen' => 'parte 0']), null, 5, 3);
+    $store->saveTriagePart($saved['id'], '0', 'done', (string)json_encode(['resumen' => 'parte 0']), null, 5, 3, 'texto crudo de la parte 0');
     $parte = $store->loadTriagePart($saved['id'], '0', 5, 3);
     check('store: parte recuperada', is_array($parte) && ($parte['data']['resumen'] ?? '') === 'parte 0');
     check('store: parte de otro perfil no se reutiliza', $store->loadTriagePart($saved['id'], '0', 9, 3) === null);
     check('store: parte de otro plan no se reutiliza', $store->loadTriagePart($saved['id'], '0', 5, 4) === null);
     check('store: cuenta de parciales', $store->countTriageParts($saved['id']) === 1);
+
+    try {
+        $rawPdo = new PDO('sqlite:' . $tmp);
+        $rawVal = (string)$rawPdo->query("SELECT raw FROM triage_partes WHERE indice = '0' LIMIT 1")->fetchColumn();
+        check('store: guarda la respuesta cruda', str_contains($rawVal, 'texto crudo de la parte 0'), $rawVal);
+    } catch (Throwable $e) {
+        check('store: guarda la respuesta cruda', false, $e->getMessage());
+    }
 
     $store->clearTriageParts($saved['id']);
     check('store: parciales borrados', $store->countTriageParts($saved['id']) === 0
@@ -471,6 +479,35 @@ check('parcial: promueve veredicto_parcial', (Module_IncidentStory::promoteParti
 check('parcial: no pisa lo que ya existe', (Module_IncidentStory::promotePartialTriage([
     'resumen_ejecutivo' => 'final', 'resumen_parcial' => 'parcial',
 ])['resumen_ejecutivo'] ?? '') === 'final');
+
+/* =====================================================================
+ * 7 ter. Forma del triaje: una lista nunca es un análisis
+ * ================================================================== */
+
+check('forma: un objeto con resumen es triaje', Module_IncidentStory::isValidTriage(['resumen_ejecutivo' => 'x']));
+check('forma: un objeto con veredicto es triaje', Module_IncidentStory::isValidTriage(['veredicto_asistido' => 'sospechosa']));
+check('forma: una lista de técnicas no es triaje', !Module_IncidentStory::isValidTriage(['T1059', 'T1003']));
+check('forma: un objeto de solo técnicas no es triaje', !Module_IncidentStory::isValidTriage(['tecnicas_attck' => ['T1059']]));
+check('forma: vacío no es triaje', !Module_IncidentStory::isValidTriage([]));
+check('forma: una parte con resumen_parcial vale', Module_IncidentStory::isValidPartial(['resumen_parcial' => 'x']));
+check('forma: una lista no es una parte', !Module_IncidentStory::isValidPartial(['T1059', 'T1003']));
+check('forma: una parte de solo técnicas vale para fusionar', Module_IncidentStory::isValidPartial(['tecnicas_attck' => ['T1059']]));
+
+$fallback = Module_IncidentStory::buildFallbackTriage([
+    ['resumen_parcial' => 'La parte 1 vio PowerShell.', 'tecnicas_attck' => ['T1059.001'], 'veredicto_parcial' => 'sospechosa', 'confianza_pct' => 60],
+    ['resumen_parcial' => 'La parte 2 vio un inicio de sesión remoto.', 'tecnicas_attck' => ['T1021.001'], 'veredicto_parcial' => 'sospechosa', 'confianza_pct' => 40],
+    ['T1003', 'T1555'],
+], 'motivo de prueba');
+
+check('emergencia: resumen con las partes', str_contains((string)($fallback['resumen_ejecutivo'] ?? ''), 'PowerShell')
+    && str_contains((string)($fallback['resumen_ejecutivo'] ?? ''), 'remoto'));
+check('emergencia: técnicas unidas (objetos y listas)', in_array('T1059.001', $fallback['tecnicas_attck'] ?? [], true)
+    && in_array('T1003', $fallback['tecnicas_attck'] ?? [], true));
+check('emergencia: veredicto mayoritario', ($fallback['veredicto_asistido'] ?? '') === 'sospechosa');
+check('emergencia: confianza media', (int)($fallback['confianza_pct'] ?? 0) === 50);
+check('emergencia: marcado como no automático', ($fallback['analisis_automatico'] ?? true) === false);
+check('emergencia: guarda el motivo', ($fallback['aviso'] ?? '') === 'motivo de prueba');
+check('emergencia: el resultado ya es un triaje válido', Module_IncidentStory::isValidTriage($fallback));
 
 /* =====================================================================
  * 8. Parseo del JSON del LLM

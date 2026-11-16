@@ -206,6 +206,50 @@ Content Write-Host "hola"
         -Body @{ csrf_token = $csrfStop } -UseBasicParsing -TimeoutSec 30 -MaximumRedirection 5
     Check 'E2E: detener sin trabajo en curso vuelve a la ficha' ($stop.StatusCode -eq 200 -and $stop.Content -match 'Triaje asistido por IA')
 
+    # --- el modelo se desvía en la fusión y devuelve solo una lista ---
+    # (caso grande para forzar el camino por partes; el aviso va en la alerta,
+    #  que está en la cabecera y por tanto en todas las llamadas)
+    $sbList = [System.Text.StringBuilder]::new()
+    for ($i = 0; $i -lt 60; $i++) {
+        $ts = $baseTime.AddMinutes($i).ToString('M/d/yyyy h:mm:ss tt', $inv)
+        $procId = 62000 + $i
+        [void]$sbList.AppendLine($ts)
+        [void]$sbList.AppendLine(" [$procId] powershell.exe -NoProfile -Command `"Get-Process`"")
+        [void]$sbList.AppendLine("Process id $procId")
+        [void]$sbList.AppendLine('Execution details Token elevation: Limited, Integrity level: Medium')
+        [void]$sbList.AppendLine('Image file path C:\Users\pinedarp\AppData\Local\Programs\Git\cmd\git.exe')
+        [void]$sbList.AppendLine('Image file SHA1 a4f874f663d4b2e682bbae87fd121865a42dddbb')
+        [void]$sbList.AppendLine('User DIBA\pinedarp')
+        [void]$sbList.AppendLine('TRIGGER-LIST Detected Medium')
+        [void]$sbList.AppendLine(" powershell.exe executed a script $i")
+        [void]$sbList.AppendLine('')
+    }
+    $listStory = $sbList.ToString()
+    $newList = Invoke-WebRequest -Uri "$base/index.php/modules/incident_story/new" -WebSession $ws -UseBasicParsing -TimeoutSec 30
+    $csrfList = [regex]::Match($newList.Content, 'name="csrf_token"\s+value="([^"]+)"').Groups[1].Value
+    $ingestList = Invoke-WebRequest -Uri "$base/index.php/modules/incident_story/ingest" -Method POST -WebSession $ws `
+        -Body @{ mode = 'text'; story_text = $listStory; client_domains = 'diba.es'; csrf_token = $csrfList } `
+        -UseBasicParsing -TimeoutSec 60 -MaximumRedirection 5
+    $listUrl = $ingestList.BaseResponse.RequestMessage.RequestUri.AbsoluteUri
+    $listCaseId = [regex]::Match($listUrl, '/case/(\d+)').Groups[1].Value
+    Check 'E2E: caso con formato inesperado creado' ([int]$listCaseId -gt 0) $listUrl
+
+    $listPage = Invoke-WebRequest -Uri "$base/index.php/modules/incident_story/case/$listCaseId" -WebSession $ws -UseBasicParsing -TimeoutSec 30
+    $csrfList2 = [regex]::Match($listPage.Content, 'name="csrf_token"\s+value="([^"]+)"').Groups[1].Value
+    $listTriage = Invoke-WebRequest -Uri "$base/index.php/modules/incident_story/case/$listCaseId/triage" -Method POST -WebSession $ws `
+        -Body @{ profile_id = $profileId; csrf_token = $csrfList2 } `
+        -UseBasicParsing -TimeoutSec 300 -MaximumRedirection 5
+    $listTriageUrl = $listTriage.BaseResponse.RequestMessage.RequestUri.AbsoluteUri
+    Check 'E2E: el formato inesperado no bloquea el triaje' ($listTriageUrl -match 'triage_ok=1') $listTriageUrl
+    Check 'E2E: se avisa del informe de emergencia' ($listTriage.Content -match 'Informe de emergencia')
+    Check 'E2E: el veredicto sale de los fragmentos' ($listTriage.Content -match 'Sospechosa' -or $listTriage.Content -match 'sospechosa')
+
+    $stateList = Probe @('state')
+    Check 'E2E: el triaje no es una lista' (-not ($stateList.triage_keys -contains '0')) (($stateList.triage_keys -join ', '))
+    Check 'E2E: hay resumen pese al desvío' ($stateList.triage_keys -contains 'resumen_ejecutivo') (($stateList.triage_keys -join ', '))
+    Check 'E2E: se marca como no automático' ($stateList.automatico -eq $false) "$($stateList.automatico)"
+    Check 'E2E: se explica el motivo' ([string]$stateList.aviso -match 'formato esperado') "$($stateList.aviso)"
+
     # --- limpieza funcional del caso ---
     $csrf3 = [regex]::Match($triage.Content, 'name="csrf_token"\s+value="([^"]+)"').Groups[1].Value
     $deleted = Invoke-WebRequest -Uri "$base/index.php/modules/incident_story/case/$caseId/delete" -Method POST -WebSession $ws `

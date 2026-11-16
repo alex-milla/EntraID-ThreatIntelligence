@@ -96,13 +96,13 @@ $procesosResumen = is_array($resumen['procesos'] ?? null) ? $resumen['procesos']
 $scriptsResumen = is_array($resumen['scripts'] ?? null) ? $resumen['scripts'] : [];
 $hashesResumen = is_array($resumen['hashes'] ?? null) ? $resumen['hashes'] : [];
 $alertasResumen = is_array($resumen['alertas'] ?? null) ? $resumen['alertas'] : [];
+// Un triaje con solo listas (p. ej. técnicas ATT&CK) no es un análisis: se
+// exige al menos un campo de texto interpretativo.
 $triageTieneContenido = $triage !== [] && (
     trim((string)($triage['veredicto_asistido'] ?? '')) !== ''
     || trim((string)($triage['resumen_ejecutivo'] ?? '')) !== ''
     || trim((string)($triage['cadena_de_eventos'] ?? '')) !== ''
     || trim((string)($triage['hipotesis_principal'] ?? '')) !== ''
-    || $list($triage['acciones_recomendadas'] ?? []) !== []
-    || $list($triage['tecnicas_attck'] ?? []) !== []
 );
 $triageEjecutadoSinContenido = $triage === [] && trim((string)($case['triage_at'] ?? '')) !== '';
 $summaryClass = 'flex items-center justify-between gap-3 flex-wrap cursor-pointer select-none';
@@ -229,13 +229,17 @@ $hintClass = 'text-[11px] text-ink-soft';
         </div>
     <?php endif; ?>
 
-    <?php if (!$triageRunning && !empty($triage['detenido'])): ?>
+    <?php if (!$triageRunning && isset($triage['analisis_automatico']) && $triage['analisis_automatico'] === false): ?>
+        <div class="alert alert-warning mt-3" role="status">
+            <strong>Informe de emergencia.</strong>
+            <?= e((string)($triage['aviso'] ?? 'El modelo no devolvió un análisis con el formato esperado; '
+                . 'este informe se ha montado con los fragmentos de cada parte.')) ?>
+        </div>
+    <?php elseif (!$triageRunning && !empty($triage['detenido'])): ?>
         <div class="alert alert-warning mt-3" role="status">
             <?= e((string)($triage['aviso'] ?? 'El análisis se detuvo antes de terminar.')) ?>
         </div>
-    <?php endif; ?>
-
-    <?php if (!$triageRunning && empty($triage['detenido']) && !empty($triage['partes_fallidas'])): ?>
+    <?php elseif (!$triageRunning && !empty($triage['partes_fallidas'])): ?>
         <div class="alert alert-warning mt-3" role="status">
             <?= e((string)($triage['aviso'] ?? 'Alguna parte del análisis no se pudo completar.')) ?>
         </div>
@@ -312,12 +316,20 @@ $hintClass = 'text-[11px] text-ink-soft';
     <?php endif; ?>
 
     <?php if ($triage !== [] && !$triageTieneContenido): ?>
+        <div class="alert alert-warning mt-3" role="status">
+            <strong>El modelo no devolvió un análisis con el formato esperado.</strong>
+            No hay resumen, veredicto ni cadena de eventos que mostrar. Revisa el perfil de IA
+            (Admin → APIs) o prueba con un modelo mayor; abajo queda lo que se guardó.
+        </div>
         <details class="mt-3 border-t border-line-subtle pt-3">
             <summary class="cursor-pointer text-sm font-medium text-brand-600 dark:text-brand-300">
                 Ver contenido guardado del triaje
             </summary>
+            <?php if (!empty($triage['aviso'])): ?>
+                <p class="text-xs mt-3"><?= e((string)$triage['aviso']) ?></p>
+            <?php endif; ?>
             <?php if (!empty($triage['respuesta_original'])): ?>
-                <p class="text-xs text-ink-muted mt-3">La IA no devolvió JSON válido. Respuesta original:</p>
+                <p class="text-xs text-ink-muted mt-3">Respuesta original del modelo:</p>
                 <pre class="mt-1 whitespace-pre-wrap break-all font-mono text-[11px] max-h-80 overflow-auto"><?= e((string)$triage['respuesta_original']) ?></pre>
             <?php endif; ?>
             <pre class="mt-3 whitespace-pre-wrap break-all font-mono text-[11px] max-h-80 overflow-auto"><?= e($json($triage)) ?></pre>

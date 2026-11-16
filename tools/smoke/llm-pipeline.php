@@ -370,6 +370,71 @@ $res = llm_pipeline_run([
 check('parte pequeña: no se divide', $intentosPequena === 1, 'intentos=' . $intentosPequena);
 check('parte pequeña: se marca fallida', empty($res['success']) && (int)$res['failed'] === 1);
 
+/* =====================================================================
+ * 15. Forma inválida (una lista no es un análisis): reintento estricto
+ * ================================================================== */
+
+$llamadasForma = 0;
+$res = llm_pipeline_run([
+    'mode'  => 'json',
+    'parts' => ['p1'],
+    'map_call' => static function () use (&$llamadasForma): array {
+        $llamadasForma++;
+        if ($llamadasForma === 1) {
+            // El modelo contesta con una lista de técnicas, no con el objeto.
+            return ['success' => true, 'data' => ['T1021.001', 'T1059.001'], 'content' => '["T1021.001","T1059.001"]'];
+        }
+        return ['success' => true, 'data' => ['resumen_parcial' => 'ok'], 'content' => '{"resumen_parcial":"ok"}'];
+    },
+    'reduce_call' => static fn(array $chunk): array => ['success' => true, 'data' => ['resumen_ejecutivo' => 'fin'], 'content' => '{}'],
+]);
+
+check('forma: se reintenta una parte mal formada', $llamadasForma === 2, 'llamadas=' . $llamadasForma);
+check('forma: el reintento recupera la parte', !empty($res['success']) && (int)$res['failed'] === 0);
+
+/* =====================================================================
+ * 16. Si el modelo insiste en la lista, la parte falla (no se guarda basura)
+ * ================================================================== */
+
+$res = llm_pipeline_run([
+    'mode'  => 'json',
+    'parts' => ['p1'],
+    'map_call' => static fn(): array => [
+        'success' => true,
+        'data'    => ['T1021.001', 'T1059.001'],
+        'content' => '["T1021.001","T1059.001"]',
+    ],
+]);
+
+check('forma: una lista no cuenta como análisis', empty($res['success']));
+check('forma: se marca el motivo', !empty($res['invalid_format']));
+check('forma: la parte queda como fallida', (int)$res['failed'] === 1);
+
+/* =====================================================================
+ * 17. Fusión con forma inválida: se rechaza y se devuelven los parciales
+ * ================================================================== */
+
+$res = llm_pipeline_run([
+    'mode'  => 'json',
+    'parts' => ['p1', 'p2'],
+    'map_call' => static fn(array $part): array => [
+        'success' => true,
+        'data'    => ['resumen_parcial' => 'parcial ' . $part['text']],
+        'content' => '{}',
+    ],
+    'reduce_call' => static fn(): array => [
+        'success' => true,
+        'data'    => ['T1003', 'T1555'],   // lista: no es el triaje
+        'content' => '["T1003","T1555"]',
+    ],
+    'final_validator' => static fn(mixed $v): bool => is_array($v) && isset($v['resumen_ejecutivo']) && $v['resumen_ejecutivo'] !== '',
+]);
+
+check('fusión: una lista no es el resultado final', empty($res['success']));
+check('fusión: se marca el motivo', !empty($res['invalid_format']));
+check('fusión: se devuelven los parciales', count((array)$res['partials']) === 2, 'parciales=' . count((array)$res['partials']));
+check('fusión: los parciales conservan su contenido', (($res['partials'][0]['resumen_parcial'] ?? '') === 'parcial p1'));
+
 echo "\n";
 if ($fail > 0) {
     echo "RESULTADO: {$fail} de {$total} comprobaciones fallidas\n";

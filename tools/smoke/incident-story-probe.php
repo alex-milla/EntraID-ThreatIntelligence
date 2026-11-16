@@ -49,6 +49,8 @@ if ($cmd === 'state') {
         'triage_partes'   => (int)($full['triage_partes'] ?? 0),
         'analisis_partes' => (int)($triage['analisis_por_partes'] ?? 0),
         'partes_fallidas' => (int)($triage['partes_fallidas'] ?? 0),
+        'automatico'      => array_key_exists('analisis_automatico', $triage) ? (bool)$triage['analisis_automatico'] : true,
+        'aviso'           => (string)($triage['aviso'] ?? ''),
     ], JSON_UNESCAPED_UNICODE);
     exit(0);
 }

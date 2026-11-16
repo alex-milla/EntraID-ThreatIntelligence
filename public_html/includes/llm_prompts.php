@@ -215,7 +215,9 @@ if (!function_exists('llm_prompts_catalog')) {
                 'is_locked'   => false,
                 'default'     => "CONTEXTO DEL CASO (JSON, sin eventos):\n{header}\n\n"
                     . "PARTE {parte_num} DE {parte_total} — EVENTOS NORMALIZADOS (JSON):\n{parte}\n\n"
-                    . 'TAREA: analiza SOLO estos eventos en el contexto del caso y devuelve exactamente este objeto JSON: '
+                    . 'TAREA: analiza SOLO estos eventos en el contexto del caso. '
+                    . 'FORMATO OBLIGATORIO: responde SOLO con un objeto JSON (empieza por { y termina en }); '
+                    . 'NO devuelvas una lista ni texto alrededor. Objeto exacto: '
                     . '{"parte":"{parte_num}","rango_eventos":"desde-hasta","resumen_parcial":"2-3 frases",'
                     . '"cadena_de_eventos":"narrativa padre->hijo con timestamps clave de esta parte",'
                     . '"hipotesis_parcial":"explicación más plausible de esta parte",'
@@ -231,10 +233,12 @@ if (!function_exists('llm_prompts_catalog')) {
                 'is_locked'   => false,
                 'default'     => "CONTEXTO DEL CASO (JSON, sin eventos):\n{header}\n\n"
                     . "ANÁLISIS PARCIALES DE LA EVIDENCIA (JSON, uno por parte; {total} partes):\n{resultados}\n\n"
-                    . 'TAREA: fusiona los análisis parciales en UN ÚNICO análisis de la incidencia y devuelve '
-                    . 'únicamente el JSON indicado. Los parciales son breves y pueden no traer todos los campos: '
-                    . 'completa el JSON final con lo que se deduzca de cada parte, sin inventar datos. Si dos '
-                    . 'partes se contradicen, explica la contradicción en datos_faltantes y baja la confianza.',
+                    . 'TAREA: fusiona los análisis parciales en UN ÚNICO análisis de la incidencia. '
+                    . 'FORMATO OBLIGATORIO: responde SOLO con el objeto JSON completo que pide el sistema '
+                    . '(empieza por { y termina en }); NO devuelvas una lista de técnicas ni texto alrededor. '
+                    . 'Los parciales son breves y pueden no traer todos los campos: completa el JSON final con lo '
+                    . 'que se deduzca de cada parte, sin inventar datos. Si dos partes se contradicen, explica la '
+                    . 'contradicción en datos_faltantes y baja la confianza.',
             ],
 
             // ====================================================

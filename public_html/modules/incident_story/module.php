@@ -790,10 +790,17 @@ class Module_IncidentStory extends BaseModule
     {
         $rawContent = (string)($res['content'] ?? '');
         $parsed = is_array($res['data'] ?? null) ? $res['data'] : self::parseAiJson($rawContent);
+        if ($parsed !== null && !self::isValidTriage($parsed)) {
+            // Objeto con claves internas (resumen_parcial…): se promueven antes
+            // de darlo por inválido.
+            $promoted = self::promotePartialTriage($parsed);
+            $parsed = self::isValidTriage($promoted) ? $promoted : null;
+        }
         if ($parsed === null) {
             $parsed = [
                 'veredicto_asistido' => null,
-                'resumen_ejecutivo'  => 'La IA no devolvió JSON válido. Respuesta original conservada abajo.',
+                'resumen_ejecutivo'  => 'La IA no devolvió un análisis con el formato esperado. '
+                    . 'Respuesta original conservada abajo.',
                 'respuesta_original' => $rawContent,
             ];
         }
@@ -1002,7 +1009,9 @@ class Module_IncidentStory extends BaseModule
             'llm.incident_story.triage.chunk',
             "CONTEXTO DEL CASO (JSON, sin eventos):\n{header}\n\n"
             . "PARTE {parte_num} DE {parte_total} — EVENTOS NORMALIZADOS (JSON):\n{parte}\n\n"
-            . 'TAREA: analiza SOLO estos eventos en el contexto del caso y devuelve exactamente este objeto JSON: '
+            . 'TAREA: analiza SOLO estos eventos en el contexto del caso. '
+            . 'FORMATO OBLIGATORIO: responde SOLO con un objeto JSON (empieza por { y termina en }); '
+            . 'NO devuelvas una lista ni texto alrededor. Objeto exacto: '
             . '{"parte":"{parte_num}","rango_eventos":"desde-hasta","resumen_parcial":"2-3 frases",'
             . '"cadena_de_eventos":"narrativa padre->hijo con timestamps clave de esta parte",'
             . '"hipotesis_parcial":"explicación más plausible de esta parte",'
@@ -1015,10 +1024,12 @@ class Module_IncidentStory extends BaseModule
             'llm.incident_story.triage.merge',
             "CONTEXTO DEL CASO (JSON, sin eventos):\n{header}\n\n"
             . "ANÁLISIS PARCIALES DE LA EVIDENCIA (JSON, uno por parte; {total} partes):\n{resultados}\n\n"
-            . 'TAREA: fusiona los análisis parciales en UN ÚNICO análisis de la incidencia y devuelve '
-            . 'únicamente el JSON indicado. Los parciales son breves y pueden no traer todos los campos: '
-            . 'completa el JSON final con lo que se deduzca de cada parte, sin inventar datos. Si dos '
-            . 'partes se contradicen, explica la contradicción en datos_faltantes y baja la confianza.'
+            . 'TAREA: fusiona los análisis parciales en UN ÚNICO análisis de la incidencia. '
+            . 'FORMATO OBLIGATORIO: responde SOLO con el objeto JSON completo que pide el sistema '
+            . '(empieza por { y termina en }); NO devuelvas una lista de técnicas ni texto alrededor. '
+            . 'Los parciales son breves y pueden no traer todos los campos: completa el JSON final con lo '
+            . 'que se deduzca de cada parte, sin inventar datos. Si dos partes se contradicen, explica la '
+            . 'contradicción en datos_faltantes y baja la confianza.'
         );
 
         try {
@@ -1031,6 +1042,8 @@ class Module_IncidentStory extends BaseModule
                 'deadline_seconds' => LLM_PIPELINE_MAX_SECONDS,
                 'min_split_chars'  => 1200,
                 'should_stop'      => static fn(): bool => llm_job_is_cancelled($jobId),
+                'validator'        => [self::class, 'isValidPartial'],
+                'final_validator'  => [self::class, 'isValidTriage'],
                 'system_map'    => $this->triageSystemPrompt() . ' En esta llamada analizas UNA PARTE de la '
                     . 'evidencia: el caso completo se ha dividido para que un modelo local pueda procesarlo. '
                     . 'No des un veredicto definitivo ni supongas eventos que no estén en esta parte.',
@@ -1048,11 +1061,20 @@ class Module_IncidentStory extends BaseModule
                 'load_part'     => static function (string $key) use ($store, $caseId, $profileId, $total): ?array {
                     return $store->loadTriagePart($caseId, $key, $profileId, $total);
                 },
-                'save_part'     => static function (string $key, mixed $data, bool $ok, string $error) use ($store, $caseId, $profileId, $total): void {
+                'save_part'     => static function (string $key, mixed $data, bool $ok, string $error, string $raw = '') use ($store, $caseId, $profileId, $total): void {
                     $encoded = is_array($data)
                         ? (string)json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
                         : null;
-                    $store->saveTriagePart($caseId, $key, $ok ? 'done' : 'error', $encoded, $error, $profileId, $total);
+                    $store->saveTriagePart(
+                        $caseId,
+                        $key,
+                        $ok ? 'done' : 'error',
+                        $encoded,
+                        $error,
+                        $profileId,
+                        $total,
+                        $raw
+                    );
                 },
                 'on_progress'   => static function (int $hechos, int $totalPartes, string $fase, array $stats = []) use ($store, $caseId, $jobId, $lockOwner, $iniciado): void {
                     $store->setTriageState($caseId, 'running', [
@@ -1072,27 +1094,33 @@ class Module_IncidentStory extends BaseModule
                 },
             ]);
 
-            if (empty($res['success'])) {
-                $error = self::clip((string)($res['error'] ?? 'La IA no completó el análisis por partes.'), 900);
-                $store->setTriageState($caseId, 'error', null, $error);
-                llm_job_fail($jobId, $error);
-                app_log('warning', 'incident_story', 'Triaje IA por partes fallido', [
-                    'case'   => $caseId,
-                    'parts'  => $total,
-                    'calls'  => (int)($res['calls'] ?? 0),
-                    'ms'     => (int)($res['elapsed_ms'] ?? 0),
-                    'error'  => $error,
-                ]);
-                return;
-            }
-
             $data = is_array($res['data'] ?? null) ? $res['data'] : null;
-            if ($data === null) {
-                $data = [
-                    'veredicto_asistido' => null,
-                    'resumen_ejecutivo'  => 'La fusión del análisis no devolvió JSON válido.',
-                    'respuesta_original' => (string)($res['content'] ?? ''),
-                ];
+            $motivoForma = '';
+
+            if (empty($res['success'])) {
+                // El modelo no respetó el formato, pero sí hay parciales: se
+                // monta un informe con ellos en vez de perder el trabajo.
+                if (!empty($res['invalid_format']) && !empty($res['partials'])) {
+                    $motivoForma = 'El modelo no devolvió un análisis con el formato esperado: '
+                        . 'este informe se ha montado con los fragmentos de cada parte.';
+                    $data = self::buildFallbackTriage((array)$res['partials'], $motivoForma);
+                } else {
+                    $error = self::clip((string)($res['error'] ?? 'La IA no completó el análisis por partes.'), 900);
+                    $store->setTriageState($caseId, 'error', null, $error);
+                    llm_job_fail($jobId, $error);
+                    app_log('warning', 'incident_story', 'Triaje IA por partes fallido', [
+                        'case'   => $caseId,
+                        'parts'  => $total,
+                        'calls'  => (int)($res['calls'] ?? 0),
+                        'ms'     => (int)($res['elapsed_ms'] ?? 0),
+                        'error'  => $error,
+                    ]);
+                    return;
+                }
+            } elseif ($data === null || !self::isValidTriage($data)) {
+                $motivoForma = 'El modelo no devolvió un análisis con el formato esperado: '
+                    . 'este informe se ha montado con los fragmentos de cada parte.';
+                $data = self::buildFallbackTriage((array)($res['partials'] ?? []), $motivoForma);
             }
 
             $stopped = (string)($res['stopped'] ?? '');
@@ -1104,7 +1132,14 @@ class Module_IncidentStory extends BaseModule
             }
 
             $data['analisis_por_partes'] = $total;
+            if (!empty($res['invalid_format']) && $motivoForma === '') {
+                $motivoForma = 'El modelo no devolvió un análisis con el formato esperado: '
+                    . 'este informe se ha montado con los fragmentos de cada parte.';
+            }
             $avisos = [];
+            if ($motivoForma !== '') {
+                $avisos[] = $motivoForma;
+            }
             if ($stopped !== '') {
                 $data['detenido'] = $stopped;
                 $avisos[] = $stopped === 'cancel'
@@ -1165,6 +1200,164 @@ class Module_IncidentStory extends BaseModule
                 llm_job_release($lockOwner);
             }
         }
+    }
+
+    /**
+     * ¿El resultado tiene forma de análisis? Una lista (por ejemplo de
+     * técnicas ATT&CK) no lo es: se rechaza en lugar de guardarla.
+     */
+    public static function isValidTriage(mixed $data): bool
+    {
+        if (!is_array($data) || $data === [] || array_is_list($data)) {
+            return false;
+        }
+        foreach (['resumen_ejecutivo', 'veredicto_asistido'] as $key) {
+            if (isset($data[$key]) && is_string($data[$key]) && trim($data[$key]) !== '') {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Forma mínima de una PARTE: objeto con algún texto de análisis o alguna
+     * lista de indicadores/técnicas. Una lista pelada no vale.
+     */
+    public static function isValidPartial(mixed $data): bool
+    {
+        if (!is_array($data) || $data === [] || array_is_list($data)) {
+            return false;
+        }
+        foreach ([
+            'resumen_parcial', 'resumen_ejecutivo', 'veredicto_parcial', 'veredicto_asistido',
+            'hipotesis_parcial', 'hipotesis_principal', 'cadena_de_eventos',
+        ] as $key) {
+            if (isset($data[$key]) && is_string($data[$key]) && trim($data[$key]) !== '') {
+                return true;
+            }
+        }
+        foreach (['tecnicas_attck', 'indicadores_maliciosos', 'acciones_recomendadas'] as $key) {
+            if (isset($data[$key]) && is_array($data[$key]) && $data[$key] !== []) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Informe de emergencia cuando el modelo no respetó el formato: se monta
+     * con lo que traiga cada parte. Nunca devuelve una lista pelada.
+     *
+     * @param array<int,mixed> $partials
+     * @return array<string,mixed>
+     */
+    public static function buildFallbackTriage(array $partials, string $motivo = ''): array
+    {
+        $resumen = [];
+        $cadena = [];
+        $hipotesis = '';
+        $veredictos = [];
+        $confianzas = [];
+        $tecnicas = [];
+        $malos = [];
+        $faltan = [];
+
+        foreach ($partials as $parte) {
+            if (is_array($parte) && array_is_list($parte)) {
+                // El modelo contestó una lista: si son cadenas, son técnicas.
+                foreach ($parte as $item) {
+                    if (is_string($item) && trim($item) !== '') {
+                        $tecnicas[] = trim($item);
+                    }
+                }
+                continue;
+            }
+            if (!is_array($parte)) {
+                continue;
+            }
+
+            foreach (['resumen_parcial', 'resumen_ejecutivo'] as $key) {
+                $v = isset($parte[$key]) && is_string($parte[$key]) ? trim($parte[$key]) : '';
+                if ($v !== '') {
+                    $resumen[] = $v;
+                    break;
+                }
+            }
+            if (isset($parte['cadena_de_eventos']) && is_string($parte['cadena_de_eventos'])) {
+                $v = trim($parte['cadena_de_eventos']);
+                if ($v !== '') {
+                    $cadena[] = $v;
+                }
+            }
+            if ($hipotesis === '') {
+                foreach (['hipotesis_parcial', 'hipotesis_principal'] as $key) {
+                    $v = isset($parte[$key]) && is_string($parte[$key]) ? trim($parte[$key]) : '';
+                    if ($v !== '') {
+                        $hipotesis = $v;
+                        break;
+                    }
+                }
+            }
+            foreach (['veredicto_parcial', 'veredicto_asistido'] as $key) {
+                $v = isset($parte[$key]) && is_string($parte[$key]) ? strtolower(trim($parte[$key])) : '';
+                if ($v !== '') {
+                    $veredictos[] = $v;
+                    break;
+                }
+            }
+            if (isset($parte['confianza_pct']) && is_numeric($parte['confianza_pct'])) {
+                $confianzas[] = max(0, min(100, (int)$parte['confianza_pct']));
+            }
+            foreach (['tecnicas_attck', 'indicadores_maliciosos', 'datos_faltantes'] as $key) {
+                if (!isset($parte[$key]) || !is_array($parte[$key])) {
+                    continue;
+                }
+                foreach ($parte[$key] as $item) {
+                    if (!is_scalar($item)) {
+                        continue;
+                    }
+                    $s = trim((string)$item);
+                    if ($s === '') {
+                        continue;
+                    }
+                    if ($key === 'tecnicas_attck') {
+                        $tecnicas[] = $s;
+                    } elseif ($key === 'indicadores_maliciosos') {
+                        $malos[] = $s;
+                    } else {
+                        $faltan[] = $s;
+                    }
+                }
+            }
+        }
+
+        $veredicto = '';
+        if ($veredictos !== []) {
+            $cuenta = array_count_values($veredictos);
+            arsort($cuenta);
+            $veredicto = (string)array_key_first($cuenta);
+        }
+        $confianza = $confianzas !== []
+            ? (int)round(array_sum($confianzas) / count($confianzas))
+            : 0;
+
+        $out = [
+            'resumen_ejecutivo'      => $resumen !== []
+                ? implode(' ', array_slice(array_values(array_unique($resumen)), 0, 6))
+                : 'El modelo no devolvió un resumen utilizable.',
+            'cadena_de_eventos'      => implode("\n", array_slice(array_values(array_unique($cadena)), 0, 8)),
+            'hipotesis_principal'    => $hipotesis,
+            'veredicto_asistido'     => $veredicto,
+            'confianza_pct'          => $confianza,
+            'tecnicas_attck'         => array_values(array_unique($tecnicas)),
+            'indicadores_maliciosos' => array_values(array_unique($malos)),
+            'datos_faltantes'        => array_values(array_unique($faltan)),
+            'analisis_automatico'    => false,
+        ];
+        if ($motivo !== '') {
+            $out['aviso'] = $motivo;
+        }
+        return $out;
     }
 
     /**

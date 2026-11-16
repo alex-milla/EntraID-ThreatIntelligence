@@ -205,8 +205,8 @@ if (!function_exists('llm_pipeline_run')) {
      * } $spec
      * @return array{
      *   success:bool,content:string,data:mixed,parts:int,failed:int,calls:int,
-     *   merged:int,clipped:bool,stopped:string,model:string,elapsed_ms:int,
-     *   error:string,warnings:array<int,string>
+     *   merged:int,clipped:bool,stopped:string,invalid_format:bool,partials:array,
+     *   model:string,elapsed_ms:int,error:string,warnings:array<int,string>
      * }
      */
     function llm_pipeline_run(array $spec): array
@@ -228,6 +228,8 @@ if (!function_exists('llm_pipeline_run')) {
             'merged'     => 0,
             'clipped'    => false,
             'stopped'    => '',
+            'invalid_format' => false,
+            'partials'   => [],
             'model'      => '',
             'elapsed_ms' => 0,
             'error'      => '',
@@ -254,6 +256,30 @@ if (!function_exists('llm_pipeline_run')) {
         $savePart   = $spec['save_part'] ?? null;
         $progress   = $spec['on_progress'] ?? null;
         $shouldStop = $spec['should_stop'] ?? null;
+
+        /**
+         * Validador de forma. En modo json, un resultado que no sea un objeto
+         * (una lista de técnicas, por ejemplo) no es un análisis: se rechaza.
+         */
+        $validator = $spec['validator'] ?? null;
+        if (!is_callable($validator)) {
+            $validator = static fn(mixed $value): bool => is_array($value) && $value !== [] && !array_is_list($value);
+        }
+        $finalValidator = $spec['final_validator'] ?? $validator;
+        if (!is_callable($finalValidator)) {
+            $finalValidator = $validator;
+        }
+
+        // En modo texto el resultado es Markdown (una cadena), no un objeto:
+        // el validador de forma solo tiene sentido en JSON.
+        $checkPart = $mode === 'json'
+            ? $validator
+            : static fn(mixed $value): bool => is_string($value) && trim($value) !== '';
+        $checkFinal = $mode === 'json' ? $finalValidator : $checkPart;
+
+        /** Recordatorio que se añade al reintentar una respuesta mal formada. */
+        $strictSuffix = ' Tu respuesta anterior no tenía el formato pedido. Devuelve SOLO un objeto JSON '
+            . 'que empiece por { y termine en }, con las claves indicadas: nada de listas, vallas ni texto alrededor.';
 
         /** ¿Se agotó el tiempo global del trabajo? */
         $deadlineHit = static function () use ($started, $deadlineSeconds): bool {
@@ -372,24 +398,42 @@ if (!function_exists('llm_pipeline_run')) {
             $item = array_shift($queue);
             $partText = (string)$item['part']['text'];
 
-            if (is_callable($mapCall)) {
-                $res = $mapCall($item['part'], $item['key'], $total);
-            } else {
+            /** Una llamada de parte. `$strict` reintenta con instrucción de forma. */
+            $doMap = function (bool $strict) use ($mapCall, $call, $spec, $header, $partText, $item, $total, $maxMap, $strictSuffix): array {
+                if (is_callable($mapCall)) {
+                    return $mapCall($item['part'], $item['key'], $total);
+                }
                 $vars = [
                     '{header}'      => $header,
                     '{parte}'       => $partText,
                     '{parte_num}'   => llm_pipeline_part_label($item['key']),
                     '{parte_total}' => (string)$total,
                 ];
-                $res = $call(
-                    strtr((string)($spec['system_map'] ?? ''), $vars),
-                    strtr((string)($spec['user_map'] ?? ''), $vars),
-                    $maxMap
-                );
-            }
+                $system = strtr((string)($spec['system_map'] ?? ''), $vars);
+                if ($strict) {
+                    $system .= $strictSuffix;
+                }
+                return $call($system, strtr((string)($spec['user_map'] ?? ''), $vars), $maxMap);
+            };
+
+            $res = $doMap(false);
             $out['calls']++;
 
             $value = empty($res['success']) ? null : $partialValue($res, $mode);
+            $invalidShape = ($value !== null && !$checkPart($value));
+
+            // Respuesta con forma equivocada (p. ej. solo una lista de
+            // técnicas): un reintento estricto antes de darla por perdida.
+            if ($invalidShape) {
+                $res = $doMap(true);
+                $out['calls']++;
+                $value = empty($res['success']) ? null : $partialValue($res, $mode);
+                if ($value !== null && !$checkPart($value)) {
+                    $value = null;
+                    $out['invalid_format'] = true;
+                }
+            }
+
             if ($value !== null) {
                 $partials[$item['key']] = $value;
                 $order[] = $item['key'];
@@ -402,13 +446,18 @@ if (!function_exists('llm_pipeline_run')) {
                     $out['clipped'] = true;
                 }
                 if (is_callable($savePart)) {
-                    $savePart($item['key'], $value, true, '');
+                    $savePart($item['key'], $value, true, '', (string)($res['content'] ?? ''));
                 }
                 $report('Analizando la evidencia');
                 continue;
             }
 
-            $error = (string)($res['error'] ?? 'La IA no devolvió contenido para esta parte.');
+            $error = $invalidShape
+                ? 'La parte no devolvió un objeto JSON con el análisis (formato inválido).'
+                : (string)($res['error'] ?? 'La IA no devolvió contenido para esta parte.');
+            if ($invalidShape) {
+                $res['error_kind'] = 'invalid_format';
+            }
             $errors[$item['key']] = $error;
 
             // Timeout o fin de contexto en una parte todavía grande: se parte
@@ -448,7 +497,7 @@ if (!function_exists('llm_pipeline_run')) {
             $failCount++;
             $resolved[$slotOf($item['key'])] = true;
             if (is_callable($savePart)) {
-                $savePart($item['key'], null, false, $error);
+                $savePart($item['key'], null, false, $error, (string)($res['content'] ?? ''));
             }
             $out['warnings'][] = 'La parte ' . llm_pipeline_part_label($item['key']) . ' no se pudo analizar: '
                 . llm_str_cut($error, 220);
@@ -471,6 +520,12 @@ if (!function_exists('llm_pipeline_run')) {
             $out['error'] = $first;
             $out['elapsed_ms'] = (int)round((microtime(true) - $started) * 1000);
             return $out;
+        }
+
+        // Los parciales se devuelven tal cual: el módulo puede montar con ellos
+        // un informe de emergencia si el modelo no respetó el formato.
+        foreach ($order as $key) {
+            $out['partials'][] = $partials[$key];
         }
 
         // Detenido a medias: se ensambla en local lo que hay (sin más llamadas).
@@ -529,18 +584,31 @@ if (!function_exists('llm_pipeline_run')) {
                 $resultados = implode("\n\n", $blocks);
                 $vars = ['{resultados}' => $resultados, '{header}' => $header, '{total}' => (string)$total];
 
-                if (is_callable($reduceCall)) {
-                    $res = $reduceCall($chunk, $level);
-                } else {
-                    $res = $call(
-                        strtr((string)($spec['system_reduce'] ?? ''), $vars),
-                        strtr((string)($spec['user_reduce'] ?? ''), $vars),
-                        $maxMerge
-                    );
-                }
+                /** Una llamada de fusión. `$strict` añade la instrucción de forma. */
+                $doReduce = function (bool $strict) use ($reduceCall, $call, $spec, $vars, $chunk, $level, $maxMerge, $strictSuffix): array {
+                    if (is_callable($reduceCall)) {
+                        return $reduceCall($chunk, $level);
+                    }
+                    $system = strtr((string)($spec['system_reduce'] ?? ''), $vars);
+                    if ($strict) {
+                        $system .= $strictSuffix;
+                    }
+                    return $call($system, strtr((string)($spec['user_reduce'] ?? ''), $vars), $maxMerge);
+                };
+
+                $res = $doReduce(false);
                 $out['calls']++;
 
                 $value = empty($res['success']) ? null : $partialValue($res, $mode);
+                if ($value !== null && !$checkFinal($value)) {
+                    // Fusión con forma equivocada: un reintento estricto.
+                    $res = $doReduce(true);
+                    $out['calls']++;
+                    $value = empty($res['success']) ? null : $partialValue($res, $mode);
+                    if ($value !== null && !$checkFinal($value)) {
+                        $value = null;
+                    }
+                }
                 if ($value !== null) {
                     if (!empty($res['model'])) {
                         $out['model'] = (string)$res['model'];
@@ -553,8 +621,9 @@ if (!function_exists('llm_pipeline_run')) {
                     continue;
                 }
 
+                $out['invalid_format'] = true;
                 $out['warnings'][] = 'La fusión del grupo ' . ($chunkIndex + 1)
-                    . ' falló (' . llm_str_cut((string)($res['error'] ?? 'sin error'), 180)
+                    . ' no devolvió el formato esperado (' . llm_str_cut((string)($res['error'] ?? 'sin error'), 180)
                     . '): se combinan los parciales en local.';
                 $local = llm_pipeline_merge_local($chunk, $mode);
                 $next[] = $mode === 'json' ? $local['data'] : $local['content'];
@@ -586,12 +655,19 @@ if (!function_exists('llm_pipeline_run')) {
                 JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE
             );
             $out['success'] = is_array($final);
+            // El resultado final también debe tener la forma pedida: una lista
+            // de técnicas no es un análisis.
+            if ($out['success'] && !$checkFinal($final)) {
+                $out['success'] = false;
+                $out['invalid_format'] = true;
+                $out['error'] = 'La IA no devolvió un análisis con el formato esperado.';
+            }
         } else {
             $out['content'] = trim((string)$final);
             $out['success'] = $out['content'] !== '';
         }
 
-        if (!$out['success']) {
+        if (!$out['success'] && $out['error'] === '') {
             $out['error'] = 'La fusión final no produjo una respuesta válida.';
         }
 

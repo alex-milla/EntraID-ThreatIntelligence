@@ -67,6 +67,31 @@ if (trim($prompt) !== '') {
 
 $content = json_encode($triage, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 
+// Las PARTES devuelven un objeto parcial (como haría un modelo real): el
+// esquema es más corto que el del triaje final.
+if (str_contains($prompt, 'EVENTOS NORMALIZADOS')) {
+    $content = (string)json_encode([
+        'parte'              => '1',
+        'rango_eventos'      => '1-10',
+        'resumen_parcial'    => 'PowerShell ejecutó un script de descubrimiento desde el perfil del usuario.',
+        'cadena_de_eventos'  => 'powershell.exe iniciado por el usuario; después ejecutó un script.',
+        'hipotesis_parcial'  => 'Reconocimiento legítimo o malware inicial.',
+        'veredicto_parcial'  => 'sospechosa',
+        'confianza_pct'      => 60,
+        'tecnicas_attck'     => ['T1059.001'],
+        'indicadores_maliciosos' => ['Command line codificada (-enc)'],
+        'datos_faltantes'    => ['Usuario que inició explorer.exe'],
+    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+}
+
+// Modo «el modelo se desvía»: en la fusión devuelve solo una lista de
+// técnicas (ni resumen ni veredicto). Sirve para comprobar que la app NO
+// guarda eso como triaje y monta el informe de emergencia.
+$esFusion = str_contains($prompt, 'ANÁLISIS PARCIALES DE LA EVIDENCIA');
+if ($esFusion && str_contains($prompt, 'TRIGGER-LIST')) {
+    $content = (string)json_encode(['T1021.001', 'T1059.001', 'T1003'], JSON_UNESCAPED_UNICODE);
+}
+
 echo json_encode([
     'model'      => 'e2e-fake-model',
     'created_at' => gmdate('c'),

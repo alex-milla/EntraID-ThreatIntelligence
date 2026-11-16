@@ -113,6 +113,7 @@ final class IncidentStoryStore
             indice     TEXT NOT NULL,
             estado     TEXT NOT NULL DEFAULT 'done',
             contenido  TEXT,
+            raw        TEXT,
             error      TEXT,
             perfil     INTEGER,
             total      INTEGER NOT NULL DEFAULT 0,
@@ -120,6 +121,16 @@ final class IncidentStoryStore
             UNIQUE(caso_id, indice)
         )");
         $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_triage_partes_caso ON triage_partes(caso_id)');
+
+        // v0.4.24: respuesta cruda de cada parte (diagnóstico: qué dijo el
+        // modelo de verdad cuando su JSON no tenía la forma esperada).
+        $partesCols = [];
+        foreach ($this->pdo->query('PRAGMA table_info(triage_partes)') as $col) {
+            $partesCols[(string)$col['name']] = true;
+        }
+        if (!isset($partesCols['raw'])) {
+            $this->pdo->exec('ALTER TABLE triage_partes ADD COLUMN raw TEXT');
+        }
 
         $this->pdo->exec("CREATE TABLE IF NOT EXISTS decisiones (
             id             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -304,20 +315,23 @@ final class IncidentStoryStore
         ?string $contenido,
         ?string $error,
         ?int $perfil,
-        int $total
+        int $total,
+        ?string $raw = null
     ): void {
         $stmt = $this->pdo->prepare(
-            "INSERT INTO triage_partes (caso_id, indice, estado, contenido, error, perfil, total, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            "INSERT INTO triage_partes (caso_id, indice, estado, contenido, raw, error, perfil, total, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(caso_id, indice) DO UPDATE SET
-                estado = excluded.estado, contenido = excluded.contenido, error = excluded.error,
-                perfil = excluded.perfil, total = excluded.total, created_at = excluded.created_at"
+                estado = excluded.estado, contenido = excluded.contenido, raw = excluded.raw,
+                error = excluded.error, perfil = excluded.perfil, total = excluded.total,
+                created_at = excluded.created_at"
         );
         $stmt->execute([
             $id,
             $indice,
             $estado,
             $contenido,
+            $raw !== null ? self::clip($raw, 20000) : null,
             self::str($error),
             $perfil,
             $total,
@@ -450,6 +464,15 @@ final class IncidentStoryStore
         $row['warnings']  = safe_json_decode((string)($row['warnings_json'] ?? ''), []);
         $row['triage']    = safe_json_decode((string)($row['triage_json'] ?? ''), null);
         return $row;
+    }
+
+    /** Recorte seguro aunque el hosting no tenga mbstring. */
+    private static function clip(string $text, int $length): string
+    {
+        if ($length <= 0) {
+            return '';
+        }
+        return function_exists('mb_substr') ? mb_substr($text, 0, $length) : substr($text, 0, $length);
     }
 
     private static function json(mixed $value): string
