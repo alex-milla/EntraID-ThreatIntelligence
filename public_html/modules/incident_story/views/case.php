@@ -20,6 +20,9 @@
  * @var array $classifications
  * @var array $determinations
  * @var array|null $notice
+ * @var string $triageEstado
+ * @var array $triageProgreso
+ * @var string $triageError
  */
 
 $base = base_url('modules/incident_story');
@@ -29,6 +32,14 @@ $triage = is_array($case['triage'] ?? null) ? $case['triage'] : [];
 $warnings = is_array($case['warnings'] ?? null) ? $case['warnings'] : [];
 $decisionActual = $decisions[0] ?? null;
 $baseVista = $base . '/case/' . (int)$case['id'];
+
+$triageEstado = (string)($triageEstado ?? 'idle');
+$triageProgreso = is_array($triageProgreso ?? null) ? $triageProgreso : [];
+$triageError = (string)($triageError ?? '');
+$triageRunning = $triageEstado === 'running';
+$triageHechos = (int)($triageProgreso['hechos'] ?? 0);
+$triageTotal = (int)($triageProgreso['total'] ?? 0);
+$triageFase = trim((string)($triageProgreso['fase'] ?? ''));
 
 $list = static function (mixed $value): array {
     if (is_string($value)) {
@@ -183,6 +194,36 @@ $hintClass = 'text-[11px] text-ink-soft';
         </div>
     <?php endif; ?>
 
+    <?php if ($triageRunning): ?>
+        <div class="alert alert-info mt-3" role="status" id="triage-live"
+             data-status-url="<?= e($baseVista . '/triage-status') ?>">
+            <div class="flex items-center gap-2">
+                <span class="spinner" aria-hidden="true"></span>
+                <span>
+                    <strong>Triaje en curso.</strong>
+                    <span data-triage-fase><?= e($triageFase !== '' ? $triageFase : 'Analizando la evidencia') ?></span>
+                    <?php if ($triageTotal > 0): ?>
+                        <span data-triage-contador class="text-ink-muted">(<?= $triageHechos ?>/<?= $triageTotal ?>)</span>
+                    <?php endif; ?>
+                </span>
+            </div>
+            <p class="text-xs mt-1">
+                La evidencia se analiza por partes para que un modelo local pueda completarla aunque tarde.
+                Puedes cerrar la pestaña: el trabajo continúa en el servidor y la ficha se actualiza sola.
+            </p>
+        </div>
+    <?php elseif ($triageError !== ''): ?>
+        <div class="alert alert-error mt-3" role="alert">
+            <strong>El triaje no se completó.</strong> <?= e($triageError) ?>
+        </div>
+    <?php endif; ?>
+
+    <?php if (!$triageRunning && !empty($triage['partes_fallidas'])): ?>
+        <div class="alert alert-warning mt-3" role="status">
+            <?= e((string)($triage['aviso'] ?? 'Alguna parte del análisis no se pudo completar.')) ?>
+        </div>
+    <?php endif; ?>
+
     <?php if ($triageEjecutadoSinContenido): ?>
         <div class="alert alert-warning mt-3" role="status">
             El triaje se ejecutó, pero no se guardó ningún resultado. Pulsa «Repetir triaje»;
@@ -282,12 +323,17 @@ $hintClass = 'text-[11px] text-ink-soft';
                     <?php endforeach; ?>
                 </select>
             </div>
-            <button type="submit" class="btn w-full" <?= $llmConfigured ? '' : 'disabled' ?>>
-                <?= icon('psychology', 18) ?> <?= $triage === [] ? 'Analizar con IA' : 'Repetir triaje' ?>
+            <button type="submit" class="btn w-full" <?= ($llmConfigured && !$triageRunning) ? '' : 'disabled' ?>>
+                <?php if ($triageRunning): ?>
+                    <?= icon('psychology', 18) ?> Analizando…
+                <?php else: ?>
+                    <?= icon('psychology', 18) ?> <?= $triage === [] ? 'Analizar con IA' : 'Repetir triaje' ?>
+                <?php endif; ?>
             </button>
         </div>
         <p class="<?= e($hintClass) ?> mt-2">
             Se envía solo la evidencia pseudonimizada. Consume cuota del proveedor.
+            Un caso grande se analiza por partes y puede tardar varios minutos.
         </p>
     </form>
 </div>
@@ -641,4 +687,44 @@ $hintClass = 'text-[11px] text-ink-soft';
             </button>
         </form>
     </details>
+<?php endif; ?>
+
+<?php if ($triageRunning): ?>
+<script>
+/* Triaje por partes en curso: se sondea el estado y, al terminar, se recarga
+   la ficha con el resultado. Sin JS la página se sigue pudiendo recargar a mano. */
+(function () {
+    var box = document.getElementById('triage-live');
+    if (!box) { return; }
+    var url = box.getAttribute('data-status-url');
+    var faseEl = box.querySelector('[data-triage-fase]');
+    var contEl = box.querySelector('[data-triage-contador]');
+    var intentos = 0;
+
+    function pintar(d) {
+        if (faseEl && d.fase) { faseEl.textContent = d.fase; }
+        if (contEl && d.total > 0) { contEl.textContent = '(' + d.hechos + '/' + d.total + ')'; }
+    }
+
+    function tick() {
+        intentos++;
+        fetch(url, { headers: { 'Accept': 'application/json' }, credentials: 'same-origin', cache: 'no-store' })
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                if (!d || !d.success) { return; }
+                if (d.estado === 'running') {
+                    pintar(d);
+                    setTimeout(tick, 3000);
+                    return;
+                }
+                location.reload();
+            })
+            .catch(function () {
+                if (intentos < 80) { setTimeout(tick, 5000); }
+            });
+    }
+
+    setTimeout(tick, 2500);
+})();
+</script>
 <?php endif; ?>

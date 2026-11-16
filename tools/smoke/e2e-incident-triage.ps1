@@ -24,6 +24,8 @@ $fake    = Join-Path $PSScriptRoot 'fake-llm.php'
 $base    = "http://127.0.0.1:$Port"
 $fakePort = $Port + 1
 $fakeBase = "http://127.0.0.1:$fakePort"
+$fakeTempDir = [System.IO.Path]::GetTempPath()
+$callLog  = Join-Path $fakeTempDir 'entraid-fake-llm-calls.log'
 
 $fail = 0
 function Check {
@@ -60,6 +62,8 @@ foreach ($name in $names) {
 $server = $null
 $llmServer = $null
 try {
+    if (Test-Path $callLog) { Remove-Item $callLog -Force -ErrorAction SilentlyContinue }
+
     # --- LLM falso (OpenAI-compatible) ---
     $llmServer = Start-Process -FilePath 'php' `
         -ArgumentList @('-S', "127.0.0.1:$fakePort", $fake) `
@@ -128,6 +132,72 @@ Content Write-Host "hola"
     Check 'E2E: triaje no vacío' ([int]$state.triage_length -gt 100) "len=$($state.triage_length)"
     Check 'E2E: campos del triaje' (($state.triage_keys -contains 'resumen_ejecutivo') -and ($state.triage_keys -contains 'confianza_pct'))
 
+    # --- el caso pequeño sigue resolviéndose en UNA llamada ---
+    $smallCalls = @()
+    if (Test-Path $callLog) { $smallCalls = @(Get-Content $callLog) }
+    Check 'E2E: caso pequeño = una sola llamada' ($smallCalls.Count -eq 1) "llamadas=$($smallCalls.Count)"
+
+    # --- caso grande: triaje POR PARTES (v0.4.22) ---
+    if (Test-Path $callLog) { Remove-Item $callLog -Force -ErrorAction SilentlyContinue }
+
+    $inv = [System.Globalization.CultureInfo]::InvariantCulture
+    $baseTime = [datetime]::ParseExact('2026-10-30T08:10:38', 'yyyy-MM-ddTHH:mm:ss', $inv)
+    $filler = 'A' * 180
+    $sb = [System.Text.StringBuilder]::new()
+    for ($i = 0; $i -lt 60; $i++) {
+        $ts = $baseTime.AddMinutes($i).ToString('M/d/yyyy h:mm:ss tt', $inv)
+        $procId = 60000 + $i
+        [void]$sb.AppendLine($ts)
+        [void]$sb.AppendLine(" [$procId] powershell.exe -NoProfile -Command `"Get-ChildItem -Path C:\Temp\$filler`"")
+        [void]$sb.AppendLine("Process id $procId")
+        [void]$sb.AppendLine('Execution details Token elevation: Limited, Integrity level: Medium')
+        [void]$sb.AppendLine('Image file path C:\Users\pinedarp\AppData\Local\Programs\Git\cmd\git.exe')
+        [void]$sb.AppendLine('Image file SHA1 a4f874f663d4b2e682bbae87fd121865a42dddbb')
+        [void]$sb.AppendLine('User DIBA\pinedarp')
+        [void]$sb.AppendLine('Sensitive information lookup New Detected Medium')
+        [void]$sb.AppendLine(" powershell.exe executed a script $i")
+        [void]$sb.AppendLine('')
+    }
+    $bigStory = $sb.ToString()
+
+    $newBig = Invoke-WebRequest -Uri "$base/index.php/modules/incident_story/new" -WebSession $ws -UseBasicParsing -TimeoutSec 30
+    $csrfBig = [regex]::Match($newBig.Content, 'name="csrf_token"\s+value="([^"]+)"').Groups[1].Value
+    $ingestBig = Invoke-WebRequest -Uri "$base/index.php/modules/incident_story/ingest" -Method POST -WebSession $ws `
+        -Body @{ mode = 'text'; story_text = $bigStory; client_domains = 'diba.es'; csrf_token = $csrfBig } `
+        -UseBasicParsing -TimeoutSec 120 -MaximumRedirection 5
+    $bigUrl = $ingestBig.BaseResponse.RequestMessage.RequestUri.AbsoluteUri
+    $bigCaseId = [regex]::Match($bigUrl, '/case/(\d+)').Groups[1].Value
+    Check 'E2E: caso grande creado' ([int]$bigCaseId -gt 0) $bigUrl
+
+    $bigPage = Invoke-WebRequest -Uri "$base/index.php/modules/incident_story/case/$bigCaseId" -WebSession $ws -UseBasicParsing -TimeoutSec 30
+    $csrfBig2 = [regex]::Match($bigPage.Content, 'name="csrf_token"\s+value="([^"]+)"').Groups[1].Value
+    $bigTriage = Invoke-WebRequest -Uri "$base/index.php/modules/incident_story/case/$bigCaseId/triage" -Method POST -WebSession $ws `
+        -Body @{ profile_id = $profileId; csrf_token = $csrfBig2 } `
+        -UseBasicParsing -TimeoutSec 300 -MaximumRedirection 5
+    $bigTriageUrl = $bigTriage.BaseResponse.RequestMessage.RequestUri.AbsoluteUri
+    Check 'E2E: redirect del triaje por partes' ($bigTriageUrl -match 'triage_ok=1') $bigTriageUrl
+    Check 'E2E: veredicto tras el análisis por partes' ($bigTriage.Content -match 'Sospechosa' -or $bigTriage.Content -match 'sospechosa')
+
+    $calls = @()
+    if (Test-Path $callLog) {
+        $calls = @(Get-Content $callLog | ForEach-Object { $_ | ConvertFrom-Json })
+    }
+    $chunks = @($calls | Where-Object { $_.kind -eq 'chunk' }).Count
+    $merges = @($calls | Where-Object { $_.kind -eq 'merge' }).Count
+    Check 'E2E: el caso grande se analiza por partes' ($chunks -ge 3) "chunks=$chunks"
+    Check 'E2E: se fusionan los parciales' ($merges -ge 1) "merges=$merges"
+
+    $stateBig = Probe @('state')
+    Check 'E2E: triaje por partes persistido' ([int]$stateBig.analisis_partes -ge 2) "partes=$($stateBig.analisis_partes)"
+    Check 'E2E: estado del triaje done' ($stateBig.triage_estado -eq 'done') "$($stateBig.triage_estado)"
+    Check 'E2E: sin partes fallidas' ([int]$stateBig.partes_fallidas -eq 0) "$($stateBig.partes_fallidas)"
+
+    # --- endpoint de sondeo del estado ---
+    $status = Invoke-WebRequest -Uri "$base/index.php/modules/incident_story/case/$bigCaseId/triage-status" -WebSession $ws -UseBasicParsing -TimeoutSec 30
+    $statusJson = $status.Content | ConvertFrom-Json
+    Check 'E2E: endpoint de estado responde' ($statusJson.success -eq $true -and $statusJson.estado -eq 'done') "$($statusJson.estado)"
+    Check 'E2E: endpoint de estado informa de las partes' ([int]$statusJson.total -ge 2) "total=$($statusJson.total)"
+
     # --- limpieza funcional del caso ---
     $csrf3 = [regex]::Match($triage.Content, 'name="csrf_token"\s+value="([^"]+)"').Groups[1].Value
     $deleted = Invoke-WebRequest -Uri "$base/index.php/modules/incident_story/case/$caseId/delete" -Method POST -WebSession $ws `
@@ -137,6 +207,7 @@ Content Write-Host "hola"
 finally {
     if ($server -and -not $server.HasExited) { Stop-Process -Id $server.Id -Force }
     if ($llmServer -and -not $llmServer.HasExited) { Stop-Process -Id $llmServer.Id -Force }
+    if (Test-Path $callLog) { Remove-Item $callLog -Force -ErrorAction SilentlyContinue }
     Start-Sleep -Milliseconds 500
     foreach ($name in $names) {
         $dst = Join-Path $storage $name

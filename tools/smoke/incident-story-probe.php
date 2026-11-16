@@ -36,13 +36,19 @@ if ($cmd === 'state') {
     $cases = $store->listCases(50);
     $latest = $cases[0] ?? null;
     $full = $latest !== null ? $store->getCase((int)$latest['id']) : null;
+    $triage = $full !== null && is_array($full['triage'] ?? null) ? $full['triage'] : [];
     echo json_encode([
-        'count'         => count($cases),
-        'id'            => $latest !== null ? (int)$latest['id'] : 0,
-        'verdict'       => $latest['triage_verdict'] ?? null,
-        'triage_at'     => $latest['triage_at'] ?? null,
-        'triage_length' => $full !== null && is_array($full['triage']) ? strlen((string)json_encode($full['triage'])) : 0,
-        'triage_keys'   => $full !== null && is_array($full['triage']) ? array_keys($full['triage']) : [],
+        'count'           => count($cases),
+        'id'              => $latest !== null ? (int)$latest['id'] : 0,
+        'verdict'         => $latest['triage_verdict'] ?? null,
+        'triage_at'       => $latest['triage_at'] ?? null,
+        'triage_length'   => $triage !== [] ? strlen((string)json_encode($triage)) : 0,
+        'triage_keys'     => array_keys($triage),
+        'triage_estado'   => $full['triage_estado'] ?? null,
+        'triage_error'    => $full['triage_error'] ?? null,
+        'triage_partes'   => (int)($full['triage_partes'] ?? 0),
+        'analisis_partes' => (int)($triage['analisis_por_partes'] ?? 0),
+        'partes_fallidas' => (int)($triage['partes_fallidas'] ?? 0),
     ], JSON_UNESCAPED_UNICODE);
     exit(0);
 }

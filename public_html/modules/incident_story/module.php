@@ -79,6 +79,7 @@ class Module_IncidentStory extends BaseModule
             ['method' => 'POST', 'pattern' => 'ingest',          'handler' => [$this, 'ingest']],
             ['method' => 'GET',  'pattern' => 'case/{id}',       'handler' => [$this, 'show']],
             ['method' => 'GET',  'pattern' => 'case/{id}/export', 'handler' => [$this, 'export']],
+            ['method' => 'GET',  'pattern' => 'case/{id}/triage-status', 'handler' => [$this, 'triageStatus']],
             ['method' => 'POST', 'pattern' => 'case/{id}/triage',   'handler' => [$this, 'triage']],
             ['method' => 'POST', 'pattern' => 'case/{id}/decision', 'handler' => [$this, 'decision']],
             ['method' => 'POST', 'pattern' => 'case/{id}/delete',   'handler' => [$this, 'delete']],
@@ -253,6 +254,8 @@ class Module_IncidentStory extends BaseModule
             ? (is_array($case['caso'] ?? null) ? $case['caso'] : [])
             : (is_array($case['anon'] ?? null) ? $case['anon'] : []);
         $eventosTotal = count((array)($evidencia['eventos'] ?? []));
+        $triageProgreso = safe_json_decode((string)($case['triage_progreso'] ?? ''), []);
+        $triageProgreso = is_array($triageProgreso) ? $triageProgreso : [];
 
         echo $this->page('case', [
             'module'           => $this,
@@ -269,6 +272,9 @@ class Module_IncidentStory extends BaseModule
             'classifications'  => IncidentStoryStore::CLASSIFICATIONS,
             'determinations'   => IncidentStoryStore::DETERMINATIONS,
             'notice'           => $this->notice(),
+            'triageEstado'     => (string)($case['triage_estado'] ?? 'idle'),
+            'triageProgreso'   => $triageProgreso,
+            'triageError'      => (string)($case['triage_error'] ?? ''),
         ]);
     }
 
@@ -285,6 +291,13 @@ class Module_IncidentStory extends BaseModule
         }
         if (isset($_GET['triage_ok'])) {
             return ['type' => 'success', 'text' => 'Triaje IA completado. Revisa el resultado y registra la decisión humana.'];
+        }
+        if (isset($_GET['triage_running'])) {
+            return [
+                'type' => 'info',
+                'text' => 'Triaje IA en curso: la evidencia se está analizando por partes para que un modelo local '
+                    . 'pueda completarlo. Puedes seguir en esta ficha; se actualiza sola al terminar.',
+            ];
         }
         if (isset($_GET['triage_error'])) {
             $msg = trim((string)$_GET['triage_error']);
@@ -512,28 +525,151 @@ class Module_IncidentStory extends BaseModule
     {
         Csrf::validateOrFail();
         $case = $this->loadCaseOrRedirect($params);
+        $caseId = (int)$case['id'];
+        $baseCaso = base_url('modules/incident_story/case/' . $caseId);
 
         $llm = ModuleManager::get('llm');
         if (!$llm instanceof Module_Llm) {
             flash('incident_story', ['type' => 'error', 'text' => 'El módulo de IA no está disponible.']);
-            redirect(base_url('modules/incident_story/case/' . (int)$case['id']));
+            redirect($baseCaso);
         }
 
         $profileId = (int)($_POST['profile_id'] ?? 0);
         $profileId = $profileId > 0 ? $profileId : null;
         if (!$llm->isConfigured($profileId)) {
             flash('incident_story', ['type' => 'error', 'text' => 'La IA no está configurada (Admin → APIs).']);
-            redirect(base_url('modules/incident_story/case/' . (int)$case['id']));
+            redirect($baseCaso);
         }
 
         $anon = is_array($case['anon'] ?? null) ? $case['anon'] : [];
+        $payload = $this->triagePayload($anon);
+
+        // Un caso grande se analiza por partes: así cada llamada cabe en el
+        // timeout del perfil y un modelo local puede terminar el triaje.
+        $parts = $this->evidenceParts($anon, $this->evidencePartChars($profileId), $payload);
+
+        // Ruta rápida: la evidencia cabe en una llamada (comportamiento de
+        // siempre, sin segundo plano ni parciales).
+        if ($parts === []) {
+            $this->store()->setTriageState($caseId, 'idle');
+            $res = $this->singleTriage($payload, $profileId);
+            if (empty($res['success'])) {
+                $error = self::clip((string)($res['error'] ?? 'error desconocido'), 500);
+                redirect($baseCaso . '?triage_error=' . rawurlencode($error) . '#triaje');
+            }
+            $this->storeTriageResult($caseId, $res, $profileId);
+            redirect($baseCaso . '?triage_ok=1#triaje');
+        }
+
+        // Por partes: se responde al instante y se trabaja en segundo plano.
+        // Cerrojo único de trabajos de IA: un modelo local tiene una sola
+        // ranura; dos análisis a la vez se pisan y acaban en timeout.
+        $lockOwner = 'incident_triage:' . $caseId . ':' . bin2hex(random_bytes(6));
+        if (!llm_job_acquire($lockOwner, 'incident_triage', 3600)) {
+            $busy = 'Hay otro trabajo de IA en curso (cola de informes, traducción o asistente). '
+                . 'Vuelve a intentar el triaje cuando termine.';
+            redirect($baseCaso . '?triage_error=' . rawurlencode($busy) . '#triaje');
+        }
+
+        $total = count($parts);
+        $job = llm_job_create('incident_triage', $caseId, $profileId, Auth::id());
+        $jobId = (int)$job['id'];
+        $progreso = [
+            'fase'        => 'Preparando el análisis por partes',
+            'hechos'      => 0,
+            'total'       => $total,
+            'actualizado' => time(),
+            'job'         => $jobId,
+        ];
+        $this->store()->setTriageState($caseId, 'running', $progreso);
+        llm_job_progress($jobId, $progreso['fase'], 0, $total);
+        app_log('info', 'incident_story', 'Triaje IA por partes', [
+            'case'    => $caseId,
+            'parts'   => $total,
+            'job'     => $jobId,
+            'profile' => $profileId,
+            'chars'   => llm_str_len($payload),
+        ]);
+
+        // Con PHP-FPM: se responde 302 y el trabajo sigue EN ESTE PROCESO
+        // (patrón de cve-worker.php / asistente de remediación). Sin FPM:
+        // en línea, como el análisis por CVE.
+        if (function_exists('fastcgi_finish_request')) {
+            @ignore_user_abort(true);
+            @set_time_limit(0);
+            release_session_lock();
+            http_response_code(302);
+            header('Location: ' . $baseCaso . '?triage_running=1#triaje');
+            finish_response();
+
+            $this->runTriageJob($caseId, $profileId, $parts, $jobId, $lockOwner);
+            exit;
+        }
+
+        $this->runTriageJob($caseId, $profileId, $parts, $jobId, $lockOwner);
+
+        $final = $this->store()->getCase($caseId);
+        if ((string)($final['triage_estado'] ?? '') === 'error') {
+            $error = self::clip((string)($final['triage_error'] ?? 'error desconocido'), 500);
+            redirect($baseCaso . '?triage_error=' . rawurlencode($error) . '#triaje');
+        }
+        redirect($baseCaso . '?triage_ok=1#triaje');
+    }
+
+    /**
+     * Estado del triaje por partes para el sondeo de la ficha.
+     */
+    public function triageStatus(array $params = []): void
+    {
+        $case = $this->store()->getCase((int)($params['id'] ?? 0));
+        if ($case === null) {
+            json_response(['success' => false, 'error' => 'El caso no existe.'], 404);
+        }
+
+        $estado = (string)($case['triage_estado'] ?? 'idle');
+        $progreso = safe_json_decode((string)($case['triage_progreso'] ?? ''), []);
+        $progreso = is_array($progreso) ? $progreso : [];
+        $error = (string)($case['triage_error'] ?? '');
+
+        // Un proceso que murió deja el estado en `running`: se da por caducado
+        // en vez de dejar la ficha esperando para siempre. Cada parte renueva
+        // `actualizado`, así que una hora sin latido es un trabajo perdido.
+        if ($estado === 'running') {
+            $actualizado = (int)($progreso['actualizado'] ?? 0);
+            if ($actualizado > 0 && (time() - $actualizado) > 3600) {
+                $estado = 'error';
+                $error = 'El triaje dejó de responder (proceso interrumpido). Vuelve a lanzarlo.';
+                $progreso['fase'] = 'Error';
+                $this->store()->setTriageState((int)$case['id'], 'error', $progreso, $error);
+            }
+        }
+
+        json_response([
+            'success'    => true,
+            'estado'     => $estado,
+            'fase'       => (string)($progreso['fase'] ?? ''),
+            'hechos'     => (int)($progreso['hechos'] ?? 0),
+            'total'      => (int)($progreso['total'] ?? 0),
+            'error'      => $error,
+            'triage_at'  => $case['triage_at'] ?? null,
+            'partes'     => (int)($case['triage_partes'] ?? 0),
+        ]);
+    }
+
+    /** Payload del caso anonimizado (recortado por tamaño). */
+    private function triagePayload(array $anon): string
+    {
         $payload = json_encode($anon, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '{}';
         if (strlen($payload) > INCIDENT_STORY_MAX_PROMPT_CHARS) {
             $payload = self::clip($payload, INCIDENT_STORY_MAX_PROMPT_CHARS)
                 . "\n…(evidencia recortada por límite de tamaño)";
         }
+        return $payload;
+    }
 
-        $system = llm_prompt(
+    private function triageSystemPrompt(): string
+    {
+        return llm_prompt(
             'llm.incident_story.triage.system',
             'Eres un analista senior de un SOC especializado en Microsoft Defender XDR y MITRE ATT&CK. '
             . 'Analizas la evidencia normalizada de una incidencia de Defender a partir de su story. '
@@ -543,7 +679,11 @@ class Module_IncidentStory extends BaseModule
             . '(4) el veredicto es ASISTIDO y la decisión final la toma una persona; '
             . '(5) responde SIEMPRE en español y SOLO con un objeto JSON válido, sin texto alrededor.'
         );
-        $format = llm_prompt(
+    }
+
+    private function triageFormatPrompt(): string
+    {
+        return llm_prompt(
             'llm.incident_story.triage.format',
             'Devuelve exactamente este objeto JSON: {'
             . '"resumen_ejecutivo":"2-4 frases",'
@@ -565,20 +705,29 @@ class Module_IncidentStory extends BaseModule
             . 'MaliciousUserActivity, Apt, ConfidentialInformation, DataExfiltration, DataSpillage, '
             . 'DestructiveAttack, DenialOfService, Fraud, InsiderThreat, PasswordAttack, Ransomware, ValidAccounts).'
         );
+    }
 
+    /** Una sola llamada (caso que cabe en la ventana del modelo). */
+    private function singleTriage(string $payload, ?int $profileId): array
+    {
         $userPrompt = "CASO ANONIMIZADO (JSON):\n" . $payload
             . "\n\nTAREA: Analiza esta incidencia y devuelve únicamente el JSON indicado.";
 
-        $res = llm_run_json('incident_triage', $system . ' ' . $format, $userPrompt, [
-            'profile_id'  => $profileId ?? 0,
-            'max_tokens'  => 2500,
-            'think'       => false,
-        ]);
-        $baseCaso = base_url('modules/incident_story/case/' . (int)$case['id']);
-        if (empty($res['success'])) {
-            redirect($baseCaso . '?triage_error=' . rawurlencode(self::clip((string)($res['error'] ?? 'error desconocido'), 500)) . '#triaje');
-        }
+        return llm_run_json(
+            'incident_triage',
+            $this->triageSystemPrompt() . ' ' . $this->triageFormatPrompt(),
+            $userPrompt,
+            [
+                'profile_id'  => $profileId ?? 0,
+                'max_tokens'  => 2500,
+                'think'       => false,
+            ]
+        );
+    }
 
+    /** Guarda el resultado (parcial o final) como triaje del caso. */
+    private function storeTriageResult(int $caseId, array $res, ?int $profileId): void
+    {
         $rawContent = (string)($res['content'] ?? '');
         $parsed = is_array($res['data'] ?? null) ? $res['data'] : self::parseAiJson($rawContent);
         if ($parsed === null) {
@@ -590,14 +739,347 @@ class Module_IncidentStory extends BaseModule
         }
 
         $this->store()->saveTriage(
-            (int)$case['id'],
+            $caseId,
             $parsed,
             isset($res['model']) ? (string)$res['model'] : null,
             $profileId,
             $rawContent
         );
+    }
 
-        redirect($baseCaso . '?triage_ok=1#triaje');
+    /**
+     * Caracteres por parte: un tercio de la ventana del modelo de entrada,
+     * con suelo y techo para no encadenar decenas de llamadas ni mandar una
+     * parte que no quepa.
+     */
+    private function evidencePartChars(?int $profileId): int
+    {
+        $llm = ModuleManager::get('llm');
+        $window = $llm instanceof Module_Llm ? $llm->contextWindow($profileId) : 0;
+        if ($window <= 0) {
+            return 12000;
+        }
+        // ~3,6 chars/token en español técnico; se usa el 30 % de la ventana
+        // para que quede sitio a la salida.
+        $chars = (int)floor($window * 0.30 * 3.6);
+        return max(2500, min(12000, $chars));
+    }
+
+    /**
+     * Divide la evidencia en partes que quepan en el modelo.
+     *
+     * Es pública para poder probarla sin IA: el smoke test comprueba que el
+     * reparto conserva todos los eventos y su orden.
+     *
+     * @return array<int,array<string,mixed>> Vacío si basta una sola llamada.
+     */
+    public function evidenceParts(array $anon, int $maxChars, string $payload): array
+    {
+        if (llm_str_len($payload) <= $maxChars) {
+            return [];
+        }
+
+        $eventos = array_values(array_filter((array)($anon['eventos'] ?? []), 'is_array'));
+        if (count($eventos) < 2) {
+            return [];
+        }
+
+        $header = $anon;
+        unset($header['eventos']);
+        $headerJson = (string)json_encode(
+            $header,
+            JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+        );
+        $headerChars = llm_str_len($headerJson);
+        if ($headerChars > intdiv($maxChars, 2)) {
+            $headerJson = self::clip($headerJson, intdiv($maxChars, 2)) . "\n…(contexto recortado)";
+            $headerChars = llm_str_len($headerJson);
+        }
+
+        $lens = [];
+        $totalChars = 0;
+        foreach ($eventos as $i => $ev) {
+            // Se mide el JSON tal y como se envía (con sangría): es lo que
+            // ocupa de verdad en el prompt de la parte.
+            $lens[$i] = llm_str_len((string)json_encode(
+                $ev,
+                JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+            ));
+            $totalChars += $lens[$i];
+        }
+
+        $budget = max(1200, $maxChars - $headerChars - 600);
+        $needed = (int)ceil($totalChars / max(1, $budget));
+        $count = max(2, min(12, $needed));
+        if ($count < 2) {
+            return [];
+        }
+
+        // Reparto equilibrado por tamaño, conservando el orden temporal.
+        $target = max(1, (int)ceil($totalChars / $count));
+        $groups = [];
+        $current = [];
+        $size = 0;
+        foreach ($eventos as $i => $ev) {
+            $current[] = $ev;
+            $size += $lens[$i];
+            if ($size >= $target && count($groups) < $count - 1) {
+                $groups[] = $current;
+                $current = [];
+                $size = 0;
+            }
+        }
+        if ($current !== []) {
+            $groups[] = $current;
+        }
+        if (count($groups) < 2) {
+            return [];
+        }
+
+        $total = count($groups);
+        $parts = [];
+        $offset = 0;
+        foreach ($groups as $index => $eventosParte) {
+            $desde = $offset + 1;
+            $offset += count($eventosParte);
+            $parts[] = $this->makeEvidencePart($eventosParte, $headerJson, [
+                'label'  => (string)($index + 1),
+                'parte'  => $index + 1,
+                'total'  => $total,
+                'desde'  => $desde,
+                'hasta'  => $offset,
+            ]);
+        }
+        return $parts;
+    }
+
+    /**
+     * Construye una parte (y sus subdivisiones) con el contexto del caso y
+     * los eventos que le tocan.
+     *
+     * @param array<int,array> $eventos
+     * @param array<string,mixed> $meta
+     * @return array<string,mixed>
+     */
+    private function makeEvidencePart(array $eventos, string $headerJson, array $meta): array
+    {
+        $body = [
+            'parte'        => (string)($meta['label'] ?? '1'),
+            'total_partes' => (int)($meta['total'] ?? 1),
+            'eventos'      => $eventos,
+            'rango'        => (int)($meta['desde'] ?? 0) . '-' . (int)($meta['hasta'] ?? 0),
+        ];
+
+        return [
+            'text'    => (string)json_encode(
+                $body,
+                JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+            ),
+            'header'  => $headerJson,
+            'eventos' => $eventos,
+            'meta'    => $meta,
+        ];
+    }
+
+    /**
+     * Parte una parte en dos (solo cuando el modelo la corta por tiempo).
+     *
+     * @param array<string,mixed> $part
+     * @return array<int,array<string,mixed>>
+     */
+    private function splitEvidencePart(array $part): array
+    {
+        $eventos = array_values(array_filter((array)($part['eventos'] ?? []), 'is_array'));
+        if (count($eventos) < 2) {
+            return [];
+        }
+
+        $mitad = intdiv(count($eventos) + 1, 2);
+        $meta = is_array($part['meta'] ?? null) ? $part['meta'] : [];
+        $headerJson = (string)($part['header'] ?? '{}');
+        $label = (string)($meta['label'] ?? '1');
+
+        $a = array_slice($eventos, 0, $mitad);
+        $b = array_slice($eventos, $mitad);
+
+        return [
+            $this->makeEvidencePart($a, $headerJson, [
+                'label' => $label . 'a',
+                'parte' => (int)($meta['parte'] ?? 1),
+                'total' => (int)($meta['total'] ?? 1),
+                'desde' => (int)($meta['desde'] ?? 0),
+                'hasta' => (int)($meta['desde'] ?? 0) + count($a) - 1,
+            ]),
+            $this->makeEvidencePart($b, $headerJson, [
+                'label' => $label . 'b',
+                'parte' => (int)($meta['parte'] ?? 1),
+                'total' => (int)($meta['total'] ?? 1),
+                'desde' => (int)($meta['desde'] ?? 0) + count($a),
+                'hasta' => (int)($meta['hasta'] ?? 0),
+            ]),
+        ];
+    }
+
+    /**
+     * Ejecuta el triaje por partes y guarda el resultado final. Corre en
+     * segundo plano (FPM) o en línea (sin FPM).
+     *
+     * @param array<int,array<string,mixed>> $parts
+     */
+    private function runTriageJob(
+        int $caseId,
+        ?int $profileId,
+        array $parts,
+        int $jobId,
+        string $lockOwner = ''
+    ): void {
+        $store = $this->store();
+        $total = count($parts);
+
+        $chunkPrompt = llm_prompt(
+            'llm.incident_story.triage.chunk',
+            "CONTEXTO DEL CASO (JSON, sin eventos):\n{header}\n\n"
+            . "PARTE {parte_num} DE {parte_total} — EVENTOS NORMALIZADOS (JSON):\n{parte}\n\n"
+            . 'TAREA: analiza SOLO estos eventos en el contexto del caso y devuelve exactamente este objeto JSON: '
+            . '{"parte":"{parte_num}","rango_eventos":"desde-hasta","resumen_parcial":"2-3 frases",'
+            . '"cadena_de_eventos":"narrativa padre->hijo con timestamps clave de esta parte",'
+            . '"hipotesis_parcial":"explicación más plausible de esta parte",'
+            . '"veredicto_parcial":"benigna|sospechosa|ataque","confianza_pct":0,'
+            . '"tecnicas_attck":["Txxxx"],"indicadores_benignos":["..."],"indicadores_maliciosos":["..."],'
+            . '"datos_faltantes":["..."],"acciones_recomendadas":["..."],"preguntas_para_el_analista":["..."]}. '
+            . 'Sé breve: máximo 5 elementos por lista y 3 frases por campo de texto.'
+        );
+
+        $mergePrompt = llm_prompt(
+            'llm.incident_story.triage.merge',
+            "CONTEXTO DEL CASO (JSON, sin eventos):\n{header}\n\n"
+            . "ANÁLISIS PARCIALES DE LA EVIDENCIA (JSON, uno por parte; {total} partes):\n{resultados}\n\n"
+            . 'TAREA: fusiona los análisis parciales en UN ÚNICO análisis de la incidencia y devuelve '
+            . 'únicamente el JSON indicado. Si dos partes se contradicen, explica la contradicción en '
+            . 'datos_faltantes y baja la confianza.'
+        );
+
+        try {
+            $res = llm_pipeline_run([
+                'mode'          => 'json',
+                'task'          => 'incident_triage',
+                'profile_id'    => $profileId,
+                'header'        => (string)($parts[0]['header'] ?? ''),
+                'parts'         => $parts,
+                'system_map'    => $this->triageSystemPrompt() . ' En esta llamada analizas UNA PARTE de la '
+                    . 'evidencia: el caso completo se ha dividido para que un modelo local pueda procesarlo. '
+                    . 'No des un veredicto definitivo ni supongas eventos que no estén en esta parte.',
+                'user_map'      => $chunkPrompt,
+                'system_reduce' => $this->triageSystemPrompt() . ' ' . $this->triageFormatPrompt(),
+                'user_reduce'   => $mergePrompt,
+                'options'       => [
+                    'max_tokens_map'     => 700,
+                    'max_tokens_reduce'  => 1500,
+                    'temperature'        => 0.2,
+                    'think'              => false,
+                ],
+                'reduce_group'  => 4,
+                'split'         => fn(array $part): array => $this->splitEvidencePart($part),
+                'load_part'     => static function (string $key) use ($store, $caseId, $profileId, $total): ?array {
+                    return $store->loadTriagePart($caseId, $key, $profileId, $total);
+                },
+                'save_part'     => static function (string $key, mixed $data, bool $ok, string $error) use ($store, $caseId, $profileId, $total): void {
+                    $encoded = is_array($data)
+                        ? (string)json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+                        : null;
+                    $store->saveTriagePart($caseId, $key, $ok ? 'done' : 'error', $encoded, $error, $profileId, $total);
+                },
+                'on_progress'   => static function (int $hechos, int $totalPartes, string $fase) use ($store, $caseId, $jobId, $lockOwner): void {
+                    $store->setTriageState($caseId, 'running', [
+                        'fase'        => $fase,
+                        'hechos'      => $hechos,
+                        'total'       => $totalPartes,
+                        'actualizado' => time(),
+                        'job'         => $jobId,
+                    ]);
+                    llm_job_progress($jobId, $fase, $hechos, $totalPartes);
+                    if ($lockOwner !== '') {
+                        llm_job_renew($lockOwner, 3600);
+                    }
+                },
+            ]);
+
+            if (empty($res['success'])) {
+                $error = self::clip((string)($res['error'] ?? 'La IA no completó el análisis por partes.'), 900);
+                $store->setTriageState($caseId, 'error', null, $error);
+                llm_job_fail($jobId, $error);
+                app_log('warning', 'incident_story', 'Triaje IA por partes fallido', [
+                    'case'   => $caseId,
+                    'parts'  => $total,
+                    'calls'  => (int)($res['calls'] ?? 0),
+                    'ms'     => (int)($res['elapsed_ms'] ?? 0),
+                    'error'  => $error,
+                ]);
+                return;
+            }
+
+            $data = is_array($res['data'] ?? null) ? $res['data'] : null;
+            if ($data === null) {
+                $data = [
+                    'veredicto_asistido' => null,
+                    'resumen_ejecutivo'  => 'La fusión del análisis no devolvió JSON válido.',
+                    'respuesta_original' => (string)($res['content'] ?? ''),
+                ];
+            }
+
+            $data['analisis_por_partes'] = $total;
+            $avisos = [];
+            if ((int)($res['failed'] ?? 0) > 0) {
+                $data['partes_fallidas'] = (int)$res['failed'];
+                $avisos[] = 'El análisis se completó con ' . (int)$res['failed'] . ' de ' . $total
+                    . ' partes sin resultado: revisa la cobertura antes de decidir.';
+            }
+            if (!empty($res['clipped'])) {
+                $avisos[] = 'Alguna parte se recortó para caber en la ventana del modelo: la cobertura '
+                    . 'puede ser parcial. Reduce el caso o sube la ventana del perfil.';
+            }
+            if ($avisos !== []) {
+                $data['aviso'] = implode(' ', $avisos);
+            }
+
+            $store->saveTriage(
+                $caseId,
+                $data,
+                (string)($res['model'] ?? ''),
+                $profileId,
+                (string)($res['content'] ?? '')
+            );
+            $store->setTriageState($caseId, 'done', [
+                'fase'        => 'Análisis completado',
+                'hechos'      => $total,
+                'total'       => $total,
+                'actualizado' => time(),
+                'job'         => $jobId,
+            ]);
+            llm_job_finish($jobId, (string)($res['content'] ?? ''), $data);
+            app_log('info', 'incident_story', 'Triaje IA por partes completado', [
+                'case'     => $caseId,
+                'parts'    => $total,
+                'failed'   => (int)($res['failed'] ?? 0),
+                'calls'    => (int)($res['calls'] ?? 0),
+                'merged'   => (int)($res['merged'] ?? 0),
+                'ms'       => (int)($res['elapsed_ms'] ?? 0),
+                'warnings' => count((array)($res['warnings'] ?? [])),
+            ]);
+        } catch (Throwable $e) {
+            $error = 'Error inesperado durante el triaje por partes: ' . $e->getMessage();
+            $store->setTriageState($caseId, 'error', null, self::clip($error, 900));
+            llm_job_fail($jobId, $error);
+            app_log('error', 'incident_story', 'Triaje IA por partes: excepción', [
+                'case'  => $caseId,
+                'parts' => $total,
+                'error' => $e->getMessage(),
+            ]);
+        } finally {
+            if ($lockOwner !== '') {
+                llm_job_release($lockOwner);
+            }
+        }
     }
 
     /** Parsea el JSON del LLM tolerando fences y texto envolvente. */

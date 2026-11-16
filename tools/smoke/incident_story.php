@@ -40,7 +40,7 @@ $nav = $module?->getNavItem();
 check('grupo Seguridad', is_array($nav) && ($nav['group'] ?? '') === 'Seguridad');
 check('etiqueta del menú', is_array($nav) && ($nav['label'] ?? '') === 'Incidentes Story');
 check('ancla tras incidents', is_array($nav) && ($nav['after'] ?? '') === 'incidents');
-check('rutas registradas (8)', $module !== null && count($module->routes()) === 8);
+check('rutas registradas (9)', $module !== null && count($module->routes()) === 9);
 
 /* =====================================================================
  * 2. Parser — texto pegado
@@ -305,6 +305,59 @@ check('export: sin datos originales', !str_contains($md, 'pinedarp') && !str_con
 check('export: sin tabla de mapeo', !str_contains($md, 'mapping'));
 
 /* =====================================================================
+ * 6 bis. Triaje por partes: reparto de la evidencia
+ * ================================================================== */
+
+$eventosGrandes = [];
+for ($i = 0; $i < 40; $i++) {
+    $eventosGrandes[] = [
+        'orden'        => $i,
+        'proceso'      => 'proc' . $i . '.exe',
+        'command_line' => str_repeat('argumento ', 20),
+        'usuario'      => 'Usu001',
+        'equipo'       => 'DBA001',
+    ];
+}
+$anonGrande = [
+    'incidencia' => ['nombre' => 'Caso grande de prueba', 'severidad' => 'High'],
+    'usuarios'   => ['Usu001'],
+    'equipos'    => ['DBA001'],
+    'eventos'    => $eventosGrandes,
+];
+$payloadGrande = (string)json_encode($anonGrande, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+
+$partes = $module !== null ? $module->evidenceParts($anonGrande, 3000, $payloadGrande) : [];
+check('partes: un caso grande se divide', count($partes) >= 2, 'partes=' . count($partes));
+
+$reunidos = [];
+$ordenOk = true;
+foreach ($partes as $parte) {
+    $texto = (string)($parte['text'] ?? '');
+    $decoded = json_decode($texto, true);
+    if (!is_array($decoded)) {
+        $ordenOk = false;
+        continue;
+    }
+    foreach ((array)($decoded['eventos'] ?? []) as $ev) {
+        $reunidos[] = (int)($ev['orden'] ?? -1);
+    }
+    if (trim((string)($parte['header'] ?? '')) === '') {
+        $ordenOk = false;
+    }
+}
+check('partes: json válido y cabecera en cada parte', $ordenOk);
+check('partes: no se pierde ningún evento', count($reunidos) === 40, 'eventos=' . count($reunidos));
+check('partes: se conserva el orden temporal', $reunidos === range(0, 39));
+
+$partes = $module !== null ? $module->evidenceParts($anonGrande, 100000, $payloadGrande) : ['x'];
+check('partes: si cabe en una llamada no se divide', $partes === []);
+
+$unEvento = $anonGrande;
+$unEvento['eventos'] = [['orden' => 0, 'command_line' => str_repeat('z', 5000)]];
+$partes = $module !== null ? $module->evidenceParts($unEvento, 500, (string)json_encode($unEvento)) : ['x'];
+check('partes: un solo evento no se puede repartir', $partes === []);
+
+/* =====================================================================
  * 7. Store (BD temporal)
  * ================================================================== */
 
@@ -343,6 +396,32 @@ try {
     $loaded = $store->getCase($saved['id']);
     check('store: triaje guardado', ($loaded['triage_verdict'] ?? '') === 'benigna');
     check('store: modelo guardado', ($loaded['triage_model'] ?? '') === 'test-model');
+
+    /* Estado y parciales del triaje por partes. */
+    $store->setTriageState($saved['id'], 'running', [
+        'fase' => 'Analizando la evidencia', 'hechos' => 1, 'total' => 3, 'iniciado' => time(), 'job' => 7,
+    ]);
+    $estado = $store->getCase($saved['id']);
+    check('store: estado running', ($estado['triage_estado'] ?? '') === 'running');
+    check('store: progreso guardado', str_contains((string)($estado['triage_progreso'] ?? ''), 'Analizando'));
+    check('store: nº de partes', (int)($estado['triage_partes'] ?? 0) === 3);
+    check('store: job guardado', (int)($estado['triage_job'] ?? 0) === 7);
+
+    $store->saveTriagePart($saved['id'], '0', 'done', (string)json_encode(['resumen' => 'parte 0']), null, 5, 3);
+    $parte = $store->loadTriagePart($saved['id'], '0', 5, 3);
+    check('store: parte recuperada', is_array($parte) && ($parte['data']['resumen'] ?? '') === 'parte 0');
+    check('store: parte de otro perfil no se reutiliza', $store->loadTriagePart($saved['id'], '0', 9, 3) === null);
+    check('store: parte de otro plan no se reutiliza', $store->loadTriagePart($saved['id'], '0', 5, 4) === null);
+    check('store: cuenta de parciales', $store->countTriageParts($saved['id']) === 1);
+
+    $store->clearTriageParts($saved['id']);
+    check('store: parciales borrados', $store->countTriageParts($saved['id']) === 0
+        && $store->loadTriagePart($saved['id'], '0', 5, 3) === null);
+
+    $store->setTriageState($saved['id'], 'idle');
+    $estado = $store->getCase($saved['id']);
+    check('store: se puede limpiar el estado', ($estado['triage_estado'] ?? '') === 'idle'
+        && (int)($estado['triage_partes'] ?? -1) === 0);
 
     /* Respuesta no serializable: nunca debe quedar un triaje vacío. */
     $store->saveTriage($saved['id'], ['veredicto_asistido' => "mal\xB1"], 'test-model', null, "respuesta cruda \xB1");

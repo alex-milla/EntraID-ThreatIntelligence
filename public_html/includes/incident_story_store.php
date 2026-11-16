@@ -87,6 +87,40 @@ final class IncidentStoryStore
         $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_story_hash ON casos(story_hash)');
         $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_story_created ON casos(created_at)');
 
+        // v0.4.22: estado del triaje por partes. Una BD ya creada no recibe
+        // columnas nuevas con CREATE TABLE IF NOT EXISTS: se añaden aquí.
+        $cols = [];
+        foreach ($this->pdo->query('PRAGMA table_info(casos)') as $col) {
+            $cols[(string)$col['name']] = true;
+        }
+        foreach ([
+            'triage_estado'   => "TEXT NOT NULL DEFAULT 'idle'",
+            'triage_progreso' => 'TEXT',
+            'triage_error'    => 'TEXT',
+            'triage_partes'   => 'INTEGER NOT NULL DEFAULT 0',
+            'triage_job'      => 'INTEGER',
+        ] as $name => $definition) {
+            if (!isset($cols[$name])) {
+                $this->pdo->exec("ALTER TABLE casos ADD COLUMN {$name} {$definition}");
+            }
+        }
+
+        // Parciales del triaje por partes: permiten reanudar un análisis
+        // interrumpido sin repetir las partes ya resueltas.
+        $this->pdo->exec("CREATE TABLE IF NOT EXISTS triage_partes (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            caso_id    INTEGER NOT NULL REFERENCES casos(id) ON DELETE CASCADE,
+            indice     TEXT NOT NULL,
+            estado     TEXT NOT NULL DEFAULT 'done',
+            contenido  TEXT,
+            error      TEXT,
+            perfil     INTEGER,
+            total      INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            UNIQUE(caso_id, indice)
+        )");
+        $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_triage_partes_caso ON triage_partes(caso_id)');
+
         $this->pdo->exec("CREATE TABLE IF NOT EXISTS decisiones (
             id             INTEGER PRIMARY KEY AUTOINCREMENT,
             caso_id        INTEGER NOT NULL REFERENCES casos(id) ON DELETE CASCADE,
@@ -238,6 +272,96 @@ final class IncidentStoryStore
     /* =====================================================================
      * Triaje IA
      * ================================================================== */
+
+    /**
+     * Estado del triaje por partes (lo pinta la ficha y lo sondea la UI).
+     *
+     * @param array{fase?:string,hechos?:int,total?:int,iniciado?:int,job?:int}|null $progreso
+     */
+    public function setTriageState(int $id, string $estado, ?array $progreso = null, ?string $error = null): void
+    {
+        $total = $progreso !== null ? (int)($progreso['total'] ?? 0) : 0;
+        $job = $progreso !== null ? (int)($progreso['job'] ?? 0) : 0;
+        $stmt = $this->pdo->prepare(
+            'UPDATE casos SET triage_estado = ?, triage_progreso = ?, triage_error = ?,
+                    triage_partes = ?, triage_job = ? WHERE id = ?'
+        );
+        $stmt->execute([
+            $estado,
+            $progreso !== null ? self::json($progreso) : null,
+            self::str($error),
+            $total,
+            $job > 0 ? $job : null,
+            $id,
+        ]);
+    }
+
+    /** Guarda (o actualiza) el resultado de una parte del triaje. */
+    public function saveTriagePart(
+        int $id,
+        string $indice,
+        string $estado,
+        ?string $contenido,
+        ?string $error,
+        ?int $perfil,
+        int $total
+    ): void {
+        $stmt = $this->pdo->prepare(
+            "INSERT INTO triage_partes (caso_id, indice, estado, contenido, error, perfil, total, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(caso_id, indice) DO UPDATE SET
+                estado = excluded.estado, contenido = excluded.contenido, error = excluded.error,
+                perfil = excluded.perfil, total = excluded.total, created_at = excluded.created_at"
+        );
+        $stmt->execute([
+            $id,
+            $indice,
+            $estado,
+            $contenido,
+            self::str($error),
+            $perfil,
+            $total,
+            gmdate('c'),
+        ]);
+    }
+
+    /**
+     * Parte ya resuelta de un intento anterior, solo si es del mismo perfil y
+     * del mismo plan de partes (si cambia el modelo o el tamaño, no vale).
+     *
+     * @return array{data:mixed}|null
+     */
+    public function loadTriagePart(int $id, string $indice, ?int $perfil, int $total): ?array
+    {
+        $stmt = $this->pdo->prepare(
+            "SELECT contenido FROM triage_partes
+             WHERE caso_id = ? AND indice = ? AND estado = 'done' AND total = ?
+               AND COALESCE(perfil, 0) = CAST(? AS INTEGER)"
+        );
+        $stmt->execute([$id, $indice, $total, $perfil ?? 0]);
+        $row = $stmt->fetch();
+        if (!$row || trim((string)($row['contenido'] ?? '')) === '') {
+            return null;
+        }
+        $data = safe_json_decode((string)$row['contenido'], null);
+        return is_array($data) ? ['data' => $data] : null;
+    }
+
+    /** Borra los parciales (plan nuevo: no se reanuda nada). */
+    public function clearTriageParts(int $id): void
+    {
+        $stmt = $this->pdo->prepare('DELETE FROM triage_partes WHERE caso_id = ?');
+        $stmt->execute([$id]);
+    }
+
+    /** Nº de parciales guardados de un caso. */
+    public function countTriageParts(int $id): int
+    {
+        $stmt = $this->pdo->prepare("SELECT COUNT(*) c FROM triage_partes WHERE caso_id = ? AND estado = 'done'");
+        $stmt->execute([$id]);
+        $row = $stmt->fetch();
+        return (int)($row['c'] ?? 0);
+    }
 
     public function saveTriage(int $id, array $triage, ?string $model, ?int $profileId, ?string $rawContent = null): void
     {

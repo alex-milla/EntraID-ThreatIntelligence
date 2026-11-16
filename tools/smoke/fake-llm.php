@@ -2,8 +2,13 @@
 /**
  * LLM falso para el E2E del triaje de Incidentes Story.
  *
- * Responde a cualquier POST con una completion OpenAI-compatible cuyo
+ * Responde a cualquier POST con una completion OpenAI/Ollama-compatible cuyo
  * contenido es el JSON estructurado que espera el módulo. No usa red externa.
+ *
+ * Guarda cada petición en `sys_get_temp_dir()/entraid-fake-llm-calls.log` con
+ * su tipo (`chunk`, `merge` o `single`) y el tamaño del prompt, para que el
+ * E2E compruebe que un caso grande se analiza POR PARTES (varias llamadas) y
+ * no en una sola.
  */
 
 declare(strict_types=1);
@@ -27,6 +32,38 @@ $triage = [
     ],
     'preguntas_para_el_analista' => ['¿El usuario reconoce la ejecución?'],
 ];
+
+/* --- Traza de llamadas (para el E2E) --------------------------------- */
+
+$raw = file_get_contents('php://input') ?: '';
+$body = json_decode($raw, true);
+$body = is_array($body) ? $body : [];
+$prompt = '';
+foreach ((array)($body['messages'] ?? []) as $m) {
+    if (is_array($m) && (string)($m['role'] ?? '') === 'user') {
+        $prompt = (string)($m['content'] ?? '');
+    }
+}
+
+$kind = 'single';
+if (str_contains($prompt, 'EVENTOS NORMALIZADOS')) {
+    $kind = 'chunk';
+} elseif (str_contains($prompt, 'ANÁLISIS PARCIALES DE LA EVIDENCIA')) {
+    $kind = 'merge';
+}
+
+if (trim($prompt) !== '') {
+    @file_put_contents(
+        sys_get_temp_dir() . '/entraid-fake-llm-calls.log',
+        json_encode([
+            'kind'   => $kind,
+            'len'    => strlen($prompt),
+            'model'  => $body['model'] ?? null,
+            'stream' => $body['stream'] ?? null,
+        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . PHP_EOL,
+        FILE_APPEND
+    );
+}
 
 $content = json_encode($triage, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 

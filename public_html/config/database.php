@@ -295,6 +295,30 @@ class Database
         )");
         $db->exec("INSERT OR IGNORE INTO llm_job_lock (id, owner, task, expires_at) VALUES (1, '', '', 0)");
 
+        // v0.4.22: trabajos de IA por partes en segundo plano (triaje de
+        // Incidentes Story). Guarda estado y progreso para que la pantalla
+        // responda al instante y sondee el avance; el resultado final se copia
+        // al módulo que lo pidió (p. ej. casos.triage_json).
+        $db->exec("CREATE TABLE IF NOT EXISTS llm_jobs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            token TEXT NOT NULL UNIQUE,
+            kind TEXT NOT NULL,
+            ref_id INTEGER,
+            estado TEXT NOT NULL DEFAULT 'queued',
+            fase TEXT,
+            hechos INTEGER NOT NULL DEFAULT 0,
+            total INTEGER NOT NULL DEFAULT 0,
+            resultado_md TEXT,
+            resultado_json TEXT,
+            error TEXT,
+            perfil INTEGER,
+            usuario INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_llm_jobs_kind ON llm_jobs(kind, estado)");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_llm_jobs_ref ON llm_jobs(kind, ref_id)");
+
         // Sincronizaciones en segundo plano (job encadenado vía PHP-FPM).
         $db->exec("CREATE TABLE IF NOT EXISTS sync_jobs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,

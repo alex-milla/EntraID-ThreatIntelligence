@@ -164,6 +164,80 @@ if (!function_exists('llm_prompts_catalog')) {
             ],
 
             // ====================================================
+            // Incidentes Story (triaje asistido)
+            // ====================================================
+            'llm.incident_story.triage.system' => [
+                'scope'       => 'incident_story',
+                'scope_label' => 'Incidentes Story',
+                'label'       => 'Triaje · rol del analista',
+                'description' => 'Reglas del triaje de una incidencia de Defender (solo evidencia, confianza, veredicto asistido).',
+                'is_locked'   => false,
+                'default'     => 'Eres un analista senior de un SOC especializado en Microsoft Defender XDR y MITRE ATT&CK. '
+                    . 'Analizas la evidencia normalizada de una incidencia de Defender a partir de su story. '
+                    . 'Reglas: (1) trabaja SOLO con la evidencia aportada, no inventes datos ni IOC; '
+                    . '(2) si falta información imprescindible, pídela en preguntas_para_el_analista (máximo 5); '
+                    . '(3) no afirmes certeza absoluta: expresa confianza en porcentaje; '
+                    . '(4) el veredicto es ASISTIDO y la decisión final la toma una persona; '
+                    . '(5) responde SIEMPRE en español y SOLO con un objeto JSON válido, sin texto alrededor.',
+            ],
+            'llm.incident_story.triage.format' => [
+                'scope'       => 'incident_story',
+                'scope_label' => 'Incidentes Story',
+                'label'       => 'Triaje · contrato de formato JSON',
+                'description' => 'Estructura exacta del triaje que guarda el caso. No editable.',
+                'is_locked'   => true,
+                'default'     => 'Devuelve exactamente este objeto JSON: {'
+                    . '"resumen_ejecutivo":"2-4 frases",'
+                    . '"cadena_de_eventos":"narrativa padre->hijo con timestamps clave",'
+                    . '"hipotesis_principal":"explicación más plausible",'
+                    . '"veredicto_asistido":"benigna|sospechosa|ataque",'
+                    . '"confianza_pct":0,'
+                    . '"tecnicas_attck":["Txxxx"],'
+                    . '"indicadores_benignos":["..."],'
+                    . '"indicadores_maliciosos":["..."],'
+                    . '"datos_faltantes":["..."],'
+                    . '"acciones_recomendadas":["..."],'
+                    . '"clasificacion_defender_sugerida":{"classification":"truePositive|falsePositive|informationalExpectedActivity|unknown","determination":"..."},'
+                    . '"preguntas_para_el_analista":["..."]'
+                    . '}. Los valores de determination deben pertenecer al enum de Microsoft Graph '
+                    . '(NotAvailable, Malware, Phishing, UnwantedSoftware, Other, CompromisedAccount, '
+                    . 'SecurityPersonnel, SecurityTesting, UserReportedPhishing, SuspiciousActivity, '
+                    . 'SuspiciousButExpected, IncorrectAlert, ConfirmedActivity, LineOfBusinessApplication, '
+                    . 'MaliciousUserActivity, Apt, ConfidentialInformation, DataExfiltration, DataSpillage, '
+                    . 'DestructiveAttack, DenialOfService, Fraud, InsiderThreat, PasswordAttack, Ransomware, ValidAccounts).',
+            ],
+            'llm.incident_story.triage.chunk' => [
+                'scope'       => 'incident_story',
+                'scope_label' => 'Incidentes Story',
+                'label'       => 'Triaje por partes · análisis de una parte',
+                'description' => 'Se envía una vez por parte. Marcadores: {header}, {parte}, {parte_num}, {parte_total}. '
+                    . 'Debe pedir un JSON parcial breve para que el modelo local no se eternice.',
+                'is_locked'   => false,
+                'default'     => "CONTEXTO DEL CASO (JSON, sin eventos):\n{header}\n\n"
+                    . "PARTE {parte_num} DE {parte_total} — EVENTOS NORMALIZADOS (JSON):\n{parte}\n\n"
+                    . 'TAREA: analiza SOLO estos eventos en el contexto del caso y devuelve exactamente este objeto JSON: '
+                    . '{"parte":"{parte_num}","rango_eventos":"desde-hasta","resumen_parcial":"2-3 frases",'
+                    . '"cadena_de_eventos":"narrativa padre->hijo con timestamps clave de esta parte",'
+                    . '"hipotesis_parcial":"explicación más plausible de esta parte",'
+                    . '"veredicto_parcial":"benigna|sospechosa|ataque","confianza_pct":0,'
+                    . '"tecnicas_attck":["Txxxx"],"indicadores_benignos":["..."],"indicadores_maliciosos":["..."],'
+                    . '"datos_faltantes":["..."],"acciones_recomendadas":["..."],"preguntas_para_el_analista":["..."]}. '
+                    . 'Sé breve: máximo 5 elementos por lista y 3 frases por campo de texto.',
+            ],
+            'llm.incident_story.triage.merge' => [
+                'scope'       => 'incident_story',
+                'scope_label' => 'Incidentes Story',
+                'label'       => 'Triaje por partes · fusión final',
+                'description' => 'Fusiona los análisis parciales en el triaje definitivo. Marcadores: {header}, {resultados}, {total}.',
+                'is_locked'   => false,
+                'default'     => "CONTEXTO DEL CASO (JSON, sin eventos):\n{header}\n\n"
+                    . "ANÁLISIS PARCIALES DE LA EVIDENCIA (JSON, uno por parte; {total} partes):\n{resultados}\n\n"
+                    . 'TAREA: fusiona los análisis parciales en UN ÚNICO análisis de la incidencia y devuelve '
+                    . 'únicamente el JSON indicado. Si dos partes se contradicen, explica la contradicción en '
+                    . 'datos_faltantes y baja la confianza.',
+            ],
+
+            // ====================================================
             // Informes IA de CVE
             // ====================================================
             'cve.report.system' => [
