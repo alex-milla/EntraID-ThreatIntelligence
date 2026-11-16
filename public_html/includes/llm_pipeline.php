@@ -205,7 +205,8 @@ if (!function_exists('llm_pipeline_run')) {
      * } $spec
      * @return array{
      *   success:bool,content:string,data:mixed,parts:int,failed:int,calls:int,
-     *   merged:int,model:string,elapsed_ms:int,error:string,warnings:array<int,string>
+     *   merged:int,clipped:bool,stopped:string,model:string,elapsed_ms:int,
+     *   error:string,warnings:array<int,string>
      * }
      */
     function llm_pipeline_run(array $spec): array
@@ -226,6 +227,7 @@ if (!function_exists('llm_pipeline_run')) {
             'calls'      => 0,
             'merged'     => 0,
             'clipped'    => false,
+            'stopped'    => '',
             'model'      => '',
             'elapsed_ms' => 0,
             'error'      => '',
@@ -242,6 +244,8 @@ if (!function_exists('llm_pipeline_run')) {
         $maxMap   = max(64, (int)($options['max_tokens_map'] ?? ($options['max_tokens'] ?? 800)));
         $maxMerge = max(128, (int)($options['max_tokens_reduce'] ?? 1500));
         $profileId = isset($spec['profile_id']) ? (int)$spec['profile_id'] : 0;
+        $deadlineSeconds = max(0.0, (float)($spec['deadline_seconds'] ?? 0));
+        $minSplitChars   = max(0, (int)($spec['min_split_chars'] ?? 1200));
 
         $mapCall    = $spec['map_call'] ?? null;
         $reduceCall = $spec['reduce_call'] ?? null;
@@ -249,6 +253,17 @@ if (!function_exists('llm_pipeline_run')) {
         $loadPart   = $spec['load_part'] ?? null;
         $savePart   = $spec['save_part'] ?? null;
         $progress   = $spec['on_progress'] ?? null;
+        $shouldStop = $spec['should_stop'] ?? null;
+
+        /** ¿Se agotó el tiempo global del trabajo? */
+        $deadlineHit = static function () use ($started, $deadlineSeconds): bool {
+            return $deadlineSeconds > 0 && (microtime(true) - $started) > $deadlineSeconds;
+        };
+
+        /** ¿El usuario pidió detener el trabajo? */
+        $isCancelled = static function () use ($shouldStop): bool {
+            return is_callable($shouldStop) && (bool)$shouldStop();
+        };
 
         /** Opciones de una llamada concreta (map o reduce). */
         $callOptions = static function (int $maxTokens) use ($options, $profileId): array {
@@ -288,10 +303,34 @@ if (!function_exists('llm_pipeline_run')) {
         $partials = [];   // clave => valor del parcial
         $order    = [];   // orden de resolución, para el reduce
         $errors   = [];   // clave => mensaje
+        $resolved = [];   // partes del PLAN cerradas (con éxito o fallidas)
+        $okCount  = 0;
+        $failCount = 0;
 
-        if (is_callable($progress)) {
-            $progress(0, $total, 'Analizando la evidencia');
-        }
+        /**
+         * Parte del plan a la que pertenece una clave: las subdivisiones
+         * ('0a', '0b') cierran la parte original ('0'), no crean una nueva.
+         */
+        $slotOf = static function (string $key): string {
+            return (string)preg_replace('/[a-z]+$/', '', $key);
+        };
+
+        /**
+         * Publica el avance. El contador cuenta partes RESUELTAS (con éxito o
+         * fallidas), no solo los aciertos: antes, un fallo dejaba la ficha
+         * clavada en el último número bueno.
+         */
+        $report = static function (string $fase) use ($progress, &$resolved, $total, &$okCount, &$failCount): void {
+            if (!is_callable($progress)) {
+                return;
+            }
+            $progress(min(count($resolved), $total), $total, $fase, [
+                'ok'     => $okCount,
+                'failed' => $failCount,
+            ]);
+        };
+
+        $report('Analizando la evidencia');
 
         $queue = [];
         foreach ($parts as $index => $part) {
@@ -306,6 +345,8 @@ if (!function_exists('llm_pipeline_run')) {
                 if (is_array($saved) && array_key_exists('data', $saved) && $saved['data'] !== null) {
                     $partials[$item['key']] = $saved['data'];
                     $order[] = $item['key'];
+                    $okCount++;
+                    $resolved[$slotOf($item['key'])] = true;
                     continue;
                 }
                 $pending[] = $item;
@@ -313,10 +354,21 @@ if (!function_exists('llm_pipeline_run')) {
             $queue = $pending;
         }
 
-        $done = count($partials);
-        $maxSplits = 2; // cada parte se puede partir, como mucho, dos niveles
+        // Un solo nivel de división: partir más multiplica la espera (cada
+        // intento cuesta el timeout entero) sin ganar fiabilidad.
+        $maxSplits = 1;
+        $stopped = '';
 
         while ($queue !== []) {
+            if ($isCancelled()) {
+                $stopped = 'cancel';
+                break;
+            }
+            if ($deadlineHit()) {
+                $stopped = 'deadline';
+                break;
+            }
+
             $item = array_shift($queue);
             $partText = (string)$item['part']['text'];
 
@@ -341,7 +393,8 @@ if (!function_exists('llm_pipeline_run')) {
             if ($value !== null) {
                 $partials[$item['key']] = $value;
                 $order[] = $item['key'];
-                $done++;
+                $okCount++;
+                $resolved[$slotOf($item['key'])] = true;
                 if (!empty($res['model'])) {
                     $out['model'] = (string)$res['model'];
                 }
@@ -351,19 +404,25 @@ if (!function_exists('llm_pipeline_run')) {
                 if (is_callable($savePart)) {
                     $savePart($item['key'], $value, true, '');
                 }
-                if (is_callable($progress)) {
-                    $progress(min($done, $total), $total, 'Analizando la evidencia');
-                }
+                $report('Analizando la evidencia');
                 continue;
             }
 
             $error = (string)($res['error'] ?? 'La IA no devolvió contenido para esta parte.');
             $errors[$item['key']] = $error;
 
-            // Timeout y parte divisible: se parte en dos y se reintenta.
+            // Timeout o fin de contexto en una parte todavía grande: se parte
+            // en dos y se reintenta. Se mira `error_kind`, que viaja desde el
+            // mensaje crudo del proveedor (el traducido engañaba al detector).
+            $kind = (string)($res['error_kind'] ?? '');
+            $retriable = $kind === 'timeout' || $kind === 'context';
+            if ($kind === '' && llm_err_is_timeout($error)) {
+                $retriable = true;
+            }
             $splittable = $item['depth'] < $maxSplits
+                && $retriable
                 && is_callable($splitPart)
-                && llm_err_is_timeout($error);
+                && llm_str_len($partText) >= $minSplitChars;
             if ($splittable) {
                 $subParts = $splitPart($item['part']);
                 if (is_array($subParts) && count($subParts) === 2) {
@@ -371,31 +430,59 @@ if (!function_exists('llm_pipeline_run')) {
                     $b = llm_pipeline_normalize_parts([$subParts[1]]);
                     if ($a !== [] && $b !== []) {
                         $out['warnings'][] = 'La parte ' . llm_pipeline_part_label($item['key'])
-                            . ' agotó el tiempo: se divide en dos y se reintenta.';
+                            . ($kind === 'context'
+                                ? ' no cabía en el modelo: se divide en dos y se reintenta.'
+                                : ' agotó el tiempo: se divide en dos y se reintenta.');
                         array_unshift(
                             $queue,
                             ['key' => $item['key'] . 'b', 'part' => $b[0], 'depth' => $item['depth'] + 1],
                             ['key' => $item['key'] . 'a', 'part' => $a[0], 'depth' => $item['depth'] + 1]
                         );
+                        $report('Reintentando la parte ' . llm_pipeline_part_label($item['key'])
+                            . ' por mitades (' . ($kind === 'context' ? 'no cabía' : 'se agotó el tiempo') . ')');
                         continue;
                     }
                 }
             }
 
-            $out['failed']++;
+            $failCount++;
+            $resolved[$slotOf($item['key'])] = true;
             if (is_callable($savePart)) {
                 $savePart($item['key'], null, false, $error);
             }
             $out['warnings'][] = 'La parte ' . llm_pipeline_part_label($item['key']) . ' no se pudo analizar: '
                 . llm_str_cut($error, 220);
-            if (is_callable($progress)) {
-                $progress(min($done, $total), $total, 'Analizando la evidencia');
-            }
+            $report('Analizando la evidencia');
         }
 
+        if ($stopped !== '') {
+            $out['stopped'] = $stopped;
+            $out['warnings'][] = $stopped === 'cancel'
+                ? 'Análisis detenido por el usuario.'
+                : 'Análisis detenido al superar el tiempo máximo del trabajo.';
+        }
+
+        $out['failed'] = $failCount;
+
         if ($partials === []) {
-            $first = (string)(reset($errors) ?: 'La IA no devolvió ningún resultado.');
+            $first = (string)(reset($errors) ?: ($stopped === 'cancel'
+                ? 'El análisis se detuvo antes de terminar ninguna parte.'
+                : 'La IA no devolvió ningún resultado.'));
             $out['error'] = $first;
+            $out['elapsed_ms'] = (int)round((microtime(true) - $started) * 1000);
+            return $out;
+        }
+
+        // Detenido a medias: se ensambla en local lo que hay (sin más llamadas).
+        if ($stopped !== '') {
+            $items = [];
+            foreach ($order as $key) {
+                $items[] = $partials[$key];
+            }
+            $local = llm_pipeline_merge_local($items, $mode);
+            $out['data'] = $mode === 'json' ? $local['data'] : null;
+            $out['content'] = (string)$local['content'];
+            $out['success'] = $mode === 'json' ? is_array($local['data']) : trim((string)$local['content']) !== '';
             $out['elapsed_ms'] = (int)round((microtime(true) - $started) * 1000);
             return $out;
         }
@@ -414,6 +501,15 @@ if (!function_exists('llm_pipeline_run')) {
         $level      = 0;
 
         while (count($items) > 1 && $level < $maxLevels) {
+            if ($isCancelled()) {
+                $stopped = 'cancel';
+                break;
+            }
+            if ($deadlineHit()) {
+                $stopped = 'deadline';
+                break;
+            }
+
             $next = [];
             foreach (array_chunk($items, $groupSize) as $chunkIndex => $chunk) {
                 if (count($chunk) === 1) {
@@ -421,9 +517,7 @@ if (!function_exists('llm_pipeline_run')) {
                     continue;
                 }
 
-                if (is_callable($progress)) {
-                    $progress(min($done, $total), $total, 'Fusionando el análisis (nivel ' . ($level + 1) . ')');
-                }
+                $report('Fusionando el análisis (nivel ' . ($level + 1) . ')');
 
                 $blocks = [];
                 foreach (array_values($chunk) as $i => $value) {
@@ -469,6 +563,17 @@ if (!function_exists('llm_pipeline_run')) {
             $level++;
         }
 
+        if ($stopped !== '') {
+            $out['stopped'] = $stopped;
+            $out['warnings'][] = $stopped === 'cancel'
+                ? 'Fusión interrumpida por el usuario.'
+                : 'Fusión interrumpida al superar el tiempo máximo del trabajo.';
+            if (count($items) > 1) {
+                $local = llm_pipeline_merge_local($items, $mode);
+                $items = [$mode === 'json' ? $local['data'] : $local['content']];
+            }
+        }
+
         $final = $items[0] ?? null;
         if ($mode === 'json') {
             if (!is_array($final)) {
@@ -491,8 +596,8 @@ if (!function_exists('llm_pipeline_run')) {
         }
 
         $out['elapsed_ms'] = (int)round((microtime(true) - $started) * 1000);
-        if (is_callable($progress) && $out['success']) {
-            $progress(min($done, $total), $total, 'Análisis completado');
+        if ($out['success'] && $stopped === '') {
+            $report('Análisis completado');
         }
 
         return $out;

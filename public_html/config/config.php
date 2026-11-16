@@ -213,6 +213,10 @@ define('LLM_MAX_TOKENS', (int)($env['LLM_MAX_TOKENS'] ?? 2048));
 // ejecución (ver Module_Llm::retryDelay()).
 define('LLM_503_RETRY_DELAY', (int)($env['LLM_503_RETRY_DELAY'] ?? 20));
 
+// Techo de tiempo (segundos) de un trabajo de IA por partes. Al superarlo se
+// detiene, se guarda lo ya analizado y se avisa: ningún trabajo se eterniza.
+define('LLM_PIPELINE_MAX_SECONDS', (int)($env['LLM_PIPELINE_MAX_SECONDS'] ?? 1800));
+
 // Cron
 define('CRON_TOKEN', $env['CRON_TOKEN'] ?? '');
 define('CRON_SYNC_INTERVAL', (int)($env['CRON_SYNC_INTERVAL'] ?? 3600));

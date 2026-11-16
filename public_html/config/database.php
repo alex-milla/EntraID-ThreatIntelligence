@@ -106,6 +106,20 @@ class Database
         )");
         $db->exec("CREATE INDEX IF NOT EXISTS idx_remediation_task_checks_task ON remediation_task_checks(task_id)");
 
+        // v0.4.23: cancelar un trabajo de IA en curso (el motor lo consulta
+        // entre parte y parte).
+        try {
+            $jobCols2 = [];
+            foreach ($db->query("PRAGMA table_info(llm_jobs)") as $c) {
+                $jobCols2[$c['name']] = true;
+            }
+            if (!isset($jobCols2['cancelado'])) {
+                $db->exec("ALTER TABLE llm_jobs ADD COLUMN cancelado INTEGER NOT NULL DEFAULT 0");
+            }
+        } catch (Throwable $e) {
+            // Tabla ausente en instalaciones muy antiguas: se creará arriba.
+        }
+
         // v0.2.5.23: retirada del proveedor OpenCode (sus modelos gratis no se
         // pueden usar desde la web). Limpieza idempotente, una sola vez.
         self::cleanupRemovedProviders($db);
@@ -313,6 +327,7 @@ class Database
             error TEXT,
             perfil INTEGER,
             usuario INTEGER,
+            cancelado INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         )");

@@ -147,6 +147,7 @@ $res = llm_pipeline_run([
     'mode'  => 'json',
     'parts' => [['text' => 'a|b|c|d', 'eventos' => ['a', 'b', 'c', 'd']]],
     'max_reduce_levels' => 1,
+    'min_split_chars' => 1,
     'map_call' => function (array $part, string $key) use (&$intentos): array {
         $eventos = (array)($part['eventos'] ?? []);
         $intentos[] = $key . ':' . count($eventos);
@@ -232,6 +233,142 @@ $res = llm_pipeline_run([
 check('reduce fallido no rompe el resultado', !empty($res['success']));
 check('reduce fallido se une en local', str_contains((string)($res['data']['resumen'] ?? ''), 'r-a'));
 check('reduce fallido se avisa', count((array)$res['warnings']) >= 1);
+
+/* =====================================================================
+ * 10. Progreso: cuenta partes resueltas (éxitos y fallos), no solo aciertos
+ * ================================================================== */
+
+$progreso = [];
+$res = llm_pipeline_run([
+    'mode'  => 'json',
+    'parts' => ['p1', 'p2', 'p3'],
+    'map_call' => static function (array $part): array {
+        if (($part['text'] ?? '') === 'p2') {
+            return ['success' => false, 'error' => 'HTTP 500', 'error_kind' => 'other'];
+        }
+        return ['success' => true, 'data' => ['resumen' => 'ok ' . $part['text']], 'content' => '{}'];
+    },
+    'reduce_call' => static fn(array $chunk): array => ['success' => true, 'data' => ['resumen' => 'f'], 'content' => '{}'],
+    'on_progress' => static function (int $hechos, int $total, string $fase, array $stats = []) use (&$progreso): void {
+        $progreso[] = ['hechos' => $hechos, 'total' => $total, 'fase' => $fase, 'stats' => $stats];
+    },
+]);
+
+$ultimo = $progreso === [] ? [] : end($progreso);
+check('progreso: el contador llega al total aunque falle una parte', ($ultimo['hechos'] ?? 0) === 3, 'hechos=' . ($ultimo['hechos'] ?? '?'));
+check('progreso: informa de los fallos', (int)($ultimo['stats']['failed'] ?? 0) === 1);
+check('progreso: informa de los aciertos', (int)($ultimo['stats']['ok'] ?? 0) === 2);
+check('progreso: el avance nunca retrocede', (function () use ($progreso): bool {
+    $prev = -1;
+    foreach ($progreso as $p) {
+        if ($p['hechos'] < $prev) {
+            return false;
+        }
+        $prev = $p['hechos'];
+    }
+    return true;
+})());
+
+/* =====================================================================
+ * 11. Techo de tiempo: para y devuelve lo analizado
+ * ================================================================== */
+
+$procesadas = 0;
+$res = llm_pipeline_run([
+    'mode'  => 'json',
+    'parts' => ['p1', 'p2', 'p3', 'p4', 'p5'],
+    'deadline_seconds' => 0.12,
+    'map_call' => static function (array $part) use (&$procesadas): array {
+        usleep(50000); // 50 ms por parte
+        $procesadas++;
+        return ['success' => true, 'data' => ['resumen' => 'ok ' . $part['text']], 'content' => '{}'];
+    },
+    'reduce_call' => static fn(array $chunk): array => ['success' => true, 'data' => ['resumen' => 'f'], 'content' => '{}'],
+]);
+
+check('techo: se detiene por tiempo', ($res['stopped'] ?? '') === 'deadline', (string)($res['stopped'] ?? ''));
+check('techo: devuelve lo parcial', !empty($res['success']) && is_array($res['data'] ?? null));
+check('techo: no procesa todas las partes', $procesadas > 0 && $procesadas < 5, 'procesadas=' . $procesadas);
+check('techo: lo avisa', count((array)$res['warnings']) >= 1);
+
+/* =====================================================================
+ * 12. Cancelación del usuario
+ * ================================================================== */
+
+$llamadasCancel = 0;
+$res = llm_pipeline_run([
+    'mode'  => 'json',
+    'parts' => ['p1', 'p2', 'p3', 'p4'],
+    'map_call' => static function (array $part) use (&$llamadasCancel): array {
+        $llamadasCancel++;
+        return ['success' => true, 'data' => ['resumen' => 'ok ' . $part['text']], 'content' => '{}'];
+    },
+    'reduce_call' => static fn(array $chunk): array => ['success' => true, 'data' => ['resumen' => 'f'], 'content' => '{}'],
+    'should_stop' => static function () use (&$llamadasCancel): bool {
+        return $llamadasCancel >= 2;
+    },
+]);
+
+check('cancelar: se detiene', ($res['stopped'] ?? '') === 'cancel', (string)($res['stopped'] ?? ''));
+check('cancelar: respeta el punto de parada', $llamadasCancel === 2, 'llamadas=' . $llamadasCancel);
+check('cancelar: devuelve lo parcial', !empty($res['success']) && is_array($res['data'] ?? null));
+
+/* =====================================================================
+ * 13. Fin de contexto también divide la parte
+ * ================================================================== */
+
+$intentosCtx = [];
+$res = llm_pipeline_run([
+    'mode'  => 'json',
+    'parts' => [['text' => str_repeat('x', 200), 'eventos' => ['a', 'b']]],
+    'min_split_chars' => 1,
+    'max_reduce_levels' => 1,
+    'map_call' => static function (array $part, string $key) use (&$intentosCtx): array {
+        $eventos = (array)($part['eventos'] ?? []);
+        $intentosCtx[] = $key . ':' . count($eventos);
+        if (count($eventos) > 1) {
+            return [
+                'success'    => false,
+                'error'      => 'request (9000 tokens) exceeds the available context size (8192 tokens)',
+                'error_kind' => 'context',
+            ];
+        }
+        return ['success' => true, 'data' => ['resumen' => 'sub'], 'content' => '{}'];
+    },
+    'split' => static function (array $part): array {
+        $eventos = array_values((array)($part['eventos'] ?? []));
+        if (count($eventos) < 2) {
+            return [];
+        }
+        $mitad = intdiv(count($eventos) + 1, 2);
+        return [
+            ['text' => 'a', 'eventos' => array_slice($eventos, 0, $mitad)],
+            ['text' => 'b', 'eventos' => array_slice($eventos, $mitad)],
+        ];
+    },
+]);
+
+check('contexto: la parte se divide', in_array('0a:1', $intentosCtx, true) && in_array('0b:1', $intentosCtx, true), implode(',', $intentosCtx));
+check('contexto: se recupera el resultado', !empty($res['success']) && (int)$res['failed'] === 0);
+
+/* =====================================================================
+ * 14. Una parte pequeña no se divide (no hay nada que ganar)
+ * ================================================================== */
+
+$intentosPequena = 0;
+$res = llm_pipeline_run([
+    'mode'  => 'json',
+    'parts' => ['corta'],
+    'min_split_chars' => 1200,
+    'map_call' => static function () use (&$intentosPequena): array {
+        $intentosPequena++;
+        return ['success' => false, 'error' => 'timeout', 'error_kind' => 'timeout'];
+    },
+    'split' => static fn(array $part): array => [['text' => 'x'], ['text' => 'y']],
+]);
+
+check('parte pequeña: no se divide', $intentosPequena === 1, 'intentos=' . $intentosPequena);
+check('parte pequeña: se marca fallida', empty($res['success']) && (int)$res['failed'] === 1);
 
 echo "\n";
 if ($fail > 0) {

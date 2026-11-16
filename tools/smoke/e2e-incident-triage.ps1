@@ -197,6 +197,14 @@ Content Write-Host "hola"
     $statusJson = $status.Content | ConvertFrom-Json
     Check 'E2E: endpoint de estado responde' ($statusJson.success -eq $true -and $statusJson.estado -eq 'done') "$($statusJson.estado)"
     Check 'E2E: endpoint de estado informa de las partes' ([int]$statusJson.total -ge 2) "total=$($statusJson.total)"
+    Check 'E2E: endpoint de estado informa de tiempos' ([long]$statusJson.ms_transcurrido -gt 0) "ms=$($statusJson.ms_transcurrido)"
+    Check 'E2E: endpoint de estado informa de aciertos' ([int]$statusJson.ok -ge 1) "ok=$($statusJson.ok)"
+
+    # --- detener un trabajo ya terminado no rompe la ficha ---
+    $csrfStop = [regex]::Match($bigTriage.Content, 'name="csrf_token"\s+value="([^"]+)"').Groups[1].Value
+    $stop = Invoke-WebRequest -Uri "$base/index.php/modules/incident_story/case/$bigCaseId/triage-cancel" -Method POST -WebSession $ws `
+        -Body @{ csrf_token = $csrfStop } -UseBasicParsing -TimeoutSec 30 -MaximumRedirection 5
+    Check 'E2E: detener sin trabajo en curso vuelve a la ficha' ($stop.StatusCode -eq 200 -and $stop.Content -match 'Triaje asistido por IA')
 
     # --- limpieza funcional del caso ---
     $csrf3 = [regex]::Match($triage.Content, 'name="csrf_token"\s+value="([^"]+)"').Groups[1].Value

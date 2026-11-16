@@ -197,19 +197,30 @@ $hintClass = 'text-[11px] text-ink-soft';
     <?php if ($triageRunning): ?>
         <div class="alert alert-info mt-3" role="status" id="triage-live"
              data-status-url="<?= e($baseVista . '/triage-status') ?>">
-            <div class="flex items-center gap-2">
-                <span class="spinner" aria-hidden="true"></span>
-                <span>
-                    <strong>Triaje en curso.</strong>
-                    <span data-triage-fase><?= e($triageFase !== '' ? $triageFase : 'Analizando la evidencia') ?></span>
-                    <?php if ($triageTotal > 0): ?>
-                        <span data-triage-contador class="text-ink-muted">(<?= $triageHechos ?>/<?= $triageTotal ?>)</span>
-                    <?php endif; ?>
-                </span>
+            <div class="flex items-start justify-between gap-3 flex-wrap">
+                <div class="flex items-center gap-2">
+                    <span class="spinner" aria-hidden="true"></span>
+                    <span>
+                        <strong>Triaje en curso.</strong>
+                        <span data-triage-fase><?= e($triageFase !== '' ? $triageFase : 'Analizando la evidencia') ?></span>
+                        <?php if ($triageTotal > 0): ?>
+                            <span data-triage-contador class="text-ink-muted">(<?= $triageHechos ?>/<?= $triageTotal ?>)</span>
+                        <?php endif; ?>
+                        <span class="text-ink-muted" data-triage-tiempo></span>
+                    </span>
+                </div>
+                <form method="POST" action="<?= e($baseVista . '/triage-cancel') ?>" class="shrink-0"
+                      data-confirm="¿Detener el triaje? Se guardará lo que ya esté analizado.">
+                    <?= Csrf::field() ?>
+                    <button type="submit" class="btn btn-outline text-xs">
+                        <?= icon('stop', 16) ?> Detener
+                    </button>
+                </form>
             </div>
             <p class="text-xs mt-1">
                 La evidencia se analiza por partes para que un modelo local pueda completarla aunque tarde.
                 Puedes cerrar la pestaña: el trabajo continúa en el servidor y la ficha se actualiza sola.
+                <span class="text-ink-soft" data-triage-latido></span>
             </p>
         </div>
     <?php elseif ($triageError !== ''): ?>
@@ -218,7 +229,13 @@ $hintClass = 'text-[11px] text-ink-soft';
         </div>
     <?php endif; ?>
 
-    <?php if (!$triageRunning && !empty($triage['partes_fallidas'])): ?>
+    <?php if (!$triageRunning && !empty($triage['detenido'])): ?>
+        <div class="alert alert-warning mt-3" role="status">
+            <?= e((string)($triage['aviso'] ?? 'El análisis se detuvo antes de terminar.')) ?>
+        </div>
+    <?php endif; ?>
+
+    <?php if (!$triageRunning && empty($triage['detenido']) && !empty($triage['partes_fallidas'])): ?>
         <div class="alert alert-warning mt-3" role="status">
             <?= e((string)($triage['aviso'] ?? 'Alguna parte del análisis no se pudo completar.')) ?>
         </div>
@@ -699,11 +716,34 @@ $hintClass = 'text-[11px] text-ink-soft';
     var url = box.getAttribute('data-status-url');
     var faseEl = box.querySelector('[data-triage-fase]');
     var contEl = box.querySelector('[data-triage-contador]');
+    var tiempoEl = box.querySelector('[data-triage-tiempo]');
+    var latidoEl = box.querySelector('[data-triage-latido]');
     var intentos = 0;
+
+    function fmt(ms) {
+        var s = Math.max(0, Math.round(ms / 1000));
+        if (s < 60) { return s + ' s'; }
+        var m = Math.floor(s / 60);
+        var r = s % 60;
+        return m + ' min' + (r > 0 ? ' ' + r + ' s' : '');
+    }
 
     function pintar(d) {
         if (faseEl && d.fase) { faseEl.textContent = d.fase; }
-        if (contEl && d.total > 0) { contEl.textContent = '(' + d.hechos + '/' + d.total + ')'; }
+        if (contEl && d.total > 0) {
+            var txt = '(' + d.hechos + '/' + d.total + ')';
+            if (d.fallidos > 0) { txt += ' · ' + d.fallidos + ' sin resultado'; }
+            contEl.textContent = txt;
+        }
+        if (tiempoEl) {
+            var t = '';
+            if (d.ms_transcurrido > 0) { t = '· ' + fmt(d.ms_transcurrido); }
+            if (d.ms_restante > 0) { t += ' · ~' + fmt(d.ms_restante) + ' restantes'; }
+            tiempoEl.textContent = t;
+        }
+        if (latidoEl) {
+            latidoEl.textContent = d.hace_ms > 0 ? 'Última llamada hace ' + fmt(d.hace_ms) + '.' : '';
+        }
     }
 
     function tick() {

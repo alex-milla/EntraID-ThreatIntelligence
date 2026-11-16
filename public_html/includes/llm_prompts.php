@@ -220,9 +220,8 @@ if (!function_exists('llm_prompts_catalog')) {
                     . '"cadena_de_eventos":"narrativa padre->hijo con timestamps clave de esta parte",'
                     . '"hipotesis_parcial":"explicación más plausible de esta parte",'
                     . '"veredicto_parcial":"benigna|sospechosa|ataque","confianza_pct":0,'
-                    . '"tecnicas_attck":["Txxxx"],"indicadores_benignos":["..."],"indicadores_maliciosos":["..."],'
-                    . '"datos_faltantes":["..."],"acciones_recomendadas":["..."],"preguntas_para_el_analista":["..."]}. '
-                    . 'Sé breve: máximo 5 elementos por lista y 3 frases por campo de texto.',
+                    . '"tecnicas_attck":["Txxxx"],"indicadores_maliciosos":["..."],"datos_faltantes":["..."]}. '
+                    . 'Sé breve: máximo 4 elementos por lista y 2 frases por campo de texto.',
             ],
             'llm.incident_story.triage.merge' => [
                 'scope'       => 'incident_story',
@@ -233,8 +232,9 @@ if (!function_exists('llm_prompts_catalog')) {
                 'default'     => "CONTEXTO DEL CASO (JSON, sin eventos):\n{header}\n\n"
                     . "ANÁLISIS PARCIALES DE LA EVIDENCIA (JSON, uno por parte; {total} partes):\n{resultados}\n\n"
                     . 'TAREA: fusiona los análisis parciales en UN ÚNICO análisis de la incidencia y devuelve '
-                    . 'únicamente el JSON indicado. Si dos partes se contradicen, explica la contradicción en '
-                    . 'datos_faltantes y baja la confianza.',
+                    . 'únicamente el JSON indicado. Los parciales son breves y pueden no traer todos los campos: '
+                    . 'completa el JSON final con lo que se deduzca de cada parte, sin inventar datos. Si dos '
+                    . 'partes se contradicen, explica la contradicción en datos_faltantes y baja la confianza.',
             ],
 
             // ====================================================

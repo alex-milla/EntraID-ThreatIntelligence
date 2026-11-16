@@ -191,7 +191,14 @@ class Module_Llm extends BaseModule
 
             return $res;
         } catch (Throwable $e) {
-            $res = ['success' => false, 'error' => $this->friendlyError($e->getMessage(), $cfg)];
+            $rawError = $e->getMessage();
+            $res = [
+                'success'    => false,
+                'error'      => $this->friendlyError($rawError, $cfg),
+                // Clasificación por el mensaje crudo: el traducido ya no
+                // contiene las firmas del proveedor (ver llm_err_kind()).
+                'error_kind' => llm_err_kind($rawError),
+            ];
             $this->logCall($cfg, $res, $options, $profileId, $fit, $started);
             return $res;
         }

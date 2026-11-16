@@ -141,3 +141,40 @@ if (!function_exists('llm_job_fail')) {
         ]);
     }
 }
+
+if (!function_exists('llm_job_cancel')) {
+    /**
+     * Pide detener un trabajo en curso. El motor lo comprueba entre parte y
+     * parte: la llamada en vuelo termina, no se corta a mitad de HTTP.
+     */
+    function llm_job_cancel(int $id): bool
+    {
+        if ($id <= 0) {
+            return false;
+        }
+        try {
+            return Database::update(
+                "UPDATE llm_jobs SET cancelado = 1, updated_at = datetime('now') WHERE id = ? AND estado IN ('queued', 'running')",
+                [$id]
+            ) > 0;
+        } catch (Throwable $e) {
+            return false;
+        }
+    }
+}
+
+if (!function_exists('llm_job_is_cancelled')) {
+    /** ¿El usuario pidió detener este trabajo? */
+    function llm_job_is_cancelled(int $id): bool
+    {
+        if ($id <= 0) {
+            return false;
+        }
+        try {
+            $row = Database::fetchOne('SELECT cancelado FROM llm_jobs WHERE id = ?', [$id]);
+        } catch (Throwable $e) {
+            return false;
+        }
+        return (int)($row['cancelado'] ?? 0) === 1;
+    }
+}

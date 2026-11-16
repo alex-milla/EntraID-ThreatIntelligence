@@ -204,12 +204,67 @@ if (!function_exists('llm_err_is_timeout')) {
     function llm_err_is_timeout(string $msg): bool
     {
         $low = strtolower($msg);
-        foreach (['timed out', 'timeout', 'operation timeout', 'curl error 28', 'resolving timed out'] as $needle) {
+        foreach ([
+            'timed out', 'timeout', 'operation timeout', 'curl error 28', 'resolving timed out',
+            // Mensaje ya traducido por friendlyError(): sin estas firmas, el
+            // reintento adaptativo no se activaba al reenviar el texto.
+            'tiempo de espera agotado', 'agotó el tiempo', 'agoto el tiempo',
+        ] as $needle) {
             if (str_contains($low, $needle)) {
                 return true;
             }
         }
         return false;
+    }
+}
+
+if (!function_exists('llm_err_kind')) {
+    /**
+     * Clasifica un error de IA por su naturaleza.
+     *
+     * Se llama con el mensaje CRUDO del proveedor (antes de traducirlo): los
+     * mensajes traducidos pierden las firmas originales y hacían que el
+     * motor por partes no reconociera un timeout ni un fin de contexto.
+     *
+     * @return string timeout|context|unavailable|gateway|model|not_found|auth|rate_limit|forbidden|other
+     */
+    function llm_err_kind(string $msg): string
+    {
+        if ($msg === '') {
+            return 'other';
+        }
+        if (llm_err_is_timeout($msg)) {
+            return 'timeout';
+        }
+        if (llm_err_is_context_overflow($msg)) {
+            return 'context';
+        }
+        if (llm_err_is_unavailable($msg)) {
+            return 'unavailable';
+        }
+        if (llm_err_is_gateway($msg) || llm_err_has_html($msg)) {
+            return 'gateway';
+        }
+        if (llm_err_is_model_error($msg)) {
+            return 'model';
+        }
+        if (llm_err_is_not_found($msg)) {
+            return 'not_found';
+        }
+
+        $low = strtolower($msg);
+        if (str_contains($low, 'invalid api key') || str_contains($low, 'incorrect api key')
+            || str_contains($low, 'invalid credential') || str_contains($low, 'unauthorized')
+            || str_contains($low, '(401)')) {
+            return 'auth';
+        }
+        if (str_contains($low, 'rate limit') || str_contains($low, 'too many requests') || str_contains($low, '(429)')) {
+            return 'rate_limit';
+        }
+        if (str_contains($low, 'forbidden') || str_contains($low, '(403)')) {
+            return 'forbidden';
+        }
+        return 'other';
     }
 }
 

@@ -40,7 +40,7 @@ $nav = $module?->getNavItem();
 check('grupo Seguridad', is_array($nav) && ($nav['group'] ?? '') === 'Seguridad');
 check('etiqueta del menú', is_array($nav) && ($nav['label'] ?? '') === 'Incidentes Story');
 check('ancla tras incidents', is_array($nav) && ($nav['after'] ?? '') === 'incidents');
-check('rutas registradas (9)', $module !== null && count($module->routes()) === 9);
+check('rutas registradas (10)', $module !== null && count($module->routes()) === 10);
 
 /* =====================================================================
  * 2. Parser — texto pegado
@@ -452,9 +452,29 @@ try {
 }
 
 /* =====================================================================
- * 8. Parseo del JSON del LLM
+ * 7 bis. Trabajos de IA: cancelación (tabla llm_jobs)
  * ================================================================== */
 
+$job = llm_job_create('smoke_test', 0, null, null);
+check('jobs: se crea el trabajo', (int)($job['id'] ?? 0) > 0, 'id=' . ($job['id'] ?? 0));
+check('jobs: no nace cancelado', llm_job_is_cancelled((int)$job['id']) === false);
+check('jobs: se puede cancelar', llm_job_cancel((int)$job['id']) === true);
+check('jobs: la cancelación se lee', llm_job_is_cancelled((int)$job['id']) === true);
+llm_job_fail((int)$job['id'], 'prueba');
+
+check('parcial: promueve resumen_parcial', (Module_IncidentStory::promotePartialTriage([
+    'resumen_parcial' => 'texto', 'veredicto_parcial' => 'sospechosa',
+])['resumen_ejecutivo'] ?? '') === 'texto');
+check('parcial: promueve veredicto_parcial', (Module_IncidentStory::promotePartialTriage([
+    'veredicto_parcial' => 'sospechosa',
+])['veredicto_asistido'] ?? '') === 'sospechosa');
+check('parcial: no pisa lo que ya existe', (Module_IncidentStory::promotePartialTriage([
+    'resumen_ejecutivo' => 'final', 'resumen_parcial' => 'parcial',
+])['resumen_ejecutivo'] ?? '') === 'final');
+
+/* =====================================================================
+ * 8. Parseo del JSON del LLM
+ * ================================================================== */
 $ai = Module_IncidentStory::parseAiJson("```json\n{\"veredicto_asistido\":\"sospechosa\",\"confianza_pct\":55}\n```");
 check('IA: fences limpiados', is_array($ai) && ($ai['veredicto_asistido'] ?? '') === 'sospechosa');
 $ai2 = Module_IncidentStory::parseAiJson('Aquí tienes: {"veredicto_asistido":"ataque"} fin');

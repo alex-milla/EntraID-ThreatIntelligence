@@ -80,6 +80,7 @@ class Module_IncidentStory extends BaseModule
             ['method' => 'GET',  'pattern' => 'case/{id}',       'handler' => [$this, 'show']],
             ['method' => 'GET',  'pattern' => 'case/{id}/export', 'handler' => [$this, 'export']],
             ['method' => 'GET',  'pattern' => 'case/{id}/triage-status', 'handler' => [$this, 'triageStatus']],
+            ['method' => 'POST', 'pattern' => 'case/{id}/triage-cancel', 'handler' => [$this, 'triageCancel']],
             ['method' => 'POST', 'pattern' => 'case/{id}/triage',   'handler' => [$this, 'triage']],
             ['method' => 'POST', 'pattern' => 'case/{id}/decision', 'handler' => [$this, 'decision']],
             ['method' => 'POST', 'pattern' => 'case/{id}/delete',   'handler' => [$this, 'delete']],
@@ -297,6 +298,13 @@ class Module_IncidentStory extends BaseModule
                 'type' => 'info',
                 'text' => 'Triaje IA en curso: la evidencia se está analizando por partes para que un modelo local '
                     . 'pueda completarlo. Puedes seguir en esta ficha; se actualiza sola al terminar.',
+            ];
+        }
+        if (isset($_GET['triage_stop'])) {
+            return [
+                'type' => 'info',
+                'text' => 'Detención solicitada: el triaje se cancela al terminar la llamada en curso y se guarda '
+                    . 'lo que ya estaba analizado.',
             ];
         }
         if (isset($_GET['triage_error'])) {
@@ -574,11 +582,15 @@ class Module_IncidentStory extends BaseModule
         $total = count($parts);
         $job = llm_job_create('incident_triage', $caseId, $profileId, Auth::id());
         $jobId = (int)$job['id'];
+        $iniciado = microtime(true);
         $progreso = [
             'fase'        => 'Preparando el análisis por partes',
             'hechos'      => 0,
             'total'       => $total,
-            'actualizado' => time(),
+            'ok'          => 0,
+            'fallidos'    => 0,
+            'iniciado'    => $iniciado,
+            'actualizado' => $iniciado,
             'job'         => $jobId,
         ];
         $this->store()->setTriageState($caseId, 'running', $progreso);
@@ -602,11 +614,11 @@ class Module_IncidentStory extends BaseModule
             header('Location: ' . $baseCaso . '?triage_running=1#triaje');
             finish_response();
 
-            $this->runTriageJob($caseId, $profileId, $parts, $jobId, $lockOwner);
+            $this->runTriageJob($caseId, $profileId, $parts, $jobId, $iniciado, $lockOwner);
             exit;
         }
 
-        $this->runTriageJob($caseId, $profileId, $parts, $jobId, $lockOwner);
+        $this->runTriageJob($caseId, $profileId, $parts, $jobId, $iniciado, $lockOwner);
 
         $final = $this->store()->getCase($caseId);
         if ((string)($final['triage_estado'] ?? '') === 'error') {
@@ -630,13 +642,14 @@ class Module_IncidentStory extends BaseModule
         $progreso = safe_json_decode((string)($case['triage_progreso'] ?? ''), []);
         $progreso = is_array($progreso) ? $progreso : [];
         $error = (string)($case['triage_error'] ?? '');
+        $jobId = (int)($case['triage_job'] ?? 0);
 
         // Un proceso que murió deja el estado en `running`: se da por caducado
         // en vez de dejar la ficha esperando para siempre. Cada parte renueva
         // `actualizado`, así que una hora sin latido es un trabajo perdido.
         if ($estado === 'running') {
-            $actualizado = (int)($progreso['actualizado'] ?? 0);
-            if ($actualizado > 0 && (time() - $actualizado) > 3600) {
+            $actualizado = (float)($progreso['actualizado'] ?? 0);
+            if ($actualizado > 0 && (time() - (int)$actualizado) > 3600) {
                 $estado = 'error';
                 $error = 'El triaje dejó de responder (proceso interrumpido). Vuelve a lanzarlo.';
                 $progreso['fase'] = 'Error';
@@ -644,16 +657,63 @@ class Module_IncidentStory extends BaseModule
             }
         }
 
+        // Tiempos para que la ficha pueda decir «cuánto llevo» y «cuánto falta».
+        $hechos = (int)($progreso['hechos'] ?? 0);
+        $totalPartes = (int)($progreso['total'] ?? 0);
+        $iniciado = (float)($progreso['iniciado'] ?? 0);
+        $actualizado = (float)($progreso['actualizado'] ?? 0);
+        $ahora = microtime(true);
+        $transcurridoMs = $iniciado > 0 ? max(0, (int)round(($ahora - $iniciado) * 1000)) : 0;
+        $restanteMs = 0;
+        if ($estado === 'running' && $hechos > 0 && $totalPartes > $hechos && $transcurridoMs > 0) {
+            // Media real por parte + un 25 % para la fase de fusión.
+            $restanteMs = (int)round(($transcurridoMs / $hechos) * ($totalPartes - $hechos) * 1.25);
+        }
+
         json_response([
-            'success'    => true,
-            'estado'     => $estado,
-            'fase'       => (string)($progreso['fase'] ?? ''),
-            'hechos'     => (int)($progreso['hechos'] ?? 0),
-            'total'      => (int)($progreso['total'] ?? 0),
-            'error'      => $error,
-            'triage_at'  => $case['triage_at'] ?? null,
-            'partes'     => (int)($case['triage_partes'] ?? 0),
+            'success'         => true,
+            'estado'          => $estado,
+            'fase'            => (string)($progreso['fase'] ?? ''),
+            'hechos'          => $hechos,
+            'total'           => $totalPartes,
+            'ok'              => (int)($progreso['ok'] ?? 0),
+            'fallidos'        => (int)($progreso['fallidos'] ?? 0),
+            'ms_transcurrido' => $transcurridoMs,
+            'ms_restante'     => $restanteMs,
+            'hace_ms'         => $actualizado > 0 ? max(0, (time() - $actualizado) * 1000) : 0,
+            'error'           => $error,
+            'triage_at'       => $case['triage_at'] ?? null,
+            'partes'          => (int)($case['triage_partes'] ?? 0),
+            'cancelado'       => $jobId > 0 ? llm_job_is_cancelled($jobId) : false,
         ]);
+    }
+
+    /**
+     * Pide detener el triaje en curso. El trabajo termina la llamada que tiene
+     * en vuelo (no se corta un HTTP a medias) y guarda lo ya analizado.
+     */
+    public function triageCancel(array $params = []): void
+    {
+        Csrf::validateOrFail();
+        $case = $this->loadCaseOrRedirect($params);
+        $caseId = (int)$case['id'];
+        $baseCaso = base_url('modules/incident_story/case/' . $caseId);
+
+        $jobId = (int)($case['triage_job'] ?? 0);
+        if ($jobId <= 0 || !llm_job_cancel($jobId)) {
+            redirect($baseCaso . '#triaje');
+        }
+
+        // Aviso inmediato en la ficha; el estado real lo cierra el trabajo.
+        $progreso = safe_json_decode((string)($case['triage_progreso'] ?? ''), []);
+        $progreso = is_array($progreso) ? $progreso : [];
+        $progreso['fase'] = 'Deteniendo: se cancelará al terminar la llamada en curso…';
+        $this->store()->setTriageState($caseId, 'running', $progreso);
+        app_log('info', 'incident_story', 'Triaje IA: detención solicitada', [
+            'case' => $caseId,
+            'job'  => $jobId,
+        ]);
+        redirect($baseCaso . '?triage_stop=1#triaje');
     }
 
     /** Payload del caso anonimizado (recortado por tamaño). */
@@ -931,10 +991,12 @@ class Module_IncidentStory extends BaseModule
         ?int $profileId,
         array $parts,
         int $jobId,
+        float $iniciado,
         string $lockOwner = ''
     ): void {
         $store = $this->store();
         $total = count($parts);
+        $iniciado = $iniciado > 0 ? $iniciado : microtime(true);
 
         $chunkPrompt = llm_prompt(
             'llm.incident_story.triage.chunk',
@@ -945,9 +1007,8 @@ class Module_IncidentStory extends BaseModule
             . '"cadena_de_eventos":"narrativa padre->hijo con timestamps clave de esta parte",'
             . '"hipotesis_parcial":"explicación más plausible de esta parte",'
             . '"veredicto_parcial":"benigna|sospechosa|ataque","confianza_pct":0,'
-            . '"tecnicas_attck":["Txxxx"],"indicadores_benignos":["..."],"indicadores_maliciosos":["..."],'
-            . '"datos_faltantes":["..."],"acciones_recomendadas":["..."],"preguntas_para_el_analista":["..."]}. '
-            . 'Sé breve: máximo 5 elementos por lista y 3 frases por campo de texto.'
+            . '"tecnicas_attck":["Txxxx"],"indicadores_maliciosos":["..."],"datos_faltantes":["..."]}. '
+            . 'Sé breve: máximo 4 elementos por lista y 2 frases por campo de texto.'
         );
 
         $mergePrompt = llm_prompt(
@@ -955,17 +1016,21 @@ class Module_IncidentStory extends BaseModule
             "CONTEXTO DEL CASO (JSON, sin eventos):\n{header}\n\n"
             . "ANÁLISIS PARCIALES DE LA EVIDENCIA (JSON, uno por parte; {total} partes):\n{resultados}\n\n"
             . 'TAREA: fusiona los análisis parciales en UN ÚNICO análisis de la incidencia y devuelve '
-            . 'únicamente el JSON indicado. Si dos partes se contradicen, explica la contradicción en '
-            . 'datos_faltantes y baja la confianza.'
+            . 'únicamente el JSON indicado. Los parciales son breves y pueden no traer todos los campos: '
+            . 'completa el JSON final con lo que se deduzca de cada parte, sin inventar datos. Si dos '
+            . 'partes se contradicen, explica la contradicción en datos_faltantes y baja la confianza.'
         );
 
         try {
             $res = llm_pipeline_run([
-                'mode'          => 'json',
-                'task'          => 'incident_triage',
-                'profile_id'    => $profileId,
-                'header'        => (string)($parts[0]['header'] ?? ''),
-                'parts'         => $parts,
+                'mode'             => 'json',
+                'task'             => 'incident_triage',
+                'profile_id'       => $profileId,
+                'header'           => (string)($parts[0]['header'] ?? ''),
+                'parts'            => $parts,
+                'deadline_seconds' => LLM_PIPELINE_MAX_SECONDS,
+                'min_split_chars'  => 1200,
+                'should_stop'      => static fn(): bool => llm_job_is_cancelled($jobId),
                 'system_map'    => $this->triageSystemPrompt() . ' En esta llamada analizas UNA PARTE de la '
                     . 'evidencia: el caso completo se ha dividido para que un modelo local pueda procesarlo. '
                     . 'No des un veredicto definitivo ni supongas eventos que no estén en esta parte.',
@@ -973,7 +1038,7 @@ class Module_IncidentStory extends BaseModule
                 'system_reduce' => $this->triageSystemPrompt() . ' ' . $this->triageFormatPrompt(),
                 'user_reduce'   => $mergePrompt,
                 'options'       => [
-                    'max_tokens_map'     => 700,
+                    'max_tokens_map'     => 500,
                     'max_tokens_reduce'  => 1500,
                     'temperature'        => 0.2,
                     'think'              => false,
@@ -989,12 +1054,15 @@ class Module_IncidentStory extends BaseModule
                         : null;
                     $store->saveTriagePart($caseId, $key, $ok ? 'done' : 'error', $encoded, $error, $profileId, $total);
                 },
-                'on_progress'   => static function (int $hechos, int $totalPartes, string $fase) use ($store, $caseId, $jobId, $lockOwner): void {
+                'on_progress'   => static function (int $hechos, int $totalPartes, string $fase, array $stats = []) use ($store, $caseId, $jobId, $lockOwner, $iniciado): void {
                     $store->setTriageState($caseId, 'running', [
                         'fase'        => $fase,
                         'hechos'      => $hechos,
                         'total'       => $totalPartes,
-                        'actualizado' => time(),
+                        'ok'          => (int)($stats['ok'] ?? 0),
+                        'fallidos'    => (int)($stats['failed'] ?? 0),
+                        'iniciado'    => $iniciado,
+                        'actualizado' => microtime(true),
                         'job'         => $jobId,
                     ]);
                     llm_job_progress($jobId, $fase, $hechos, $totalPartes);
@@ -1027,8 +1095,22 @@ class Module_IncidentStory extends BaseModule
                 ];
             }
 
+            $stopped = (string)($res['stopped'] ?? '');
+            if ($stopped !== '') {
+                // Detenido a medias: los parciales traen sus propias claves
+                // (resumen_parcial, veredicto_parcial…). Se promueven para que
+                // la ficha muestre algo útil en vez de un JSON crudo.
+                $data = self::promotePartialTriage($data);
+            }
+
             $data['analisis_por_partes'] = $total;
             $avisos = [];
+            if ($stopped !== '') {
+                $data['detenido'] = $stopped;
+                $avisos[] = $stopped === 'cancel'
+                    ? 'Análisis detenido por el usuario: se guarda lo que ya estaba analizado.'
+                    : 'El análisis superó el tiempo máximo y se detuvo: se guarda lo que ya estaba analizado.';
+            }
             if ((int)($res['failed'] ?? 0) > 0) {
                 $data['partes_fallidas'] = (int)$res['failed'];
                 $avisos[] = 'El análisis se completó con ' . (int)$res['failed'] . ' de ' . $total
@@ -1050,10 +1132,13 @@ class Module_IncidentStory extends BaseModule
                 (string)($res['content'] ?? '')
             );
             $store->setTriageState($caseId, 'done', [
-                'fase'        => 'Análisis completado',
+                'fase'        => $stopped === 'cancel' ? 'Detenido por el usuario' : 'Análisis completado',
                 'hechos'      => $total,
                 'total'       => $total,
-                'actualizado' => time(),
+                'ok'          => (int)($res['parts'] ?? 0) - (int)($res['failed'] ?? 0),
+                'fallidos'    => (int)($res['failed'] ?? 0),
+                'iniciado'    => $iniciado,
+                'actualizado' => microtime(true),
                 'job'         => $jobId,
             ]);
             llm_job_finish($jobId, (string)($res['content'] ?? ''), $data);
@@ -1080,6 +1165,26 @@ class Module_IncidentStory extends BaseModule
                 llm_job_release($lockOwner);
             }
         }
+    }
+
+    /**
+     * Promueve las claves de un análisis parcial (detenido por tiempo o por el
+     * usuario) a las del triaje final, para que la ficha muestre algo útil en
+     * vez de un JSON con nombres internos.
+     */
+    public static function promotePartialTriage(array $data): array
+    {
+        $map = [
+            'resumen_parcial'   => 'resumen_ejecutivo',
+            'hipotesis_parcial' => 'hipotesis_principal',
+            'veredicto_parcial' => 'veredicto_asistido',
+        ];
+        foreach ($map as $from => $to) {
+            if (empty($data[$to]) && !empty($data[$from])) {
+                $data[$to] = $data[$from];
+            }
+        }
+        return $data;
     }
 
     /** Parsea el JSON del LLM tolerando fences y texto envolvente. */
