@@ -12,6 +12,9 @@ foreach ($profiles as $profile) {
     }
 }
 $slaCritical = is_array($slaCritical ?? null) ? $slaCritical : ['critical' => 3, 'high' => 7, 'medium' => 15, 'low' => 30];
+$users = is_array($users ?? null) ? $users : [];
+$roleMap = is_array($roleMap ?? null) ? $roleMap : [];
+$roleLabels = is_array($roleLabels ?? null) ? $roleLabels : [];
 ?>
 <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
     <div class="lg:col-span-2 card p-5">
@@ -73,6 +76,61 @@ $slaCritical = is_array($slaCritical ?? null) ? $slaCritical : ['critical' => 3,
             <div class="pt-2">
                 <button type="submit" class="px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg">
                     Guardar SLA
+                </button>
+            </div>
+        </form>
+    </div>
+
+    <div class="card p-5 mt-5">
+        <h2 class="text-sm font-semibold">Roles de remediación</h2>
+        <p class="text-xs text-ink-muted mt-1">
+            Si no asignas ningún rol, todo el mundo mantiene el acceso actual (analista).
+            <strong>Aprobador</strong> puede aceptar riesgos; <strong>Lectura</strong> no puede
+            modificar tareas, cola ni informes. Los administradores conservan todos los permisos.
+        </p>
+        <form method="POST" action="<?= base_url('modules/remediation/settings/roles') ?>" class="mt-4">
+            <?= Csrf::field() ?>
+            <input type="hidden" name="org_id" value="<?= (int)$selectedOrgId ?>">
+            <div class="overflow-x-auto">
+                <table class="data-table w-full text-xs">
+                    <thead>
+                        <tr class="text-[10px] uppercase text-ink-soft border-b border-line">
+                            <th class="text-left px-3 py-2">Usuario</th>
+                            <th class="text-left px-3 py-2">Rol</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-line-subtle">
+                        <?php foreach ($users as $user): ?>
+                            <?php $userId = (int)$user['id']; ?>
+                            <tr>
+                                <td class="px-3 py-2">
+                                    <?= e((string)($user['display_name'] ?: $user['username'])) ?>
+                                    <span class="text-[10px] text-ink-soft font-mono"><?= e((string)$user['username']) ?></span>
+                                </td>
+                                <td class="px-3 py-2">
+                                    <?php if ((string)($user['role'] ?? '') === 'admin'): ?>
+                                        <span class="px-1.5 py-0.5 rounded bg-brand-100 text-brand-700 dark:bg-brand-900/30 dark:text-brand-300 text-[10px] font-semibold">
+                                            Administrador (todos)
+                                        </span>
+                                    <?php else: ?>
+                                        <select name="roles[<?= $userId ?>]"
+                                                class="px-2 py-1 rounded border border-line-strong bg-input text-ink text-xs">
+                                            <?php foreach ($roleLabels as $key => $label): ?>
+                                                <option value="<?= e($key) ?>" <?= (string)($roleMap[$userId] ?? 'analista') === $key ? 'selected' : '' ?>>
+                                                    <?= e($label) ?>
+                                                </option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                    <?php endif; ?>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+            <div class="pt-3">
+                <button type="submit" class="px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg">
+                    Guardar roles
                 </button>
             </div>
         </form>

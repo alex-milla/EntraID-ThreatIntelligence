@@ -83,6 +83,8 @@ require_once CONFIG_PATH . '/database.php';
 require_once INCLUDES_PATH . '/remediation_workflow.php';
 require_once INCLUDES_PATH . '/remediation_sla.php';
 require_once INCLUDES_PATH . '/remediation_queue.php';
+require_once INCLUDES_PATH . '/remediation_roles.php';
+require_once INCLUDES_PATH . '/remediation_report.php';
 
 // Inicializar base de datos (crea el esquema si no existe)
 Database::getInstance();

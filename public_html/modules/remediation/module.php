@@ -42,6 +42,10 @@ class Module_Remediation extends BaseModule
             ['method' => 'POST', 'pattern' => 'orgs/delete',   'handler' => [$this, 'deleteOrg']],
             ['method' => 'POST', 'pattern' => 'tasks/save',    'handler' => [$this, 'saveTask']],
             ['method' => 'POST', 'pattern' => 'tasks/action',  'handler' => [$this, 'taskAction']],
+            ['method' => 'POST', 'pattern' => 'reports/create', 'handler' => [$this, 'createReport']],
+            ['method' => 'POST', 'pattern' => 'reports/items',  'handler' => [$this, 'reportItem']],
+            ['method' => 'POST', 'pattern' => 'reports/publish','handler' => [$this, 'publishReport']],
+            ['method' => 'POST', 'pattern' => 'settings/roles', 'handler' => [$this, 'saveRoles']],
             ['method' => 'POST', 'pattern' => 'tasks/delete',  'handler' => [$this, 'deleteTask']],
             ['method' => 'POST', 'pattern' => 'tasks/import',  'handler' => [$this, 'importTasks']],
             ['method' => 'POST', 'pattern' => 'tasks/plan',    'handler' => [$this, 'savePlan']],
@@ -64,7 +68,7 @@ class Module_Remediation extends BaseModule
 
         $isAdmin = Auth::isAdmin();
         $tab = (string)($_GET['tab'] ?? 'tasks');
-        if (!in_array($tab, ['tasks', 'queue', 'assistant', 'metrics', 'settings'], true)) {
+        if (!in_array($tab, ['tasks', 'queue', 'reports', 'assistant', 'metrics', 'settings'], true)) {
             $tab = 'tasks';
         }
         if ($tab === 'settings' && !$isAdmin) {
@@ -156,8 +160,41 @@ class Module_Remediation extends BaseModule
         }
         $dashboard = $this->dashboardStats($selectedOrgId, $org, $queueCounts);
         $users = Database::fetchAll(
-            "SELECT id, display_name, username FROM users ORDER BY COALESCE(NULLIF(display_name, ''), username)"
+            "SELECT id, display_name, username, role FROM users ORDER BY COALESCE(NULLIF(display_name, ''), username)"
         );
+        $roleMap = RemediationRoles::all();
+        $roleLabels = RemediationRoles::labels();
+
+        // v0.4.27.3 — informes por periodo y métricas de servicio.
+        $servicePeriod = RemediationReport::periodFromRequest((string)($_GET['period'] ?? ''));
+        $serviceMetrics = null;
+        $reports = [];
+        $report = null;
+        $reportItems = [];
+        $reportMetrics = null;
+        $reportHtml = '';
+        $reportMd = '';
+        if ($org !== null && $tab === 'reports') {
+            $reports = RemediationReport::listForOrg($selectedOrgId);
+            $reportId = (int)($_GET['report'] ?? 0);
+            if ($reportId > 0) {
+                $report = RemediationReport::get($selectedOrgId, $reportId);
+                if ($report !== null) {
+                    $reportItems = RemediationReport::items($reportId);
+                    $reportMetrics = RemediationReport::metricsForPeriod($selectedOrgId, (string)$report['periodo']);
+                    if ((string)$report['estado'] === 'publicado' && (string)($report['snapshot_html'] ?? '') !== '') {
+                        $reportHtml = (string)$report['snapshot_html'];
+                        $reportMd = (string)($report['snapshot_md'] ?? '');
+                    } else {
+                        $reportHtml = RemediationReport::renderHtml($report, $reportItems, $reportMetrics);
+                        $reportMd = RemediationReport::renderMarkdown($report, $reportItems, $reportMetrics);
+                    }
+                }
+            }
+        }
+        if ($org !== null && $tab === 'metrics') {
+            $serviceMetrics = RemediationReport::metricsForPeriod($selectedOrgId, $servicePeriod);
+        }
 
         $chats = $this->listChats($selectedOrgId);
         $chatId = (int)($_GET['chat'] ?? 0);
@@ -235,6 +272,16 @@ class Module_Remediation extends BaseModule
             'queueFilters'   => $queueFilters,
             'dashboard'      => $dashboard,
             'users'          => $users,
+            'roleMap'        => $roleMap,
+            'roleLabels'     => $roleLabels,
+            'reports'        => $reports,
+            'report'         => $report,
+            'reportItems'    => $reportItems,
+            'reportMetrics'  => $reportMetrics,
+            'reportHtml'     => $reportHtml,
+            'reportMd'       => $reportMd,
+            'servicePeriod'  => $servicePeriod,
+            'serviceMetrics' => $serviceMetrics,
             'workflowLabels' => RemediationWorkflow::stateLabels(),
             'workflowClasses'=> RemediationWorkflow::stateClasses(),
             'logTypeLabels'  => RemediationWorkflow::logTypeLabels(),
@@ -262,6 +309,7 @@ class Module_Remediation extends BaseModule
     {
         Auth::require();
         Csrf::validateOrFail();
+        $this->requireWrite();
 
         $id = (int)($_POST['id'] ?? 0);
         $name = trim((string)($_POST['name'] ?? ''));
@@ -352,6 +400,7 @@ class Module_Remediation extends BaseModule
     {
         Auth::require();
         Csrf::validateOrFail();
+        $this->requireWrite();
 
         $id = (int)($_POST['id'] ?? 0);
         $orgId = (int)($_POST['org_id'] ?? 0);
@@ -561,6 +610,7 @@ class Module_Remediation extends BaseModule
     {
         Auth::require();
         Csrf::validateOrFail();
+        $this->requireWrite();
 
         $orgId = (int)($_POST['org_id'] ?? 0);
         $taskId = (int)($_POST['task_id'] ?? 0);
@@ -582,6 +632,10 @@ class Module_Remediation extends BaseModule
                 $userId
             );
         } else {
+            if ($action === 'aceptar_riesgo' && !RemediationRoles::canApproveRisk($userId)) {
+                flash('error', 'Solo un aprobador puede aceptar riesgos. Pide el cambio de rol en Ajustes.');
+                redirect(base_url('modules/remediation?tab=tasks&org=' . $orgId . '&task=' . $taskId));
+            }
             $payload = [
                 'ventana_parcheo' => trim((string)($_POST['ventana_parcheo'] ?? '')),
                 'evidencia'       => trim((string)($_POST['evidencia'] ?? '')),
@@ -620,10 +674,95 @@ class Module_Remediation extends BaseModule
         redirect(base_url('modules/remediation?tab=tasks&org=' . $orgId . '&task=' . $taskId));
     }
 
+    /**
+     * POST reports/create — borrador del periodo (copia las marcas en_informe).
+     */
+    public function createReport(array $params = []): void
+    {
+        Auth::require();
+        Csrf::validateOrFail();
+        $this->requireWrite();
+
+        $orgId = (int)($_POST['org_id'] ?? 0);
+        $org = $this->getOrg($orgId);
+        if ($org === null) {
+            flash('error', 'La organización no existe.');
+            redirect(base_url('modules/remediation'));
+        }
+        $period = RemediationReport::periodFromRequest((string)($_POST['periodo'] ?? ''));
+        $res = RemediationReport::createDraft($orgId, $period, (int)Auth::id());
+        if (empty($res['ok'])) {
+            flash('error', (string)$res['error']);
+            redirect(base_url('modules/remediation?tab=reports&org=' . $orgId));
+        }
+        flash('success', 'Informe ' . $period . ' creado con ' . (int)$res['copied'] . ' CVE.');
+        redirect(base_url('modules/remediation?tab=reports&org=' . $orgId . '&report=' . (int)$res['id']));
+    }
+
+    /** POST reports/items — añade o quita un CVE de un borrador. */
+    public function reportItem(array $params = []): void
+    {
+        Auth::require();
+        Csrf::validateOrFail();
+        $this->requireWrite();
+
+        $orgId = (int)($_POST['org_id'] ?? 0);
+        $reportId = (int)($_POST['report_id'] ?? 0);
+        $cveId = (string)($_POST['cve_id'] ?? '');
+        $action = (string)($_POST['item_action'] ?? 'add');
+        if ($this->getOrg($orgId) === null) {
+            flash('error', 'La organización no existe.');
+            redirect(base_url('modules/remediation'));
+        }
+
+        $res = $action === 'remove'
+            ? RemediationReport::removeItem($orgId, $reportId, $cveId)
+            : RemediationReport::addItem($orgId, $reportId, $cveId, (int)Auth::id());
+        flash(!empty($res['ok']) ? 'success' : 'error', !empty($res['ok'])
+            ? ($action === 'remove' ? 'CVE quitado del borrador.' : 'CVE añadido al borrador.')
+            : (string)$res['error']);
+        redirect(base_url('modules/remediation?tab=reports&org=' . $orgId . '&report=' . $reportId));
+    }
+
+    /** POST reports/publish — congela la foto del informe. */
+    public function publishReport(array $params = []): void
+    {
+        Auth::require();
+        Csrf::validateOrFail();
+        $this->requireWrite();
+
+        $orgId = (int)($_POST['org_id'] ?? 0);
+        $reportId = (int)($_POST['report_id'] ?? 0);
+        $res = RemediationReport::publish($orgId, $reportId, (int)Auth::id());
+        flash(!empty($res['ok']) ? 'success' : 'error', !empty($res['ok'])
+            ? 'Informe publicado: la foto queda congelada.'
+            : (string)$res['error']);
+        redirect(base_url('modules/remediation?tab=reports&org=' . $orgId . '&report=' . $reportId));
+    }
+
+    /** POST settings/roles — asigna rol de remediación a los usuarios. */
+    public function saveRoles(array $params = []): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        $roles = is_array($_POST['roles'] ?? null) ? $_POST['roles'] : [];
+        $updated = 0;
+        foreach ($roles as $userId => $role) {
+            if (RemediationRoles::assign((int)$userId, (string)$role)) {
+                $updated++;
+            }
+        }
+        log_activity('remediation.roles_saved', ['rows' => $updated]);
+        flash('success', 'Roles de remediación guardados.');
+        redirect(base_url('modules/remediation?tab=settings&org=' . (int)($_POST['org_id'] ?? 0)));
+    }
+
     public function deleteTask(array $params = []): void
     {
         Auth::require();
         Csrf::validateOrFail();
+        $this->requireWrite();
 
         $id = (int)($_POST['id'] ?? 0);
         $orgId = (int)($_POST['org_id'] ?? 0);
@@ -639,6 +778,7 @@ class Module_Remediation extends BaseModule
     {
         Auth::require();
         Csrf::validateOrFail();
+        $this->requireWrite();
 
         $orgId = (int)($_POST['org_id'] ?? 0);
         $org = $this->getOrg($orgId);
@@ -1128,6 +1268,7 @@ class Module_Remediation extends BaseModule
     {
         Auth::require();
         Csrf::validateOrFail();
+        $this->requireWrite();
 
         try {
             $input = json_decode((string)file_get_contents('php://input'), true);
@@ -1230,6 +1371,7 @@ class Module_Remediation extends BaseModule
     {
         Auth::require();
         Csrf::validateOrFail();
+        $this->requireWrite();
 
         try {
             $input = json_decode((string)file_get_contents('php://input'), true);
@@ -1346,6 +1488,7 @@ class Module_Remediation extends BaseModule
     {
         Auth::require();
         Csrf::validateOrFail();
+        $this->requireWrite();
 
         $orgId = (int)($_POST['org_id'] ?? 0);
         $org = $this->getOrg($orgId);
@@ -1377,6 +1520,7 @@ class Module_Remediation extends BaseModule
     {
         Auth::require();
         Csrf::validateOrFail();
+        $this->requireWrite();
 
         $orgId = (int)($_POST['org_id'] ?? 0);
         $taskId = (int)($_POST['task_id'] ?? 0);
@@ -1459,6 +1603,16 @@ class Module_Remediation extends BaseModule
         }
 
         json_response(['success' => true, 'results' => $results]);
+    }
+
+    private function requireWrite(): void
+    {
+        if (RemediationRoles::canWrite((int)Auth::id())) {
+            return;
+        }
+        flash('error', 'Tu rol de remediación es de solo lectura.');
+        $org = (int)($_POST['org_id'] ?? $_GET['org'] ?? 0);
+        redirect(base_url('modules/remediation' . ($org > 0 ? '?org=' . $org : '')));
     }
 
     private function orgs(): array
@@ -1592,6 +1746,7 @@ class Module_Remediation extends BaseModule
             'riesgo'             => 0,
             'sla_vencido'        => 0,
             'bloqueados_sin_eta' => 0,
+            'riesgo_por_caducar' => 0,
         ];
         if ($orgId <= 0 || $org === null) {
             return $out;
@@ -1616,6 +1771,14 @@ class Module_Remediation extends BaseModule
             "SELECT COUNT(*) AS c FROM remediation_tasks
              WHERE org_id = ? AND estado = 'cerrado' AND resolved_at IS NOT NULL
                AND resolved_at >= datetime('now', '-30 days')",
+            [$orgId]
+        )['c'] ?? 0);
+        $out['riesgo_por_caducar'] = (int)(Database::fetchOne(
+            "SELECT COUNT(*) AS c
+             FROM remediation_risk_acceptances a
+             JOIN remediation_tasks t ON t.id = a.task_id
+             WHERE t.org_id = ? AND a.estado = 'vigente'
+               AND a.caducidad BETWEEN date('now') AND date('now', '+7 days')",
             [$orgId]
         )['c'] ?? 0);
 

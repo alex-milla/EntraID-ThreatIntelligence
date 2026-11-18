@@ -245,6 +245,12 @@ if ($selectedTask !== null) {
             $stepIndex = $stepIndex === false ? 0 : (int)$stepIndex;
             $isBlocked = $taskState === 'bloqueado';
             $isRisk = $taskState === 'riesgo_aceptado';
+            $riskDaysLeft = null;
+            if ($isRisk && !empty($task['exception_until'])) {
+                $riskDaysLeft = (int)floor(
+                    (strtotime((string)$task['exception_until']) - strtotime(gmdate('Y-m-d'))) / 86400
+                );
+            }
             $visualIndex = $isRisk ? -1 : ($isBlocked ? 2 : $stepIndex);
             ?>
             <div class="card p-4 mb-4">
@@ -274,6 +280,11 @@ if ($selectedTask !== null) {
                     <p class="text-[11px] text-ink-muted m-0 mt-2">
                         Riesgo aceptado<?= !empty($task['exception_until']) ? ' hasta ' . e(format_date((string)$task['exception_until'], 'd/m/Y')) : '' ?>.
                         Al vencer vuelve sola a la cola.
+                        <?php if ($riskDaysLeft !== null && $riskDaysLeft <= 7): ?>
+                            <span class="ml-1 text-amber-700 dark:text-amber-300 font-semibold">
+                                Caduca en <?= max(0, $riskDaysLeft) ?> día(s): revisa la justificación o renueva.
+                            </span>
+                        <?php endif; ?>
                     </p>
                 <?php endif; ?>
             </div>

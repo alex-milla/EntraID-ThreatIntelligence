@@ -103,7 +103,7 @@ $flashData = flash();
 $dashboard = is_array($dashboard ?? null) ? $dashboard : [];
 $dashboard = array_merge([
     'nuevo' => 0, 'en_informe' => 0, 'en_remediacion' => 0, 'cerrados' => 0,
-    'riesgo' => 0, 'sla_vencido' => 0, 'bloqueados_sin_eta' => 0,
+    'riesgo' => 0, 'sla_vencido' => 0, 'bloqueados_sin_eta' => 0, 'riesgo_por_caducar' => 0,
 ], $dashboard);
 $queueCounts = is_array($queueCounts ?? null) ? $queueCounts : ['tenant' => false];
 $counter = static function (string $label, int $value, string $href, string $tone = 'neutral'): string {
@@ -126,6 +126,7 @@ $counter = static function (string $label, int $value, string $href, string $ton
         <?= $counter('En remediación', (int)$dashboard['en_remediacion'], $modUrl . '?tab=tasks&org=' . $selectedOrgId . '&view=open') ?>
         <?= $counter('Cerrados 30 d', (int)$dashboard['cerrados'], $modUrl . '?tab=tasks&org=' . $selectedOrgId . '&view=closed', 'ok') ?>
         <?= $counter('Riesgo aceptado', (int)$dashboard['riesgo'], $modUrl . '?tab=tasks&org=' . $selectedOrgId . '&view=risk') ?>
+        <?= $counter('Riesgos por caducar', (int)$dashboard['riesgo_por_caducar'], $modUrl . '?tab=tasks&org=' . $selectedOrgId . '&view=risk', 'warn') ?>
         <?= $counter('SLA vencido', (int)$dashboard['sla_vencido'], $modUrl . '?tab=tasks&org=' . $selectedOrgId . '&sla=vencido', 'alert') ?>
         <?= $counter('Bloqueados sin ETA', (int)$dashboard['bloqueados_sin_eta'], $modUrl . '?tab=tasks&org=' . $selectedOrgId . '&estado=bloqueado', 'warn') ?>
     </div>
@@ -136,6 +137,7 @@ $counter = static function (string $label, int $value, string $href, string $ton
     $tabs = [
         'queue'     => 'Cola',
         'tasks'     => 'Bandeja',
+        'reports'   => 'Informes',
         'assistant' => 'Asistente IA',
         'metrics'   => 'Métricas',
     ];
@@ -161,6 +163,8 @@ $counter = static function (string $label, int $value, string $href, string $ton
 <?php else: ?>
     <?php if ($tab === 'queue'): ?>
         <?php require __DIR__ . '/queue.php'; ?>
+    <?php elseif ($tab === 'reports'): ?>
+        <?php require __DIR__ . '/reports.php'; ?>
     <?php elseif ($tab === 'assistant'): ?>
         <?php require __DIR__ . '/assistant.php'; ?>
     <?php elseif ($tab === 'metrics'): ?>

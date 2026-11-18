@@ -104,6 +104,25 @@ if ($cmd === 'seed-chat') {
     exit(0);
 }
 
+if ($cmd === 'risk') {
+    $id = (int)($argv[2] ?? 0);
+    if ($id <= 0) {
+        echo json_encode(['ok' => false, 'error' => 'task id']);
+        exit(2);
+    }
+    // CVSS < 9 para no exigir segundo aprobador en el smoke.
+    Database::query("UPDATE remediation_tasks SET cvss = 8.8 WHERE id = ?", [$id]);
+    $res = RemediationWorkflow::acceptRisk(
+        $id,
+        'Riesgo aceptado E2E con caducidad próxima',
+        date('Y-m-d', strtotime('+5 days')),
+        1,
+        null
+    );
+    echo json_encode($res, JSON_UNESCAPED_UNICODE);
+    exit(0);
+}
+
 if ($cmd === 'cleanup') {
     $orgId = (int)($argv[2] ?? 0);
     if ($orgId > 0) {
