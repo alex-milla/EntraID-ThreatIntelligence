@@ -37,7 +37,7 @@ check('clave del módulo', $module !== null && $module->key() === 'exposed_repor
 check('nombre visible', $module !== null && $module->name() === 'Equipos expuestos');
 check('sin permisos Graph', $module !== null && $module->requiredPermissions() === []);
 check('no sincronizable', $module !== null && $module->isSyncable() === false);
-check('rutas registradas (14)', $module !== null && count($module->routes()) === 14);
+check('rutas registradas (15)', $module !== null && count($module->routes()) === 15);
 
 $nav = $module?->getNavItem();
 check('grupo Seguridad', is_array($nav) && ($nav['group'] ?? '') === 'Seguridad');

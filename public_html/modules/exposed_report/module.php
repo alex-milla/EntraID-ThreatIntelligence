@@ -99,6 +99,7 @@ class Module_ExposedReport extends BaseModule
             ['method' => 'POST', 'pattern' => 'groups/create',         'handler' => [$this, 'createGroup']],
             ['method' => 'POST', 'pattern' => 'group/{id}/plan',       'handler' => [$this, 'generatePlan']],
             ['method' => 'POST', 'pattern' => 'group/{id}/analyze',    'handler' => [$this, 'analyzeGroup']],
+            ['method' => 'POST', 'pattern' => 'group/{id}/analyze-retry','handler' => [$this, 'retryGroupAnalyses']],
             ['method' => 'POST', 'pattern' => 'group/{id}/remediation','handler' => [$this, 'createRemediation']],
             ['method' => 'POST', 'pattern' => 'group/{id}/remove-cve', 'handler' => [$this, 'removeGroupCve']],
             ['method' => 'POST', 'pattern' => 'group/{id}/delete',     'handler' => [$this, 'deleteGroup']],
@@ -568,6 +569,94 @@ class Module_ExposedReport extends BaseModule
     }
 
     /**
+     * POST group/{id}/analyze-retry — reintenta SOLO los análisis fallidos
+     * (ítems en `error`) y conserva los que ya están «done».
+     */
+    public function retryGroupAnalyses(array $params = []): void
+    {
+        Auth::require();
+        Csrf::validateOrFail();
+
+        $groupId = (int)($params['id'] ?? 0);
+        $group = ExposedConsoleStore::getGroup($groupId);
+        if ($group === null) {
+            http_response_code(404);
+            $this->renderGroup(0, ['error' => 'El grupo no existe.']);
+            return;
+        }
+
+        $reports = ExposedConsoleStore::groupReports($groupId);
+        if (($reports['rows'] ?? []) === []) {
+            $this->renderGroup($groupId, [
+                'error' => 'Este grupo no tiene análisis lanzados. Usa «Generar análisis» primero.',
+            ]);
+            return;
+        }
+
+        $llm = ModuleManager::get('llm');
+        $reportProfileId = (int)($reports['rows'][0]['ai_profile_id'] ?? 0);
+        if (!$llm instanceof Module_Llm || !$llm->isConfigured($reportProfileId > 0 ? $reportProfileId : null)) {
+            $this->renderGroup($groupId, [
+                'error' => 'La IA no está configurada. Revisa el perfil en Admin → APIs antes de reintentar.',
+            ]);
+            return;
+        }
+
+        $useFpm = function_exists('fastcgi_finish_request');
+        $requeue = ExposedConsoleStore::requeueFailedReports($groupId);
+        $queued = (int)$requeue['queued'];
+        $kept = (int)$requeue['kept'];
+        $tokens = (array)$requeue['tokens'];
+
+        if ($queued === 0) {
+            $this->renderGroup($groupId, [
+                'queueNotice' => 'No hay análisis fallidos que reintentar: '
+                    . ($kept > 0 ? $kept . ' informe(s) ya están completos.' : 'todo está en orden.'),
+            ]);
+            return;
+        }
+
+        log_activity('exposed_report.group_analyses_retried', [
+            'group'   => $groupId,
+            'reports' => $queued,
+            'kept'    => $kept,
+        ]);
+
+        $this->renderGroup($groupId, [
+            'queueNotice' => $queued . ' informe(s) reencolados. Solo se regeneran los CVE que fallaron; '
+                . 'los que ya estaban listos se conservan. '
+                . ($useFpm
+                    ? 'El progreso aparece en la tarjeta «Análisis por CVE» y se actualiza solo.'
+                    : 'Se están regenerando ahora mismo en esta petición.'),
+        ]);
+
+        if ($useFpm) {
+            @ignore_user_abort(true);
+            @set_time_limit(0);
+            if (function_exists('release_session_lock')) {
+                release_session_lock();
+            }
+            finish_response();
+        }
+
+        foreach ($tokens as $reportId => $token) {
+            try {
+                CveReportAi::runPending((string)$token);
+            } catch (Throwable $e) {
+                app_log('error', 'exposed_report', 'Reintento de análisis del grupo fallido', [
+                    'group'  => $groupId,
+                    'report' => $reportId,
+                    'error'  => $e->getMessage(),
+                ]);
+            }
+        }
+
+        if ($useFpm) {
+            exit;
+        }
+    }
+
+    /**
      * POST group/{id}/remediation — crea las tareas del grupo en el módulo
      * Remediación (organización manual + una tarea por CVE).
      */
@@ -705,28 +794,96 @@ class Module_ExposedReport extends BaseModule
         $systemDefault = (string)($catalog['llm.exposed.action_plan']['default'] ?? '');
         $system = llm_prompt('llm.exposed.action_plan', $systemDefault);
 
+        // Ninguna petición puede llevar el grupo entero: a partir de este
+        // tamaño se analiza por partes (map) y se fusiona (reduce).
+        $total = count($rows);
+        $chunks = $this->planChunks($rows, self::PLAN_PART_SIZE);
+        $chunkCount = count($chunks);
+        $usePipeline = $chunkCount > 1;
+
+        if (function_exists('release_session_lock')) {
+            release_session_lock();
+        }
+        @set_time_limit(0);
+        @ignore_user_abort(true);
+
         $startedAt = microtime(true);
-        $res = llm_run('exposed_action_plan', $system, $context['text'], [
-            'profile_id'  => $profileId,
-            'max_tokens'  => 4500,
-            'temperature' => 0.15,
-            'think'       => false,
-        ]);
+        $warnings = [];
+        $parts = 0;
+
+        if (!$usePipeline) {
+            $res = llm_run('exposed_action_plan', $system, $context['text'], [
+                'profile_id'  => $profileId,
+                'max_tokens'  => 4500,
+                'temperature' => 0.15,
+                'think'       => false,
+            ]);
+        } else {
+            $header = $this->planContextHeader((string)$context['text']);
+            $partTexts = [];
+            foreach ($chunks as $chunk) {
+                $partTexts[] = $this->planPartText($chunk);
+            }
+
+            $systemMap = $system . "\n\n---\n\n"
+                . 'TRABAJO POR PARTES. En esta llamada analizas UNA PARTE de un grupo de ' . $total
+                . ' CVE, no el grupo completo. Recibes el contexto agregado del grupo y la tabla de los CVE '
+                . 'de esta parte. Devuelve SOLO la lectura del riesgo y las notas de ejecución que se deduzcan '
+                . 'de ESTOS CVE, con las mismas tres secciones y reglas, en un máximo de 350 palabras. '
+                . 'No repitas las cifras agregadas del grupo salvo que sean imprescindibles para explicar la parte.';
+
+            $systemReduce = $system . "\n\n---\n\n"
+                . 'AHORA FUSIONAS. Recibes los análisis parciales de las ' . $chunkCount . ' partes del mismo grupo. '
+                . 'Redacta el documento FINAL en Markdown, en castellano, con exactamente las tres secciones pedidas '
+                . '(## Lectura del riesgo, ## Justificación de la prioridad, ## Notas de ejecución), máximo 900 palabras. '
+                . 'Elimina repeticiones, une las observaciones que coincidan y no inventes datos que no estén en los '
+                . 'parciales. No devuelvas los parciales ni los enumeres: el documento final, nada más.';
+
+            $res = llm_pipeline_run([
+                'mode'          => 'text',
+                'task'          => 'exposed_action_plan',
+                'profile_id'    => $profileId > 0 ? $profileId : null,
+                'header'        => $header,
+                'parts'         => $partTexts,
+                'system_map'    => $systemMap,
+                'user_map'      => "CONTEXTO DEL GRUPO:\n{header}\n\nPARTE {parte_num} DE {parte_total}:\n{parte}",
+                'system_reduce' => $systemReduce,
+                'user_reduce'   => "CONTEXTO DEL GRUPO:\n{header}\n\nANÁLISIS PARCIALES ({total} partes):\n{resultados}",
+                'options'       => [
+                    'max_tokens_map'    => 800,
+                    'max_tokens_reduce' => 1800,
+                    'temperature'       => 0.15,
+                    'think'             => false,
+                ],
+                'deadline_seconds' => defined('LLM_PIPELINE_MAX_SECONDS') ? (int)LLM_PIPELINE_MAX_SECONDS : 900,
+            ]);
+
+            $parts = (int)($res['parts'] ?? $chunkCount);
+            $warnings = is_array($res['warnings'] ?? null) ? $res['warnings'] : [];
+            $context['parts'] = $parts;
+            $context['mode'] = 'pipeline';
+            $context['failed_parts'] = (int)($res['failed'] ?? 0);
+            $context['detailed'] = $total;
+            $context['truncated'] = 0;
+        }
         $elapsedMs = (int)round((microtime(true) - $startedAt) * 1000);
 
-        if (empty($res['success'])) {
+        $markdown = trim((string)($res['content'] ?? ''));
+        if (empty($res['success']) && $markdown === '') {
             app_log('error', 'exposed_report', 'Plan de actuación fallido', [
-                'group' => $groupId,
-                'error' => (string)($res['error'] ?? 'error desconocido'),
+                'group'  => $groupId,
+                'parts'  => $parts,
+                'error'  => (string)($res['error'] ?? 'error desconocido'),
+                'warn'   => $warnings,
             ]);
             $this->renderGroup($groupId, [
-                'error' => 'La IA no pudo generar el plan: ' . (string)($res['error'] ?? 'error desconocido'),
+                'error' => 'La IA no pudo generar el plan: ' . (string)($res['error'] ?? 'error desconocido')
+                    . ($warnings !== [] ? ' (' . implode(' ', array_slice($warnings, 0, 2)) . ')' : ''),
                 'planContext' => $context,
             ]);
             return;
         }
 
-        $markdown = trim((string)($res['content'] ?? ''));
         if ($markdown === '') {
             $this->renderGroup($groupId, [
                 'error' => 'El modelo no devolvió contenido. Repite la generación o cambia de perfil de IA.',
@@ -751,15 +908,125 @@ class Module_ExposedReport extends BaseModule
             'group'    => $groupId,
             'cves'     => count($rows),
             'analyzed' => (int)$context['detailed'],
+            'parts'    => $parts,
+            'failed'   => (int)($res['failed'] ?? 0),
             'ms'       => $elapsedMs,
             'profile'  => $profileId,
         ]);
+        if ($warnings !== []) {
+            app_log('warning', 'exposed_report', 'Plan con avisos del motor por partes', [
+                'group' => $groupId,
+                'parts' => $parts,
+                'warn'  => $warnings,
+            ]);
+        }
 
         $this->renderGroup($groupId, [
             'planFresh'   => true,
             'elapsedMs'   => $elapsedMs,
             'planContext' => $context,
         ]);
+    }
+
+    /** Tamaño máximo de cada parte del plan (CVE por llamada). */
+    private const PLAN_PART_SIZE = 10;
+
+    /**
+     * Cabecera del contexto sin la tabla de CVE: es común a todas las partes.
+     */
+    private function planContextHeader(string $text): string
+    {
+        $pos = strpos($text, '## CVE analizados en detalle');
+        $header = $pos !== false ? substr($text, 0, $pos) : $text;
+        $header = rtrim($header);
+        // El motor ya envuelve cada parte; la cabecera solo aporta el contexto.
+        return $header !== '' ? $header : 'Grupo de análisis sin contexto adicional.';
+    }
+
+    /**
+     * Trocea los CVE por software principal para que un racimo no se parta
+     * entre dos llamadas (un solo parche debe analizarse junto).
+     *
+     * @param array<int,array<string,mixed>> $rows
+     * @return array<int,array<int,array<string,mixed>>>
+     */
+    private function planChunks(array $rows, int $size = self::PLAN_PART_SIZE): array
+    {
+        $size = max(1, $size);
+        $buckets = [];
+        $order = [];
+        foreach ($rows as $row) {
+            $main = ExposedConsoleStore::mainSoftware((string)($row['software_labels'] ?? ''));
+            $key = $main !== '' ? 'sw:' . strtolower($main) : 'cve:' . (string)($row['cve_id'] ?? '');
+            if (!isset($buckets[$key])) {
+                $buckets[$key] = [];
+                $order[] = $key;
+            }
+            $buckets[$key][] = $row;
+        }
+
+        $chunks = [];
+        $current = [];
+        foreach ($order as $key) {
+            $bucket = $buckets[$key];
+            if ($current !== [] && count($current) + count($bucket) > $size) {
+                $chunks[] = $current;
+                $current = [];
+            }
+            foreach ($bucket as $row) {
+                $current[] = $row;
+            }
+            if (count($current) >= $size) {
+                $chunks[] = $current;
+                $current = [];
+            }
+        }
+        if ($current !== []) {
+            $chunks[] = $current;
+        }
+        return $chunks !== [] ? $chunks : [$rows];
+    }
+
+    /**
+     * Texto de una parte: la tabla de CVE con las mismas columnas que el
+     * contexto completo, para que el modelo no pierda el formato.
+     *
+     * @param array<int,array<string,mixed>> $rows
+     */
+    private function planPartText(array $rows): string
+    {
+        $lines = [];
+        $lines[] = '## CVE de esta parte (' . count($rows) . ')';
+        $lines[] = '';
+        $lines[] = '| CVE | Severidad | CVSS | EPSS | Edad (días) | Equipos | Exploit | Amenaza | KEV | Software | Resumen |';
+        $lines[] = '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |';
+        foreach ($rows as $row) {
+            $lines[] = $this->planRowLine($row);
+        }
+        return implode("\n", $lines);
+    }
+
+    /**
+     * Una fila de la tabla de CVE del contexto (misma en plan completo y por partes).
+     *
+     * @param array<string,mixed> $row
+     */
+    private function planRowLine(array $row): string
+    {
+        $summary = $this->clipText((string)($row['description'] ?? ''), 320);
+        $softwareLabel = trim(explode(',', (string)($row['software_labels'] ?? ''))[0] ?? '');
+        return '| ' . (string)$row['cve_id']
+            . ' | ' . ($row['severity'] !== null ? (string)$row['severity'] : 'sin datos')
+            . ' | ' . ($row['cvss'] !== null ? number_format((float)$row['cvss'], 1) : '—')
+            . ' | ' . ($row['epss'] !== null ? number_format((float)$row['epss'], 4) : '—')
+            . ' | ' . ($row['age_days'] !== null ? (int)$row['age_days'] : '—')
+            . ' | ' . (int)($row['exposed_machines'] ?? 0)
+            . ' | ' . ((int)($row['has_exploit'] ?? 0) === 1 ? 'sí' : 'no')
+            . ' | ' . ((int)($row['has_known_threats'] ?? 0) === 1 ? 'sí' : 'no')
+            . ' | ' . ((int)($row['is_kev'] ?? 0) === 1 ? 'sí' : 'no')
+            . ' | ' . ($softwareLabel !== '' ? $softwareLabel : '—')
+            . ' | ' . ($summary !== '' ? $summary : '—')
+            . ' |';
     }
 
     /**
@@ -951,21 +1218,7 @@ class Module_ExposedReport extends BaseModule
             if ($row['severity'] === null && $row['age_days'] === null) {
                 continue;
             }
-            $summary = $this->clipText((string)($row['description'] ?? ''), 320);
-            $softwareLabel = (string)($row['software_labels'] ?? '');
-            $softwareLabel = trim(explode(',', $softwareLabel)[0] ?? '');
-            $line = '| ' . (string)$row['cve_id']
-                . ' | ' . ($row['severity'] !== null ? (string)$row['severity'] : 'sin datos')
-                . ' | ' . ($row['cvss'] !== null ? number_format((float)$row['cvss'], 1) : '—')
-                . ' | ' . ($row['epss'] !== null ? number_format((float)$row['epss'], 4) : '—')
-                . ' | ' . ($row['age_days'] !== null ? (int)$row['age_days'] : '—')
-                . ' | ' . (int)($row['exposed_machines'] ?? 0)
-                . ' | ' . ((int)($row['has_exploit'] ?? 0) === 1 ? 'sí' : 'no')
-                . ' | ' . ((int)($row['has_known_threats'] ?? 0) === 1 ? 'sí' : 'no')
-                . ' | ' . ((int)($row['is_kev'] ?? 0) === 1 ? 'sí' : 'no')
-                . ' | ' . ($softwareLabel !== '' ? $softwareLabel : '—')
-                . ' | ' . ($summary !== '' ? $summary : '—')
-                . ' |';
+            $line = $this->planRowLine($row);
             // Tope de contexto: si el modelo tiene poca ventana, llm_run recorta
             // el final; mejor cortar por nuestra cuenta y avisar.
             if ($chars + strlen($line) > 48000) {
@@ -1837,8 +2090,9 @@ class Module_ExposedReport extends BaseModule
             'elapsedMs'     => 0,
             'planContext'   => null,
             'maxAnalysis'   => ExposedReportEnrichment::MAX_ANALYSIS_QUEUE,
-            'downloadName'  => 'dossier-parcheo-' . preg_replace('/[^a-z0-9]+/i', '-', (string)($group['name'] ?? 'grupo'))
-                . '-' . gmdate('Ymd-Hi') . '.md',
+            'downloadName'  => 'informe-vulnerabilidad-'
+                . ($singleCve !== '' ? strtolower($singleCve) . '-' : '')
+                . gmdate('Ymd-Hi') . '.md',
         ], $extra));
     }
 

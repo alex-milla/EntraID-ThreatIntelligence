@@ -149,15 +149,24 @@ $flashData = is_array($flashData) ? $flashData : [];
                 <h2 class="text-sm font-semibold m-0">Plan de actuación del grupo</h2>
                 <p class="text-xs text-ink-muted mt-1 mb-0">
                     La IA recibe el contexto TVM del grupo (severidad, antigüedad, equipos expuestos,
-                    exploit/amenazas y software) y devuelve un plan por fases. La aplicación añade después el
-                    anexo con todos los CVE y sus datos, para que cada cifra sea rastreable al export.
+                    exploit/amenazas y software) y devuelve una lectura del riesgo. Si el grupo es grande,
+                    se analiza <strong>por partes</strong> y se fusiona el resultado: ninguna petición lleva
+                    el grupo entero. La aplicación añade después el anexo con todos los CVE.
                 </p>
                 <?php if ($planContext !== null): ?>
                     <p class="text-[11px] text-ink-soft mt-2 mb-0">
-                        Contexto enviado: <?= (int)($planContext['detailed'] ?? 0) ?> CVE en detalle de
-                        <?= (int)($planContext['total'] ?? 0) ?>
-                        <?php if ((int)($planContext['truncated'] ?? 0) > 0): ?>
-                            · <?= (int)$planContext['truncated'] ?> quedan solo en el anexo
+                        <?php if (($planContext['mode'] ?? '') === 'pipeline'): ?>
+                            Analizado por partes: <?= (int)($planContext['parts'] ?? 0) ?> llamadas para
+                            <?= (int)($planContext['total'] ?? 0) ?> CVE
+                            <?php if ((int)($planContext['failed_parts'] ?? 0) > 0): ?>
+                                · <?= (int)$planContext['failed_parts'] ?> parte(s) con error (se fusionó lo disponible)
+                            <?php endif; ?>
+                        <?php else: ?>
+                            Contexto enviado: <?= (int)($planContext['detailed'] ?? 0) ?> CVE en detalle de
+                            <?= (int)($planContext['total'] ?? 0) ?>
+                            <?php if ((int)($planContext['truncated'] ?? 0) > 0): ?>
+                                · <?= (int)$planContext['truncated'] ?> quedan solo en el anexo
+                            <?php endif; ?>
                         <?php endif; ?>
                         <?php if ($elapsedMs > 0): ?> · <?= (int)$elapsedMs ?> ms<?php endif; ?>
                     </p>
@@ -220,6 +229,7 @@ $flashData = is_array($flashData) ? $flashData : [];
             $rProcessed = (int)($groupReports['processed'] ?? 0);
             $rPending = (int)($groupReports['pending'] ?? 0);
             $rFailed = (int)($groupReports['failed'] ?? 0);
+            $rTimeout = !empty($groupReports['timeout']);
             $rPct = $rTotal > 0 ? max(0, min(100, (int)round($rProcessed * 100 / $rTotal))) : 0;
             $firstReport = (int)($groupReports['rows'][0]['id'] ?? 0);
             $statusLabels = [
@@ -233,8 +243,9 @@ $flashData = is_array($flashData) ? $flashData : [];
                 'error' => 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',
                 'canceled' => 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
             ];
+            $partialClass = 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300';
             ?>
-            <div class="mt-4 pt-4 border-t border-line">
+            <div class="mt-4 pt-4 border-t border-line" id="exposed-group-reports">
                 <div class="flex items-start justify-between gap-3 flex-wrap">
                     <div class="min-w-0 flex-1">
                         <p class="text-xs font-semibold m-0">Análisis por CVE</p>
@@ -242,40 +253,93 @@ $flashData = is_array($flashData) ? $flashData : [];
                             <?= $rProcessed ?>/<?= $rTotal ?> generados
                             <?php if ($rPending > 0): ?> · <?= $rPending ?> en cola<?php endif; ?>
                             <?php if ($rFailed > 0): ?> · <?= $rFailed ?> con error<?php endif; ?>
-                            <?= $rPending > 0 ? ' · se actualiza solo' : ' · completado' ?>
+                            <?php if ($rPending > 0): ?>
+                                · se actualiza solo
+                            <?php elseif ($rFailed > 0): ?>
+                                · <span class="text-amber-700 dark:text-amber-300">completado con errores</span>
+                            <?php else: ?>
+                                · completado
+                            <?php endif; ?>
                         </p>
                         <div class="mt-2 h-1.5 w-full max-w-md rounded-full bg-muted overflow-hidden">
                             <div class="h-full <?= $rFailed > 0 ? 'bg-amber-500' : 'bg-brand-500' ?> transition-all" style="width: <?= $rPct ?>%"></div>
                         </div>
                     </div>
-                    <?php if ($firstReport > 0): ?>
-                        <a href="<?= e(base_url('modules/cve/report-ai/' . $firstReport)) ?>"
-                           class="text-[11px] text-brand-600 dark:text-brand-300 hover:underline whitespace-nowrap">
-                            <?= icon('open_in_new', 13) ?> Abrir en el módulo CVE
-                        </a>
-                    <?php endif; ?>
+                    <div class="flex items-center gap-2 flex-wrap">
+                        <?php if ($rFailed > 0): ?>
+                            <form method="POST" action="<?= e($base . '/group/' . (int)$group['id'] . '/analyze-retry') ?>" class="m-0">
+                                <?= Csrf::field() ?>
+                                <button type="submit" class="btn btn-outline"
+                                        title="Vuelve a lanzar solo los CVE que fallaron; los que ya están listos no se tocan">
+                                    <?= icon('refresh', 14) ?> Reintentar los <?= $rFailed ?> fallidos
+                                </button>
+                            </form>
+                        <?php endif; ?>
+                        <?php if ($firstReport > 0): ?>
+                            <a href="<?= e(base_url('modules/cve/report-ai/' . $firstReport)) ?>"
+                               class="text-[11px] text-brand-600 dark:text-brand-300 hover:underline whitespace-nowrap">
+                                <?= icon('open_in_new', 13) ?> Abrir en el módulo CVE
+                            </a>
+                        <?php endif; ?>
+                    </div>
                 </div>
+
+                <?php if ($rTimeout): ?>
+                    <p class="text-[11px] text-amber-700 dark:text-amber-300 m-0 mt-2">
+                        El modelo tardó más que el tiempo de espera del perfil de IA. Súbelo en
+                        <a class="underline" href="<?= e(base_url('admin/apis')) ?>">Admin → APIs</a>
+                        o usa un perfil más rápido para los análisis por CVE, y pulsa «Reintentar».
+                    </p>
+                <?php endif; ?>
+
                 <div class="mt-2 space-y-1">
                     <?php foreach ($groupReports['rows'] as $reportRow): ?>
                         <?php
                         $rStatus = (string)($reportRow['status'] ?? 'pending');
+                        $rFailedItems = (int)($reportRow['failed_items'] ?? 0);
+                        $rErrorCves = is_array($reportRow['error_cves'] ?? null) ? $reportRow['error_cves'] : [];
                         $rCves = is_array($reportRow['cve_list'] ?? null) ? $reportRow['cve_list'] : [];
                         $rLabel = $rCves === [] ? 'Conjunto' : (count($rCves) === 1 ? $rCves[0] : count($rCves) . ' CVE');
+                        $rBadgeLabel = $statusLabels[$rStatus] ?? $rStatus;
+                        $rBadgeClass = $statusClasses[$rStatus] ?? $statusClasses['pending'];
+                        if ($rStatus === 'done' && $rFailedItems > 0) {
+                            $rBadgeLabel = 'Parcial';
+                            $rBadgeClass = $partialClass;
+                        }
                         ?>
-                        <div class="flex items-center justify-between gap-2 text-[11px]">
-                            <span class="min-w-0 truncate">
-                                <span class="font-mono"><?= e($rLabel) ?></span>
-                                <?php if ($rStatus === 'error' && (string)($reportRow['ai_error'] ?? '') !== ''): ?>
-                                    <span class="text-danger"> · <?= e((string)$reportRow['ai_error']) ?></span>
-                                <?php endif; ?>
-                            </span>
-                            <span class="flex items-center gap-2 shrink-0">
-                                <span class="px-2 py-0.5 rounded-full text-[10px] font-medium <?= $statusClasses[$rStatus] ?? $statusClasses['pending'] ?>">
-                                    <?= e($statusLabels[$rStatus] ?? $rStatus) ?>
+                        <div class="text-[11px]">
+                            <div class="flex items-center justify-between gap-2">
+                                <span class="min-w-0 truncate">
+                                    <span class="font-mono"><?= e($rLabel) ?></span>
+                                    <?php if ($rStatus === 'error' && (string)($reportRow['ai_error'] ?? '') !== '' && $rErrorCves === []): ?>
+                                        <span class="text-danger"> · <?= e((string)$reportRow['ai_error']) ?></span>
+                                    <?php endif; ?>
                                 </span>
-                                <a href="<?= e(base_url('modules/cve/report-ai/' . (int)$reportRow['id'])) ?>"
-                                   class="text-brand-600 dark:text-brand-300 hover:underline">#<?= (int)$reportRow['id'] ?></a>
-                            </span>
+                                <span class="flex items-center gap-2 shrink-0">
+                                    <span class="px-2 py-0.5 rounded-full text-[10px] font-medium <?= $rBadgeClass ?>">
+                                        <?= e($rBadgeLabel) ?>
+                                    </span>
+                                    <a href="<?= e(base_url('modules/cve/report-ai/' . (int)$reportRow['id'])) ?>"
+                                       class="text-brand-600 dark:text-brand-300 hover:underline">#<?= (int)$reportRow['id'] ?></a>
+                                </span>
+                            </div>
+                            <?php if ($rErrorCves !== []): ?>
+                                <ul class="m-0 mt-0.5 pl-4 text-danger">
+                                    <?php foreach (array_slice($rErrorCves, 0, 8) as $errorCve): ?>
+                                        <li>
+                                            <span class="font-mono"><?= e((string)($errorCve['cve_id'] ?? '')) ?></span>
+                                            <?php if ((string)($errorCve['error'] ?? '') !== ''): ?>
+                                                · <?= e(function_exists('mb_substr')
+                                                    ? mb_substr((string)$errorCve['error'], 0, 180)
+                                                    : substr((string)$errorCve['error'], 0, 180)) ?>
+                                            <?php endif; ?>
+                                        </li>
+                                    <?php endforeach; ?>
+                                    <?php if (count($rErrorCves) > 8): ?>
+                                        <li>… y <?= count($rErrorCves) - 8 ?> más</li>
+                                    <?php endif; ?>
+                                </ul>
+                            <?php endif; ?>
                         </div>
                     <?php endforeach; ?>
                 </div>
@@ -531,7 +595,7 @@ $flashData = is_array($flashData) ? $flashData : [];
 
 <?php endif; ?>
 
-<?php if ($group !== null && $planText !== ''): ?>
+<?php if ($group !== null && $hasDocument): ?>
 <style>
     @media print {
         body * { visibility: hidden !important; }
@@ -572,14 +636,16 @@ $flashData = is_array($flashData) ? $flashData : [];
     function applyStyles(root) {
         Object.keys(STYLES).forEach(function (tag) {
             root.querySelectorAll(tag).forEach(function (node) {
+                // El dossier ya trae estilos en línea por tarjeta: no se pisan.
+                if (node.getAttribute('style')) { return; }
                 node.setAttribute('style', STYLES[tag]);
             });
         });
     }
 
-    function notify(message) {
+    function notify(message, type) {
         if (typeof toast === 'function') {
-            toast(message, 'success');
+            toast(message, type || 'success');
         }
     }
 
@@ -597,6 +663,10 @@ $flashData = is_array($flashData) ? $flashData : [];
 
     window.exposedCopyMarkdown = function () {
         var text = PLAN_MD;
+        if (!text) {
+            notify('No hay informe que copiar.', 'error');
+            return;
+        }
         if (navigator.clipboard && window.isSecureContext) {
             navigator.clipboard.writeText(text).then(function () { notify('Markdown copiado'); });
             return;
@@ -612,7 +682,10 @@ $flashData = is_array($flashData) ? $flashData : [];
     };
 
     window.exposedCopyRich = function () {
-        if (!SHEET) { return; }
+        if (!SHEET) {
+            notify('No hay informe que copiar.', 'error');
+            return;
+        }
         var clone = SHEET.cloneNode(true);
         // La descripción completa de Defender no viaja en el informe.
         clone.querySelectorAll('details').forEach(function (node) { node.remove(); });
@@ -642,19 +715,34 @@ $flashData = is_array($flashData) ? $flashData : [];
     }
 
     window.exposedDownloadMd = function () {
+        if (!PLAN_MD) {
+            notify('No hay informe que exportar.', 'error');
+            return;
+        }
         saveFile(PLAN_NAME, PLAN_MD, 'text/markdown;charset=utf-8');
     };
 
     window.exposedDownloadHtml = function () {
-        var clone = SHEET ? SHEET.cloneNode(true) : document.createElement('div');
+        if (!SHEET) {
+            notify('No hay informe que exportar.', 'error');
+            return;
+        }
+        var clone = SHEET.cloneNode(true);
+        // La descripción completa de Defender no viaja en el `.html`.
+        clone.querySelectorAll('details').forEach(function (node) { node.remove(); });
         applyStyles(clone);
-        var html = '<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Plan de actuación</title></head>'
+        var html = '<!doctype html><html lang="es"><head><meta charset="utf-8">'
+            + '<title>Informe de vulnerabilidad</title></head>'
             + '<body style="font-family:Segoe UI,Arial,sans-serif;color:#0f172a;max-width:900px;margin:24px auto;">'
             + clone.innerHTML + '</body></html>';
         saveFile(PLAN_NAME.replace(/\.md$/i, '.html'), html, 'text/html;charset=utf-8');
     };
 
     window.exposedPrint = function () {
+        if (!SHEET) {
+            notify('No hay informe que imprimir.', 'error');
+            return;
+        }
         window.print();
     };
 })();

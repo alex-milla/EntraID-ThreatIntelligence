@@ -573,6 +573,61 @@ try {
     check('progreso: sin trabajo pendiente', empty($gr['has_job']));
     check('progreso: CVE del informe', ($gr['rows'][0]['cve_list'][0] ?? '') === (string)$groupRows[0]['cve_id']);
 
+    // Informe conjunto con un ítem «done» y otro en «error»: el progreso debe
+    // salir del detalle por CVE, no del estado global del informe.
+    $partialReportId = CveDatabase::insert(
+        "INSERT INTO cve_ai_reports (cve_ids, title, status, token, no_ai, mode, total_items, processed_items, ai_error)
+         VALUES (?, ?, 'done', ?, 1, 'extended', 2, 2, '1 de 2 análisis fallaron: tiempo de espera agotado')",
+        [
+            json_encode([(string)$groupRows[0]['cve_id'], (string)$groupRows[1]['cve_id']], JSON_UNESCAPED_SLASHES),
+            'smoke parcial', bin2hex(random_bytes(8)),
+        ]
+    );
+    CveDatabase::insert(
+        "INSERT INTO cve_ai_report_items (report_id, cve_id, position, status)
+         VALUES (?, ?, 0, 'done')",
+        [$partialReportId, (string)$groupRows[0]['cve_id']]
+    );
+    CveDatabase::insert(
+        "INSERT INTO cve_ai_report_items (report_id, cve_id, position, status, ai_error)
+         VALUES (?, ?, 1, 'error', 'Tiempo de espera agotado al llamar al modelo')",
+        [$partialReportId, (string)$groupRows[1]['cve_id']]
+    );
+    ExposedConsoleStore::setGroupReports($groupId, [$partialReportId]);
+    $grPartial = ExposedConsoleStore::groupReports($groupId);
+    check('progreso: fallo contado por CVE',
+        (int)$grPartial['total'] === 2 && (int)$grPartial['done'] === 1 && (int)$grPartial['failed'] === 1);
+    check('progreso: informe parcial marcado', (int)$grPartial['failed_reports'] === 1);
+    check('progreso: CVE fallido identificado',
+        ($grPartial['rows'][0]['error_cves'][0]['cve_id'] ?? '') === (string)$groupRows[1]['cve_id']);
+    check('progreso: detecta el timeout', !empty($grPartial['timeout']));
+    check('progreso: sin trabajo pendiente', empty($grPartial['has_job']));
+
+    // Troceado del plan: agrupa por software y no parte un racimo.
+    $chunkMethod = new ReflectionMethod(Module_ExposedReport::class, 'planChunks');
+    $chunkMethod->setAccessible(true);
+    $chunks = $chunkMethod->invoke($module, $groupRows, 2);
+    check('plan: se trocea en varias partes', count($chunks) >= 2);
+    $flat = [];
+    foreach ($chunks as $chunk) {
+        $flat = array_merge($flat, $chunk);
+    }
+    check('plan: no pierde ningún CVE', count($flat) === count($groupRows));
+    $clusterRows = [
+        ['cve_id' => 'CVE-2026-91001', 'software_labels' => 'acme:server;other:lib'],
+        ['cve_id' => 'CVE-2026-91002', 'software_labels' => 'acme:server'],
+        ['cve_id' => 'CVE-2026-91003', 'software_labels' => 'zeta:app'],
+    ];
+    $clusterChunks = $chunkMethod->invoke($module, $clusterRows, 2);
+    $clusterTogether = false;
+    foreach ($clusterChunks as $chunk) {
+        $ids = array_column($chunk, 'cve_id');
+        if (in_array('CVE-2026-91001', $ids, true)) {
+            $clusterTogether = in_array('CVE-2026-91002', $ids, true);
+        }
+    }
+    check('plan: el racimo de software no se parte', $clusterTogether);
+
     // Vista del grupo: la hoja no debe llevar «md-body» (rompía el modo oscuro)
     // y debe avisar de que aún no hay análisis de IA.
     $groupHtml = $module->render('group', [
@@ -607,6 +662,47 @@ try {
         && str_contains($groupHtmlProgress, '1/1 generados'));
     check('vista grupo: selector por CVE', str_contains($groupHtmlProgress, 'Por CVE…')
         && str_contains($groupHtmlProgress, 'Conjunto'));
+    check('vista grupo: exportación con JS aunque no haya plan',
+        str_contains($groupHtml, 'window.exposedDownloadMd')
+        && str_contains($groupHtml, 'window.exposedDownloadHtml')
+        && str_contains($groupHtml, 'window.exposedPrint')
+        && str_contains($groupHtml, '@media print'));
+    check('vista grupo: applyStyles respeta el estilo en línea',
+        str_contains($groupHtml, "node.getAttribute('style')"));
+    check('vista grupo: exportar sin informe avisa',
+        str_contains($groupHtml, 'No hay informe que exportar.'));
+
+    $groupHtmlRetry = $module->render('group', [
+        'module'        => $module,
+        'group'         => $group,
+        'groupId'       => $groupId,
+        'rows'          => $groupRows,
+        'plan'          => null,
+        'dossier'       => $dossier,
+        'profiles'      => [],
+        'orgs'          => [],
+        'downloadName'  => 'informe.md',
+        'groupReports'  => $grPartial,
+    ]);
+    check('vista grupo: botón de reintentar fallidos',
+        str_contains($groupHtmlRetry, 'analyze-retry')
+        && str_contains($groupHtmlRetry, 'Reintentar los 1 fallidos'));
+    check('vista grupo: pista de timeout con enlace a Admin',
+        str_contains($groupHtmlRetry, 'tiempo de espera del perfil')
+        && str_contains($groupHtmlRetry, 'Admin → APIs'));
+    check('vista grupo: informe parcial', str_contains($groupHtmlRetry, 'Parcial'));
+
+    // Reintento: reabre solo los ítems en error y conserva los «done».
+    $requeue = ExposedConsoleStore::requeueFailedReports($groupId);
+    check('reintento: un informe reencolado', (int)$requeue['queued'] === 1);
+    check('reintento: token nuevo', (string)($requeue['tokens'][$partialReportId] ?? '') !== '');
+    $grRequeued = ExposedConsoleStore::groupReports($groupId);
+    check('reintento: conserva el CVE ya generado',
+        (int)$grRequeued['done'] === 1 && (int)$grRequeued['pending'] === 1);
+    check('reintento: el fallo pasa a la cola', (int)$grRequeued['failed'] === 0);
+    check('reintento: el trabajo vuelve a estar vivo', !empty($grRequeued['has_job']));
+    $requeueAgain = ExposedConsoleStore::requeueFailedReports($groupId);
+    check('reintento: no duplica trabajo pendiente', (int)$requeueAgain['queued'] === 0);
 
     $groupHtmlBack = $module->render('group', [
         'module'        => $module,
@@ -673,7 +769,7 @@ try {
 
     $module = ModuleManager::get('exposed_report');
     check('módulo: versión 2', $module instanceof Module_ExposedReport && $module->version() === '2.0.0');
-    check('módulo: 14 rutas', $module !== null && count($module->routes()) === 14);
+    check('módulo: 15 rutas', $module !== null && count($module->routes()) === 15);
 
     /* -----------------------------------------------------------------
      * 11. Orden numérico del CVE (distinta longitud de secuencia)

@@ -1176,7 +1176,11 @@ if (!class_exists('ExposedConsoleStore')) {
          */
         public static function groupReports(int $groupId): array
         {
-            $out = ['rows' => [], 'total' => 0, 'processed' => 0, 'done' => 0, 'failed' => 0, 'pending' => 0, 'has_job' => false];
+            $out = [
+                'rows' => [], 'total' => 0, 'processed' => 0, 'done' => 0,
+                'failed' => 0, 'pending' => 0, 'has_job' => false,
+                'failed_reports' => 0, 'timeout' => false,
+            ];
             $group = self::getGroup($groupId);
             if ($group === null) {
                 return $out;
@@ -1191,33 +1195,188 @@ if (!class_exists('ExposedConsoleStore')) {
             }
 
             $rows = CveDatabase::fetchAll(
-                "SELECT id, title, status, total_items, processed_items, cve_ids, ai_error, ai_model, updated_at
+                "SELECT id, title, status, total_items, processed_items, cve_ids, ai_error, ai_model,
+                        ai_profile_id, updated_at
                  FROM cve_ai_reports
                  WHERE id IN (" . implode(',', array_fill(0, count($ids), '?')) . ")
                  ORDER BY id DESC",
                 $ids
             );
 
+            // El estado real está por CVE (`cve_ai_report_items`): un informe
+            // conjunto puede estar «done» y aun así tener ítems en error.
+            $itemsByReport = [];
+            $itemRows = CveDatabase::fetchAll(
+                "SELECT report_id, cve_id, status, ai_error
+                 FROM cve_ai_report_items
+                 WHERE report_id IN (" . implode(',', array_fill(0, count($ids), '?')) . ")
+                 ORDER BY position ASC, id ASC",
+                $ids
+            );
+            foreach ($itemRows as $itemRow) {
+                $itemsByReport[(int)$itemRow['report_id']][] = $itemRow;
+            }
+
             foreach ($rows as $row) {
+                $reportId = (int)$row['id'];
                 $status = (string)($row['status'] ?? 'pending');
-                $total = max(1, (int)($row['total_items'] ?? 1));
-                $processed = max(0, (int)($row['processed_items'] ?? 0));
-                if ($status === 'done') {
-                    $processed = $total;
-                }
-                $out['total'] += $total;
-                $out['processed'] += min($processed, $total);
-                if ($status === 'done') {
-                    $out['done']++;
-                } elseif (in_array($status, ['error', 'canceled'], true)) {
-                    $out['failed']++;
-                } else {
-                    $out['pending']++;
-                    $out['has_job'] = true;
-                }
                 $cves = safe_json_decode((string)($row['cve_ids'] ?? ''), []);
                 $row['cve_list'] = is_array($cves) ? array_values(array_map('strval', $cves)) : [];
+
+                $items = $itemsByReport[$reportId] ?? [];
+                $doneCount = 0;
+                $failedCount = 0;
+                $pendingCount = 0;
+                $errorCves = [];
+
+                if ($items !== []) {
+                    foreach ($items as $item) {
+                        $itemStatus = (string)($item['status'] ?? 'pending');
+                        if ($itemStatus === 'done') {
+                            $doneCount++;
+                        } elseif (in_array($itemStatus, ['error', 'canceled'], true)) {
+                            $failedCount++;
+                            $errorCves[] = [
+                                'cve_id' => (string)($item['cve_id'] ?? ''),
+                                'error'  => (string)($item['ai_error'] ?? ''),
+                            ];
+                        } else {
+                            $pendingCount++;
+                        }
+                    }
+                    $total = count($items);
+                    // Un informe 'error' sin ítems marcados: el fallo fue de la
+                    // llamada completa, no de un CVE concreto.
+                    if ($status === 'error' && $failedCount === 0 && $doneCount === 0) {
+                        $failedCount = $total;
+                    }
+                } else {
+                    $total = max(1, (int)($row['total_items'] ?? 1));
+                    if ($status === 'done') {
+                        $doneCount = $total;
+                    } elseif (in_array($status, ['error', 'canceled'], true)) {
+                        $failedCount = $total;
+                    } else {
+                        $pendingCount = $total;
+                    }
+                }
+
+                $processed = $doneCount + $failedCount;
+                $row['item_total'] = $total;
+                $row['done_items'] = $doneCount;
+                $row['failed_items'] = $failedCount;
+                $row['pending_items'] = $pendingCount;
+                $row['error_cves'] = $errorCves;
+
+                $out['total'] += $total;
+                $out['processed'] += min($processed, $total);
+                $out['done'] += $doneCount;
+                $out['failed'] += $failedCount;
+                $out['pending'] += $pendingCount;
+                if ($pendingCount > 0 || in_array($status, ['pending', 'running'], true)) {
+                    $out['has_job'] = true;
+                }
+                if ($failedCount > 0 || in_array($status, ['error', 'canceled'], true)) {
+                    $out['failed_reports']++;
+                }
+
+                // Pista accionable: si el fallo fue el tiempo de espera del
+                // perfil, la ficha lo dice con enlace a Admin → APIs.
+                $errorsToCheck = [(string)($row['ai_error'] ?? '')];
+                foreach ($errorCves as $errorCve) {
+                    $errorsToCheck[] = (string)$errorCve['error'];
+                }
+                foreach ($errorsToCheck as $errorText) {
+                    if ($errorText !== '' && function_exists('llm_err_is_timeout') && llm_err_is_timeout($errorText)) {
+                        $out['timeout'] = true;
+                        break;
+                    }
+                }
+
                 $out['rows'][] = $row;
+            }
+
+            return $out;
+        }
+
+        /**
+         * Reencola SOLO los ítems fallidos de los informes del grupo. Los
+         * «done» se conservan: no se repite trabajo ya pagado.
+         *
+         * @return array{queued:int,kept:int,tokens:array<int,string>}
+         */
+        public static function requeueFailedReports(int $groupId): array
+        {
+            $out = ['queued' => 0, 'kept' => 0, 'tokens' => []];
+            $reports = self::groupReports($groupId);
+            if (($reports['rows'] ?? []) === []) {
+                return $out;
+            }
+
+            foreach ($reports['rows'] as $reportRow) {
+                $reportId = (int)($reportRow['id'] ?? 0);
+                if ($reportId <= 0) {
+                    continue;
+                }
+                $status = (string)($reportRow['status'] ?? 'pending');
+                $failedItems = (int)($reportRow['failed_items'] ?? 0);
+                $itemTotal = (int)($reportRow['item_total'] ?? 0);
+                $cancelled = in_array($status, ['error', 'canceled'], true);
+
+                if ($failedItems === 0 && !$cancelled) {
+                    $out['kept']++;
+                    continue;
+                }
+
+                if ($itemTotal > 0) {
+                    // Un informe cancelado puede tener ítems a medias: se
+                    // reabren todos los que no terminaron. En un informe
+                    // «done» con fallos solo se reabren los que están en error.
+                    $where = $cancelled ? "status <> 'done'" : "status = 'error'";
+                    CveDatabase::query(
+                        "UPDATE cve_ai_report_items
+                         SET status = 'pending', ai_error = NULL, ai_text = NULL, sections_json = NULL,
+                             ai_model = NULL, started_at = NULL, finished_at = NULL, updated_at = datetime('now')
+                         WHERE report_id = ? AND " . $where,
+                        [$reportId]
+                    );
+                    $doneNow = CveDatabase::fetchOne(
+                        "SELECT COUNT(*) AS c FROM cve_ai_report_items WHERE report_id = ? AND status = 'done'",
+                        [$reportId]
+                    );
+                    $totalNow = CveDatabase::fetchOne(
+                        "SELECT COUNT(*) AS c FROM cve_ai_report_items WHERE report_id = ?",
+                        [$reportId]
+                    );
+                    $doneCount = (int)($doneNow['c'] ?? 0);
+                    $total = (int)($totalNow['c'] ?? 0);
+                    if ($total <= 0) {
+                        $total = max(1, (int)($reportRow['total_items'] ?? 1));
+                    }
+                } else {
+                    // Informe que falló antes de crear sus ítems: entero.
+                    $doneCount = 0;
+                    $total = max(1, (int)($reportRow['total_items'] ?? 1));
+                    CveDatabase::query(
+                        "UPDATE cve_ai_report_items
+                         SET status = 'pending', ai_error = NULL, ai_text = NULL, sections_json = NULL,
+                             ai_model = NULL, started_at = NULL, finished_at = NULL, updated_at = datetime('now')
+                         WHERE report_id = ? AND status <> 'done'",
+                        [$reportId]
+                    );
+                }
+
+                $token = bin2hex(random_bytes(24));
+                CveDatabase::update(
+                    "UPDATE cve_ai_reports
+                     SET status = 'pending', token = ?, ai_error = NULL, ai_text = NULL, content_text = NULL,
+                         ai_model = NULL, started_at = NULL, finished_at = NULL,
+                         processed_items = ?, total_items = ?
+                     WHERE id = ?",
+                    [$token, $doneCount, $total, $reportId]
+                );
+                $out['tokens'][$reportId] = $token;
+                $out['queued']++;
             }
 
             return $out;
