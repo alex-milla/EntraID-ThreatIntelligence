@@ -116,10 +116,11 @@ $flashData = is_array($flashData) ? $flashData : [];
                 <h2 class="text-sm font-semibold m-0">Cargar el export del tenant</h2>
                 <p class="text-xs text-ink-muted mt-1 mb-0 max-w-2xl">
                     En <strong>Defender → Vulnerability management → Vulnerabilities</strong>, filtra por
-                    <em>Exposed devices → Affects my organization</em> y pulsa <em>Export</em>. Sube aquí el
-                    CSV completo: se guarda como snapshot y podrás filtrarlo en pantalla sin volver a subirlo.
-                    Hasta <?= e((string)($console['maxBytesLabel'] ?? '30 MB')) ?> y
-                    <?= (int)($console['maxRowsConsole'] ?? 20000) ?> CVE.
+                    <em>Exposed devices → Affects my organization</em> y pulsa <em>Export</em>. Sube uno o
+                    varios CSV: si eliges <strong>fusionar</strong>, los CVE se comparan con los que ya hay
+                    (nuevos se añaden, cambiados se actualizan y los idénticos se omiten).
+                    Hasta <?= e((string)($console['maxBytesLabel'] ?? '30 MB')) ?> por fichero y
+                    <?= (int)($console['maxRowsConsole'] ?? 20000) ?> CVE por snapshot.
                     <?php if (!empty($console['iniLimited'])): ?>
                         <span class="block mt-1 text-amber-700 dark:text-amber-300">
                             El límite lo impone <code class="font-mono">php.ini</code> (post_max_size / upload_max_filesize).
@@ -135,18 +136,47 @@ $flashData = is_array($flashData) ? $flashData : [];
         </div>
 
         <form method="POST" action="<?= e($base . '/upload') ?>" enctype="multipart/form-data"
-              class="mt-4 grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3 items-end">
+              class="mt-4 space-y-3">
             <?= Csrf::field() ?>
-            <div>
-                <label for="exposed-csv" class="block text-xs font-medium text-ink-muted mb-1">
-                    CSV «Vulnerabilities Export» de Defender TVM
-                </label>
-                <input id="exposed-csv" type="file" name="csv" accept=".csv,.txt,text/csv,text/plain" required
-                       class="block w-full text-sm text-ink file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:bg-brand-500 file:text-white file:text-xs file:font-semibold hover:file:bg-brand-600 border border-line-strong rounded-lg bg-input">
+            <?php if ($snapshot !== null): ?>
+                <input type="hidden" name="snapshot_id" value="<?= $snapshotId ?>">
+            <?php endif; ?>
+
+            <div class="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3 items-end">
+                <div>
+                    <label for="exposed-csv" class="block text-xs font-medium text-ink-muted mb-1">
+                        CSV «Vulnerabilities Export» de Defender TVM
+                        <span class="text-ink-soft">(puedes seleccionar varios)</span>
+                    </label>
+                    <input id="exposed-csv" type="file" name="csv[]" multiple accept=".csv,.txt,text/csv,text/plain" required
+                           class="block w-full text-sm text-ink file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:bg-brand-500 file:text-white file:text-xs file:font-semibold hover:file:bg-brand-600 border border-line-strong rounded-lg bg-input">
+                </div>
+                <button type="submit" class="btn">
+                    <?= icon('cloud_upload', 16) ?> Importar
+                </button>
             </div>
-            <button type="submit" class="btn">
-                <?= icon('cloud_upload', 16) ?> Importar snapshot
-            </button>
+
+            <?php if ($snapshot !== null): ?>
+                <fieldset class="border-0 p-0 m-0">
+                    <legend class="text-[11px] font-medium text-ink-muted mb-1">Destino de la importación</legend>
+                    <div class="flex flex-col sm:flex-row gap-2">
+                        <label class="flex items-start gap-2 px-3 py-2 rounded-lg border border-line cursor-pointer hover:bg-muted">
+                            <input type="radio" name="target" value="merge" class="mt-0.5" checked>
+                            <span>
+                                <span class="block text-xs font-medium">Fusionar con el snapshot #<?= $snapshotId ?></span>
+                                <span class="block text-[10px] text-ink-soft">Añade los nuevos y actualiza solo lo que haya cambiado.</span>
+                            </span>
+                        </label>
+                        <label class="flex items-start gap-2 px-3 py-2 rounded-lg border border-line cursor-pointer hover:bg-muted">
+                            <input type="radio" name="target" value="new" class="mt-0.5">
+                            <span>
+                                <span class="block text-xs font-medium">Crear un snapshot nuevo</span>
+                                <span class="block text-[10px] text-ink-soft">Foto limpia; el actual se conserva.</span>
+                            </span>
+                        </label>
+                    </div>
+                </fieldset>
+            <?php endif; ?>
         </form>
     </div>
 
@@ -164,10 +194,16 @@ $flashData = is_array($flashData) ? $flashData : [];
                 </p>
                 <p class="text-[11px] text-ink-soft mt-1 mb-0">
                     Export del <?= e($fmtDate((string)($snapshot['export_date'] ?? ''))) ?>
-                    · importado el <?= e($fmtDate((string)($snapshot['created_at'] ?? ''))) ?>
-                    · <?= (int)($snapshot['rows_imported'] ?? 0) ?> CVE
+                    · creado el <?= e($fmtDate((string)($snapshot['created_at'] ?? ''))) ?>
+                    <?php if (!empty($snapshot['updated_at'])): ?>
+                        · actualizado el <?= e($fmtDate((string)$snapshot['updated_at'])) ?>
+                    <?php endif; ?>
+                    · <strong><?= (int)($snapshot['rows_imported'] ?? 0) ?> CVE únicos</strong>
+                    <?php if ((int)($snapshot['imports'] ?? 1) > 1): ?>
+                        · <?= (int)$snapshot['imports'] ?> importaciones
+                    <?php endif; ?>
                     <?php if ((int)($snapshot['rows_skipped'] ?? 0) > 0): ?>
-                        · <?= (int)$snapshot['rows_skipped'] ?> descartados
+                        · <?= (int)$snapshot['rows_skipped'] ?> filas descartadas
                     <?php endif; ?>
                     · <?= e(ExposedConsoleStore::formatBytes((int)($snapshot['bytes'] ?? 0))) ?>
                 </p>

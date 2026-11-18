@@ -76,13 +76,35 @@ if (!class_exists('ExposedConsoleStore')) {
         }
 
         /**
-         * Importa el CSV completo como snapshot nuevo.
+         * Importa un CSV en un snapshot nuevo o lo fusiona con uno existente.
          *
-         * @return array{ok:bool,error:string,snapshot_id:int,rows:int,skipped:int}
+         * v0.4.25.2: compara CVE a CVE con una huella estable de los datos de
+         * Defender. Si el CVE no está, se inserta; si está y cambió, se
+         * actualiza; si está idéntico, se omite. La antigüedad (`age_days`) se
+         * refresca en silencio porque es tiempo transcurrido, no un cambio de
+         * información: si contara, cualquier reimportación marcaría todo como
+         * «actualizado».
+         *
+         * @return array{ok:bool,error:string,snapshot_id:int,rows:int,skipped:int,
+         *               inserted:int,updated:int,unchanged:int,merged:bool,
+         *               snapshot_total:int,truncated:bool,range:string}
          */
-        public static function importCsv(string $csv, string $filename, int $userId = 0): array
+        public static function importCsv(string $csv, string $filename, int $userId = 0, int $targetSnapshotId = 0): array
         {
-            $out = ['ok' => false, 'error' => '', 'snapshot_id' => 0, 'rows' => 0, 'skipped' => 0];
+            $out = [
+                'ok'             => false,
+                'error'          => '',
+                'snapshot_id'    => 0,
+                'rows'           => 0,
+                'skipped'        => 0,
+                'inserted'       => 0,
+                'updated'        => 0,
+                'unchanged'      => 0,
+                'merged'         => false,
+                'snapshot_total' => 0,
+                'truncated'      => false,
+                'range'          => '',
+            ];
 
             if (trim($csv) === '') {
                 $out['error'] = 'El fichero CSV está vacío.';
@@ -106,72 +128,199 @@ if (!class_exists('ExposedConsoleStore')) {
                 return $out;
             }
 
+            if ($targetSnapshotId > 0 && self::getSnapshot($targetSnapshotId) === null) {
+                $out['error'] = 'El snapshot de destino no existe o se ha eliminado.';
+                return $out;
+            }
+
             $db = CveDatabase::getInstance();
             try {
                 $db->beginTransaction();
 
-                $snapshotId = CveDatabase::insert(
-                    "INSERT INTO exposed_snapshots
-                     (filename, export_date, bytes, rows_total, rows_imported, rows_skipped, generated_by)
-                     VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    [
-                        $filename !== '' ? $filename : 'export-tvm.csv',
-                        (string)($parsed['export_date'] ?? ''),
-                        strlen($csv),
-                        (int)($parsed['total'] ?? count($parsed['rows'])),
-                        count($parsed['rows']),
-                        (int)($parsed['skipped'] ?? 0),
-                        $userId > 0 ? $userId : null,
-                    ]
-                );
+                if ($targetSnapshotId > 0) {
+                    $snapshotId = $targetSnapshotId;
+                    $out['merged'] = true;
+                } else {
+                    $snapshotId = CveDatabase::insert(
+                        "INSERT INTO exposed_snapshots
+                         (filename, export_date, bytes, rows_total, rows_imported, rows_skipped, imports, generated_by)
+                         VALUES (?, ?, ?, ?, 0, ?, 1, ?)",
+                        [
+                            $filename !== '' ? $filename : 'export-tvm.csv',
+                            (string)($parsed['export_date'] ?? ''),
+                            strlen($csv),
+                            (int)($parsed['total'] ?? count($parsed['rows'])),
+                            (int)($parsed['skipped'] ?? 0),
+                            $userId > 0 ? $userId : null,
+                        ]
+                    );
+                }
 
-                $stmt = $db->prepare(
-                    "INSERT OR REPLACE INTO exposed_cves
+                // Huellas existentes del snapshot: una sola lectura, sin N queries.
+                $existing = [];
+                $rows = CveDatabase::fetchAll(
+                    "SELECT cve_id, fingerprint, age_days FROM exposed_cves WHERE snapshot_id = ?",
+                    [$snapshotId]
+                );
+                foreach ($rows as $row) {
+                    $existing[(string)$row['cve_id']] = $row;
+                }
+
+                $insertStmt = $db->prepare(
+                    "INSERT INTO exposed_cves
                      (snapshot_id, cve_id, severity, cvss, epss, age_days, published_at,
                       first_detected_at, updated_at, has_exploit, has_known_threats, has_alerts,
                       exposed_machines, tvm_status, related_software, software_labels,
                       software_tokens, software_total, zero_day, no_security_update,
-                      security_update, exploit_kit, exploit_verified, description)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                      security_update, exploit_kit, exploit_verified, description, fingerprint)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
                 );
 
+                $updateStmt = $db->prepare(
+                    "UPDATE exposed_cves
+                     SET severity = ?, cvss = ?, epss = ?, age_days = ?, published_at = ?,
+                         first_detected_at = ?, updated_at = ?, has_exploit = ?,
+                         has_known_threats = ?, has_alerts = ?, exposed_machines = ?,
+                         tvm_status = ?, related_software = ?, software_labels = ?,
+                         software_tokens = ?, software_total = ?, zero_day = ?,
+                         no_security_update = ?, security_update = ?, exploit_kit = ?,
+                         exploit_verified = ?, description = ?, fingerprint = ?
+                     WHERE snapshot_id = ? AND cve_id = ?"
+                );
+
+                $ageStmt = $db->prepare(
+                    "UPDATE exposed_cves SET age_days = ? WHERE snapshot_id = ? AND cve_id = ?"
+                );
+
+                $inserted = 0;
+                $updated = 0;
+                $unchanged = 0;
+                $minCve = null;
+                $maxCve = null;
+                $minAge = null;
+                $maxAge = null;
+
                 foreach ($parsed['rows'] as $row) {
-                    $tags = is_array($row['tags'] ?? null) ? $row['tags'] : [];
-                    $labels = is_array($row['software_labels'] ?? null) ? $row['software_labels'] : [];
-                    $stmt->execute([
+                    $cveId = (string)$row['cve_id'];
+                    $payload = self::rowPayload($row);
+                    $fingerprint = self::fingerprintRow($payload);
+
+                    $minCve = $minCve === null || strcmp($cveId, $minCve) < 0 ? $cveId : $minCve;
+                    $maxCve = $maxCve === null || strcmp($cveId, $maxCve) > 0 ? $cveId : $maxCve;
+                    $age = (int)($row['age_days'] ?? 0);
+                    $minAge = $minAge === null ? $age : min($minAge, $age);
+                    $maxAge = $maxAge === null ? $age : max($maxAge, $age);
+
+                    if (!isset($existing[$cveId])) {
+                        $insertStmt->execute([
+                            $snapshotId,
+                            $cveId,
+                            $payload['severity'],
+                            $payload['cvss'],
+                            $payload['epss'],
+                            $age,
+                            $payload['published_at'],
+                            $payload['first_detected_at'],
+                            $payload['updated_at'],
+                            $payload['has_exploit'],
+                            $payload['has_known_threats'],
+                            $payload['has_alerts'],
+                            $payload['exposed_machines'],
+                            $payload['tvm_status'],
+                            $payload['related_software'],
+                            $payload['software_labels'],
+                            $payload['software_tokens'],
+                            $payload['software_total'],
+                            $payload['zero_day'],
+                            $payload['no_security_update'],
+                            $payload['security_update'],
+                            $payload['exploit_kit'],
+                            $payload['exploit_verified'],
+                            $payload['description'],
+                            $fingerprint,
+                        ]);
+                        $inserted++;
+                        continue;
+                    }
+
+                    $sameFingerprint = (string)($existing[$cveId]['fingerprint'] ?? '') === $fingerprint;
+                    if ($sameFingerprint) {
+                        $unchanged++;
+                        // Solo el tiempo transcurrido: no es un cambio del dato.
+                        if ((int)($existing[$cveId]['age_days'] ?? 0) !== $age) {
+                            $ageStmt->execute([$age, $snapshotId, $cveId]);
+                        }
+                        continue;
+                    }
+
+                    $updateStmt->execute([
+                        $payload['severity'],
+                        $payload['cvss'],
+                        $payload['epss'],
+                        $age,
+                        $payload['published_at'],
+                        $payload['first_detected_at'],
+                        $payload['updated_at'],
+                        $payload['has_exploit'],
+                        $payload['has_known_threats'],
+                        $payload['has_alerts'],
+                        $payload['exposed_machines'],
+                        $payload['tvm_status'],
+                        $payload['related_software'],
+                        $payload['software_labels'],
+                        $payload['software_tokens'],
+                        $payload['software_total'],
+                        $payload['zero_day'],
+                        $payload['no_security_update'],
+                        $payload['security_update'],
+                        $payload['exploit_kit'],
+                        $payload['exploit_verified'],
+                        $payload['description'],
+                        $fingerprint,
                         $snapshotId,
-                        (string)$row['cve_id'],
-                        (string)($row['severity'] ?? ''),
-                        $row['cvss'] !== null ? (float)$row['cvss'] : null,
-                        $row['epss'] !== null ? (float)$row['epss'] : null,
-                        (int)($row['age_days'] ?? 0),
-                        (string)($row['published_at'] ?? ''),
-                        (string)($row['first_detected_at'] ?? ''),
-                        (string)($row['updated_at'] ?? ''),
-                        (int)($row['has_exploit'] ?? 0),
-                        (int)($row['has_known_threats'] ?? 0),
-                        (int)($row['has_alerts'] ?? 0),
-                        (int)($row['exposed_machines'] ?? 0),
-                        (string)($row['tvm_status'] ?? ''),
-                        self::clip((string)($row['related_software'] ?? ''), 20000),
-                        implode(', ', array_slice($labels, 0, 6)),
-                        (string)($row['software_tokens'] ?? ''),
-                        (int)($row['software_total'] ?? 0),
-                        isset($tags['zero_day']) ? 1 : 0,
-                        isset($tags['no_security_update']) ? 1 : 0,
-                        isset($tags['security_update']) ? 1 : 0,
-                        isset($tags['exploit_kit']) ? 1 : 0,
-                        isset($tags['exploit_verified']) ? 1 : 0,
-                        self::clip((string)($row['description'] ?? ''), 8000),
+                        $cveId,
                     ]);
+                    $updated++;
                 }
+
+                $unique = CveDatabase::fetchOne(
+                    "SELECT COUNT(*) AS c FROM exposed_cves WHERE snapshot_id = ?",
+                    [$snapshotId]
+                );
+
+                CveDatabase::query(
+                    "UPDATE exposed_snapshots
+                     SET rows_total = rows_total + ?, rows_imported = ?, rows_skipped = rows_skipped + ?,
+                         bytes = bytes + ?, imports = imports + ?, updated_at = datetime('now')
+                     WHERE id = ?",
+                    [
+                        (int)($parsed['total'] ?? count($parsed['rows'])),
+                        (int)($unique['c'] ?? 0),
+                        (int)($parsed['skipped'] ?? 0),
+                        strlen($csv),
+                        $targetSnapshotId > 0 ? 1 : 0,
+                        $snapshotId,
+                    ]
+                );
 
                 $db->commit();
 
+                $fileRows = (int)($parsed['total'] ?? count($parsed['rows']));
                 $out['ok'] = true;
                 $out['snapshot_id'] = $snapshotId;
                 $out['rows'] = count($parsed['rows']);
                 $out['skipped'] = (int)($parsed['skipped'] ?? 0);
+                $out['inserted'] = $inserted;
+                $out['updated'] = $updated;
+                $out['unchanged'] = $unchanged;
+                $out['snapshot_total'] = (int)($unique['c'] ?? 0);
+                // Defender corta el export web en 6.000 filas: se avisa con el
+                // rango cubierto para que se pueda completar con otro tramo.
+                $out['truncated'] = $fileRows >= 6000;
+                if ($out['truncated'] && $minCve !== null && $maxCve !== null) {
+                    $out['range'] = $minCve . ' – ' . $maxCve
+                        . ' · edades ' . (int)$minAge . '–' . (int)$maxAge . ' días';
+                }
                 return $out;
             } catch (Throwable $e) {
                 if ($db->inTransaction()) {
@@ -180,6 +329,54 @@ if (!class_exists('ExposedConsoleStore')) {
                 $out['error'] = 'No se pudo guardar el snapshot: ' . $e->getMessage();
                 return $out;
             }
+        }
+
+        /**
+         * Campos de una fila del CSV tal y como se guardan en `exposed_cves`.
+         *
+         * @param array<string,mixed> $row
+         * @return array<string,mixed>
+         */
+        private static function rowPayload(array $row): array
+        {
+            $tags = is_array($row['tags'] ?? null) ? $row['tags'] : [];
+            $labels = is_array($row['software_labels'] ?? null) ? $row['software_labels'] : [];
+
+            return [
+                'severity'          => (string)($row['severity'] ?? ''),
+                'cvss'              => $row['cvss'] !== null ? (float)$row['cvss'] : null,
+                'epss'              => $row['epss'] !== null ? (float)$row['epss'] : null,
+                'published_at'      => (string)($row['published_at'] ?? ''),
+                'first_detected_at' => (string)($row['first_detected_at'] ?? ''),
+                'updated_at'        => (string)($row['updated_at'] ?? ''),
+                'has_exploit'       => (int)($row['has_exploit'] ?? 0),
+                'has_known_threats' => (int)($row['has_known_threats'] ?? 0),
+                'has_alerts'        => (int)($row['has_alerts'] ?? 0),
+                'exposed_machines'  => (int)($row['exposed_machines'] ?? 0),
+                'tvm_status'        => (string)($row['tvm_status'] ?? ''),
+                'related_software'  => self::clip((string)($row['related_software'] ?? ''), 20000),
+                'software_labels'   => implode(', ', array_slice(array_map('strval', $labels), 0, 6)),
+                'software_tokens'   => (string)($row['software_tokens'] ?? ''),
+                'software_total'    => (int)($row['software_total'] ?? 0),
+                'zero_day'          => isset($tags['zero_day']) ? 1 : 0,
+                'no_security_update' => isset($tags['no_security_update']) ? 1 : 0,
+                'security_update'   => isset($tags['security_update']) ? 1 : 0,
+                'exploit_kit'       => isset($tags['exploit_kit']) ? 1 : 0,
+                'exploit_verified'  => isset($tags['exploit_verified']) ? 1 : 0,
+                'description'       => self::clip((string)($row['description'] ?? ''), 8000),
+            ];
+        }
+
+        /**
+         * Huella estable de un CVE. Excluye `age_days` (tiempo transcurrido) para
+         * que una reimportación idéntica no se cuente como cambio.
+         *
+         * @param array<string,mixed> $payload
+         */
+        private static function fingerprintRow(array $payload): string
+        {
+            $json = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            return sha1(is_string($json) ? $json : serialize($payload));
         }
 
         public static function listSnapshots(int $limit = 25): array

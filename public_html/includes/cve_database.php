@@ -267,8 +267,10 @@ class CveDatabase
             rows_total INTEGER NOT NULL DEFAULT 0,
             rows_imported INTEGER NOT NULL DEFAULT 0,
             rows_skipped INTEGER NOT NULL DEFAULT 0,
+            imports INTEGER NOT NULL DEFAULT 1,
             generated_by INTEGER,
-            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT
         )");
         $db->exec("CREATE TABLE IF NOT EXISTS exposed_cves (
             snapshot_id INTEGER NOT NULL,
@@ -295,6 +297,7 @@ class CveDatabase
             exploit_kit INTEGER NOT NULL DEFAULT 0,
             exploit_verified INTEGER NOT NULL DEFAULT 0,
             description TEXT,
+            fingerprint TEXT,
             PRIMARY KEY (snapshot_id, cve_id)
         ) WITHOUT ROWID");
         $db->exec("CREATE INDEX IF NOT EXISTS idx_exposed_cves_sev ON exposed_cves(snapshot_id, severity)");
@@ -576,6 +579,27 @@ class CveDatabase
 
     private static function migrateSchema(PDO $db): void
     {
+        // v0.4.25.2: la consola de Equipos expuestos compara los CVE que ya
+        // están en el snapshot por huella (fingerprint) para actualizar solo lo
+        // que cambia y omitir lo idéntico. Aditivo e idempotente.
+        $exposedCols = [];
+        foreach ($db->query("PRAGMA table_info(exposed_cves)") as $col) {
+            $exposedCols[$col['name']] = true;
+        }
+        if ($exposedCols !== [] && !isset($exposedCols['fingerprint'])) {
+            $db->exec("ALTER TABLE exposed_cves ADD COLUMN fingerprint TEXT");
+        }
+        $snapshotCols = [];
+        foreach ($db->query("PRAGMA table_info(exposed_snapshots)") as $col) {
+            $snapshotCols[$col['name']] = true;
+        }
+        if ($snapshotCols !== [] && !isset($snapshotCols['updated_at'])) {
+            $db->exec("ALTER TABLE exposed_snapshots ADD COLUMN updated_at TEXT");
+        }
+        if ($snapshotCols !== [] && !isset($snapshotCols['imports'])) {
+            $db->exec("ALTER TABLE exposed_snapshots ADD COLUMN imports INTEGER NOT NULL DEFAULT 1");
+        }
+
         // v0.2.6.1 creó software_watchlist con environment NULL y
         // UNIQUE(name, version). v0.2.7.0 añade entorno a la clave única.
         // SQLite no permite alterar una UNIQUE: reconstruimos la tabla.

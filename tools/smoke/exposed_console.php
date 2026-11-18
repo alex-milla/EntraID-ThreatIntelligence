@@ -339,7 +339,80 @@ try {
     )['c'] === 1);
 
     /* -----------------------------------------------------------------
-     * 8. Borrado del snapshot bloqueado por grupos
+     * 8. Fusión incremental: nuevo / actualizado / sin cambios (v0.4.25.2)
+     * -------------------------------------------------------------- */
+
+    $mergeFirst = ExposedConsoleStore::importCsv($csv, 'merge-a.csv', 0);
+    $mergeId = (int)$mergeFirst['snapshot_id'];
+    check('fusión: snapshot nuevo', $mergeFirst['ok'] && $mergeId > 0, $mergeFirst['error']);
+    check('fusión: 13 nuevos', (int)$mergeFirst['inserted'] === 13
+        && (int)$mergeFirst['updated'] === 0
+        && (int)$mergeFirst['unchanged'] === 0);
+    check('fusión: total del snapshot', (int)$mergeFirst['snapshot_total'] === 13);
+    check('fusión: sin truncado', empty($mergeFirst['truncated']));
+
+    $mergeAgain = ExposedConsoleStore::importCsv($csv, 'merge-b.csv', 0, $mergeId);
+    check('fusión: reimportar idéntico', $mergeAgain['ok'] && !empty($mergeAgain['merged']));
+    check('fusión: 0 nuevos y 13 sin cambios', (int)$mergeAgain['inserted'] === 0
+        && (int)$mergeAgain['updated'] === 0
+        && (int)$mergeAgain['unchanged'] === 13);
+    check('fusión: no duplica filas', (int)$mergeAgain['snapshot_total'] === 13);
+
+    // Un dato cambia (equipos expuestos 600 → 601): solo ese CVE se actualiza.
+    $changedCsv = str_replace('google:chrome,600,', 'google:chrome,601,', $csv);
+    $mergeChanged = ExposedConsoleStore::importCsv($changedCsv, 'merge-c.csv', 0, $mergeId);
+    check('fusión: 1 actualizado y 12 sin cambios', (int)$mergeChanged['updated'] === 1
+        && (int)$mergeChanged['inserted'] === 0
+        && (int)$mergeChanged['unchanged'] === 12);
+    $changedRow = CveDatabase::fetchOne(
+        "SELECT exposed_machines FROM exposed_cves WHERE snapshot_id = ? AND cve_id = ?",
+        [$mergeId, 'CVE-2026-90001']
+    );
+    check('fusión: el dato actualizado se guarda', (int)($changedRow['exposed_machines'] ?? 0) === 601);
+
+    // Fila nueva en el mismo snapshot.
+    $extraCsv = $changedCsv . implode('', [
+        'CVE-2026-90014,High,7.2,0.11,20,"01 Nov, 2026","02 Nov, 2026","18 Nov, 2026",',
+        'False,False,False,microsoft:windows,3,"Summary: nueva detección.",RemediationRequired', "\n",
+    ]);
+    $mergeNew = ExposedConsoleStore::importCsv($extraCsv, 'merge-d.csv', 0, $mergeId);
+    check('fusión: 1 nuevo y 13 sin cambios', (int)$mergeNew['inserted'] === 1
+        && (int)$mergeNew['updated'] === 0
+        && (int)$mergeNew['unchanged'] === 13);
+    check('fusión: total 14', (int)$mergeNew['snapshot_total'] === 14);
+
+    $mergeSnapshot = ExposedConsoleStore::getSnapshot($mergeId);
+    check('fusión: contador de importaciones', (int)($mergeSnapshot['imports'] ?? 0) === 4);
+    check('fusión: fecha de actualización', !empty($mergeSnapshot['updated_at']));
+    check('fusión: huellas guardadas', (int)CveDatabase::fetchOne(
+        "SELECT COUNT(*) AS c FROM exposed_cves WHERE snapshot_id = ? AND (fingerprint IS NULL OR fingerprint = '')",
+        [$mergeId]
+    )['c'] === 0);
+
+    // Aviso del tope de 6.000 filas de Defender (6000 filas → 1 CVE único).
+    $fhMany = fopen('php://temp', 'r+');
+    fputcsv($fhMany, ['Vulnerabilities Export', '18 Nov 2026 05:54 PM +00:00'], ',', '"', '\\');
+    fputcsv($fhMany, $header, ',', '"', '\\');
+    for ($i = 0; $i < 6000; $i++) {
+        fputcsv($fhMany, $data[0], ',', '"', '\\');
+    }
+    rewind($fhMany);
+    $truncCsv = (string)stream_get_contents($fhMany);
+    fclose($fhMany);
+
+    $trunc = ExposedConsoleStore::importCsv($truncCsv, 'trunc-6000.csv', 0);
+    $truncId = (int)$trunc['snapshot_id'];
+    check('tope: 6.000 filas detectadas', $trunc['ok'] && !empty($trunc['truncated']));
+    check('tope: rango informado', (string)$trunc['range'] !== '' && str_contains((string)$trunc['range'], 'CVE-2026-90001'));
+    check('tope: deduplica filas repetidas', (int)$trunc['rows'] === 1 && (int)$trunc['snapshot_total'] === 1);
+    if ($truncId > 0) {
+        ExposedConsoleStore::deleteSnapshot($truncId);
+    }
+
+    ExposedConsoleStore::deleteSnapshot($mergeId);
+
+    /* -----------------------------------------------------------------
+     * 9. Borrado del snapshot bloqueado por grupos
      * -------------------------------------------------------------- */
 
     $blocked = ExposedConsoleStore::deleteSnapshot($snapshotId);

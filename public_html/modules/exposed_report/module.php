@@ -133,59 +133,177 @@ class Module_ExposedReport extends BaseModule
 
         Csrf::validateOrFail();
 
-        $file = $_FILES['csv'] ?? null;
-        $uploadError = is_array($file) ? (int)($file['error'] ?? UPLOAD_ERR_NO_FILE) : UPLOAD_ERR_NO_FILE;
-        if (!is_array($file) || $uploadError !== UPLOAD_ERR_OK) {
-            flash('error', $this->uploadError($uploadError));
+        $target = ((string)($_POST['target'] ?? 'new')) === 'merge' ? 'merge' : 'new';
+        $targetId = (int)($_POST['snapshot_id'] ?? 0);
+        if ($target === 'merge' && $targetId <= 0) {
+            flash('error', 'Elige un snapshot válido para fusionar los CSV.');
+            redirect($back);
+        }
+        if ($target === 'new') {
+            $targetId = 0;
+        }
+
+        $files = $this->uploadedFiles('csv');
+        if ($files === []) {
+            $error = UPLOAD_ERR_NO_FILE;
+            foreach (($_FILES['csv']['error'] ?? []) as $code) {
+                if ((int)$code !== UPLOAD_ERR_OK && (int)$code !== UPLOAD_ERR_NO_FILE) {
+                    $error = (int)$code;
+                    break;
+                }
+            }
+            flash('error', $this->uploadError($error));
             redirect($back);
         }
 
-        $size = (int)($file['size'] ?? 0);
-        if ($size <= 0) {
-            flash('error', 'El fichero está vacío.');
-            redirect($back);
+        // Validación previa de TODO el lote: o entran todos los ficheros o
+        // ninguno, para no dejar el snapshot a medias sin explicación.
+        $errors = [];
+        foreach ($files as $file) {
+            $label = (string)($file['name'] ?? 'CSV');
+            $size = (int)($file['size'] ?? 0);
+            if ((int)($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+                $errors[] = $label . ': ' . $this->uploadError((int)$file['error']);
+                continue;
+            }
+            if ($size <= 0) {
+                $errors[] = $label . ': el fichero está vacío.';
+                continue;
+            }
+            if ($size > CveTvmImport::CONSOLE_MAX_BYTES) {
+                $errors[] = $label . ': ocupa ' . ExposedConsoleStore::formatBytes($size)
+                    . ' y el máximo por fichero es ' . ExposedConsoleStore::formatBytes(CveTvmImport::CONSOLE_MAX_BYTES) . '.';
+                continue;
+            }
+            $extension = strtolower(pathinfo($label, PATHINFO_EXTENSION));
+            if ($extension !== '' && !in_array($extension, ['csv', 'txt'], true)) {
+                $errors[] = $label . ': no es un CSV (solo .csv o .txt).';
+            }
         }
-        if ($size > CveTvmImport::CONSOLE_MAX_BYTES) {
-            flash('error', 'El CSV ocupa ' . ExposedConsoleStore::formatBytes($size)
-                . ' y el máximo es ' . ExposedConsoleStore::formatBytes($maxUpload) . '.');
+        if ($errors !== []) {
+            flash('error', 'No se ha importado nada. ' . implode(' · ', array_slice($errors, 0, 4)));
+            redirect($back . ($targetId > 0 ? '?snapshot=' . $targetId : ''));
+        }
+
+        $snapshotId = 0;
+        $inserted = 0;
+        $updated = 0;
+        $unchanged = 0;
+        $skipped = 0;
+        $processed = 0;
+        $truncated = [];
+        $bytes = 0;
+        $failures = [];
+
+        foreach ($files as $file) {
+            $label = trim((string)($file['name'] ?? 'export-tvm.csv'));
+            $tmpName = (string)($file['tmp_name'] ?? '');
+            if ($tmpName === '' || !is_uploaded_file($tmpName)) {
+                $failures[] = $label . ': no se pudo leer el fichero subido.';
+                continue;
+            }
+            $content = file_get_contents($tmpName);
+            if ($content === false || trim($content) === '') {
+                $failures[] = $label . ': contenido vacío.';
+                continue;
+            }
+
+            $res = ExposedConsoleStore::importCsv(
+                $content,
+                $label,
+                Auth::id(),
+                $snapshotId > 0 ? $snapshotId : $targetId
+            );
+            if (!$res['ok']) {
+                $failures[] = $label . ': ' . $res['error'];
+                continue;
+            }
+
+            $snapshotId = (int)$res['snapshot_id'];
+            $targetId = $snapshotId;
+            $inserted += (int)$res['inserted'];
+            $updated += (int)$res['updated'];
+            $unchanged += (int)$res['unchanged'];
+            $skipped += (int)$res['skipped'];
+            $processed += (int)$res['rows'];
+            $bytes += (int)($file['size'] ?? 0);
+            if (!empty($res['truncated'])) {
+                $truncated[] = $label . ' (' . (string)$res['range'] . ')';
+            }
+        }
+
+        if ($snapshotId === 0) {
+            flash('error', 'No se pudo importar ningún CSV. ' . implode(' · ', array_slice($failures, 0, 3)));
             redirect($back);
         }
 
-        $tmpName = (string)($file['tmp_name'] ?? '');
-        if ($tmpName === '' || !is_uploaded_file($tmpName)) {
-            flash('error', 'No se pudo leer el fichero subido.');
-            redirect($back);
-        }
-
-        $filename = trim((string)($file['name'] ?? 'export-tvm.csv'));
-        $extension = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
-        if ($extension !== '' && !in_array($extension, ['csv', 'txt'], true)) {
-            flash('error', 'Sube el CSV de Defender TVM (Vulnerabilidades → Exportar).');
-            redirect($back);
-        }
-
-        $content = file_get_contents($tmpName);
-        if ($content === false || trim($content) === '') {
-            flash('error', 'No se pudo leer el contenido del CSV.');
-            redirect($back);
-        }
-
-        $res = ExposedConsoleStore::importCsv($content, $filename, Auth::id());
-        if (!$res['ok']) {
-            flash('error', $res['error']);
-            redirect($back);
-        }
+        $snapshot = ExposedConsoleStore::getSnapshot($snapshotId);
+        $total = (int)($snapshot['rows_imported'] ?? 0);
 
         log_activity('exposed_report.snapshot_imported', [
-            'snapshot' => (int)$res['snapshot_id'],
-            'rows'     => (int)$res['rows'],
-            'skipped'  => (int)$res['skipped'],
-            'bytes'    => $size,
+            'snapshot'  => $snapshotId,
+            'files'     => count($files),
+            'rows'      => $processed,
+            'inserted'  => $inserted,
+            'updated'   => $updated,
+            'unchanged' => $unchanged,
+            'skipped'   => $skipped,
+            'bytes'     => $bytes,
+            'merged'    => $targetId > 0,
         ]);
 
-        flash('success', 'Snapshot #' . (int)$res['snapshot_id'] . ' guardado con '
-            . (int)$res['rows'] . ' CVE del tenant.');
-        redirect($back . '?snapshot=' . (int)$res['snapshot_id']);
+        $summary = 'Snapshot #' . $snapshotId . ' con ' . $total . ' CVE únicos'
+            . (count($files) > 1 ? ' (' . count($files) . ' ficheros)' : '')
+            . ': ' . $inserted . ' nuevos, ' . $updated . ' actualizados, '
+            . $unchanged . ' sin cambios (omitidos).';
+        if ($inserted === 0 && $updated === 0) {
+            $summary .= ' No había información nueva que guardar.';
+        }
+        if ($failures !== []) {
+            $summary .= ' ' . count($failures) . ' fichero(s) con error: '
+                . implode(' · ', array_slice($failures, 0, 3));
+        }
+        flash('success', $summary);
+
+        if ($truncated !== []) {
+            flash('warning', 'Defender corta cada export web en 6.000 filas. '
+                . implode(' · ', $truncated)
+                . '. Si el tenant tiene más, exporta otro tramo (por edad o severidad) y '
+                . 'súbelo a este mismo snapshot para completarlo sin duplicar.');
+        }
+
+        redirect($back . '?snapshot=' . $snapshotId);
+    }
+
+    /**
+     * Normaliza $_FILES de un campo multiple a una lista de ficheros.
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    private function uploadedFiles(string $field): array
+    {
+        $raw = $_FILES[$field] ?? null;
+        if (!is_array($raw) || !isset($raw['name'])) {
+            return [];
+        }
+        if (!is_array($raw['name'])) {
+            return [$raw];
+        }
+
+        $files = [];
+        foreach ($raw['name'] as $index => $name) {
+            if (!is_scalar($name) || (string)$name === '') {
+                continue;
+            }
+            $files[] = [
+                'name'     => (string)$name,
+                'type'     => (string)($raw['type'][$index] ?? ''),
+                'tmp_name' => (string)($raw['tmp_name'][$index] ?? ''),
+                'error'    => (int)($raw['error'][$index] ?? UPLOAD_ERR_NO_FILE),
+                'size'     => (int)($raw['size'][$index] ?? 0),
+            ];
+        }
+        return $files;
     }
 
     /** POST snapshot/delete */
