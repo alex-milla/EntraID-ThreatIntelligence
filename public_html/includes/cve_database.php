@@ -314,6 +314,7 @@ class CveDatabase
             name TEXT NOT NULL,
             snapshot_id INTEGER,
             filters_json TEXT,
+            report_ids TEXT,
             created_by INTEGER,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -603,6 +604,14 @@ class CveDatabase
         }
         if ($snapshotCols !== [] && !isset($snapshotCols['imports'])) {
             $db->exec("ALTER TABLE exposed_snapshots ADD COLUMN imports INTEGER NOT NULL DEFAULT 1");
+        }
+        // v0.4.26.5: informes por CVE lanzados desde el grupo (ids de cve_ai_reports).
+        $exposedGroupCols = [];
+        foreach ($db->query("PRAGMA table_info(exposed_groups)") as $col) {
+            $exposedGroupCols[$col['name']] = true;
+        }
+        if ($exposedGroupCols !== [] && !isset($exposedGroupCols['report_ids'])) {
+            $db->exec("ALTER TABLE exposed_groups ADD COLUMN report_ids TEXT");
         }
         foreach (['rows_inserted', 'rows_updated', 'rows_unchanged'] as $counter) {
             if ($snapshotCols !== [] && !isset($snapshotCols[$counter])) {

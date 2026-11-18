@@ -647,6 +647,8 @@ button .material-icons {
     .doc-sheet blockquote,
     .doc-sheet pre { break-inside: avoid; page-break-inside: avoid; }
     .doc-sheet thead { display: table-header-group; }
+    /* La descripción completa de Defender no se imprime: es material de consulta. */
+    .doc-sheet details { display: none !important; }
 }
 
 

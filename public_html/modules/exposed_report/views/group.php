@@ -68,6 +68,8 @@ $orgs = is_array($orgs ?? null) ? $orgs : [];
 $singleCve = strtoupper(trim((string)($singleCve ?? '')));
 $backUrl = (string)($backUrl ?? $base);
 $currentBack = (string)($_GET['back'] ?? '');
+$groupReports = is_array($groupReports ?? null) ? $groupReports : ['rows' => [], 'total' => 0, 'processed' => 0, 'done' => 0, 'failed' => 0, 'pending' => 0, 'has_job' => false];
+$backQuery = $currentBack !== '' ? '&back=' . rawurlencode($currentBack) : '';
 
 $filters = [];
 if ($group !== null && (string)($group['filters_json'] ?? '') !== '') {
@@ -185,11 +187,22 @@ $flashData = is_array($flashData) ? $flashData : [];
                     </button>
                 </form>
 
-                <form method="POST" action="<?= e($base . '/group/' . (int)$group['id'] . '/analyze') ?>">
+                <form method="POST" action="<?= e($base . '/group/' . (int)$group['id'] . '/analyze') ?>"
+                      class="flex items-end gap-2 flex-wrap">
                     <?= Csrf::field() ?>
+                    <div>
+                        <label for="exposed-report-mode" class="block text-[10px] uppercase tracking-wide text-ink-soft mb-1">
+                            Informes
+                        </label>
+                        <select id="exposed-report-mode" name="report_mode"
+                                class="px-3 py-2 rounded-lg border border-line-strong bg-input text-ink text-xs">
+                            <option value="per_cve">Uno por CVE (recomendado si no hay racimo)</option>
+                            <option value="joint">Un informe conjunto</option>
+                        </select>
+                    </div>
                     <button type="submit" class="btn btn-outline"
                             title="Encola el informe IA de los CVE del grupo que están en el catálogo local (máximo <?= $maxAnalysis ?>)">
-                        <?= icon('psychology', 16) ?> Informes por CVE
+                        <?= icon('psychology', 16) ?> Generar análisis
                     </button>
                 </form>
             </div>
@@ -199,6 +212,77 @@ $flashData = is_array($flashData) ? $flashData : [];
                 La IA no está configurada. Revisa el perfil en
                 <a class="underline" href="<?= e(base_url('admin/apis')) ?>">Admin → APIs</a>.
             </p>
+        <?php endif; ?>
+
+        <?php if (($groupReports['rows'] ?? []) !== []): ?>
+            <?php
+            $rTotal = (int)($groupReports['total'] ?? 0);
+            $rProcessed = (int)($groupReports['processed'] ?? 0);
+            $rPending = (int)($groupReports['pending'] ?? 0);
+            $rFailed = (int)($groupReports['failed'] ?? 0);
+            $rPct = $rTotal > 0 ? max(0, min(100, (int)round($rProcessed * 100 / $rTotal))) : 0;
+            $firstReport = (int)($groupReports['rows'][0]['id'] ?? 0);
+            $statusLabels = [
+                'pending' => 'En cola', 'running' => 'Generando', 'done' => 'Listo',
+                'error' => 'Error', 'canceled' => 'Cancelado',
+            ];
+            $statusClasses = [
+                'pending' => 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300',
+                'running' => 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300',
+                'done' => 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300',
+                'error' => 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',
+                'canceled' => 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
+            ];
+            ?>
+            <div class="mt-4 pt-4 border-t border-line">
+                <div class="flex items-start justify-between gap-3 flex-wrap">
+                    <div class="min-w-0 flex-1">
+                        <p class="text-xs font-semibold m-0">Análisis por CVE</p>
+                        <p class="text-[11px] text-ink-soft m-0 mt-0.5">
+                            <?= $rProcessed ?>/<?= $rTotal ?> generados
+                            <?php if ($rPending > 0): ?> · <?= $rPending ?> en cola<?php endif; ?>
+                            <?php if ($rFailed > 0): ?> · <?= $rFailed ?> con error<?php endif; ?>
+                            <?= $rPending > 0 ? ' · se actualiza solo' : ' · completado' ?>
+                        </p>
+                        <div class="mt-2 h-1.5 w-full max-w-md rounded-full bg-muted overflow-hidden">
+                            <div class="h-full <?= $rFailed > 0 ? 'bg-amber-500' : 'bg-brand-500' ?> transition-all" style="width: <?= $rPct ?>%"></div>
+                        </div>
+                    </div>
+                    <?php if ($firstReport > 0): ?>
+                        <a href="<?= e(base_url('modules/cve/report-ai/' . $firstReport)) ?>"
+                           class="text-[11px] text-brand-600 dark:text-brand-300 hover:underline whitespace-nowrap">
+                            <?= icon('open_in_new', 13) ?> Abrir en el módulo CVE
+                        </a>
+                    <?php endif; ?>
+                </div>
+                <div class="mt-2 space-y-1">
+                    <?php foreach ($groupReports['rows'] as $reportRow): ?>
+                        <?php
+                        $rStatus = (string)($reportRow['status'] ?? 'pending');
+                        $rCves = is_array($reportRow['cve_list'] ?? null) ? $reportRow['cve_list'] : [];
+                        $rLabel = $rCves === [] ? 'Conjunto' : (count($rCves) === 1 ? $rCves[0] : count($rCves) . ' CVE');
+                        ?>
+                        <div class="flex items-center justify-between gap-2 text-[11px]">
+                            <span class="min-w-0 truncate">
+                                <span class="font-mono"><?= e($rLabel) ?></span>
+                                <?php if ($rStatus === 'error' && (string)($reportRow['ai_error'] ?? '') !== ''): ?>
+                                    <span class="text-danger"> · <?= e((string)$reportRow['ai_error']) ?></span>
+                                <?php endif; ?>
+                            </span>
+                            <span class="flex items-center gap-2 shrink-0">
+                                <span class="px-2 py-0.5 rounded-full text-[10px] font-medium <?= $statusClasses[$rStatus] ?? $statusClasses['pending'] ?>">
+                                    <?= e($statusLabels[$rStatus] ?? $rStatus) ?>
+                                </span>
+                                <a href="<?= e(base_url('modules/cve/report-ai/' . (int)$reportRow['id'])) ?>"
+                                   class="text-brand-600 dark:text-brand-300 hover:underline">#<?= (int)$reportRow['id'] ?></a>
+                            </span>
+                        </div>
+                    <?php endforeach; ?>
+                </div>
+                <?php if (!empty($groupReports['has_job'])): ?>
+                    <script>setTimeout(function () { window.location.reload(); }, 8000);</script>
+                <?php endif; ?>
+            </div>
         <?php endif; ?>
 
         <div class="mt-4 pt-4 border-t border-line flex items-end justify-between gap-3 flex-wrap">
@@ -255,6 +339,32 @@ $flashData = is_array($flashData) ? $flashData : [];
          Dossier (plan + fichas por CVE)
          ============================================================ -->
     <?php if ($hasDocument): ?>
+        <?php if (count($rows) > 1): ?>
+            <div class="flex items-center gap-2 mb-3 no-print flex-wrap">
+                <span class="text-[11px] text-ink-soft">Vista:</span>
+                <a href="<?= e($base . '/group/' . (int)$group['id'] . ($currentBack !== '' ? '?back=' . rawurlencode($currentBack) : '')) ?>"
+                   class="px-3 py-1.5 rounded-lg text-xs font-medium <?= $singleCve === ''
+                        ? 'bg-brand-500 text-white'
+                        : 'border border-line text-ink-muted hover:bg-muted' ?>">
+                    Conjunto
+                </a>
+                <form method="GET" action="<?= e($base . '/group/' . (int)$group['id']) ?>" class="m-0">
+                    <?php if ($currentBack !== ''): ?>
+                        <input type="hidden" name="back" value="<?= e($currentBack) ?>">
+                    <?php endif; ?>
+                    <select name="cve" onchange="this.form.submit()"
+                            class="px-3 py-1.5 rounded-lg border border-line-strong bg-input text-ink text-xs">
+                        <option value="">Por CVE…</option>
+                        <?php foreach ($rows as $rowOption): ?>
+                            <?php $optId = (string)($rowOption['cve_id'] ?? ''); ?>
+                            <option value="<?= e($optId) ?>" <?= $singleCve === strtoupper($optId) ? 'selected' : '' ?>>
+                                <?= e($optId) ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </form>
+            </div>
+        <?php endif; ?>
         <div class="card overflow-hidden mb-6" id="exposed-plan-card">
             <div class="px-5 py-4 border-b border-line flex items-center justify-between gap-3 flex-wrap no-print">
                 <div class="min-w-0">
@@ -504,6 +614,8 @@ $flashData = is_array($flashData) ? $flashData : [];
     window.exposedCopyRich = function () {
         if (!SHEET) { return; }
         var clone = SHEET.cloneNode(true);
+        // La descripción completa de Defender no viaja en el informe.
+        clone.querySelectorAll('details').forEach(function (node) { node.remove(); });
         applyStyles(clone);
         var html = clone.innerHTML;
         if (navigator.clipboard && window.ClipboardItem && window.isSecureContext) {

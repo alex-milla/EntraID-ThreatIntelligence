@@ -557,6 +557,21 @@ try {
         str_contains((string)$single['html'], '<h1')
         && str_contains((string)$single['html'], (string)$groupRows[0]['cve_id'])
         && (int)$single['count'] === 1);
+    check('informe: tarjeta respirable', str_contains((string)$dossier['html'], '<ul')
+        && str_contains((string)$dossier['html'], 'exposed-full-desc'));
+    check('informe: markdown en viñetas', str_contains((string)$dossier['markdown'], '**Qué es**'));
+
+    // Progreso de los informes por CVE (cve_ai_reports).
+    $reportId = CveDatabase::insert(
+        "INSERT INTO cve_ai_reports (cve_ids, title, status, token, no_ai, mode, total_items, processed_items)
+         VALUES (?, ?, 'done', ?, 1, 'extended', 1, 1)",
+        [json_encode([(string)$groupRows[0]['cve_id']], JSON_UNESCAPED_SLASHES), 'smoke grupo', bin2hex(random_bytes(8))]
+    );
+    ExposedConsoleStore::setGroupReports($groupId, [$reportId]);
+    $gr = ExposedConsoleStore::groupReports($groupId);
+    check('progreso: informe contado', (int)$gr['total'] === 1 && (int)$gr['processed'] === 1 && (int)$gr['done'] === 1);
+    check('progreso: sin trabajo pendiente', empty($gr['has_job']));
+    check('progreso: CVE del informe', ($gr['rows'][0]['cve_list'][0] ?? '') === (string)$groupRows[0]['cve_id']);
 
     // Vista del grupo: la hoja no debe llevar «md-body» (rompía el modo oscuro)
     // y debe avisar de que aún no hay análisis de IA.
@@ -575,6 +590,23 @@ try {
     check('vista grupo: aviso de que no es la IA', str_contains($groupHtml, 'Esto todavía no es el análisis de la IA'));
     check('vista grupo: informe renderizado', str_contains($groupHtml, 'Informe de vulnerabilidad')
         && str_contains($groupHtml, 'Sin análisis IA'));
+
+    $groupHtmlProgress = $module->render('group', [
+        'module'        => $module,
+        'group'         => $group,
+        'groupId'       => $groupId,
+        'rows'          => $groupRows,
+        'plan'          => null,
+        'dossier'       => $dossier,
+        'profiles'      => [],
+        'orgs'          => [],
+        'downloadName'  => 'informe.md',
+        'groupReports'  => $gr,
+    ]);
+    check('vista grupo: tarjeta de progreso', str_contains($groupHtmlProgress, 'Análisis por CVE')
+        && str_contains($groupHtmlProgress, '1/1 generados'));
+    check('vista grupo: selector por CVE', str_contains($groupHtmlProgress, 'Por CVE…')
+        && str_contains($groupHtmlProgress, 'Conjunto'));
 
     $groupHtmlBack = $module->render('group', [
         'module'        => $module,

@@ -1146,6 +1146,84 @@ if (!class_exists('ExposedConsoleStore')) {
         }
 
         /**
+         * Guarda los informes de IA lanzados desde el grupo (ids de cve_ai_reports).
+         *
+         * @param int[] $reportIds
+         */
+        public static function setGroupReports(int $groupId, array $reportIds): void
+        {
+            if ($groupId <= 0) {
+                return;
+            }
+            $ids = [];
+            foreach ($reportIds as $value) {
+                $id = (int)$value;
+                if ($id > 0) {
+                    $ids[$id] = true;
+                }
+            }
+            CveDatabase::query(
+                "UPDATE exposed_groups SET report_ids = ?, updated_at = datetime('now') WHERE id = ?",
+                [json_encode(array_keys($ids)), $groupId]
+            );
+        }
+
+        /**
+         * Estado de los informes lanzados desde el grupo, con su progreso real
+         * (cve_ai_reports.status / processed_items / total_items).
+         *
+         * @return array{rows:array<int,array<string,mixed>>,total:int,processed:int,done:int,failed:int,pending:int,has_job:bool}
+         */
+        public static function groupReports(int $groupId): array
+        {
+            $out = ['rows' => [], 'total' => 0, 'processed' => 0, 'done' => 0, 'failed' => 0, 'pending' => 0, 'has_job' => false];
+            $group = self::getGroup($groupId);
+            if ($group === null) {
+                return $out;
+            }
+            $ids = safe_json_decode((string)($group['report_ids'] ?? ''), []);
+            if (!is_array($ids) || $ids === []) {
+                return $out;
+            }
+            $ids = array_values(array_filter(array_map('intval', $ids), static fn(int $id): bool => $id > 0));
+            if ($ids === []) {
+                return $out;
+            }
+
+            $rows = CveDatabase::fetchAll(
+                "SELECT id, title, status, total_items, processed_items, cve_ids, ai_error, ai_model, updated_at
+                 FROM cve_ai_reports
+                 WHERE id IN (" . implode(',', array_fill(0, count($ids), '?')) . ")
+                 ORDER BY id DESC",
+                $ids
+            );
+
+            foreach ($rows as $row) {
+                $status = (string)($row['status'] ?? 'pending');
+                $total = max(1, (int)($row['total_items'] ?? 1));
+                $processed = max(0, (int)($row['processed_items'] ?? 0));
+                if ($status === 'done') {
+                    $processed = $total;
+                }
+                $out['total'] += $total;
+                $out['processed'] += min($processed, $total);
+                if ($status === 'done') {
+                    $out['done']++;
+                } elseif (in_array($status, ['error', 'canceled'], true)) {
+                    $out['failed']++;
+                } else {
+                    $out['pending']++;
+                    $out['has_job'] = true;
+                }
+                $cves = safe_json_decode((string)($row['cve_ids'] ?? ''), []);
+                $row['cve_list'] = is_array($cves) ? array_values(array_map('strval', $cves)) : [];
+                $out['rows'][] = $row;
+            }
+
+            return $out;
+        }
+
+        /**
          * CVEs del grupo con sus datos TVM de la lista maestra.
          *
          * @return array<int,array<string,mixed>>

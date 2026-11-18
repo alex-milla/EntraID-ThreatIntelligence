@@ -296,57 +296,78 @@ if (!class_exists('ExposedReportDossier')) {
                 . ((string)($item['tvm_status'] ?? '') !== '' ? ' · estado ' . self::esc((string)$item['tvm_status']) : '')
                 . '</p>';
 
-            // Descripción.
+            // TL;DR: la acción en una línea.
+            $out[] = '<p style="margin:8px 0 0;font-size:12.5px;color:#0f172a;font-weight:600;">'
+                . self::esc((string)$item['_action']) . ' · ' . (int)($item['exposed_machines'] ?? 0)
+                . ' equipos · ventana ' . self::esc((string)$item['_window']) . '</p>';
+
+            // Descripción en viñetas cortas.
             $desc = $item['_desc'];
-            if ((string)$desc['summary'] !== '') {
-                $out[] = '<p style="margin:10px 0 0;font-size:13px;color:#374151;">' . self::esc((string)$desc['summary']) . '</p>';
-            }
-            foreach (['impact' => 'Impacto', 'remediation' => 'Remediación'] as $key => $label) {
-                if ((string)$desc[$key] !== '') {
-                    $out[] = '<p style="margin:6px 0 0;font-size:12px;color:#4b5563;"><strong>' . $label . ':</strong> '
-                        . self::esc((string)$desc[$key]) . '</p>';
+            $bullets = self::bullets((string)$desc['summary'], 3, 160);
+            if ($bullets !== []) {
+                $out[] = '<ul style="margin:8px 0 0 18px;padding:0;font-size:12.5px;color:#374151;">';
+                foreach ($bullets as $bullet) {
+                    $out[] = '<li style="margin:2px 0;">' . self::esc($bullet) . '</li>';
                 }
+                $out[] = '</ul>';
+            }
+            $impact = self::bullets((string)$desc['impact'], 2, 160);
+            if ($impact !== []) {
+                $out[] = '<p style="margin:8px 0 0;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#6b7280;font-weight:700;">Impacto</p>';
+                $out[] = '<ul style="margin:2px 0 0 18px;padding:0;font-size:12.5px;color:#374151;">';
+                foreach ($impact as $bullet) {
+                    $out[] = '<li style="margin:2px 0;">' . self::esc($bullet) . '</li>';
+                }
+                $out[] = '</ul>';
+            }
+            $remediation = self::clip((string)$desc['remediation'], 200);
+            if ($remediation !== '') {
+                $out[] = '<p style="margin:8px 0 0;font-size:12.5px;color:#374151;"><strong>Remediación:</strong> ' . self::esc($remediation) . '</p>';
             }
             if ((string)$desc['fix'] !== '') {
-                $out[] = '<p style="margin:6px 0 0;font-size:12px;color:#92400e;"><strong>Versión de corrección inferida:</strong> '
-                    . self::esc((string)$desc['fix']) . ' (confirmar en el boletín del fabricante)</p>';
+                $out[] = '<p style="margin:4px 0 0;font-size:11px;color:#92400e;">Versión de corrección inferida: '
+                    . self::esc((string)$desc['fix']) . ' (confirmar en el boletín)</p>';
             }
 
-            // Exposición y software.
-            $labels = array_values(array_filter(array_map('trim', explode(',', (string)($item['software_labels'] ?? '')))));
-            $exposure = [];
-            $exposure[] = (int)($item['exposed_machines'] ?? 0) . ' equipos';
+            // Exposición en badges.
+            $badgesExp = ['<span style="display:inline-block;padding:1px 7px;border-radius:10px;background:#eef2ff;color:#3730a3;font-size:11px;margin:2px 4px 0 0;">'
+                . (int)($item['exposed_machines'] ?? 0) . ' equipos</span>'];
             if ((int)($item['has_exploit'] ?? 0) === 1) {
-                $exposure[] = 'exploit disponible';
+                $badgesExp[] = '<span style="display:inline-block;padding:1px 7px;border-radius:10px;background:#ffedd5;color:#9a3412;font-size:11px;margin:2px 4px 0 0;">exploit</span>';
             }
             if ((int)($item['has_known_threats'] ?? 0) === 1) {
-                $exposure[] = 'amenazas conocidas';
+                $badgesExp[] = '<span style="display:inline-block;padding:1px 7px;border-radius:10px;background:#fee2e2;color:#b91c1c;font-size:11px;margin:2px 4px 0 0;">amenazas</span>';
             }
             if ((int)($item['has_alerts'] ?? 0) === 1) {
-                $exposure[] = 'alerta activa';
+                $badgesExp[] = '<span style="display:inline-block;padding:1px 7px;border-radius:10px;background:#fee2e2;color:#b91c1c;font-size:11px;margin:2px 4px 0 0;">alerta</span>';
             }
-            $out[] = '<p style="margin:10px 0 0;font-size:12px;color:#374151;"><strong>Exposición en tu tenant:</strong> '
-                . self::esc(implode(' · ', $exposure))
-                . ($labels !== [] ? ' · <strong>software:</strong> ' . self::esc(implode(', ', array_slice($labels, 0, 6))) : '')
-                . '</p>';
+            if ((string)($item['tvm_status'] ?? '') !== '') {
+                $badgesExp[] = '<span style="display:inline-block;padding:1px 7px;border-radius:10px;background:#f3f4f6;color:#374151;font-size:11px;margin:2px 4px 0 0;">' . self::esc((string)$item['tvm_status']) . '</span>';
+            }
+            $out[] = '<div style="margin-top:8px;">' . implode('', $badgesExp) . '</div>';
 
-            // Relacionados.
+            // Software: máximo 3 chips y «+N».
+            $labels = array_values(array_filter(array_map('trim', explode(',', (string)($item['software_labels'] ?? '')))));
+            if ($labels !== []) {
+                $chips = [];
+                foreach (array_slice($labels, 0, 3) as $label) {
+                    $chips[] = '<span style="display:inline-block;padding:1px 7px;border-radius:6px;background:#f3f4f6;color:#111827;font-family:Consolas,Menlo,monospace;font-size:10.5px;margin:2px 4px 0 0;">' . self::esc($label) . '</span>';
+                }
+                if (count($labels) > 3) {
+                    $chips[] = '<span style="display:inline-block;padding:1px 7px;border-radius:6px;background:#f9fafb;color:#6b7280;font-size:10.5px;margin:2px 4px 0 0;" title="' . self::esc(implode(', ', array_slice($labels, 3))) . '">+' . (count($labels) - 3) . '</span>';
+                }
+                $out[] = '<div style="margin-top:6px;">' . implode('', $chips) . '</div>';
+            }
+
             $related = self::relatedFor((string)$cveId);
             if ($related !== []) {
-                $out[] = '<p style="margin:6px 0 0;font-size:12px;color:#4b5563;"><strong>CVEs relacionados:</strong> '
+                $out[] = '<p style="margin:8px 0 0;font-size:11px;color:#6b7280;">Relacionados: '
                     . self::esc(implode(', ', $related)) . '</p>';
             }
 
-            // Informe de la IA del CVE.
-            if (isset($GLOBALS['__exposed_analyses'][$cveId])) {
-                // No se usa; el informe técnico se enlaza desde la ficha del grupo.
-            }
-            $out[] = '<p style="margin:6px 0 0;font-size:11px;color:#6b7280;">'
-                . 'Acción: ' . self::esc((string)$item['_action']) . '</p>';
-
             $full = trim((string)($item['description'] ?? ''));
             if ($full !== '') {
-                $out[] = '<details style="margin:8px 0 0;"><summary style="cursor:pointer;font-size:11px;color:#6b7280;">Descripción completa de Defender</summary>'
+                $out[] = '<details class="exposed-full-desc" style="margin:8px 0 0;"><summary style="cursor:pointer;font-size:11px;color:#6b7280;">Descripción completa de Defender</summary>'
                     . '<p style="margin:6px 0 0;font-size:12px;color:#4b5563;">' . nl2br(self::esc($full)) . '</p></details>';
             }
 
@@ -528,15 +549,23 @@ if (!class_exists('ExposedReportDossier')) {
                 $md[] = '| Software | ' . self::cell((string)($item['software_labels'] ?? '—')) . ' |';
                 $md[] = '';
                 if ((string)$item['_desc']['summary'] !== '') {
-                    $md[] = '**Qué es.** ' . (string)$item['_desc']['summary'];
+                    $md[] = '**Qué es**';
+                    $md[] = '';
+                    foreach (self::bullets((string)$item['_desc']['summary'], 3, 160) as $bullet) {
+                        $md[] = '- ' . $bullet;
+                    }
                     $md[] = '';
                 }
                 if ((string)$item['_desc']['impact'] !== '') {
-                    $md[] = '**Impacto.** ' . (string)$item['_desc']['impact'];
+                    $md[] = '**Impacto**';
+                    $md[] = '';
+                    foreach (self::bullets((string)$item['_desc']['impact'], 2, 160) as $bullet) {
+                        $md[] = '- ' . $bullet;
+                    }
                     $md[] = '';
                 }
                 if ((string)$item['_desc']['remediation'] !== '') {
-                    $md[] = '**Remediación.** ' . (string)$item['_desc']['remediation'];
+                    $md[] = '**Remediación.** ' . self::clip((string)$item['_desc']['remediation'], 200);
                     $md[] = '';
                 }
                 if ((string)$item['_desc']['fix'] !== '') {
@@ -720,6 +749,54 @@ if (!class_exists('ExposedReportDossier')) {
         {
             $value = trim(preg_replace('/\s+/u', ' ', $value) ?? $value);
             return str_replace(['|', "\n", "\r"], ['/', ' ', ' '], $value);
+        }
+
+        /**
+         * Convierte un párrafo en viñetas cortas (frases), sin cortar palabras.
+         *
+         * @return string[]
+         */
+        private static function bullets(string $text, int $max = 3, int $clip = 160): array
+        {
+            $text = trim($text);
+            if ($text === '') {
+                return [];
+            }
+            $parts = preg_split('/(?<=[.!?])\s+/', $text) ?: [];
+            $out = [];
+            foreach (array_slice($parts, 0, max(1, $max)) as $sentence) {
+                $sentence = self::clip($sentence, $clip);
+                if ($sentence !== '') {
+                    $out[] = $sentence;
+                }
+            }
+            if (count($parts) > $max && $out !== []) {
+                $last = count($out) - 1;
+                if (!str_ends_with($out[$last], '…')) {
+                    $out[$last] .= ' …';
+                }
+            }
+            return $out;
+        }
+
+        /** Recorta por caracteres en un límite de palabra. */
+        private static function clip(string $text, int $max): string
+        {
+            $text = trim(preg_replace('/\s+/u', ' ', $text) ?? $text);
+            if ($max <= 0 || self::len($text) <= $max) {
+                return $text;
+            }
+            $cut = function_exists('mb_substr') ? mb_substr($text, 0, $max) : substr($text, 0, $max);
+            $space = strrpos($cut, ' ');
+            if ($space !== false && $space > (int)($max * 0.6)) {
+                $cut = substr($cut, 0, $space);
+            }
+            return rtrim($cut, " ,;.") . '…';
+        }
+
+        private static function len(string $text): int
+        {
+            return function_exists('mb_strlen') ? mb_strlen($text) : strlen($text);
         }
 
         private static function esc(string $value): string

@@ -473,38 +473,71 @@ class Module_ExposedReport extends BaseModule
         }
 
         try {
-            $token = bin2hex(random_bytes(24));
-            $reportId = CveDatabase::insert(
-                "INSERT INTO cve_ai_reports
-                 (cve_ids, title, status, token, ai_profile_id, generated_by, no_ai, mode, total_items)
-                 VALUES (?, ?, 'pending', ?, ?, ?, 0, 'extended', ?)",
-                [
-                    json_encode($queue, JSON_UNESCAPED_SLASHES),
-                    'Equipos expuestos · grupo #' . $groupId . ' · ' . date('d/m/Y H:i'),
-                    $token,
-                    llm_task_profile('cve_report'),
-                    Auth::id(),
-                    count($queue),
-                ]
-            );
-
-            CveReportAi::ensureReportItems($reportId);
-
+            $mode = ((string)($_POST['report_mode'] ?? 'per_cve')) === 'joint' ? 'joint' : 'per_cve';
             $useFpm = function_exists('fastcgi_finish_request');
+            $reportIds = [];
+            $tokens = [];
+            $now = date('d/m/Y H:i');
+
+            if ($mode === 'joint') {
+                $token = bin2hex(random_bytes(24));
+                $reportId = CveDatabase::insert(
+                    "INSERT INTO cve_ai_reports
+                     (cve_ids, title, status, token, ai_profile_id, generated_by, no_ai, mode, total_items)
+                     VALUES (?, ?, 'pending', ?, ?, ?, 0, 'extended', ?)",
+                    [
+                        json_encode($queue, JSON_UNESCAPED_SLASHES),
+                        'Equipos expuestos · grupo #' . $groupId . ' · ' . $now,
+                        $token,
+                        llm_task_profile('cve_report'),
+                        Auth::id(),
+                        count($queue),
+                    ]
+                );
+                CveReportAi::ensureReportItems($reportId);
+                $reportIds[] = $reportId;
+                $tokens[$reportId] = $token;
+            } else {
+                // Un informe independiente por CVE: cada uno con su propio estado.
+                foreach ($queue as $cveId) {
+                    $token = bin2hex(random_bytes(24));
+                    $reportId = CveDatabase::insert(
+                        "INSERT INTO cve_ai_reports
+                         (cve_ids, title, status, token, ai_profile_id, generated_by, no_ai, mode, total_items)
+                         VALUES (?, ?, 'pending', ?, ?, ?, 0, 'extended', 1)",
+                        [
+                            json_encode([$cveId], JSON_UNESCAPED_SLASHES),
+                            'Equipos expuestos · grupo #' . $groupId . ' · ' . $cveId . ' · ' . $now,
+                            $token,
+                            llm_task_profile('cve_report'),
+                            Auth::id(),
+                        ]
+                    );
+                    CveReportAi::ensureReportItems($reportId);
+                    $reportIds[] = $reportId;
+                    $tokens[$reportId] = $token;
+                }
+            }
+
+            ExposedConsoleStore::setGroupReports($groupId, $reportIds);
+
             log_activity('exposed_report.group_analyses_queued', [
                 'group'   => $groupId,
-                'report'  => $reportId,
+                'reports' => count($reportIds),
+                'mode'    => $mode,
                 'cves'    => count($queue),
                 'skipped' => count($skipped),
             ]);
 
-            $notice = count($queue) . ' análisis por CVE en cola (informe IA #' . $reportId . '). '
-                . ($useFpm
-                    ? 'Se generan en segundo plano; en unos minutos estarán disponibles en el módulo CVE.'
-                    : 'Se están generando ahora mismo en esta petición.')
-                . ($skipped !== []
-                    ? ' ' . count($skipped) . ' CVE del grupo no están en el catálogo local y se han omitido.'
-                    : '');
+            $notice = $mode === 'joint'
+                ? 'Análisis conjunto en cola (informe IA #' . $reportIds[0] . '). '
+                : count($reportIds) . ' informes creados, uno por CVE (#' . implode(', #', $reportIds) . '). ';
+            $notice .= $useFpm
+                ? 'Se generan en segundo plano: el progreso aparece en la tarjeta «Análisis por CVE» de esta ficha y se actualiza solo.'
+                : 'Se están generando ahora mismo en esta petición.';
+            if ($skipped !== []) {
+                $notice .= ' ' . count($skipped) . ' CVE del grupo no están en el catálogo local y se han omitido.';
+            }
 
             $this->renderGroup($groupId, ['queueNotice' => $notice]);
 
@@ -513,14 +546,16 @@ class Module_ExposedReport extends BaseModule
                 @set_time_limit(0);
                 finish_response();
             }
-            try {
-                CveReportAi::runPending($token);
-            } catch (Throwable $e) {
-                app_log('error', 'exposed_report', 'Análisis por CVE del grupo fallido', [
-                    'group'  => $groupId,
-                    'report' => $reportId,
-                    'error'  => $e->getMessage(),
-                ]);
+            foreach ($tokens as $reportId => $token) {
+                try {
+                    CveReportAi::runPending($token);
+                } catch (Throwable $e) {
+                    app_log('error', 'exposed_report', 'Análisis por CVE del grupo fallido', [
+                        'group'  => $groupId,
+                        'report' => $reportId,
+                        'error'  => $e->getMessage(),
+                    ]);
+                }
             }
             if ($useFpm) {
                 exit;
@@ -1777,6 +1812,9 @@ class Module_ExposedReport extends BaseModule
         } catch (Throwable $e) {
             $orgs = [];
         }
+        $groupReports = $group !== null
+            ? ExposedConsoleStore::groupReports($groupId)
+            : ['rows' => [], 'total' => 0, 'processed' => 0, 'done' => 0, 'failed' => 0, 'pending' => 0, 'has_job' => false];
 
         echo $this->page('group', array_merge([
             'module'        => $this,
@@ -1787,6 +1825,7 @@ class Module_ExposedReport extends BaseModule
             'dossier'       => $dossier,
             'singleCve'     => $singleCve,
             'backUrl'       => $backUrl,
+            'groupReports'  => $groupReports,
             'orgs'          => $orgs,
             'profiles'      => $profiles,
             'profileId'     => $defaultProfileId,
