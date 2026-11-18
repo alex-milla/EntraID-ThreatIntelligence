@@ -232,20 +232,12 @@ $flashData = is_array($flashData) ? $flashData : [];
         </div>
     </div>
 
-    <?php if (!$hasDocument): ?>
-        <div class="card p-6 mb-6">
-            <div class="flex items-start gap-3">
-                <span class="inline-flex items-center justify-center w-9 h-9 rounded-lg bg-brand-100 dark:bg-brand-900/30 text-brand-600 dark:text-brand-300">
-                    <?= icon('description', 20) ?>
-                </span>
-                <div>
-                    <h3 class="text-sm font-semibold m-0">Todavía no hay plan</h3>
-                    <p class="text-xs text-ink-muted mt-1 mb-0 max-w-2xl">
-                        Pulsa <strong>Generar plan de actuación</strong>. El plan se guarda con el grupo, así que
-                        volverás a verlo al abrir esta ficha. Si el grupo cambia, puedes regenerarlo.
-                    </p>
-                </div>
-            </div>
+    <?php if ($planText === '' && $hasDocument): ?>
+        <div class="alert alert-info mb-4 no-print" role="status">
+            <strong>Esto todavía no es el informe de la IA.</strong>
+            El dossier contiene los datos importados de Defender (Anexo A y B) y las relaciones
+            internas (Anexo C). Pulsa <strong>Generar plan de actuación</strong> para que tu IA local
+            añada el análisis por fases, la agrupación por ciclos de parcheo y la verificación.
         </div>
     <?php endif; ?>
 
@@ -259,12 +251,15 @@ $flashData = is_array($flashData) ? $flashData : [];
                     <h2 class="text-sm font-semibold m-0">Dossier de parcheo</h2>
                     <p class="text-[11px] text-ink-soft m-0 mt-1">
                         <?php if ($planText !== ''): ?>
-                            Plan generado el <?= e($fmtDate((string)($plan['generated_at'] ?? ''))) ?>
+                            <span class="inline-flex px-1.5 py-0.5 rounded bg-brand-100 text-brand-700 dark:bg-brand-900/30 dark:text-brand-300 text-[9px] font-semibold">Plan de IA</span>
+                            generado el <?= e($fmtDate((string)($plan['generated_at'] ?? ''))) ?>
                             · <?= (int)($plan['cve_count'] ?? 0) ?> CVE
                             <?php if (!empty($plan['model'])): ?> · <?= e((string)$plan['model']) ?><?php endif; ?>
                         <?php else: ?>
-                            Sin plan de IA: dossier con las fichas técnicas.
+                            <span class="inline-flex px-1.5 py-0.5 rounded bg-muted text-ink-muted text-[9px] font-semibold uppercase tracking-wide">Sin plan de IA</span>
+                            dossier con los datos importados (Anexo A y B)
                         <?php endif; ?>
+                        · Anexo C de relaciones
                         · <?= $dossierWith ?> con informe técnico
                         <?php if ($dossierWithout > 0): ?> · <?= $dossierWithout ?> con ficha de Defender<?php endif; ?>
                         <?php if ($planFresh): ?>
@@ -288,7 +283,7 @@ $flashData = is_array($flashData) ? $flashData : [];
             </div>
             <div class="doc-stage p-5">
                 <div id="exposed-plan-document">
-                    <div id="exposed-plan-sheet" class="doc-sheet md-body"><?= $documentHtml ?></div>
+                    <div id="exposed-plan-sheet" class="doc-sheet"><?= $documentHtml ?></div>
                 </div>
                 <div id="exposed-plan-markdown" hidden>
                     <pre id="exposed-plan-raw" class="doc-raw"><?= e($documentMd) ?></pre>

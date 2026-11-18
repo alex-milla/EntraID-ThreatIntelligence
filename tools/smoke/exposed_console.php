@@ -500,8 +500,47 @@ try {
     check('dossier: incluye cada CVE', str_contains((string)$dossier['markdown'], '### CVE-2026-90001')
         && str_contains((string)$dossier['markdown'], '### CVE-2026-90006'));
     check('dossier: explicita las fichas sin informe', (int)$dossier['without'] >= 1
-        && str_contains((string)$dossier['markdown'], 'Sin informe técnico generado'));
+        && str_contains((string)$dossier['markdown'], 'Sin informe técnico de la IA'));
     check('dossier: HTML generado', trim((string)$dossier['html']) !== '');
+    check('dossier: ficha vertical con software', str_contains((string)$dossier['markdown'], '**Software afectado**')
+        && !str_contains((string)$dossier['markdown'], '| Severidad | CVSS | EPSS |'));
+    check('dossier: relaciones por CVE', str_contains((string)$dossier['markdown'], '**CVEs relacionados en tu tenant**'));
+    check('dossier: anexo C de relaciones del grupo', str_contains((string)$dossier['markdown'], 'Anexo C. Relaciones dentro del grupo')
+        && str_contains((string)$dossier['markdown'], '### Por software principal'));
+
+    // Vista del grupo: la hoja no debe llevar «md-body» (rompía el modo oscuro)
+    // y debe avisar de que aún no hay plan de IA.
+    $groupHtml = $module->render('group', [
+        'module'        => $module,
+        'group'         => $group,
+        'groupId'       => $groupId,
+        'rows'          => $groupRows,
+        'plan'          => null,
+        'dossier'       => $dossier,
+        'profiles'      => [],
+        'orgs'          => [],
+        'downloadName'  => 'dossier.md',
+    ]);
+    check('vista grupo: hoja sin md-body', !str_contains($groupHtml, 'doc-sheet md-body'));
+    check('vista grupo: aviso de que no es la IA', str_contains($groupHtml, 'Esto todavía no es el informe de la IA'));
+    check('vista grupo: anexo C renderizado', str_contains($groupHtml, 'Anexo C. Relaciones dentro del grupo'));
+
+    $groupHtmlWithPlan = $module->render('group', [
+        'module'        => $module,
+        'group'         => $group,
+        'groupId'       => $groupId,
+        'rows'          => $groupRows,
+        'plan'          => ['content_text' => "## 1. Resumen\n\nPlan.", 'content_html' => '<p>Plan.</p>',
+                            'generated_at' => '2026-11-18 10:00:00', 'cve_count' => 3, 'model' => 'modelo-x'],
+        'dossier'       => $dossier,
+        'profiles'      => [],
+        'orgs'          => [],
+        'downloadName'  => 'dossier.md',
+    ]);
+    check('vista grupo: etiqueta Plan de IA', str_contains($groupHtmlWithPlan, 'Plan de IA')
+        && !str_contains($groupHtmlWithPlan, 'Esto todavía no es el informe de la IA'));
+    check('vista grupo: dossier con botones', str_contains($groupHtmlWithPlan, 'exposedCopyRich')
+        && str_contains($groupHtmlWithPlan, 'exposedDownloadMd'));
 
     /* -----------------------------------------------------------------
      * 10. Esquema y prompts

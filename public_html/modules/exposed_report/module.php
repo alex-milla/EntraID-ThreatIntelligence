@@ -844,6 +844,56 @@ class Module_ExposedReport extends BaseModule
         }
         $lines[] = '';
 
+        // Racimos y relaciones internas (deterministas): permiten al modelo
+        // proponer un único parche para varios CVE en vez de acciones sueltas.
+        $groupIds = [];
+        $byMain = [];
+        foreach ($rows as $row) {
+            $id = (string)($row['cve_id'] ?? '');
+            if ($id === '') {
+                continue;
+            }
+            $groupIds[$id] = true;
+            $main = ExposedConsoleStore::mainSoftware((string)($row['software_labels'] ?? ''));
+            if ($main !== '') {
+                $byMain[$main][] = $id;
+            }
+        }
+        $mentions = ExposedConsoleStore::mentionIndex();
+        $lines[] = '## Relaciones entre los CVE del grupo (datos importados)';
+        $lines[] = '';
+        $clusters = array_filter($byMain, static fn(array $ids): bool => count($ids) > 1);
+        if ($clusters === []) {
+            $lines[] = 'Ningún software agrupa a más de un CVE del grupo.';
+        } else {
+            $lines[] = 'Software que corrige varios CVE del grupo (un solo parche por producto):';
+            $lines[] = '';
+            foreach ($clusters as $software => $ids) {
+                $lines[] = '- ' . $software . ': ' . implode(', ', $ids);
+            }
+        }
+        $lines[] = '';
+        $mentionPairs = [];
+        foreach (array_keys($groupIds) as $id) {
+            $hits = [];
+            foreach ((array)($mentions['out'][$id] ?? []) as $other) {
+                if (isset($groupIds[$other])) {
+                    $hits[$other] = true;
+                }
+            }
+            if ($hits !== []) {
+                $mentionPairs[] = $id . ' → ' . implode(', ', array_keys($hits));
+            }
+        }
+        if ($mentionPairs !== []) {
+            $lines[] = 'CVE del grupo que citan a otros del grupo en la descripción de Defender:';
+            $lines[] = '';
+            foreach ($mentionPairs as $pair) {
+                $lines[] = '- ' . $pair;
+            }
+            $lines[] = '';
+        }
+
         $detailed = min($total, max(1, $maxDetail));
         $lines[] = '## CVE analizados en detalle (' . $detailed . ' de ' . $total . ')';
         $lines[] = '';
@@ -893,18 +943,30 @@ class Module_ExposedReport extends BaseModule
     }
 
     /**
-     * Anexo B del dossier: una ficha determinista por CVE del grupo, con el
-     * informe técnico de la aplicación cuando existe. No usa IA aquí.
+     * Anexo B del dossier: una ficha legible por CVE del grupo (formato
+     * vertical, no tabla ancha), con sus CVEs relacionados y el informe
+     * técnico de la aplicación cuando existe. Anexo C: relaciones internas.
      *
      * @param array<int,array<string,mixed>> $rows
      * @return array{markdown:string,html:string,with_report:int,without:int}
      */
     private function buildCveDossiers(array $rows): array
     {
-        $ids = array_values(array_map(
-            static fn(array $row): string => (string)($row['cve_id'] ?? ''),
-            $rows
-        ));
+        $ids = [];
+        $groupIds = [];
+        $bySoftware = [];
+        foreach ($rows as $row) {
+            $id = (string)($row['cve_id'] ?? '');
+            if ($id === '') {
+                continue;
+            }
+            $ids[] = $id;
+            $groupIds[$id] = true;
+            $main = ExposedConsoleStore::mainSoftware((string)($row['software_labels'] ?? ''));
+            if ($main !== '') {
+                $bySoftware[$main][$id] = true;
+            }
+        }
 
         $analyses = [];
         if ($ids !== [] && class_exists('ExposedReportEnrichment')) {
@@ -914,12 +976,13 @@ class Module_ExposedReport extends BaseModule
                 $analyses = [];
             }
         }
+        $mentions = ExposedConsoleStore::mentionIndex();
 
         $md = [];
         $md[] = '## Anexo B. Fichas técnicas por CVE';
         $md[] = '';
-        $md[] = 'Datos del export de Defender. Si el CVE tiene informe técnico generado en la '
-            . 'aplicación, se reproduce a continuación.';
+        $md[] = '> **Datos importados (sin IA).** Cada ficha resume el export de Defender y, '
+            . 'si existe, reproduce el informe técnico generado con tu IA en la aplicación.';
         $md[] = '';
 
         $withReport = 0;
@@ -928,31 +991,106 @@ class Module_ExposedReport extends BaseModule
             if ($cveId === '') {
                 continue;
             }
+
             $md[] = '### ' . $cveId;
             $md[] = '';
-            $md[] = '| Severidad | CVSS | EPSS | Edad | Equipos | Estado TVM | Software |';
-            $md[] = '| --- | --- | --- | --- | --- | --- | --- |';
-            $md[] = '| ' . ($row['severity'] !== null ? (string)$row['severity'] : '—')
-                . ' | ' . ($row['cvss'] !== null ? number_format((float)$row['cvss'], 1) : '—')
-                . ' | ' . ($row['epss'] !== null ? number_format((float)$row['epss'], 4) : '—')
-                . ' | ' . ($row['age_days'] !== null ? (int)$row['age_days'] . ' d' : '—')
-                . ' | ' . (int)($row['exposed_machines'] ?? 0)
-                . ' | ' . ((string)($row['tvm_status'] ?? '') !== '' ? (string)$row['tvm_status'] : '—')
-                . ' | ' . ((string)($row['software_labels'] ?? '') !== '' ? (string)$row['software_labels'] : '—')
-                . ' |';
+
+            $metrics = [];
+            $metrics[] = '**' . (($row['severity'] !== null && (string)$row['severity'] !== '')
+                ? ucfirst((string)$row['severity']) : 'Sin severidad') . '**';
+            $metrics[] = 'CVSS ' . ($row['cvss'] !== null ? number_format((float)$row['cvss'], 1) : '—');
+            $metrics[] = 'EPSS ' . ($row['epss'] !== null ? number_format((float)$row['epss'], 4) : '—');
+            $metrics[] = ($row['age_days'] !== null ? (int)$row['age_days'] . ' días en el tenant' : 'antigüedad sin datos');
+            $metrics[] = (int)($row['exposed_machines'] ?? 0) . ' equipos expuestos';
+            if ((string)($row['tvm_status'] ?? '') !== '') {
+                $metrics[] = 'estado ' . (string)$row['tvm_status'];
+            }
+            if ((int)($row['has_exploit'] ?? 0) === 1) {
+                $metrics[] = '**exploit disponible**';
+            }
+            if ((int)($row['has_known_threats'] ?? 0) === 1) {
+                $metrics[] = '**amenazas conocidas**';
+            }
+            $md[] = implode(' · ', $metrics);
+            $md[] = '';
+
+            $labels = array_values(array_filter(array_map(
+                'trim',
+                explode(',', (string)($row['software_labels'] ?? ''))
+            )));
+            if ($labels !== []) {
+                $md[] = '**Software afectado**';
+                $md[] = '';
+                foreach ($labels as $label) {
+                    $md[] = '- ' . $label;
+                }
+                $md[] = '';
+            }
 
             $description = trim((string)($row['description'] ?? ''));
             if ($description !== '') {
-                $md[] = '';
+                $description = preg_replace(
+                    '/\s+(Impact:|Remediation:|AdditionalInformation:)/u',
+                    "\n\n**$1** ",
+                    $description
+                ) ?? $description;
+                $description = str_replace('Generated by AI', '', $description);
                 $md[] = '**Descripción de Defender**';
                 $md[] = '';
-                $md[] = $this->clipText($description, 1200);
+                foreach (preg_split('/\n\s*\n/', trim($description)) ?: [] as $paragraph) {
+                    $paragraph = trim(preg_replace('/\s+/u', ' ', $paragraph) ?? $paragraph);
+                    if ($paragraph !== '') {
+                        $md[] = $paragraph;
+                        $md[] = '';
+                    }
+                }
+            }
+
+            // CVEs relacionados (menciones en cualquier dirección).
+            $related = [];
+            foreach ((array)($mentions['out'][$cveId] ?? []) as $other) {
+                $related[$other] = 'citado en esta descripción';
+            }
+            foreach ((array)($mentions['in'][$cveId] ?? []) as $other) {
+                if ($other !== $cveId && !isset($related[$other])) {
+                    $related[$other] = 'este CVE aparece en su descripción';
+                }
+            }
+            if ($related !== []) {
+                $md[] = '**CVEs relacionados en tu tenant**';
+                $md[] = '';
+                $shown = 0;
+                foreach ($related as $other => $relation) {
+                    if ($shown >= 10) {
+                        $md[] = '- … y ' . (count($related) - $shown) . ' más (ver «Relacionados» en la consola).';
+                        break;
+                    }
+                    $md[] = '- ' . $other . ' · ' . $relation
+                        . (isset($groupIds[$other]) ? ' · **en el grupo**' : '');
+                    $shown++;
+                }
+                $md[] = '';
+            }
+
+            $main = ExposedConsoleStore::mainSoftware((string)($row['software_labels'] ?? ''));
+            $peers = [];
+            if ($main !== '' && isset($bySoftware[$main])) {
+                foreach (array_keys($bySoftware[$main]) as $peer) {
+                    if ($peer !== $cveId) {
+                        $peers[] = $peer;
+                    }
+                }
+            }
+            if ($peers !== []) {
+                $md[] = '**Mismo software en el grupo:** '
+                    . implode(', ', array_slice($peers, 0, 10))
+                    . (count($peers) > 10 ? '…' : '');
+                $md[] = '';
             }
 
             if (isset($analyses[$cveId])) {
                 $withReport++;
-                $md[] = '';
-                $md[] = '**Informe técnico de la aplicación**';
+                $md[] = '**Informe técnico de tu IA**';
                 foreach ((array)$analyses[$cveId]['sections'] as $section) {
                     $title = trim((string)($section['title'] ?? ''));
                     if ($title !== '') {
@@ -968,11 +1106,57 @@ class Module_ExposedReport extends BaseModule
                     }
                 }
             } else {
-                $md[] = '';
-                $md[] = '> Sin informe técnico generado en la aplicación: los datos de arriba '
-                    . 'son los del export de Defender.';
+                $md[] = '> Sin informe técnico de la IA para este CVE: la ficha muestra solo '
+                    . 'los datos del export de Defender.';
             }
             $md[] = '';
+        }
+
+        // Anexo C — relaciones internas del grupo.
+        $md[] = '## Anexo C. Relaciones dentro del grupo';
+        $md[] = '';
+        $md[] = '> Calculado por la aplicación con los datos importados (sin IA).';
+        $md[] = '';
+
+        $md[] = '### Por software principal';
+        $md[] = '';
+        if ($bySoftware === []) {
+            $md[] = 'Sin software asociado en el export.';
+        } else {
+            $md[] = '| Software | CVE del grupo |';
+            $md[] = '| --- | --- |';
+            uksort($bySoftware, static fn(string $a, string $b): int => strcmp($a, $b));
+            foreach ($bySoftware as $software => $group) {
+                $names = array_keys($group);
+                if (count($names) < 2) {
+                    continue;
+                }
+                $md[] = '| ' . str_replace('|', '/', (string)$software) . ' | '
+                    . implode(', ', $names) . ' |';
+            }
+        }
+        $md[] = '';
+
+        $md[] = '### Menciones entre CVE del grupo';
+        $md[] = '';
+        $pairs = [];
+        foreach ($ids as $id) {
+            $hits = [];
+            foreach ((array)($mentions['out'][$id] ?? []) as $other) {
+                if (isset($groupIds[$other])) {
+                    $hits[$other] = true;
+                }
+            }
+            if ($hits !== []) {
+                $pairs[] = '- ' . $id . ' → ' . implode(', ', array_keys($hits));
+            }
+        }
+        if ($pairs === []) {
+            $md[] = 'Ningún CVE del grupo cita a otro del grupo en su descripción.';
+        } else {
+            foreach ($pairs as $line) {
+                $md[] = $line;
+            }
         }
 
         $markdown = implode("\n", $md);

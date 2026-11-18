@@ -595,7 +595,9 @@ Reglas:
 - Prioriza por riesgo real, no solo por CVSS: exploit/amenaza conocida y volumen de equipos expuestos pesan más que una severidad alta sin exposición.
 - Agrupa por software o ciclo de parcheo: un mismo paquete (por ejemplo, una actualización de kernel o de navegador) corrige varios CVE de golpe; dilo así en lugar de enumerar acciones sueltas.
 - No propongas productos comerciales concretos ni auditorías genéricas. Sí puedes proponer mitigaciones compensatorias (segmentación, deshabilitar un componente, restringir exposición) cuando no haya parche.
-- El anexo técnico con todos los CVE lo añade la aplicación: no lo repitas. Tú aportas el análisis y el plan.
+- Usa el bloque «Relaciones entre los CVE del grupo»: si un mismo software corrige varios CVE, trátalos como un solo racimo y una sola acción de parcheo con todos sus identificadores.
+- El anexo técnico con todos los CVE (fichas, descripciones de Defender y relaciones) lo añade la aplicación: no lo repitas. Tú aportas el análisis, la prioridad y el plan.
+- Formato de entrega pensado para PDF y correo: tablas de 2 a 5 columnas como máximo, sin bloques de código, listas cortas y encabezados `##`/`###`. Nada de párrafos de 30 líneas: una idea por párrafo.
 
 Estructura obligatoria del plan (usa estos encabezados de nivel 2):
 
