@@ -95,12 +95,6 @@ $flashData = is_array($flashData) ? $flashData : [];
         <h1 class="truncate"><?= e((string)($group['name'] ?? 'Grupo de análisis')) ?></h1>
         <p class="subtitle">
             <?= count($rows) ?> CVE
-            <?php if ($group !== null && !empty($group['filename'])): ?>
-                · snapshot <?= e((string)$group['filename']) ?>
-                <?php if (!empty($group['export_date'])): ?>
-                    (export del <?= e($fmtDate((string)$group['export_date'], 'd/m/Y')) ?>)
-                <?php endif; ?>
-            <?php endif; ?>
             <?php if ($filterText !== []): ?>
                 · filtro: <?= e(implode(' · ', $filterText)) ?>
             <?php endif; ?>
@@ -290,7 +284,7 @@ $flashData = is_array($flashData) ? $flashData : [];
                             <?php
                             $cveId = (string)($row['cve_id'] ?? '');
                             $severity = (string)($row['severity'] ?? '');
-                            $hasTvm = $row['snapshot_id'] !== null;
+                            $hasTvm = ($row['last_seen_at'] ?? null) !== null;
                             $signals = [];
                             if ((int)($row['has_exploit'] ?? 0) === 1) {
                                 $signals[] = ['exploit', 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300'];

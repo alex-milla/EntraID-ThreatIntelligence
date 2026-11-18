@@ -1,11 +1,16 @@
 <?php
 /**
- * exposed_console_store.php — Consola de Equipos expuestos (v0.4.25).
+ * exposed_console_store.php — Consola de Equipos expuestos (v0.4.25.3).
  *
- * Guarda el export completo de Defender TVM («Vulnerabilities Export» con el
- * filtro Affects my organization) como un *snapshot* en cve.sqlite y ofrece el
- * filtrado tipo portal (Severity, Age, Threats, Exposed devices, Status, Tags),
- * los grupos de análisis y su plan de actuación.
+ * Una **única lista maestra** de vulnerabilidades del tenant en cve.sqlite
+ * (`exposed_cves` con PK `cve_id`). Cada CSV que se sube se compara CVE a CVE
+ * contra esa lista: lo nuevo se inserta, lo cambiado se actualiza y lo idéntico
+ * se omite. Las subidas quedan como **historial de importaciones**
+ * (`exposed_snapshots`), no como listas separadas.
+ *
+ * Sobre esa lista única funcionan los filtros tipo portal (Severity, Age,
+ * Threats, Exposed devices, Status, Tags), los grupos de análisis y su plan de
+ * actuación.
  *
  * Todo es aditivo: tablas `exposed_*` propias, sin tocar cve_tvm_imports (el
  * import por empresa del módulo CVE) ni el seguimiento vm_*.
@@ -38,7 +43,7 @@ if (!class_exists('ExposedConsoleStore')) {
         public const MAX_GROUP_CVES = 2000;
 
         /* =================================================================
-         * Importación de snapshots
+         * Límites de subida
          * ============================================================== */
 
         /**
@@ -75,35 +80,41 @@ if (!class_exists('ExposedConsoleStore')) {
             };
         }
 
+        /* =================================================================
+         * Ingesta incremental en la lista maestra
+         * ============================================================== */
+
         /**
-         * Importa un CSV en un snapshot nuevo o lo fusiona con uno existente.
+         * Importa un CSV en la lista maestra del tenant.
          *
-         * v0.4.25.2: compara CVE a CVE con una huella estable de los datos de
-         * Defender. Si el CVE no está, se inserta; si está y cambió, se
-         * actualiza; si está idéntico, se omite. La antigüedad (`age_days`) se
-         * refresca en silencio porque es tiempo transcurrido, no un cambio de
-         * información: si contara, cualquier reimportación marcaría todo como
-         * «actualizado».
+         * Compara CVE a CVE con una huella estable de los datos de Defender:
+         *   · no está            → INSERT (nuevo)
+         *   · está y cambió      → UPDATE (actualizado)
+         *   · está idéntico      → se omite (sin cambios); solo se refresca la
+         *                          antigüedad y `last_seen_at`, porque el tiempo
+         *                          transcurrido no es un cambio de información.
          *
-         * @return array{ok:bool,error:string,snapshot_id:int,rows:int,skipped:int,
-         *               inserted:int,updated:int,unchanged:int,merged:bool,
-         *               snapshot_total:int,truncated:bool,range:string}
+         * El cuarto argumento se acepta por compatibilidad con v0.4.25.2 y se
+         * ignora: ya no hay snapshots separados.
+         *
+         * @return array{ok:bool,error:string,import_id:int,rows:int,skipped:int,
+         *               inserted:int,updated:int,unchanged:int,total:int,
+         *               truncated:bool,range:string}
          */
-        public static function importCsv(string $csv, string $filename, int $userId = 0, int $targetSnapshotId = 0): array
+        public static function importCsv(string $csv, string $filename, int $userId = 0, int $ignoredSnapshotId = 0): array
         {
             $out = [
-                'ok'             => false,
-                'error'          => '',
-                'snapshot_id'    => 0,
-                'rows'           => 0,
-                'skipped'        => 0,
-                'inserted'       => 0,
-                'updated'        => 0,
-                'unchanged'      => 0,
-                'merged'         => false,
-                'snapshot_total' => 0,
-                'truncated'      => false,
-                'range'          => '',
+                'ok'          => false,
+                'error'       => '',
+                'import_id'   => 0,
+                'rows'        => 0,
+                'skipped'     => 0,
+                'inserted'    => 0,
+                'updated'     => 0,
+                'unchanged'   => 0,
+                'total'       => 0,
+                'truncated'   => false,
+                'range'       => '',
             ];
 
             if (trim($csv) === '') {
@@ -128,39 +139,29 @@ if (!class_exists('ExposedConsoleStore')) {
                 return $out;
             }
 
-            if ($targetSnapshotId > 0 && self::getSnapshot($targetSnapshotId) === null) {
-                $out['error'] = 'El snapshot de destino no existe o se ha eliminado.';
-                return $out;
-            }
-
             $db = CveDatabase::getInstance();
             try {
                 $db->beginTransaction();
 
-                if ($targetSnapshotId > 0) {
-                    $snapshotId = $targetSnapshotId;
-                    $out['merged'] = true;
-                } else {
-                    $snapshotId = CveDatabase::insert(
-                        "INSERT INTO exposed_snapshots
-                         (filename, export_date, bytes, rows_total, rows_imported, rows_skipped, imports, generated_by)
-                         VALUES (?, ?, ?, ?, 0, ?, 1, ?)",
-                        [
-                            $filename !== '' ? $filename : 'export-tvm.csv',
-                            (string)($parsed['export_date'] ?? ''),
-                            strlen($csv),
-                            (int)($parsed['total'] ?? count($parsed['rows'])),
-                            (int)($parsed['skipped'] ?? 0),
-                            $userId > 0 ? $userId : null,
-                        ]
-                    );
-                }
+                $importId = CveDatabase::insert(
+                    "INSERT INTO exposed_snapshots
+                     (filename, export_date, bytes, rows_total, rows_imported, rows_skipped, imports, generated_by, updated_at)
+                     VALUES (?, ?, ?, ?, ?, ?, 1, ?, datetime('now'))",
+                    [
+                        $filename !== '' ? $filename : 'export-tvm.csv',
+                        (string)($parsed['export_date'] ?? ''),
+                        strlen($csv),
+                        (int)($parsed['total'] ?? count($parsed['rows'])),
+                        count($parsed['rows']),
+                        (int)($parsed['skipped'] ?? 0),
+                        $userId > 0 ? $userId : null,
+                    ]
+                );
 
-                // Huellas existentes del snapshot: una sola lectura, sin N queries.
+                // Huellas existentes: una sola lectura de toda la lista maestra.
                 $existing = [];
                 $rows = CveDatabase::fetchAll(
-                    "SELECT cve_id, fingerprint, age_days FROM exposed_cves WHERE snapshot_id = ?",
-                    [$snapshotId]
+                    "SELECT cve_id, fingerprint, age_days FROM exposed_cves"
                 );
                 foreach ($rows as $row) {
                     $existing[(string)$row['cve_id']] = $row;
@@ -168,12 +169,13 @@ if (!class_exists('ExposedConsoleStore')) {
 
                 $insertStmt = $db->prepare(
                     "INSERT INTO exposed_cves
-                     (snapshot_id, cve_id, severity, cvss, epss, age_days, published_at,
+                     (cve_id, severity, cvss, epss, age_days, published_at,
                       first_detected_at, updated_at, has_exploit, has_known_threats, has_alerts,
                       exposed_machines, tvm_status, related_software, software_labels,
                       software_tokens, software_total, zero_day, no_security_update,
-                      security_update, exploit_kit, exploit_verified, description, fingerprint)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                      security_update, exploit_kit, exploit_verified, description,
+                      fingerprint, first_seen_at, last_seen_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))"
                 );
 
                 $updateStmt = $db->prepare(
@@ -184,12 +186,13 @@ if (!class_exists('ExposedConsoleStore')) {
                          tvm_status = ?, related_software = ?, software_labels = ?,
                          software_tokens = ?, software_total = ?, zero_day = ?,
                          no_security_update = ?, security_update = ?, exploit_kit = ?,
-                         exploit_verified = ?, description = ?, fingerprint = ?
-                     WHERE snapshot_id = ? AND cve_id = ?"
+                         exploit_verified = ?, description = ?, fingerprint = ?,
+                         last_seen_at = datetime('now')
+                     WHERE cve_id = ?"
                 );
 
-                $ageStmt = $db->prepare(
-                    "UPDATE exposed_cves SET age_days = ? WHERE snapshot_id = ? AND cve_id = ?"
+                $seenStmt = $db->prepare(
+                    "UPDATE exposed_cves SET age_days = ?, last_seen_at = datetime('now') WHERE cve_id = ?"
                 );
 
                 $inserted = 0;
@@ -213,7 +216,6 @@ if (!class_exists('ExposedConsoleStore')) {
 
                     if (!isset($existing[$cveId])) {
                         $insertStmt->execute([
-                            $snapshotId,
                             $cveId,
                             $payload['severity'],
                             $payload['cvss'],
@@ -246,10 +248,7 @@ if (!class_exists('ExposedConsoleStore')) {
                     $sameFingerprint = (string)($existing[$cveId]['fingerprint'] ?? '') === $fingerprint;
                     if ($sameFingerprint) {
                         $unchanged++;
-                        // Solo el tiempo transcurrido: no es un cambio del dato.
-                        if ((int)($existing[$cveId]['age_days'] ?? 0) !== $age) {
-                            $ageStmt->execute([$age, $snapshotId, $cveId]);
-                        }
+                        $seenStmt->execute([$age, $cveId]);
                         continue;
                     }
 
@@ -277,43 +276,31 @@ if (!class_exists('ExposedConsoleStore')) {
                         $payload['exploit_verified'],
                         $payload['description'],
                         $fingerprint,
-                        $snapshotId,
                         $cveId,
                     ]);
                     $updated++;
                 }
 
-                $unique = CveDatabase::fetchOne(
-                    "SELECT COUNT(*) AS c FROM exposed_cves WHERE snapshot_id = ?",
-                    [$snapshotId]
-                );
+                $total = CveDatabase::fetchOne("SELECT COUNT(*) AS c FROM exposed_cves");
 
                 CveDatabase::query(
                     "UPDATE exposed_snapshots
-                     SET rows_total = rows_total + ?, rows_imported = ?, rows_skipped = rows_skipped + ?,
-                         bytes = bytes + ?, imports = imports + ?, updated_at = datetime('now')
+                     SET rows_inserted = ?, rows_updated = ?, rows_unchanged = ?
                      WHERE id = ?",
-                    [
-                        (int)($parsed['total'] ?? count($parsed['rows'])),
-                        (int)($unique['c'] ?? 0),
-                        (int)($parsed['skipped'] ?? 0),
-                        strlen($csv),
-                        $targetSnapshotId > 0 ? 1 : 0,
-                        $snapshotId,
-                    ]
+                    [$inserted, $updated, $unchanged, $importId]
                 );
 
                 $db->commit();
 
                 $fileRows = (int)($parsed['total'] ?? count($parsed['rows']));
                 $out['ok'] = true;
-                $out['snapshot_id'] = $snapshotId;
+                $out['import_id'] = $importId;
                 $out['rows'] = count($parsed['rows']);
                 $out['skipped'] = (int)($parsed['skipped'] ?? 0);
                 $out['inserted'] = $inserted;
                 $out['updated'] = $updated;
                 $out['unchanged'] = $unchanged;
-                $out['snapshot_total'] = (int)($unique['c'] ?? 0);
+                $out['total'] = (int)($total['c'] ?? 0);
                 // Defender corta el export web en 6.000 filas: se avisa con el
                 // rango cubierto para que se pueda completar con otro tramo.
                 $out['truncated'] = $fileRows >= 6000;
@@ -326,7 +313,7 @@ if (!class_exists('ExposedConsoleStore')) {
                 if ($db->inTransaction()) {
                     $db->rollBack();
                 }
-                $out['error'] = 'No se pudo guardar el snapshot: ' . $e->getMessage();
+                $out['error'] = 'No se pudo guardar el CSV: ' . $e->getMessage();
                 return $out;
             }
         }
@@ -379,15 +366,27 @@ if (!class_exists('ExposedConsoleStore')) {
             return sha1(is_string($json) ? $json : serialize($payload));
         }
 
+        /* =================================================================
+         * Historial de importaciones (antes «snapshots»)
+         * ============================================================== */
+
+        /**
+         * Historial de CSV subidos, del más reciente al más antiguo.
+         */
         public static function listSnapshots(int $limit = 25): array
         {
             return CveDatabase::fetchAll(
-                "SELECT s.*,
-                        (SELECT COUNT(*) FROM exposed_groups g WHERE g.snapshot_id = s.id) AS group_count
+                "SELECT s.*
                  FROM exposed_snapshots s
                  ORDER BY s.created_at DESC, s.id DESC
                  LIMIT " . max(1, min(200, $limit))
             );
+        }
+
+        /** Alias semántico: el historial son importaciones, no snapshots. */
+        public static function listImports(int $limit = 25): array
+        {
+            return self::listSnapshots($limit);
         }
 
         public static function getSnapshot(int $id): ?array
@@ -397,6 +396,7 @@ if (!class_exists('ExposedConsoleStore')) {
                 : null;
         }
 
+        /** Última importación registrada (para la cabecera). */
         public static function latestSnapshot(): ?array
         {
             return CveDatabase::fetchOne(
@@ -404,29 +404,48 @@ if (!class_exists('ExposedConsoleStore')) {
             );
         }
 
-        /** @return array{ok:bool,error:string} */
+        /**
+         * Borra un registro del historial. **No toca las vulnerabilidades**: la
+         * lista maestra es única y compartida por todas las importaciones.
+         *
+         * @return array{ok:bool,error:string}
+         */
         public static function deleteSnapshot(int $id): array
         {
             if ($id <= 0) {
-                return ['ok' => false, 'error' => 'Snapshot no válido.'];
-            }
-            $groups = CveDatabase::fetchOne(
-                "SELECT COUNT(*) AS c FROM exposed_groups WHERE snapshot_id = ?",
-                [$id]
-            );
-            if ((int)($groups['c'] ?? 0) > 0) {
-                return [
-                    'ok'    => false,
-                    'error' => 'Este snapshot tiene grupos de análisis asociados. '
-                        . 'Elimina primero esos grupos para no perder su contexto.',
-                ];
+                return ['ok' => false, 'error' => 'Importación no válida.'];
             }
             try {
-                CveDatabase::query("DELETE FROM exposed_cves WHERE snapshot_id = ?", [$id]);
                 CveDatabase::query("DELETE FROM exposed_snapshots WHERE id = ?", [$id]);
                 return ['ok' => true, 'error' => ''];
             } catch (Throwable $e) {
-                return ['ok' => false, 'error' => 'No se pudo eliminar el snapshot: ' . $e->getMessage()];
+                return ['ok' => false, 'error' => 'No se pudo borrar el registro: ' . $e->getMessage()];
+            }
+        }
+
+        /**
+         * Vacía la base de vulnerabilidades del tenant (y los grupos derivados).
+         * Conserva el historial de importaciones.
+         *
+         * @return array{ok:bool,error:string,deleted:int}
+         */
+        public static function clearAll(): array
+        {
+            $db = CveDatabase::getInstance();
+            try {
+                $before = CveDatabase::fetchOne("SELECT COUNT(*) AS c FROM exposed_cves");
+                $db->beginTransaction();
+                CveDatabase::query("DELETE FROM exposed_group_cves");
+                CveDatabase::query("DELETE FROM exposed_group_plans");
+                CveDatabase::query("DELETE FROM exposed_groups");
+                CveDatabase::query("DELETE FROM exposed_cves");
+                $db->commit();
+                return ['ok' => true, 'error' => '', 'deleted' => (int)($before['c'] ?? 0)];
+            } catch (Throwable $e) {
+                if ($db->inTransaction()) {
+                    $db->rollBack();
+                }
+                return ['ok' => false, 'error' => 'No se pudo vaciar la base: ' . $e->getMessage(), 'deleted' => 0];
             }
         }
 
@@ -520,7 +539,9 @@ if (!class_exists('ExposedConsoleStore')) {
                 $out['machines'] = (int)$filters['machines'];
             }
             if (!empty($filters['software'])) {
-                $out['software'] = implode(' ', (array)$filters['software']);
+                $out['software'] = is_array($filters['software'])
+                    ? implode(' ', array_map('strval', $filters['software']))
+                    : (string)$filters['software'];
             }
             if ((string)($filters['q'] ?? '') !== '') {
                 $out['q'] = (string)$filters['q'];
@@ -529,15 +550,15 @@ if (!class_exists('ExposedConsoleStore')) {
         }
 
         /**
-         * WHERE del snapshot con los filtros. OR dentro de cada bloque, AND
-         * entre bloques (como el portal de Defender).
+         * WHERE sobre la lista maestra. OR dentro de cada bloque, AND entre
+         * bloques (como el portal de Defender).
          *
          * @return array{0:string,1:array<int,mixed>}
          */
-        public static function where(int $snapshotId, array $filters): array
+        public static function where(array $filters): array
         {
-            $clauses = ['e.snapshot_id = ?'];
-            $params = [$snapshotId];
+            $clauses = ['1 = 1'];
+            $params = [];
 
             $severity = array_values(array_intersect((array)($filters['severity'] ?? []), self::SEVERITIES));
             if ($severity !== []) {
@@ -633,9 +654,9 @@ if (!class_exists('ExposedConsoleStore')) {
             };
         }
 
-        public static function count(int $snapshotId, array $filters): int
+        public static function count(array $filters): int
         {
-            [$where, $params] = self::where($snapshotId, $filters);
+            [$where, $params] = self::where($filters);
             $row = CveDatabase::fetchOne("SELECT COUNT(*) AS c FROM exposed_cves e" . $where, $params);
             return (int)($row['c'] ?? 0);
         }
@@ -643,9 +664,9 @@ if (!class_exists('ExposedConsoleStore')) {
         /**
          * @return array<int,array<string,mixed>>
          */
-        public static function rows(int $snapshotId, array $filters, int $limit = self::PER_PAGE, int $offset = 0): array
+        public static function rows(array $filters, int $limit = self::PER_PAGE, int $offset = 0): array
         {
-            [$where, $params] = self::where($snapshotId, $filters);
+            [$where, $params] = self::where($filters);
             $limit = max(1, min(500, $limit));
             $offset = max(0, $offset);
             return CveDatabase::fetchAll(
@@ -659,9 +680,9 @@ if (!class_exists('ExposedConsoleStore')) {
         /**
          * @return string[]
          */
-        public static function allIds(int $snapshotId, array $filters, int $max = self::MAX_GROUP_CVES): array
+        public static function allIds(array $filters, int $max = self::MAX_GROUP_CVES): array
         {
-            [$where, $params] = self::where($snapshotId, $filters);
+            [$where, $params] = self::where($filters);
             $rows = CveDatabase::fetchAll(
                 "SELECT e.cve_id FROM exposed_cves e" . $where
                 . " ORDER BY " . self::orderBy((string)($filters['sort'] ?? 'oldest'))
@@ -676,9 +697,9 @@ if (!class_exists('ExposedConsoleStore')) {
          *
          * @return array<string,mixed>
          */
-        public static function stats(int $snapshotId, array $filters): array
+        public static function stats(array $filters): array
         {
-            [$where, $params] = self::where($snapshotId, $filters);
+            [$where, $params] = self::where($filters);
             $row = CveDatabase::fetchOne(
                 "SELECT COUNT(*) AS total,
                         SUM(CASE WHEN e.severity = 'critical' THEN 1 ELSE 0 END) AS critical,
@@ -718,11 +739,10 @@ if (!class_exists('ExposedConsoleStore')) {
          *
          * @return array<string,array<string,int>>
          */
-        public static function facets(int $snapshotId, array $filters): array
+        public static function facets(array $filters): array
         {
-            $countWith = static function (array $overrides) use ($snapshotId, $filters): int {
-                $merged = array_merge($filters, $overrides);
-                return self::count($snapshotId, $merged);
+            $countWith = static function (array $overrides) use ($filters): int {
+                return self::count(array_merge($filters, $overrides));
             };
 
             $facets = ['severity' => [], 'age' => [], 'threats' => [], 'tags' => [], 'status' => []];
@@ -746,6 +766,27 @@ if (!class_exists('ExposedConsoleStore')) {
             return $facets;
         }
 
+        /** Totales de la lista maestra completa (cabecera de la consola). */
+        public static function masterTotals(): array
+        {
+            $row = CveDatabase::fetchOne(
+                "SELECT COUNT(*) AS total,
+                        SUM(CASE WHEN severity = 'critical' THEN 1 ELSE 0 END) AS critical,
+                        SUM(CASE WHEN has_exploit = 1 THEN 1 ELSE 0 END) AS exploitable,
+                        MAX(exposed_machines) AS machines_max,
+                        MAX(last_seen_at) AS last_seen_at
+                 FROM exposed_cves"
+            ) ?? [];
+
+            return [
+                'total'        => (int)($row['total'] ?? 0),
+                'critical'     => (int)($row['critical'] ?? 0),
+                'exploitable'  => (int)($row['exploitable'] ?? 0),
+                'machines_max' => (int)($row['machines_max'] ?? 0),
+                'last_seen_at' => (string)($row['last_seen_at'] ?? ''),
+            ];
+        }
+
         /** Opciones del 1 al N para un bloque (la interfaz usa etiquetas). */
         public static function severityRankSql(string $column = 'e.severity'): string
         {
@@ -765,7 +806,7 @@ if (!class_exists('ExposedConsoleStore')) {
          * @param string[] $cveIds
          * @return array{ok:bool,error:string,group_id:int}
          */
-        public static function createGroup(string $name, int $snapshotId, array $filters, array $cveIds, int $userId = 0): array
+        public static function createGroup(string $name, array $filters, array $cveIds, int $userId = 0): array
         {
             $name = trim(preg_replace('/\s+/u', ' ', $name) ?? $name);
             if ($name === '') {
@@ -787,11 +828,10 @@ if (!class_exists('ExposedConsoleStore')) {
             try {
                 $db->beginTransaction();
                 $groupId = CveDatabase::insert(
-                    "INSERT INTO exposed_groups (name, snapshot_id, filters_json, created_by)
-                     VALUES (?, ?, ?, ?)",
+                    "INSERT INTO exposed_groups (name, filters_json, created_by)
+                     VALUES (?, ?, ?)",
                     [
                         $name,
-                        $snapshotId > 0 ? $snapshotId : null,
                         json_encode(self::filtersToQuery($filters), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
                         $userId > 0 ? $userId : null,
                     ]
@@ -889,11 +929,9 @@ if (!class_exists('ExposedConsoleStore')) {
         {
             return CveDatabase::fetchAll(
                 "SELECT g.*,
-                        s.filename, s.export_date,
                         (SELECT COUNT(*) FROM exposed_group_cves gc WHERE gc.group_id = g.id) AS cve_count,
                         (SELECT p.generated_at FROM exposed_group_plans p WHERE p.group_id = g.id) AS plan_generated_at
                  FROM exposed_groups g
-                 LEFT JOIN exposed_snapshots s ON s.id = g.snapshot_id
                  ORDER BY g.updated_at DESC, g.id DESC
                  LIMIT " . max(1, min(300, $limit))
             );
@@ -905,45 +943,33 @@ if (!class_exists('ExposedConsoleStore')) {
                 return null;
             }
             return CveDatabase::fetchOne(
-                "SELECT g.*, s.filename, s.export_date,
+                "SELECT g.*,
                         (SELECT COUNT(*) FROM exposed_group_cves gc WHERE gc.group_id = g.id) AS cve_count
                  FROM exposed_groups g
-                 LEFT JOIN exposed_snapshots s ON s.id = g.snapshot_id
                  WHERE g.id = ?",
                 [$groupId]
             );
         }
 
         /**
-         * CVEs del grupo con sus datos TVM (del snapshot del grupo o del último).
+         * CVEs del grupo con sus datos TVM de la lista maestra.
          *
          * @return array<int,array<string,mixed>>
          */
         public static function groupRows(int $groupId, ?int $limit = null): array
         {
-            $group = self::getGroup($groupId);
-            if ($group === null) {
-                return [];
-            }
-            $snapshotId = (int)($group['snapshot_id'] ?? 0);
-            if ($snapshotId <= 0) {
-                $latest = self::latestSnapshot();
-                $snapshotId = (int)($latest['id'] ?? 0);
-            }
-
             $sql = "SELECT gc.cve_id,
-                           e.snapshot_id, e.severity, e.cvss, e.epss, e.age_days,
+                           e.severity, e.cvss, e.epss, e.age_days,
                            e.published_at, e.first_detected_at, e.has_exploit,
                            e.has_known_threats, e.has_alerts, e.exposed_machines,
                            e.tvm_status, e.software_labels, e.software_tokens,
                            e.software_total, e.zero_day, e.no_security_update,
                            e.security_update, e.exploit_kit, e.exploit_verified,
-                           e.description,
+                           e.description, e.first_seen_at, e.last_seen_at,
                            " . self::severityRankSql('e.severity') . " AS severity_rank,
                            EXISTS (SELECT 1 FROM cve_kev k WHERE k.cve_id = gc.cve_id) AS is_kev
                     FROM exposed_group_cves gc
-                    LEFT JOIN exposed_cves e
-                           ON e.cve_id = gc.cve_id AND e.snapshot_id = ?
+                    LEFT JOIN exposed_cves e ON e.cve_id = gc.cve_id
                     WHERE gc.group_id = ?
                     ORDER BY severity_rank ASC, e.exposed_machines DESC, e.age_days DESC, gc.cve_id ASC";
 
@@ -951,7 +977,7 @@ if (!class_exists('ExposedConsoleStore')) {
                 $sql .= " LIMIT " . max(1, $limit);
             }
 
-            return CveDatabase::fetchAll($sql, [$snapshotId, $groupId]);
+            return CveDatabase::fetchAll($sql, [$groupId]);
         }
 
         /**

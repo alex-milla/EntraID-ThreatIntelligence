@@ -267,14 +267,18 @@ class CveDatabase
             rows_total INTEGER NOT NULL DEFAULT 0,
             rows_imported INTEGER NOT NULL DEFAULT 0,
             rows_skipped INTEGER NOT NULL DEFAULT 0,
+            rows_inserted INTEGER NOT NULL DEFAULT 0,
+            rows_updated INTEGER NOT NULL DEFAULT 0,
+            rows_unchanged INTEGER NOT NULL DEFAULT 0,
             imports INTEGER NOT NULL DEFAULT 1,
             generated_by INTEGER,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             updated_at TEXT
         )");
+        // v0.4.25.3: lista MAESTRA única del tenant (PK cve_id). Cada CSV se
+        // compara contra esta tabla; el historial vive en exposed_snapshots.
         $db->exec("CREATE TABLE IF NOT EXISTS exposed_cves (
-            snapshot_id INTEGER NOT NULL,
-            cve_id TEXT NOT NULL,
+            cve_id TEXT PRIMARY KEY,
             severity TEXT,
             cvss REAL,
             epss REAL,
@@ -298,11 +302,12 @@ class CveDatabase
             exploit_verified INTEGER NOT NULL DEFAULT 0,
             description TEXT,
             fingerprint TEXT,
-            PRIMARY KEY (snapshot_id, cve_id)
+            first_seen_at TEXT,
+            last_seen_at TEXT
         ) WITHOUT ROWID");
-        $db->exec("CREATE INDEX IF NOT EXISTS idx_exposed_cves_sev ON exposed_cves(snapshot_id, severity)");
-        $db->exec("CREATE INDEX IF NOT EXISTS idx_exposed_cves_age ON exposed_cves(snapshot_id, age_days DESC)");
-        $db->exec("CREATE INDEX IF NOT EXISTS idx_exposed_cves_machines ON exposed_cves(snapshot_id, exposed_machines DESC)");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_exposed_cves_sev ON exposed_cves(severity)");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_exposed_cves_age ON exposed_cves(age_days DESC)");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_exposed_cves_machines ON exposed_cves(exposed_machines DESC)");
 
         $db->exec("CREATE TABLE IF NOT EXISTS exposed_groups (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -598,6 +603,29 @@ class CveDatabase
         }
         if ($snapshotCols !== [] && !isset($snapshotCols['imports'])) {
             $db->exec("ALTER TABLE exposed_snapshots ADD COLUMN imports INTEGER NOT NULL DEFAULT 1");
+        }
+        foreach (['rows_inserted', 'rows_updated', 'rows_unchanged'] as $counter) {
+            if ($snapshotCols !== [] && !isset($snapshotCols[$counter])) {
+                $db->exec("ALTER TABLE exposed_snapshots ADD COLUMN {$counter} INTEGER NOT NULL DEFAULT 0");
+            }
+        }
+
+        // v0.4.25.3: de snapshots separados a UNA lista maestra del tenant.
+        // `exposed_cves` pasa de PK (snapshot_id, cve_id) a PK (cve_id). SQLite
+        // no altera la PK: se reconstruye la tabla consolidando los CVE que
+        // hubiera en varios snapshots (se queda la fila del más reciente).
+        $cveCols = [];
+        foreach ($db->query("PRAGMA table_info(exposed_cves)") as $col) {
+            $cveCols[$col['name']] = $col;
+        }
+        if ($cveCols !== [] && isset($cveCols['snapshot_id'])) {
+            self::rebuildExposedCvesMaster($db);
+        } else {
+            foreach (['fingerprint', 'first_seen_at', 'last_seen_at'] as $extra) {
+                if ($cveCols !== [] && !isset($cveCols[$extra])) {
+                    $db->exec("ALTER TABLE exposed_cves ADD COLUMN {$extra} TEXT");
+                }
+            }
         }
 
         // v0.2.6.1 creó software_watchlist con environment NULL y
@@ -965,6 +993,85 @@ class CveDatabase
         }
     }
 
+    /**
+     * v0.4.25.3 — Reconstruye `exposed_cves` como lista maestra con PK `cve_id`.
+     *
+     * Consolida las filas de los snapshots antiguos: por cada CVE se conserva la
+     * de la importación más reciente (mayor snapshot_id). El historial de
+     * importaciones (`exposed_snapshots`) no se toca.
+     */
+    private static function rebuildExposedCvesMaster(PDO $db): void
+    {
+        $db->exec("PRAGMA foreign_keys = OFF");
+        try {
+            $db->beginTransaction();
+            $db->exec("DROP TABLE IF EXISTS exposed_cves_new");
+            $db->exec("CREATE TABLE exposed_cves_new (
+                cve_id TEXT PRIMARY KEY,
+                severity TEXT,
+                cvss REAL,
+                epss REAL,
+                age_days INTEGER NOT NULL DEFAULT 0,
+                published_at TEXT,
+                first_detected_at TEXT,
+                updated_at TEXT,
+                has_exploit INTEGER NOT NULL DEFAULT 0,
+                has_known_threats INTEGER NOT NULL DEFAULT 0,
+                has_alerts INTEGER NOT NULL DEFAULT 0,
+                exposed_machines INTEGER NOT NULL DEFAULT 0,
+                tvm_status TEXT,
+                related_software TEXT,
+                software_labels TEXT,
+                software_tokens TEXT,
+                software_total INTEGER NOT NULL DEFAULT 0,
+                zero_day INTEGER NOT NULL DEFAULT 0,
+                no_security_update INTEGER NOT NULL DEFAULT 0,
+                security_update INTEGER NOT NULL DEFAULT 0,
+                exploit_kit INTEGER NOT NULL DEFAULT 0,
+                exploit_verified INTEGER NOT NULL DEFAULT 0,
+                description TEXT,
+                fingerprint TEXT,
+                first_seen_at TEXT,
+                last_seen_at TEXT
+            ) WITHOUT ROWID");
+
+            $db->exec(
+                "INSERT INTO exposed_cves_new
+                 (cve_id, severity, cvss, epss, age_days, published_at,
+                  first_detected_at, updated_at, has_exploit, has_known_threats, has_alerts,
+                  exposed_machines, tvm_status, related_software, software_labels,
+                  software_tokens, software_total, zero_day, no_security_update,
+                  security_update, exploit_kit, exploit_verified, description,
+                  fingerprint, first_seen_at, last_seen_at)
+                 SELECT e.cve_id, e.severity, e.cvss, e.epss, e.age_days, e.published_at,
+                        e.first_detected_at, e.updated_at, e.has_exploit, e.has_known_threats, e.has_alerts,
+                        e.exposed_machines, e.tvm_status, e.related_software, e.software_labels,
+                        e.software_tokens, e.software_total, e.zero_day, e.no_security_update,
+                        e.security_update, e.exploit_kit, e.exploit_verified, e.description,
+                        e.fingerprint, NULL, NULL
+                 FROM exposed_cves e
+                 WHERE e.snapshot_id = (
+                     SELECT MAX(e2.snapshot_id) FROM exposed_cves e2 WHERE e2.cve_id = e.cve_id
+                 )"
+            );
+
+            $db->exec("DROP TABLE exposed_cves");
+            $db->exec("ALTER TABLE exposed_cves_new RENAME TO exposed_cves");
+            $db->exec("CREATE INDEX IF NOT EXISTS idx_exposed_cves_sev ON exposed_cves(severity)");
+            $db->exec("CREATE INDEX IF NOT EXISTS idx_exposed_cves_age ON exposed_cves(age_days DESC)");
+            $db->exec("CREATE INDEX IF NOT EXISTS idx_exposed_cves_machines ON exposed_cves(exposed_machines DESC)");
+
+            $db->commit();
+        } catch (Throwable $e) {
+            if ($db->inTransaction()) {
+                $db->rollBack();
+            }
+            throw $e;
+        } finally {
+            $db->exec("PRAGMA foreign_keys = ON");
+        }
+    }
+
     private static function rebuildSoftwareWatchlist(PDO $db): void
     {
         $db->exec("PRAGMA foreign_keys = OFF");
@@ -1009,6 +1116,15 @@ class CveDatabase
         }
 
         $db->exec("CREATE INDEX IF NOT EXISTS idx_software_group ON software_watchlist(group_id)");
+    }
+
+    /**
+     * Cierra la conexión estática. Útil en pruebas que necesitan restaurar el
+     * fichero SQLite y en tareas de mantenimiento.
+     */
+    public static function disconnect(): void
+    {
+        self::$instance = null;
     }
 
     public static function query(string $sql, array $params = []): PDOStatement

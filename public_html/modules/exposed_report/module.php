@@ -92,6 +92,7 @@ class Module_ExposedReport extends BaseModule
             ['method' => 'GET',  'pattern' => 'group/{id}',            'handler' => [$this, 'showGroup']],
             ['method' => 'POST', 'pattern' => 'upload',                'handler' => [$this, 'upload']],
             ['method' => 'POST', 'pattern' => 'snapshot/delete',       'handler' => [$this, 'deleteSnapshot']],
+            ['method' => 'POST', 'pattern' => 'clear',                 'handler' => [$this, 'clearAll']],
             ['method' => 'POST', 'pattern' => 'groups/create',         'handler' => [$this, 'createGroup']],
             ['method' => 'POST', 'pattern' => 'group/{id}/plan',       'handler' => [$this, 'generatePlan']],
             ['method' => 'POST', 'pattern' => 'group/{id}/analyze',    'handler' => [$this, 'analyzeGroup']],
@@ -133,20 +134,10 @@ class Module_ExposedReport extends BaseModule
 
         Csrf::validateOrFail();
 
-        $target = ((string)($_POST['target'] ?? 'new')) === 'merge' ? 'merge' : 'new';
-        $targetId = (int)($_POST['snapshot_id'] ?? 0);
-        if ($target === 'merge' && $targetId <= 0) {
-            flash('error', 'Elige un snapshot válido para fusionar los CSV.');
-            redirect($back);
-        }
-        if ($target === 'new') {
-            $targetId = 0;
-        }
-
         $files = $this->uploadedFiles('csv');
         if ($files === []) {
             $error = UPLOAD_ERR_NO_FILE;
-            foreach (($_FILES['csv']['error'] ?? []) as $code) {
+            foreach ((array)($_FILES['csv']['error'] ?? []) as $code) {
                 if ((int)$code !== UPLOAD_ERR_OK && (int)$code !== UPLOAD_ERR_NO_FILE) {
                     $error = (int)$code;
                     break;
@@ -157,7 +148,7 @@ class Module_ExposedReport extends BaseModule
         }
 
         // Validación previa de TODO el lote: o entran todos los ficheros o
-        // ninguno, para no dejar el snapshot a medias sin explicación.
+        // ninguno, para no dejar la lista a medias sin explicación.
         $errors = [];
         foreach ($files as $file) {
             $label = (string)($file['name'] ?? 'CSV');
@@ -182,10 +173,9 @@ class Module_ExposedReport extends BaseModule
         }
         if ($errors !== []) {
             flash('error', 'No se ha importado nada. ' . implode(' · ', array_slice($errors, 0, 4)));
-            redirect($back . ($targetId > 0 ? '?snapshot=' . $targetId : ''));
+            redirect($back);
         }
 
-        $snapshotId = 0;
         $inserted = 0;
         $updated = 0;
         $unchanged = 0;
@@ -194,6 +184,7 @@ class Module_ExposedReport extends BaseModule
         $truncated = [];
         $bytes = 0;
         $failures = [];
+        $total = 0;
 
         foreach ($files as $file) {
             $label = trim((string)($file['name'] ?? 'export-tvm.csv'));
@@ -208,40 +199,30 @@ class Module_ExposedReport extends BaseModule
                 continue;
             }
 
-            $res = ExposedConsoleStore::importCsv(
-                $content,
-                $label,
-                Auth::id(),
-                $snapshotId > 0 ? $snapshotId : $targetId
-            );
+            $res = ExposedConsoleStore::importCsv($content, $label, Auth::id());
             if (!$res['ok']) {
                 $failures[] = $label . ': ' . $res['error'];
                 continue;
             }
 
-            $snapshotId = (int)$res['snapshot_id'];
-            $targetId = $snapshotId;
             $inserted += (int)$res['inserted'];
             $updated += (int)$res['updated'];
             $unchanged += (int)$res['unchanged'];
             $skipped += (int)$res['skipped'];
             $processed += (int)$res['rows'];
+            $total = (int)$res['total'];
             $bytes += (int)($file['size'] ?? 0);
             if (!empty($res['truncated'])) {
                 $truncated[] = $label . ' (' . (string)$res['range'] . ')';
             }
         }
 
-        if ($snapshotId === 0) {
+        if ($processed === 0) {
             flash('error', 'No se pudo importar ningún CSV. ' . implode(' · ', array_slice($failures, 0, 3)));
             redirect($back);
         }
 
-        $snapshot = ExposedConsoleStore::getSnapshot($snapshotId);
-        $total = (int)($snapshot['rows_imported'] ?? 0);
-
-        log_activity('exposed_report.snapshot_imported', [
-            'snapshot'  => $snapshotId,
+        log_activity('exposed_report.master_imported', [
             'files'     => count($files),
             'rows'      => $processed,
             'inserted'  => $inserted,
@@ -249,12 +230,12 @@ class Module_ExposedReport extends BaseModule
             'unchanged' => $unchanged,
             'skipped'   => $skipped,
             'bytes'     => $bytes,
-            'merged'    => $targetId > 0,
+            'total'     => $total,
         ]);
 
-        $summary = 'Snapshot #' . $snapshotId . ' con ' . $total . ' CVE únicos'
-            . (count($files) > 1 ? ' (' . count($files) . ' ficheros)' : '')
-            . ': ' . $inserted . ' nuevos, ' . $updated . ' actualizados, '
+        $summary = 'Base del tenant actualizada: ' . $total . ' CVE únicos en total'
+            . (count($files) > 1 ? ' · ' . count($files) . ' ficheros' : '')
+            . '. Esta importación: ' . $inserted . ' nuevos, ' . $updated . ' actualizados, '
             . $unchanged . ' sin cambios (omitidos).';
         if ($inserted === 0 && $updated === 0) {
             $summary .= ' No había información nueva que guardar.';
@@ -269,10 +250,10 @@ class Module_ExposedReport extends BaseModule
             flash('warning', 'Defender corta cada export web en 6.000 filas. '
                 . implode(' · ', $truncated)
                 . '. Si el tenant tiene más, exporta otro tramo (por edad o severidad) y '
-                . 'súbelo a este mismo snapshot para completarlo sin duplicar.');
+                . 'súbelo aquí: se añade a la misma lista sin duplicar.');
         }
 
-        redirect($back . '?snapshot=' . $snapshotId);
+        redirect($back);
     }
 
     /**
@@ -313,7 +294,27 @@ class Module_ExposedReport extends BaseModule
         Csrf::validateOrFail();
 
         $res = ExposedConsoleStore::deleteSnapshot((int)($_POST['snapshot_id'] ?? 0));
-        flash($res['ok'] ? 'success' : 'error', $res['ok'] ? 'Snapshot eliminado.' : $res['error']);
+        flash($res['ok'] ? 'success' : 'error', $res['ok'] ? 'Registro del historial eliminado.' : $res['error']);
+        redirect(base_url('modules/exposed_report'));
+    }
+
+    /**
+     * POST clear — vacía la base de vulnerabilidades del tenant.
+     * Conserva el historial de importaciones (auditoría).
+     */
+    public function clearAll(array $params = []): void
+    {
+        Auth::require();
+        Csrf::validateOrFail();
+
+        $res = ExposedConsoleStore::clearAll();
+        if ($res['ok']) {
+            log_activity('exposed_report.cleared', ['deleted' => (int)$res['deleted']]);
+            flash('success', 'Base de vulnerabilidades vaciada (' . (int)$res['deleted']
+                . ' CVE y sus grupos). El historial de importaciones se conserva.');
+        } else {
+            flash('error', $res['error']);
+        }
         redirect(base_url('modules/exposed_report'));
     }
 
@@ -323,20 +324,19 @@ class Module_ExposedReport extends BaseModule
         Auth::require();
         Csrf::validateOrFail();
 
-        $snapshotId = (int)($_POST['snapshot_id'] ?? 0);
         $filters = ExposedConsoleStore::filtersFromInput($_POST);
         $ids = $_POST['cve_ids'] ?? [];
         $ids = is_array($ids) ? $ids : [];
 
         $selectAll = (string)($_POST['select_all'] ?? '') === '1';
-        if ($selectAll && $snapshotId > 0) {
-            $ids = array_merge($ids, ExposedConsoleStore::allIds($snapshotId, $filters));
+        if ($selectAll) {
+            $ids = array_merge($ids, ExposedConsoleStore::allIds($filters));
         }
 
         $name = (string)($_POST['group_name'] ?? '');
-        $res = ExposedConsoleStore::createGroup($name, $snapshotId, $filters, $ids, Auth::id());
+        $res = ExposedConsoleStore::createGroup($name, $filters, $ids, Auth::id());
 
-        $query = http_build_query(array_merge(['snapshot' => $snapshotId], ExposedConsoleStore::filtersToQuery($filters)));
+        $query = http_build_query(ExposedConsoleStore::filtersToQuery($filters));
         $back = base_url('modules/exposed_report') . ($query !== '' ? '?' . $query : '');
 
         if (!$res['ok']) {
@@ -345,10 +345,9 @@ class Module_ExposedReport extends BaseModule
         }
 
         log_activity('exposed_report.group_created', [
-            'group'    => (int)$res['group_id'],
-            'snapshot' => $snapshotId,
-            'cves'     => count($ids),
-            'all'      => $selectAll,
+            'group' => (int)$res['group_id'],
+            'cves'  => count($ids),
+            'all'   => $selectAll,
         ]);
 
         flash('success', 'Grupo creado con ' . count($ids) . ' CVE. Ya puedes generar su plan de actuación.');
@@ -668,11 +667,11 @@ class Module_ExposedReport extends BaseModule
         $lines[] = '# Contexto del grupo de análisis';
         $lines[] = '';
         $lines[] = '- Grupo: ' . (string)($group['name'] ?? '');
-        $lines[] = '- Snapshot: ' . (string)($group['filename'] ?? 'sin fichero')
-            . (!empty($group['export_date']) ? ' · export del ' . (string)$group['export_date'] : '');
+        $lines[] = '- Base de vulnerabilidades del tenant: lista maestra única (último export procesado el '
+            . date('d/m/Y') . ')';
         $lines[] = '- Filtro de origen: ' . $filterText;
         $lines[] = '- CVE en el grupo: ' . $total;
-        $lines[] = '- Sin datos TVM en el snapshot actual: ' . $missing;
+        $lines[] = '- Sin datos TVM en la base: ' . $missing;
         $lines[] = '- Severidad: ' . implode(' · ', [
             'Critical ' . $bySeverity['critical'],
             'High ' . $bySeverity['high'],
@@ -761,8 +760,8 @@ class Module_ExposedReport extends BaseModule
         $out = [];
         $out[] = '## Anexo A. CVE del grupo (datos del export de Defender)';
         $out[] = '';
-        $out[] = 'Lo añade la aplicación, no la IA: cada dato es rastreable al snapshot '
-            . (string)($group['filename'] ?? '') . '.';
+        $out[] = 'Lo añade la aplicación, no la IA: cada dato es rastreable a la base de '
+            . 'vulnerabilidades del tenant (lista maestra única).';
         $out[] = '';
         $out[] = '| CVE | Severidad | CVSS | EPSS | Edad | Equipos | Exploit | Amenaza | KEV | Estado TVM | Software |';
         $out[] = '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |';
@@ -1205,20 +1204,16 @@ class Module_ExposedReport extends BaseModule
     }
 
     /**
-     * Estado de la consola para la vista: snapshot activo, filtros, facets,
-     * página de resultados y grupos.
+     * Estado de la consola para la vista: lista maestra, filtros, facets,
+     * página de resultados, historial de importaciones y grupos.
      *
      * @return array<string,mixed>
      */
     private function consoleState(): array
     {
-        $snapshots = ExposedConsoleStore::listSnapshots(25);
-        $requested = (int)($_GET['snapshot'] ?? 0);
-        $snapshot = $requested > 0 ? ExposedConsoleStore::getSnapshot($requested) : null;
-        if ($snapshot === null) {
-            $snapshot = ExposedConsoleStore::latestSnapshot();
-        }
-        $snapshotId = (int)($snapshot['id'] ?? 0);
+        $imports = ExposedConsoleStore::listSnapshots(50);
+        $latestImport = $imports[0] ?? null;
+        $totals = ExposedConsoleStore::masterTotals();
 
         $filters = ExposedConsoleStore::filtersFromInput($_GET);
         $perPage = ExposedConsoleStore::PER_PAGE;
@@ -1229,20 +1224,19 @@ class Module_ExposedReport extends BaseModule
         $page = 1;
         $pages = 1;
 
-        if ($snapshotId > 0) {
-            $total = ExposedConsoleStore::count($snapshotId, $filters);
+        if ((int)$totals['total'] > 0) {
+            $total = ExposedConsoleStore::count($filters);
             $pages = max(1, (int)ceil($total / $perPage));
             $page = max(1, min($pages, (int)($_GET['page'] ?? 1)));
-            $rows = ExposedConsoleStore::rows($snapshotId, $filters, $perPage, ($page - 1) * $perPage);
-            $stats = ExposedConsoleStore::stats($snapshotId, $filters);
-            $facets = ExposedConsoleStore::facets($snapshotId, $filters);
+            $rows = ExposedConsoleStore::rows($filters, $perPage, ($page - 1) * $perPage);
+            $stats = ExposedConsoleStore::stats($filters);
+            $facets = ExposedConsoleStore::facets($filters);
         }
-        $groups = ExposedConsoleStore::listGroups(100);
 
         return [
-            'snapshots'   => $snapshots,
-            'snapshot'    => $snapshot,
-            'snapshotId'  => $snapshotId,
+            'imports'     => $imports,
+            'latestImport'=> $latestImport,
+            'totals'      => $totals,
             'filters'     => $filters,
             'filterQuery' => ExposedConsoleStore::filtersToQuery($filters),
             'rows'        => $rows,
@@ -1252,37 +1246,10 @@ class Module_ExposedReport extends BaseModule
             'page'        => $page,
             'pages'       => $pages,
             'perPage'     => $perPage,
-            'groups'      => $groups,
+            'groups'      => ExposedConsoleStore::listGroups(100),
             'maxBytesLabel' => ExposedConsoleStore::formatBytes(ExposedConsoleStore::maxUploadBytes()),
             'iniLimited'  => ExposedConsoleStore::maxUploadBytes() < CveTvmImport::CONSOLE_MAX_BYTES,
             'maxRowsConsole' => CveTvmImport::CONSOLE_MAX_ROWS,
-            'counts'      => $this->countSnapshotTotals($snapshotId),
-        ];
-    }
-
-    /**
-     * Totales sin filtrar del snapshot (para la cabecera de la consola).
-     *
-     * @return array<string,mixed>
-     */
-    private function countSnapshotTotals(int $snapshotId): array
-    {
-        if ($snapshotId <= 0) {
-            return ['total' => 0];
-        }
-        $row = CveDatabase::fetchOne(
-            "SELECT COUNT(*) AS total,
-                    SUM(CASE WHEN severity = 'critical' THEN 1 ELSE 0 END) AS critical,
-                    SUM(CASE WHEN has_exploit = 1 THEN 1 ELSE 0 END) AS exploitable,
-                    MAX(exposed_machines) AS machines_max
-             FROM exposed_cves WHERE snapshot_id = ?",
-            [$snapshotId]
-        ) ?? [];
-        return [
-            'total'        => (int)($row['total'] ?? 0),
-            'critical'     => (int)($row['critical'] ?? 0),
-            'exploitable'  => (int)($row['exploitable'] ?? 0),
-            'machines_max' => (int)($row['machines_max'] ?? 0),
         ];
     }
 

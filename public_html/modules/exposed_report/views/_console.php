@@ -1,9 +1,11 @@
 <?php
 /**
- * Parcial: consola de Equipos expuestos (v0.4.25).
+ * Parcial: consola de Equipos expuestos (v0.4.25.3).
  *
- * Vista de los filtros tipo portal de Defender sobre el snapshot del export
- * completo de TVM, la tabla de resultados y la creación de grupos de análisis.
+ * Lista MAESTRA única del tenant (`exposed_cves`): cualquier CSV que se suba se
+ * compara contra ella (nuevo / actualizado / sin cambios). Los filtros, la tabla
+ * y los grupos trabajan siempre sobre el 100% de la base; las subidas quedan
+ * como historial de importaciones.
  *
  * @var array $console
  * @var Module_ExposedReport $module
@@ -11,20 +13,19 @@
  */
 
 $console = is_array($console ?? null) ? $console : [];
-$snapshots = is_array($console['snapshots'] ?? null) ? $console['snapshots'] : [];
-$snapshot = is_array($console['snapshot'] ?? null) ? $console['snapshot'] : null;
-$snapshotId = (int)($console['snapshotId'] ?? 0);
+$imports = is_array($console['imports'] ?? null) ? $console['imports'] : [];
+$latestImport = is_array($console['latestImport'] ?? null) ? $console['latestImport'] : null;
+$totals = is_array($console['totals'] ?? null) ? $console['totals'] : ['total' => 0];
 $filters = is_array($console['filters'] ?? null) ? $console['filters'] : [];
 $filterQuery = is_array($console['filterQuery'] ?? null) ? $console['filterQuery'] : [];
 $rows = is_array($console['rows'] ?? null) ? $console['rows'] : [];
 $stats = is_array($console['stats'] ?? null) ? $console['stats'] : null;
 $facets = is_array($console['facets'] ?? null) ? $console['facets'] : [];
 $groups = is_array($console['groups'] ?? null) ? $console['groups'] : [];
-$counts = is_array($console['counts'] ?? null) ? $console['counts'] : ['total' => 0];
+$masterTotal = (int)($totals['total'] ?? 0);
 $total = (int)($console['total'] ?? 0);
 $page = (int)($console['page'] ?? 1);
 $pages = (int)($console['pages'] ?? 1);
-$perPage = (int)($console['perPage'] ?? 100);
 
 $base = base_url('modules/exposed_report');
 
@@ -82,17 +83,17 @@ $sortOptions = [
     'epss'     => 'Mayor EPSS',
 ];
 
-$consoleUrl = static function (array $extra = []) use ($base, $snapshotId, $filterQuery): string {
-    $query = array_merge(['snapshot' => $snapshotId], $filterQuery, $extra);
-    return $base . '?' . http_build_query($query);
+$consoleUrl = static function (array $extra = []) use ($base, $filterQuery): string {
+    $query = array_merge($filterQuery, $extra);
+    return $base . ($query !== [] ? '?' . http_build_query($query) : '');
 };
-$fmtDate = static function (?string $value): string {
+$fmtDate = static function (?string $value, string $format = 'd/m/Y H:i'): string {
     $value = trim((string)$value);
     if ($value === '') {
         return '—';
     }
     $ts = strtotime($value);
-    return $ts === false ? $value : date('d/m/Y', $ts);
+    return $ts === false ? $value : date($format, $ts);
 };
 
 $flashData = function_exists('flash') ? flash() : [];
@@ -117,10 +118,10 @@ $flashData = is_array($flashData) ? $flashData : [];
                 <p class="text-xs text-ink-muted mt-1 mb-0 max-w-2xl">
                     En <strong>Defender → Vulnerability management → Vulnerabilities</strong>, filtra por
                     <em>Exposed devices → Affects my organization</em> y pulsa <em>Export</em>. Sube uno o
-                    varios CSV: si eliges <strong>fusionar</strong>, los CVE se comparan con los que ya hay
-                    (nuevos se añaden, cambiados se actualizan y los idénticos se omiten).
+                    varios CSV: todos alimentan la <strong>misma base del tenant</strong>. Cada CVE se compara
+                    con lo que ya hay (nuevo → se añade, cambiado → se actualiza, idéntico → se omite).
                     Hasta <?= e((string)($console['maxBytesLabel'] ?? '30 MB')) ?> por fichero y
-                    <?= (int)($console['maxRowsConsole'] ?? 20000) ?> CVE por snapshot.
+                    <?= (int)($console['maxRowsConsole'] ?? 20000) ?> CVE por importación.
                     <?php if (!empty($console['iniLimited'])): ?>
                         <span class="block mt-1 text-amber-700 dark:text-amber-300">
                             El límite lo impone <code class="font-mono">php.ini</code> (post_max_size / upload_max_filesize).
@@ -131,110 +132,112 @@ $flashData = is_array($flashData) ? $flashData : [];
             </div>
             <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-muted text-[11px] text-ink-muted">
                 <i class="material-icons icon-14" aria-hidden="true">database</i>
-                Snapshot en cve.sqlite
+                Lista maestra en cve.sqlite
             </span>
         </div>
 
         <form method="POST" action="<?= e($base . '/upload') ?>" enctype="multipart/form-data"
-              class="mt-4 space-y-3">
+              class="mt-4 grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3 items-end">
             <?= Csrf::field() ?>
-            <?php if ($snapshot !== null): ?>
-                <input type="hidden" name="snapshot_id" value="<?= $snapshotId ?>">
-            <?php endif; ?>
-
-            <div class="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3 items-end">
-                <div>
-                    <label for="exposed-csv" class="block text-xs font-medium text-ink-muted mb-1">
-                        CSV «Vulnerabilities Export» de Defender TVM
-                        <span class="text-ink-soft">(puedes seleccionar varios)</span>
-                    </label>
-                    <input id="exposed-csv" type="file" name="csv[]" multiple accept=".csv,.txt,text/csv,text/plain" required
-                           class="block w-full text-sm text-ink file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:bg-brand-500 file:text-white file:text-xs file:font-semibold hover:file:bg-brand-600 border border-line-strong rounded-lg bg-input">
-                </div>
-                <button type="submit" class="btn">
-                    <?= icon('cloud_upload', 16) ?> Importar
-                </button>
+            <div>
+                <label for="exposed-csv" class="block text-xs font-medium text-ink-muted mb-1">
+                    CSV «Vulnerabilities Export» de Defender TVM
+                    <span class="text-ink-soft">(puedes seleccionar varios)</span>
+                </label>
+                <input id="exposed-csv" type="file" name="csv[]" multiple accept=".csv,.txt,text/csv,text/plain" required
+                       class="block w-full text-sm text-ink file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:bg-brand-500 file:text-white file:text-xs file:font-semibold hover:file:bg-brand-600 border border-line-strong rounded-lg bg-input">
             </div>
-
-            <?php if ($snapshot !== null): ?>
-                <fieldset class="border-0 p-0 m-0">
-                    <legend class="text-[11px] font-medium text-ink-muted mb-1">Destino de la importación</legend>
-                    <div class="flex flex-col sm:flex-row gap-2">
-                        <label class="flex items-start gap-2 px-3 py-2 rounded-lg border border-line cursor-pointer hover:bg-muted">
-                            <input type="radio" name="target" value="merge" class="mt-0.5" checked>
-                            <span>
-                                <span class="block text-xs font-medium">Fusionar con el snapshot #<?= $snapshotId ?></span>
-                                <span class="block text-[10px] text-ink-soft">Añade los nuevos y actualiza solo lo que haya cambiado.</span>
-                            </span>
-                        </label>
-                        <label class="flex items-start gap-2 px-3 py-2 rounded-lg border border-line cursor-pointer hover:bg-muted">
-                            <input type="radio" name="target" value="new" class="mt-0.5">
-                            <span>
-                                <span class="block text-xs font-medium">Crear un snapshot nuevo</span>
-                                <span class="block text-[10px] text-ink-soft">Foto limpia; el actual se conserva.</span>
-                            </span>
-                        </label>
-                    </div>
-                </fieldset>
-            <?php endif; ?>
+            <button type="submit" class="btn">
+                <?= icon('cloud_upload', 16) ?> Importar
+            </button>
         </form>
     </div>
 
-<?php if ($snapshot !== null): ?>
+<?php if ($masterTotal > 0): ?>
 
     <!-- ============================================================
-         Snapshot activo
+         Estado de la base maestra + historial
          ============================================================ -->
     <div class="card p-4">
         <div class="flex items-start justify-between gap-3 flex-wrap">
             <div class="min-w-0">
-                <p class="text-xs text-ink-soft m-0">Snapshot activo</p>
-                <p class="text-sm font-semibold m-0 mt-0.5 truncate" title="<?= e((string)($snapshot['filename'] ?? '')) ?>">
-                    #<?= (int)$snapshot['id'] ?> · <?= e((string)($snapshot['filename'] ?? '')) ?>
+                <p class="text-xs text-ink-soft m-0">Base de vulnerabilidades del tenant</p>
+                <p class="text-sm font-semibold m-0 mt-0.5">
+                    <strong><?= $masterTotal ?></strong> CVE únicos
+                    · <?= (int)($totals['critical'] ?? 0) ?> críticas
+                    · <?= (int)($totals['exploitable'] ?? 0) ?> con exploit
+                    · máx. <?= (int)($totals['machines_max'] ?? 0) ?> equipos
                 </p>
                 <p class="text-[11px] text-ink-soft mt-1 mb-0">
-                    Export del <?= e($fmtDate((string)($snapshot['export_date'] ?? ''))) ?>
-                    · creado el <?= e($fmtDate((string)($snapshot['created_at'] ?? ''))) ?>
-                    <?php if (!empty($snapshot['updated_at'])): ?>
-                        · actualizado el <?= e($fmtDate((string)$snapshot['updated_at'])) ?>
+                    <?php if ($latestImport !== null): ?>
+                        Última importación: <?= e($fmtDate((string)($latestImport['created_at'] ?? ''))) ?>
+                        · <?= e((string)($latestImport['filename'] ?? '')) ?>
                     <?php endif; ?>
-                    · <strong><?= (int)($snapshot['rows_imported'] ?? 0) ?> CVE únicos</strong>
-                    <?php if ((int)($snapshot['imports'] ?? 1) > 1): ?>
-                        · <?= (int)$snapshot['imports'] ?> importaciones
+                    <?php if (!empty($totals['last_seen_at'])): ?>
+                        · datos vistos por última vez el <?= e($fmtDate((string)$totals['last_seen_at'])) ?>
                     <?php endif; ?>
-                    <?php if ((int)($snapshot['rows_skipped'] ?? 0) > 0): ?>
-                        · <?= (int)$snapshot['rows_skipped'] ?> filas descartadas
-                    <?php endif; ?>
-                    · <?= e(ExposedConsoleStore::formatBytes((int)($snapshot['bytes'] ?? 0))) ?>
+                    · <?= count($imports) ?> importaciones registradas
                 </p>
             </div>
-            <div class="flex items-end gap-2 flex-wrap">
-                <?php if (count($snapshots) > 1): ?>
-                    <form method="GET" action="<?= e($base) ?>" class="flex items-end gap-2">
-                        <div>
-                            <label for="exposed-snapshot" class="block text-[10px] uppercase tracking-wide text-ink-soft mb-1">Otro snapshot</label>
-                            <select id="exposed-snapshot" name="snapshot" onchange="this.form.submit()"
-                                    class="px-2.5 py-1.5 rounded-lg border border-line-strong bg-input text-ink text-xs">
-                                <?php foreach ($snapshots as $item): ?>
-                                    <option value="<?= (int)$item['id'] ?>" <?= (int)$item['id'] === $snapshotId ? 'selected' : '' ?>>
-                                        #<?= (int)$item['id'] ?> · <?= e($fmtDate((string)($item['created_at'] ?? ''))) ?> · <?= (int)($item['rows_imported'] ?? 0) ?> CVE
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
-                    </form>
-                <?php endif; ?>
-                <form method="POST" action="<?= e($base . '/snapshot/delete') ?>"
-                      onsubmit="return confirm('¿Eliminar este snapshot? Los grupos que lo usan deben borrarse antes.');">
-                    <?= Csrf::field() ?>
-                    <input type="hidden" name="snapshot_id" value="<?= $snapshotId ?>">
-                    <button type="submit"
-                            class="inline-flex items-center gap-1.5 px-2.5 py-1.5 border border-danger-border text-danger text-xs font-medium rounded-lg hover:bg-danger-bg transition-colors">
-                        <?= icon('delete', 14) ?> Eliminar
-                    </button>
-                </form>
-            </div>
+            <form method="POST" action="<?= e($base . '/clear') ?>"
+                  onsubmit="return confirm('¿Vaciar la base de vulnerabilidades del tenant? Se borrarán todos los CVE y los grupos de análisis. El historial de importaciones se conserva.');">
+                <?= Csrf::field() ?>
+                <button type="submit"
+                        class="inline-flex items-center gap-1.5 px-2.5 py-1.5 border border-danger-border text-danger text-xs font-medium rounded-lg hover:bg-danger-bg transition-colors">
+                    <?= icon('delete_sweep', 14) ?> Vaciar base
+                </button>
+            </form>
         </div>
+
+        <details class="mt-3">
+            <summary class="cursor-pointer text-xs font-medium text-ink-muted">
+                Historial de importaciones (<?= count($imports) ?>)
+            </summary>
+            <?php if ($imports === []): ?>
+                <p class="text-xs text-ink-soft mt-2 mb-0">Todavía no hay importaciones registradas.</p>
+            <?php else: ?>
+                <div class="overflow-x-auto mt-2">
+                    <table class="w-full text-xs">
+                        <thead class="bg-muted text-ink-muted">
+                            <tr>
+                                <th class="px-3 py-2 text-left">Fecha</th>
+                                <th class="px-3 py-2 text-left">Fichero</th>
+                                <th class="px-3 py-2 text-right">Filas</th>
+                                <th class="px-3 py-2 text-right">Nuevos</th>
+                                <th class="px-3 py-2 text-right">Actualizados</th>
+                                <th class="px-3 py-2 text-right">Sin cambios</th>
+                                <th class="px-3 py-2 text-right"></th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-line">
+                            <?php foreach ($imports as $import): ?>
+                                <?php $importId = (int)$import['id']; ?>
+                                <tr class="hover:bg-muted/50">
+                                    <td class="px-3 py-2 whitespace-nowrap"><?= e($fmtDate((string)($import['created_at'] ?? ''))) ?></td>
+                                    <td class="px-3 py-2 max-w-[260px] truncate" title="<?= e((string)($import['filename'] ?? '')) ?>">
+                                        <?= e((string)($import['filename'] ?? '')) ?>
+                                    </td>
+                                    <td class="px-3 py-2 text-right font-mono"><?= (int)($import['rows_imported'] ?? 0) ?></td>
+                                    <td class="px-3 py-2 text-right font-mono text-green-700 dark:text-green-300"><?= (int)($import['rows_inserted'] ?? 0) ?></td>
+                                    <td class="px-3 py-2 text-right font-mono text-amber-700 dark:text-amber-300"><?= (int)($import['rows_updated'] ?? 0) ?></td>
+                                    <td class="px-3 py-2 text-right font-mono text-ink-soft"><?= (int)($import['rows_unchanged'] ?? 0) ?></td>
+                                    <td class="px-3 py-2 text-right">
+                                        <form method="POST" action="<?= e($base . '/snapshot/delete') ?>" class="m-0"
+                                              onsubmit="return confirm('¿Quitar este registro del historial? Los CVE de la base NO se borran.');">
+                                            <?= Csrf::field() ?>
+                                            <input type="hidden" name="snapshot_id" value="<?= $importId ?>">
+                                            <button type="submit" class="text-ink-soft hover:text-danger" title="Quitar del historial">
+                                                <?= icon('close', 14) ?>
+                                            </button>
+                                        </form>
+                                    </td>
+                                </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+            <?php endif; ?>
+        </details>
     </div>
 
     <div class="grid grid-cols-1 xl:grid-cols-[300px_minmax(0,1fr)] gap-5 items-start">
@@ -244,13 +247,11 @@ $flashData = is_array($flashData) ? $flashData : [];
              ==================================================== -->
         <form method="GET" action="<?= e($base) ?>" id="exposed-filters"
               class="card p-4 space-y-4">
-            <input type="hidden" name="snapshot" value="<?= $snapshotId ?>">
-
             <div class="flex items-center justify-between gap-2">
                 <h2 class="text-sm font-bold m-0 inline-flex items-center gap-1.5">
                     <?= icon('filter_alt', 16) ?> Filter
                 </h2>
-                <a href="<?= e($base . '?snapshot=' . $snapshotId) ?>"
+                <a href="<?= e($base) ?>"
                    class="text-[11px] text-brand-600 dark:text-brand-300 hover:underline inline-flex items-center gap-1">
                     <?= icon('filter_alt_off', 13) ?> Clear filters
                 </a>
@@ -348,7 +349,7 @@ $flashData = is_array($flashData) ? $flashData : [];
                         <span class="stat-ico"><i class="material-icons icon-18" aria-hidden="true">bug_report</i></span>
                         <div class="min-w-0">
                             <p class="stat-num"><?= (int)$stats['total'] ?></p>
-                            <p class="stat-label">CVE del filtro · <?= (int)$counts['total'] ?> en el snapshot</p>
+                            <p class="stat-label">CVE del filtro · <?= $masterTotal ?> en la base</p>
                         </div>
                     </div>
                     <div class="stat">
@@ -377,7 +378,6 @@ $flashData = is_array($flashData) ? $flashData : [];
 
             <form method="POST" action="<?= e($base . '/groups/create') ?>" id="exposed-group-form">
                 <?= Csrf::field() ?>
-                <input type="hidden" name="snapshot_id" value="<?= $snapshotId ?>">
                 <?php foreach ($filterQuery as $key => $value): ?>
                     <?php if (is_array($value)): ?>
                         <?php foreach ($value as $item): ?>
@@ -387,7 +387,6 @@ $flashData = is_array($flashData) ? $flashData : [];
                         <input type="hidden" name="<?= e((string)$key) ?>" value="<?= e((string)$value) ?>">
                     <?php endif; ?>
                 <?php endforeach; ?>
-                <input type="hidden" name="sort" value="<?= e((string)($filters['sort'] ?? 'oldest')) ?>">
                 <input type="hidden" name="select_all" id="exposed-select-all-flag" value="0">
 
                 <div class="card overflow-hidden">
@@ -409,7 +408,7 @@ $flashData = is_array($flashData) ? $flashData : [];
                     <?php if ($rows === []): ?>
                         <p class="p-6 text-sm text-ink-muted m-0">
                             Ningún CVE cumple el filtro actual.
-                            <a class="underline" href="<?= e($base . '?snapshot=' . $snapshotId) ?>">Quitar filtros</a>.
+                            <a class="underline" href="<?= e($base) ?>">Quitar filtros</a>.
                         </p>
                     <?php else: ?>
                         <div class="overflow-x-auto">
@@ -479,7 +478,7 @@ $flashData = is_array($flashData) ? $flashData : [];
                                                 <?= $row['age_days'] !== null ? (int)$row['age_days'] . ' d' : '—' ?>
                                             </td>
                                             <td class="px-3 py-2 whitespace-nowrap text-ink-soft">
-                                                <?= e($fmtDate((string)($row['first_detected_at'] ?? ''))) ?>
+                                                <?= e($fmtDate((string)($row['first_detected_at'] ?? ''), 'd/m/Y')) ?>
                                             </td>
                                             <td class="px-3 py-2 text-right font-mono"><?= (int)($row['exposed_machines'] ?? 0) ?></td>
                                             <td class="px-3 py-2">
@@ -557,6 +556,27 @@ $flashData = is_array($flashData) ? $flashData : [];
         </div>
     </div>
 
+<?php else: ?>
+
+    <!-- ============================================================
+         Base vacía
+         ============================================================ -->
+    <div class="card p-6">
+        <div class="flex items-start gap-3">
+            <span class="inline-flex items-center justify-center w-9 h-9 rounded-lg bg-brand-100 dark:bg-brand-900/30 text-brand-600 dark:text-brand-300">
+                <?= icon('database', 20) ?>
+            </span>
+            <div>
+                <h3 class="text-sm font-semibold m-0">La base del tenant está vacía</h3>
+                <p class="text-xs text-ink-muted mt-1 mb-0 max-w-2xl">
+                    Sube el primer CSV de Defender. Si el tenant tiene más de 6.000
+                    vulnerabilidades, exporta en varios tramos (por edad o severidad) y
+                    súbelos aquí: se unifican en esta misma lista sin duplicar.
+                </p>
+            </div>
+        </div>
+    </div>
+
 <?php endif; ?>
 
     <!-- ============================================================
@@ -581,7 +601,6 @@ $flashData = is_array($flashData) ? $flashData : [];
                     <thead class="bg-muted text-ink-muted">
                         <tr>
                             <th class="px-3 py-2 text-left">Grupo</th>
-                            <th class="px-3 py-2 text-left">Snapshot</th>
                             <th class="px-3 py-2 text-right">CVE</th>
                             <th class="px-3 py-2 text-left">Plan de actuación</th>
                             <th class="px-3 py-2 text-left">Creado</th>
@@ -598,22 +617,19 @@ $flashData = is_array($flashData) ? $flashData : [];
                                         <?= e((string)($group['name'] ?? ('Grupo #' . $gid))) ?>
                                     </a>
                                 </td>
-                                <td class="px-3 py-2 text-ink-soft">
-                                    <?= !empty($group['filename']) ? e((string)$group['filename']) : '—' ?>
-                                </td>
                                 <td class="px-3 py-2 text-right font-mono"><?= (int)($group['cve_count'] ?? 0) ?></td>
                                 <td class="px-3 py-2">
                                     <?php if (!empty($group['plan_generated_at'])): ?>
                                         <span class="inline-flex items-center gap-1 text-green-700 dark:text-green-300">
                                             <?= icon('check_circle', 13) ?>
-                                            <?= e(date('d/m/Y H:i', strtotime((string)$group['plan_generated_at'])) ?: (string)$group['plan_generated_at']) ?>
+                                            <?= e($fmtDate((string)$group['plan_generated_at'])) ?>
                                         </span>
                                     <?php else: ?>
                                         <span class="text-ink-soft">Sin generar</span>
                                     <?php endif; ?>
                                 </td>
                                 <td class="px-3 py-2 text-ink-soft whitespace-nowrap">
-                                    <?= e($fmtDate((string)($group['created_at'] ?? ''))) ?>
+                                    <?= e($fmtDate((string)($group['created_at'] ?? ''), 'd/m/Y')) ?>
                                 </td>
                                 <td class="px-3 py-2 text-right">
                                     <a href="<?= e($base . '/group/' . $gid) ?>" class="text-[11px] text-brand-600 dark:text-brand-300 hover:underline">
