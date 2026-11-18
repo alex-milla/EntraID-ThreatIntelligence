@@ -65,6 +65,7 @@ $documentMd = $dossierMd;
 $documentHtml = $dossierHtml;
 $hasDocument = $documentMd !== '';
 $orgs = is_array($orgs ?? null) ? $orgs : [];
+$singleCve = strtoupper(trim((string)($singleCve ?? '')));
 
 $filters = [];
 if ($group !== null && (string)($group['filters_json'] ?? '') !== '') {
@@ -232,12 +233,19 @@ $flashData = is_array($flashData) ? $flashData : [];
         </div>
     </div>
 
+    <?php if ($singleCve !== ''): ?>
+        <div class="alert alert-info mb-4 no-print" role="status">
+            Mostrando solo <strong class="font-mono"><?= e($singleCve) ?></strong>.
+            <a class="underline" href="<?= e($base . '/group/' . (int)$group['id']) ?>">Ver el grupo completo</a>.
+        </div>
+    <?php endif; ?>
+
     <?php if ($planText === '' && $hasDocument): ?>
         <div class="alert alert-info mb-4 no-print" role="status">
-            <strong>Esto todavía no es el informe de la IA.</strong>
-            El dossier contiene los datos importados de Defender (Anexo A y B) y las relaciones
-            internas (Anexo C). Pulsa <strong>Generar plan de actuación</strong> para que tu IA local
-            añada el análisis por fases, la agrupación por ciclos de parcheo y la verificación.
+            <strong>Esto todavía no es el análisis de la IA.</strong>
+            El informe muestra los datos importados de Defender y la prioridad calculada por la
+            aplicación. Pulsa <strong>Generar plan de actuación</strong> si quieres además la lectura
+            del riesgo de tu modelo local.
         </div>
     <?php endif; ?>
 
@@ -248,21 +256,23 @@ $flashData = is_array($flashData) ? $flashData : [];
         <div class="card overflow-hidden mb-6" id="exposed-plan-card">
             <div class="px-5 py-4 border-b border-line flex items-center justify-between gap-3 flex-wrap no-print">
                 <div class="min-w-0">
-                    <h2 class="text-sm font-semibold m-0">Dossier de parcheo</h2>
+                    <h2 class="text-sm font-semibold m-0">Informe de vulnerabilidad</h2>
                     <p class="text-[11px] text-ink-soft m-0 mt-1">
+                        Grupo: <strong><?= e((string)($group['name'] ?? '')) ?></strong>
+                        <?php if ($singleCve !== ''): ?>
+                            · vista de <span class="font-mono"><?= e($singleCve) ?></span>
+                        <?php endif; ?>
                         <?php if ($planText !== ''): ?>
-                            <span class="inline-flex px-1.5 py-0.5 rounded bg-brand-100 text-brand-700 dark:bg-brand-900/30 dark:text-brand-300 text-[9px] font-semibold">Plan de IA</span>
-                            generado el <?= e($fmtDate((string)($plan['generated_at'] ?? ''))) ?>
-                            · <?= (int)($plan['cve_count'] ?? 0) ?> CVE
+                            <span class="ml-1 inline-flex px-1.5 py-0.5 rounded bg-brand-100 text-brand-700 dark:bg-brand-900/30 dark:text-brand-300 text-[9px] font-semibold">Lectura del riesgo IA</span>
+                            <?= e($fmtDate((string)($plan['generated_at'] ?? ''))) ?>
                             <?php if (!empty($plan['model'])): ?> · <?= e((string)$plan['model']) ?><?php endif; ?>
                         <?php else: ?>
-                            <span class="inline-flex px-1.5 py-0.5 rounded bg-muted text-ink-muted text-[9px] font-semibold uppercase tracking-wide">Sin plan de IA</span>
-                            dossier con los datos importados (Anexo A y B)
+                            <span class="ml-1 inline-flex px-1.5 py-0.5 rounded bg-muted text-ink-muted text-[9px] font-semibold uppercase tracking-wide">Sin análisis IA</span>
                         <?php endif; ?>
-                        · Anexo C de relaciones
-                        · <?= (int)($dossier['tiers']['p1'] ?? 0) ?> P1 · <?= (int)($dossier['tiers']['p2'] ?? 0) ?> P2
-                        · <?= $dossierWith ?> con informe técnico
-                        <?php if ($dossierWithout > 0): ?> · <?= $dossierWithout ?> con ficha de Defender<?php endif; ?>
+                        <?php if ((string)($dossier['max_priority'] ?? '') !== ''): ?>
+                            · prioridad máx. <strong><?= e((string)$dossier['max_priority']) ?></strong>
+                        <?php endif; ?>
+                        · <?= (int)($dossier['kev'] ?? 0) ?> en KEV
                         <?php if ($planFresh): ?>
                             <span class="ml-1 inline-flex px-1.5 py-0.5 rounded bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300 text-[9px] font-semibold">recién generado</span>
                         <?php endif; ?>
@@ -384,8 +394,13 @@ $flashData = is_array($flashData) ? $flashData : [];
                                     <?= e((string)($row['software_labels'] ?? '—')) ?>
                                 </td>
                                 <td class="px-3 py-2 text-right">
+                                    <a href="<?= e($base . '/group/' . (int)$group['id'] . '?cve=' . urlencode($cveId)) ?>"
+                                       class="mr-2 text-[11px] text-brand-600 dark:text-brand-300 hover:underline"
+                                       title="Ver solo esta vulnerabilidad">
+                                        Informe
+                                    </a>
                                     <form method="POST" action="<?= e($base . '/group/' . (int)$group['id'] . '/remove-cve') ?>"
-                                          class="m-0" onsubmit="return confirm('¿Quitar <?= e($cveId) ?> del grupo?');">
+                                          class="inline m-0" onsubmit="return confirm('¿Quitar <?= e($cveId) ?> del grupo?');">
                                         <?= Csrf::field() ?>
                                         <input type="hidden" name="cve_id" value="<?= e($cveId) ?>">
                                         <button type="submit" class="text-ink-soft hover:text-danger" title="Quitar del grupo">

@@ -1730,11 +1730,24 @@ class Module_ExposedReport extends BaseModule
             ? $llm->isConfigured($defaultProfileId > 0 ? $defaultProfileId : null)
             : false;
 
-        $dossier = ['markdown' => '', 'html' => '', 'with_report' => 0, 'without' => 0, 'tiers' => [], 'p1p2' => 0, 'kev' => 0];
+        $dossier = ['markdown' => '', 'html' => '', 'with_report' => 0, 'without' => 0, 'tiers' => [], 'p1p2' => 0, 'kev' => 0, 'max_priority' => '', 'count' => 0];
+        $singleCve = strtoupper(trim((string)($_GET['cve'] ?? '')));
         if ($group !== null) {
             $planText = $plan !== null ? (string)($plan['content_text'] ?? '') : '';
+            $reportRows = $rows;
+            if ($singleCve !== '') {
+                $reportRows = array_values(array_filter($rows, static function (array $row) use ($singleCve): bool {
+                    return strtoupper((string)($row['cve_id'] ?? '')) === $singleCve;
+                }));
+            }
             try {
-                $dossier = ExposedReportDossier::build($group, $rows, $this->priorityOptions(), $planText);
+                $dossier = ExposedReportDossier::build(
+                    $group,
+                    $reportRows,
+                    $this->priorityOptions(),
+                    $planText,
+                    $singleCve !== '' ? $singleCve : null
+                );
             } catch (Throwable $e) {
                 app_log('error', 'exposed_report', 'No se pudo componer el informe', [
                     'group' => $groupId,
@@ -1756,6 +1769,7 @@ class Module_ExposedReport extends BaseModule
             'rows'          => $rows,
             'plan'          => $plan,
             'dossier'       => $dossier,
+            'singleCve'     => $singleCve,
             'orgs'          => $orgs,
             'profiles'      => $profiles,
             'profileId'     => $defaultProfileId,

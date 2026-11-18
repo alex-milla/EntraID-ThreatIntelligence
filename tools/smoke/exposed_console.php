@@ -517,33 +517,40 @@ try {
         [$groupId]
     )['c'] === 1);
 
-    // Informe de remediación completo (v0.4.26.2).
+    // Informe de vulnerabilidad (formato SploitScan, v0.4.26.3).
     $dossier = ExposedReportDossier::build(
         $group,
         $groupRows,
         ExposedPriority::defaults(),
         "## Lectura del riesgo\n\nTexto de prueba de la IA."
     );
-    check('informe: control del documento', str_contains((string)$dossier['markdown'], '## 1. Control del documento'));
-    check('informe: resumen ejecutivo', str_contains((string)$dossier['markdown'], '## 2. Resumen ejecutivo')
-        && str_contains((string)$dossier['markdown'], 'Se pide aprobar'));
-    check('informe: tablero y prioridad', str_contains((string)$dossier['markdown'], '## 3. Tablero')
-        && str_contains((string)$dossier['markdown'], '## 4. Modelo de prioridad'));
-    check('informe: fases y escenarios NIST', str_contains((string)$dossier['markdown'], '## 5. Plan de actuación por fases')
-        && str_contains((string)$dossier['markdown'], 'NIST SP 800-40'));
-    check('informe: análisis de la IA', str_contains((string)$dossier['markdown'], '## 6. Análisis de la IA')
+    check('informe: cabecera de vulnerabilidad', str_contains((string)$dossier['html'], 'Informe de vulnerabilidad')
+        && str_contains((string)$dossier['markdown'], '# Informe de vulnerabilidad'));
+    check('informe: tarjeta por CVE', str_contains((string)$dossier['html'], 'CVE-2026-90001')
+        && str_contains((string)$dossier['html'], 'Equipos expuestos')
+        && str_contains((string)$dossier['html'], 'CISA KEV'));
+    check('informe: prioridad A+/A/B/C/D', (string)$dossier['max_priority'] !== ''
+        && preg_match('/Prioridad (A\+|A|B|C|D)/', (string)$dossier['html']) === 1);
+    check('informe: tabla de trabajo', str_contains((string)$dossier['html'], 'Tabla de trabajo')
+        && str_contains((string)$dossier['markdown'], '## Tabla de trabajo'));
+    check('informe: racimos', str_contains((string)$dossier['html'], 'Racimos por software'));
+    check('informe: excepciones, verificación y decisiones',
+        str_contains((string)$dossier['html'], 'Excepciones')
+        && str_contains((string)$dossier['html'], 'Verificación')
+        && str_contains((string)$dossier['html'], 'Decisiones'));
+    check('informe: lectura de la IA al final', str_contains((string)$dossier['html'], 'Lectura del riesgo (IA)')
         && str_contains((string)$dossier['markdown'], 'Texto de prueba de la IA'));
-    check('informe: racimos por software', str_contains((string)$dossier['markdown'], '## 7. Agrupación por software'));
-    check('informe: tabla de trabajo', str_contains((string)$dossier['markdown'], '## 8. Tabla de trabajo'));
-    check('informe: decisiones', str_contains((string)$dossier['markdown'], '## 11. Decisiones que se piden'));
-    check('informe: fichas solo P1/P2', str_contains((string)$dossier['markdown'], '## Anexo B. Fichas de los CVE P1 y P2'));
-    check('informe: definiciones', str_contains((string)$dossier['markdown'], '## Anexo D. Definiciones y fuentes'));
-    check('informe: tiers calculados', (int)($dossier['tiers']['p1'] ?? 0) >= 1
-        && (int)($dossier['tiers']['p1'] ?? 0) + (int)($dossier['tiers']['p2'] ?? 0) >= 2);
-    check('informe: HTML generado', trim((string)$dossier['html']) !== '');
+    check('informe: contadores', (int)$dossier['count'] === count($groupRows)
+        && (int)$dossier['tiers']['p1'] >= 1);
+
+    $single = ExposedReportDossier::build($group, [$groupRows[0]], ExposedPriority::defaults(), null, (string)$groupRows[0]['cve_id']);
+    check('informe: vista de un solo CVE',
+        str_contains((string)$single['html'], '<h1')
+        && str_contains((string)$single['html'], (string)$groupRows[0]['cve_id'])
+        && (int)$single['count'] === 1);
 
     // Vista del grupo: la hoja no debe llevar «md-body» (rompía el modo oscuro)
-    // y debe avisar de que aún no hay plan de IA.
+    // y debe avisar de que aún no hay análisis de IA.
     $groupHtml = $module->render('group', [
         'module'        => $module,
         'group'         => $group,
@@ -553,12 +560,12 @@ try {
         'dossier'       => $dossier,
         'profiles'      => [],
         'orgs'          => [],
-        'downloadName'  => 'dossier.md',
+        'downloadName'  => 'informe.md',
     ]);
     check('vista grupo: hoja sin md-body', !str_contains($groupHtml, 'doc-sheet md-body'));
-    check('vista grupo: aviso de que no es la IA', str_contains($groupHtml, 'Esto todavía no es el informe de la IA'));
-    check('vista grupo: informe renderizado', str_contains($groupHtml, 'Modelo de prioridad')
-        && str_contains($groupHtml, 'P1 · Immediate'));
+    check('vista grupo: aviso de que no es la IA', str_contains($groupHtml, 'Esto todavía no es el análisis de la IA'));
+    check('vista grupo: informe renderizado', str_contains($groupHtml, 'Informe de vulnerabilidad')
+        && str_contains($groupHtml, 'Sin análisis IA'));
 
     $groupHtmlWithPlan = $module->render('group', [
         'module'        => $module,
@@ -570,11 +577,11 @@ try {
         'dossier'       => $dossier,
         'profiles'      => [],
         'orgs'          => [],
-        'downloadName'  => 'dossier.md',
+        'downloadName'  => 'informe.md',
     ]);
-    check('vista grupo: etiqueta Plan de IA', str_contains($groupHtmlWithPlan, 'Plan de IA')
-        && !str_contains($groupHtmlWithPlan, 'Esto todavía no es el informe de la IA'));
-    check('vista grupo: dossier con botones', str_contains($groupHtmlWithPlan, 'exposedCopyRich')
+    check('vista grupo: etiqueta de lectura IA', str_contains($groupHtmlWithPlan, 'Lectura del riesgo IA')
+        && !str_contains($groupHtmlWithPlan, 'Esto todavía no es el análisis de la IA'));
+    check('vista grupo: botones de exportación', str_contains($groupHtmlWithPlan, 'exposedCopyRich')
         && str_contains($groupHtmlWithPlan, 'exposedDownloadMd'));
 
     /* -----------------------------------------------------------------

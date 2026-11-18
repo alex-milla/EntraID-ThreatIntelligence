@@ -1,17 +1,18 @@
 <?php
 /**
- * exposed_report_dossier.php — Informe de remediación de un grupo (v0.4.26.2).
+ * exposed_report_dossier.php — Informe de vulnerabilidad de un grupo
+ * (v0.4.26.3).
  *
- * Compone el documento siguiendo la estructura de la práctica recomendada:
+ * Formato minimalista tipo SploitScan: cabecera «Informe de vulnerabilidad»,
+ * tira de KPIs y **una tarjeta independiente por CVE** (no una tabla ancha).
+ * El grupo es solo el contenedor de entrega y aparece en la línea de metadatos;
+ * el protagonista es la vulnerabilidad.
  *
- *   1 Control · 2 Resumen ejecutivo (5 frases) · 3 Tablero · 4 Prioridad
- *   5 Plan por fases + escenarios NIST · 6 Análisis de la IA (si existe)
- *   7 Racimos por software · 8 Tabla de trabajo · 9 Exposición residual
- *   10 Verificación · 11 Decisiones
- *   Anexo A inventario · B fichas P1/P2 · C relaciones · D definiciones
+ * El HTML se construye con **estilos en línea** a propósito: así «Copiar
+ * informe» conserva colores, barras y bordes al pegarlo en Word/Outlook.
  *
- * Todo lo determinista lo calcula la aplicación (ExposedPriority). La IA solo
- * aporta la lectura del riesgo. Nunca se inventan owners, equipos ni fechas.
+ * Lo determinista lo calcula la aplicación (ExposedPriority + CveReportAi).
+ * La IA solo aporta, si se pide, la lectura del riesgo.
  */
 
 declare(strict_types=1);
@@ -19,36 +20,69 @@ declare(strict_types=1);
 if (!class_exists('ExposedReportDossier')) {
     final class ExposedReportDossier
     {
-        /** Filas de la tabla de trabajo y del inventario anexo. */
         private const MAX_WORK_ROWS = 40;
-        private const MAX_INVENTORY_ROWS = 300;
-        private const MAX_FICHAS = 60;
+        private const MAX_FICHAS = 120;
+
+        private const SEV_COLORS = [
+            'critical' => ['#dc2626', '#fee2e2', '#b91c1c'],
+            'high'     => ['#ea580c', '#ffedd5', '#c2410c'],
+            'medium'   => ['#d97706', '#fef3c7', '#92400e'],
+            'low'      => ['#16a34a', '#dcfce7', '#15803d'],
+            'info'     => ['#6b7280', '#f3f4f6', '#374151'],
+        ];
+
+        private const SEV_LABELS = [
+            'critical' => 'CRÍTICO',
+            'high'     => 'ALTO',
+            'medium'   => 'MEDIO',
+            'low'      => 'BAJO',
+            'info'     => 'INFORMATIVO',
+        ];
+
+        private const GRADE_COLORS = [
+            'A+' => '#b91c1c',
+            'A'  => '#dc2626',
+            'B'  => '#d97706',
+            'C'  => '#2563eb',
+            'D'  => '#059669',
+        ];
 
         /**
          * @param array<string,mixed>            $group
          * @param array<int,array<string,mixed>> $rows
-         * @param array<string,mixed>            $options Umbrales de prioridad
-         * @return array{markdown:string,html:string,tiers:array<string,int>,p1p2:int,kev:int,with_report:int,without:int}
+         * @param array<string,mixed>            $options
+         * @return array{markdown:string,html:string,tiers:array<string,int>,p1p2:int,kev:int,
+         *               with_report:int,without:int,max_priority:string,count:int}
          */
-        public static function build(array $group, array $rows, array $options = [], ?string $aiPlan = null): array
-        {
+        public static function build(
+            array $group,
+            array $rows,
+            array $options = [],
+            ?string $aiPlan = null,
+            ?string $singleCve = null
+        ): array {
             $items = [];
             $tiers = ['p1' => 0, 'p2' => 0, 'p3' => 0, 'p4' => 0];
             $kev = 0;
-            $exceptions = 0;
             $exploit = 0;
+            $exceptions = 0;
             $maxMachines = 0;
             $maxAge = 0;
+            $maxGrade = null;
+            $gradeOrder = ['A+' => 5, 'A' => 4, 'B' => 3, 'C' => 2, 'D' => 1];
 
             foreach ($rows as $row) {
                 $priority = ExposedPriority::classify($row, $options);
                 $desc = ExposedPriority::describe((string)($row['description'] ?? ''));
+                $grade = self::priorityGrade($row);
                 $row['_tier'] = $priority['tier'];
                 $row['_label'] = $priority['label'];
                 $row['_reason'] = $priority['reason'];
                 $row['_window'] = $priority['window'];
                 $row['_ssvc'] = $priority['ssvc'];
+                $row['_exception'] = !empty($priority['exception']);
                 $row['_desc'] = $desc;
+                $row['_grade'] = $grade;
                 $row['_action'] = self::actionFor($row);
                 $items[] = $row;
 
@@ -59,15 +93,18 @@ if (!class_exists('ExposedReportDossier')) {
                 if ((int)($row['has_exploit'] ?? 0) === 1) {
                     $exploit++;
                 }
-                if (!empty($priority['exception'])) {
+                if (!empty($row['_exception'])) {
                     $exceptions++;
                 }
                 $maxMachines = max($maxMachines, (int)($row['exposed_machines'] ?? 0));
                 $maxAge = max($maxAge, (int)($row['age_days'] ?? 0));
+                if ($grade !== '' && ($maxGrade === null || ($gradeOrder[$grade] ?? 0) > ($gradeOrder[$maxGrade] ?? 0))) {
+                    $maxGrade = $grade;
+                }
             }
 
-            usort($items, static function (array $a, array $b): int {
-                return ExposedPriority::rank((string)$a['_tier']) <=> ExposedPriority::rank((string)$b['_tier'])
+            usort($items, static function (array $a, array $b) use ($gradeOrder): int {
+                return ($gradeOrder[(string)$b['_grade']] ?? 0) <=> ($gradeOrder[(string)$a['_grade']] ?? 0)
                     ?: ((int)($b['exposed_machines'] ?? 0) <=> (int)($a['exposed_machines'] ?? 0))
                     ?: ((int)($b['age_days'] ?? 0) <=> (int)($a['age_days'] ?? 0))
                     ?: strcmp((string)$a['cve_id'], (string)$b['cve_id']);
@@ -75,390 +112,561 @@ if (!class_exists('ExposedReportDossier')) {
 
             $groupName = trim((string)($group['name'] ?? 'Grupo de análisis'));
             $total = count($items);
-            $software = self::softwareClusters($items);
+            $clusters = self::softwareClusters($items);
             $p1p2 = $tiers['p1'] + $tiers['p2'];
-            $worst = $items[0] ?? null;
+            $single = $singleCve !== null && $singleCve !== '';
 
-            $md = [];
-            $md[] = '# Informe de remediación · ' . self::cell($groupName);
-            $md[] = '';
-
-            // 1. Control del documento.
-            $md[] = '## 1. Control del documento';
-            $md[] = '';
-            $md[] = '| Campo | Valor |';
-            $md[] = '| --- | --- |';
-            $md[] = '| Grupo | ' . self::cell($groupName) . ' |';
-            $md[] = '| Fecha del informe | ' . date('d/m/Y H:i') . ' |';
-            $md[] = '| Fuente | Export de Microsoft Defender TVM (lista maestra del tenant) |';
-            $md[] = '| Alcance | ' . $total . ' CVE · ' . count($software) . ' software principal |';
-            $md[] = '| Límite del dato | El export web de Defender corta en 6.000 filas y agrega por CVE |';
-            $md[] = '| Sin datos | Identidad de equipos, propietario del activo y criticidad de negocio |';
-            $md[] = '';
-
-            // 2. Resumen ejecutivo (5 frases).
-            $md[] = '## 2. Resumen ejecutivo';
-            $md[] = '';
-            $md[] = self::executiveSummary($groupName, $items, $tiers, $kev, $exceptions, $maxMachines, $worst, $total);
-            $md[] = '';
-
-            // 3. Tablero.
-            $md[] = '## 3. Tablero';
-            $md[] = '';
-            $md[] = '| Indicador | Valor | Objetivo |';
-            $md[] = '| --- | --- | --- |';
-            $md[] = '| CVE con prioridad P1 (Immediate) | ' . $tiers['p1'] . ' | 0 en 72 h |';
-            $md[] = '| CVE con prioridad P2 (Out-of-cycle) | ' . $tiers['p2'] . ' | 0 en 15 días |';
-            $md[] = '| CVE en CISA KEV | ' . $kev . ' | 0 |';
-            $md[] = '| CVE con exploit disponible | ' . $exploit . ' | seguimiento |';
-            $md[] = '| Excepciones TVM registradas | ' . $exceptions . ' | con aprobador y caducidad |';
-            $md[] = '| Máximo de equipos expuestos por CVE | ' . $maxMachines . ' | bajar del máximo actual |';
-            $md[] = '| Antigüedad máxima en el tenant | ' . $maxAge . ' días | según SLA |';
-            $md[] = '';
-
-            // 4. Prioridad.
-            $md[] = '## 4. Modelo de prioridad';
-            $md[] = '';
-            $md[] = 'La prioridad no es el CVSS: manda la explotación confirmada (KEV), las alertas '
-                . 'activas y el EPSS, y después la exposición real del tenant. Cada CVE lleva su '
-                . 'motivo y su ventana; el tier equivale al resultado de CISA SSVC.';
-            $md[] = '';
-            $md[] = '| Tier | CVE | Ventana | SSVC |';
-            $md[] = '| --- | --- | --- | --- |';
-            foreach (ExposedPriority::TIERS as $key => $meta) {
-                $md[] = '| ' . $meta['label'] . ' | ' . (int)($tiers[$key] ?? 0)
-                    . ' | ' . $meta['window'] . ' | ' . $meta['ssvc'] . ' |';
-            }
-            $md[] = '';
-
-            // 5. Plan por fases.
-            $md[] = '## 5. Plan de actuación por fases';
-            $byTier = [];
-            foreach ($items as $item) {
-                $byTier[(string)$item['_tier']][] = $item;
-            }
-            foreach (ExposedPriority::TIERS as $key => $meta) {
-                $list = $byTier[$key] ?? [];
-                $md[] = '### ' . $meta['label'] . ' (' . $meta['window'] . ')';
-                $md[] = '';
-                if ($list === []) {
-                    $md[] = 'Sin CVE en este tier.';
-                    $md[] = '';
-                    continue;
-                }
-                $md[] = '| CVE | Motivo | Equipos | Acción |';
-                $md[] = '| --- | --- | --- | --- |';
-                foreach (array_slice($list, 0, 12) as $item) {
-                    $md[] = '| ' . self::cell((string)$item['cve_id'])
-                        . ' | ' . self::cell((string)$item['_reason'])
-                        . ' | ' . (int)($item['exposed_machines'] ?? 0)
-                        . ' | ' . self::cell((string)$item['_action']) . ' |';
-                }
-                if (count($list) > 12) {
-                    $md[] = '';
-                    $md[] = '… y ' . (count($list) - 12) . ' CVE más en este tier (ver Anexo A).';
-                }
-                $md[] = '';
-            }
-
-            // Escenarios NIST SP 800-40 r4.
-            $noFix = 0;
-            foreach ($items as $item) {
-                if ((string)$item['_desc']['fix'] === '' && !in_array($item['_tier'], ['p1', 'p2'], true)) {
-                    $noFix++;
-                }
-            }
-            $md[] = '### Escenarios de mantenimiento (NIST SP 800-40 r4)';
-            $md[] = '';
-            $md[] = '| Escenario | CVE | Qué hacer |';
-            $md[] = '| --- | --- | --- |';
-            $md[] = '| Parcheo de emergencia | ' . $tiers['p1'] . ' | Aplicar en la ventana de 24-72 h |';
-            $md[] = '| Parcheo fuera de ciclo | ' . $tiers['p2'] . ' | Ventana de 7-15 días |';
-            $md[] = '| Parcheo rutinario | ' . $tiers['p3'] . ' | Ciclo mensual de actualizaciones |';
-            $md[] = '| Mitigación / no parcheable | ' . max($noFix, $tiers['p4']) . ' | Sin versión de corrección en el dato: control compensatorio |';
-            $md[] = '';
-
-            // 6. Análisis de la IA.
-            if ($aiPlan !== null && trim($aiPlan) !== '') {
-                $md[] = '## 6. Análisis de la IA';
-                $md[] = '';
-                $md[] = '> Lectura del riesgo y justificación de prioridades generada por el modelo '
-                    . 'local. Las tablas, tiers y ventanas son deterministas y no dependen del modelo.';
-                $md[] = '';
-                $md[] = trim($aiPlan);
-                $md[] = '';
-            }
-
-            // 7. Racimos por software.
-            $md[] = '## 7. Agrupación por software (racimos)';
-            $md[] = '';
-            $md[] = 'Una sola acción por producto corrige varios CVE. Es la vista que usa el equipo '
-                . 'de sistemas para planificar la ventana.';
-            $md[] = '';
-            $md[] = '| Software | CVE | Equipos máx. | Tier máx. | Acción |';
-            $md[] = '| --- | --- | --- | --- | --- |';
-            foreach ($software as $label => $cluster) {
-                $md[] = '| ' . self::cell((string)$label)
-                    . ' | ' . count($cluster['cves'])
-                    . ' | ' . (int)$cluster['machines']
-                    . ' | ' . $cluster['tier']
-                    . ' | ' . self::cell($cluster['action']) . ' |';
-            }
-            $md[] = '';
-
-            // 8. Tabla de trabajo.
-            $md[] = '## 8. Tabla de trabajo';
-            $md[] = '';
-            $md[] = '| CVE | Prioridad y motivo | Equipos | Acción | Responsable | Ventana |';
-            $md[] = '| --- | --- | --- | --- | --- | --- |';
-            foreach (array_slice($items, 0, self::MAX_WORK_ROWS) as $item) {
-                $md[] = '| ' . self::cell((string)$item['cve_id'])
-                    . ' | ' . self::cell($item['_label'] . ': ' . $item['_reason'])
-                    . ' | ' . (int)($item['exposed_machines'] ?? 0)
-                    . ' | ' . self::cell((string)$item['_action'])
-                    . ' | por asignar | ' . self::cell((string)$item['_window']) . ' |';
-            }
-            if ($total > self::MAX_WORK_ROWS) {
-                $md[] = '';
-                $md[] = 'Se listan los ' . self::MAX_WORK_ROWS . ' CVE de mayor prioridad de ' . $total
-                    . '. El resto está en el Anexo A.';
-            }
-            $md[] = '';
-
-            // 9. Exposición residual.
-            $md[] = '## 9. Exposición residual y excepciones';
-            $md[] = '';
-            if ($exceptions === 0) {
-                $md[] = 'El export no contiene CVE en estado `UnderException` ni `PartialException`. '
-                    . 'Si existen excepciones internas, no están reflejadas en este dato.';
-            } else {
-                $md[] = 'Hay **' . $exceptions . ' CVE en excepción** según Defender. El export no '
-                    . 'incluye aprobador ni fecha de caducidad: hay que completarlos en el registro de '
-                    . 'excepciones antes de aceptarlos.';
-                $md[] = '';
-                foreach (array_slice(array_values(array_filter($items, static function (array $item): bool {
-                    return in_array((string)($item['tvm_status'] ?? ''), ['UnderException', 'PartialException'], true);
-                })), 0, 10) as $item) {
-                    $md[] = '- ' . $item['cve_id'] . ' · ' . $item['tvm_status']
-                        . ' · ' . (int)($item['exposed_machines'] ?? 0) . ' equipos';
-                }
-            }
-            $md[] = '';
-
-            // 10. Verificación.
-            $md[] = '## 10. Verificación';
-            $md[] = '';
-            $md[] = '- **P1:** ' . $tiers['p1'] . ' → 0 en 72 h; **P2:** ' . $tiers['p2'] . ' → 0 en 15 días.';
-            $md[] = '- **KEV:** ' . $kev . ' → 0; son los únicos con explotación confirmada.';
-            $md[] = '- **Equipos expuestos:** el máximo actual es ' . $maxMachines
-                . '; debe bajar en el siguiente export.';
-            $md[] = '- **Demostración:** adjuntar captura del estado del activo o del gestor de parches. '
-                . 'Que un CVE desaparezca del export **no** prueba que se haya parcheado.';
-            $md[] = '- **Siguiente revisión:** volver a importar el export y comparar P1, KEV y equipos.';
-            $md[] = '';
-
-            // 11. Decisiones.
-            $md[] = '## 11. Decisiones que se piden';
-            $md[] = '';
-            $md[] = '- **D1 · Excepciones:** aprobar o renovar las ' . $exceptions
-                . ' excepciones con responsable y fecha de caducidad.';
-            $md[] = '- **D2 · Responsables:** asignar owner y ventana a los ' . $p1p2
-                . ' CVE P1/P2 (el export no identifica equipos ni propietarios).';
-            $md[] = '- **D3 · Ciclo:** confirmar la ventana de parcheo de emergencia y la verificación '
-                . 'en el próximo export.';
-            $md[] = '';
-
-            // Anexo A. Inventario.
-            $md[] = '## Anexo A. Inventario completo';
-            $md[] = '';
-            $md[] = '| CVE | Severidad | CVSS | EPSS | Equipos | Tier | Software |';
-            $md[] = '| --- | --- | --- | --- | --- | --- | --- |';
-            foreach (array_slice($items, 0, self::MAX_INVENTORY_ROWS) as $item) {
-                $md[] = '| ' . self::cell((string)$item['cve_id'])
-                    . ' | ' . self::cell((string)($item['severity'] ?? '—'))
-                    . ' | ' . ($item['cvss'] !== null ? number_format((float)$item['cvss'], 1) : '—')
-                    . ' | ' . ($item['epss'] !== null ? number_format((float)$item['epss'], 4) : '—')
-                    . ' | ' . (int)($item['exposed_machines'] ?? 0)
-                    . ' | ' . self::cell((string)$item['_label'])
-                    . ' | ' . self::cell((string)($item['software_labels'] ?? '—')) . ' |';
-            }
-            if ($total > self::MAX_INVENTORY_ROWS) {
-                $md[] = '';
-                $md[] = 'Se listan ' . self::MAX_INVENTORY_ROWS . ' de ' . $total . ' CVE.';
-            }
-            $md[] = '';
-
-            // Anexo B. Fichas P1/P2.
-            $md[] = '## Anexo B. Fichas de los CVE P1 y P2';
-            $md[] = '';
-            $fiches = array_values(array_filter($items, static function (array $item): bool {
-                return in_array((string)$item['_tier'], ['p1', 'p2'], true);
-            }));
+            // Cuántos análisis de IA existen para las fichas (solo informativo).
             $withReport = 0;
             $analyses = [];
-            if ($fiches !== [] && class_exists('ExposedReportEnrichment')) {
+            if ($items !== [] && class_exists('ExposedReportEnrichment')) {
                 try {
                     $analyses = ExposedReportEnrichment::storedAnalyses(array_map(
                         static fn(array $item): string => (string)$item['cve_id'],
-                        $fiches
+                        array_slice($items, 0, self::MAX_FICHAS)
                     ));
                 } catch (Throwable $e) {
                     $analyses = [];
                 }
             }
-            if ($fiches === []) {
-                $md[] = 'No hay CVE en P1 ni P2: no se generan fichas.';
-                $md[] = '';
+
+            $data = [
+                'group'       => $groupName,
+                'items'       => $items,
+                'clusters'    => $clusters,
+                'total'       => $total,
+                'kev'         => $kev,
+                'exploit'     => $exploit,
+                'exceptions'  => $exceptions,
+                'maxMachines' => $maxMachines,
+                'maxAge'      => $maxAge,
+                'maxGrade'    => $maxGrade,
+                'tiers'       => $tiers,
+                'analyses'    => $analyses,
+                'aiPlan'      => $aiPlan,
+                'single'      => $single,
+                'filter'      => self::filterLabel($group),
+                'date'        => date('d/m/Y H:i'),
+            ];
+
+            $html = self::renderHtml($data);
+            $markdown = self::renderMarkdown($data);
+
+            foreach ($items as $item) {
+                if (isset($analyses[(string)$item['cve_id']])) {
+                    $withReport++;
+                }
             }
-            foreach (array_slice($fiches, 0, self::MAX_FICHAS) as $item) {
-                $cveId = (string)$item['cve_id'];
-                $md[] = '### ' . $cveId . ' · ' . $item['_label'];
+
+            return [
+                'markdown'     => $markdown,
+                'html'         => $html,
+                'tiers'        => $tiers,
+                'p1p2'         => $p1p2,
+                'kev'          => $kev,
+                'with_report'  => $withReport,
+                'without'      => max(0, $total - $withReport),
+                'max_priority' => (string)($maxGrade ?? ''),
+                'count'        => $total,
+            ];
+        }
+
+        /* =================================================================
+         * HTML (estilos en línea para que sobrevivan al copiar/pegar)
+         * ============================================================== */
+
+        private static function renderHtml(array $data): string
+        {
+            $items = $data['items'];
+            $total = (int)$data['total'];
+            $html = [];
+
+            $html[] = '<div style="font-family:Segoe UI,Arial,sans-serif;color:#111827;line-height:1.55;">';
+            $html[] = '<p style="margin:0;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:#6b7280;font-weight:700;">Informe de vulnerabilidad</p>';
+
+            if ($total === 1) {
+                $html[] = '<h1 style="margin:4px 0 0;font-size:26px;font-weight:700;font-family:Consolas,Menlo,monospace;color:#0f172a;">'
+                    . self::esc((string)$items[0]['cve_id']) . '</h1>';
+            } else {
+                $html[] = '<h1 style="margin:4px 0 0;font-size:26px;font-weight:700;color:#0f172a;">'
+                    . $total . ' vulnerabilidades</h1>';
+            }
+
+            $chips = [];
+            foreach ($items as $item) {
+                $chips[] = '<a href="https://nvd.nist.gov/vuln/detail/' . rawurlencode((string)$item['cve_id'])
+                    . '" target="_blank" rel="noopener noreferrer" style="display:inline-block;margin:2px 4px 2px 0;padding:2px 7px;border-radius:6px;background:#f3f4f6;color:#111827;font-family:Consolas,Menlo,monospace;font-size:11px;text-decoration:none;">'
+                    . self::esc((string)$item['cve_id']) . '</a>';
+            }
+            $html[] = '<div style="margin-top:10px;">' . implode('', $chips) . '</div>';
+
+            $meta = [];
+            $meta[] = 'Grupo: <strong>' . self::esc((string)$data['group']) . '</strong>';
+            $meta[] = 'Export: ' . self::esc((string)$data['date']);
+            if ((string)$data['maxGrade'] !== '') {
+                $meta[] = 'Prioridad máxima: <strong>' . self::esc((string)$data['maxGrade']) . '</strong>';
+            }
+            if ((string)$data['filter'] !== '') {
+                $meta[] = 'Filtro: ' . self::esc((string)$data['filter']);
+            }
+            $html[] = '<p style="margin:8px 0 0;font-size:11px;color:#6b7280;">' . implode(' · ', $meta) . '</p>';
+
+            // Tira de KPIs (tabla: se copia e imprime bien).
+            $html[] = '<table style="width:100%;border-collapse:collapse;margin:18px 0 6px;font-size:12px;">'
+                . '<tr>'
+                . self::kpiCell('CVE', (string)$total)
+                . self::kpiCell('En CISA KEV', (string)$data['kev'], (int)$data['kev'] > 0 ? '#b91c1c' : null)
+                . self::kpiCell('CVSS máximo', self::maxCvss($items))
+                . self::kpiCell('Prioridad máxima', (string)($data['maxGrade'] ?? '—'))
+                . '</tr></table>';
+
+            // Tarjetas por CVE.
+            $first = true;
+            foreach (array_slice($items, 0, self::MAX_FICHAS) as $item) {
+                $html[] = self::cardHtml($item, $first ? '' : 'page-break-before:always;');
+                $first = false;
+            }
+            if ($total > self::MAX_FICHAS) {
+                $html[] = '<p style="font-size:11px;color:#6b7280;">Se listan ' . self::MAX_FICHAS
+                    . ' de ' . $total . ' CVE. El resto está en la consola.</p>';
+            }
+
+            // Bloques compactos.
+            if ($total > 1) {
+                $html[] = self::workTableHtml($items);
+                $html[] = self::clustersHtml($data['clusters']);
+            }
+            $html[] = self::exceptionsHtml($data);
+            $html[] = self::verificationHtml($data);
+            $html[] = self::decisionsHtml($data);
+            if (is_string($data['aiPlan']) && trim($data['aiPlan']) !== '') {
+                $html[] = '<h2 style="font-size:15px;font-weight:700;color:#0f172a;margin:28px 0 6px;border-top:1px solid #e5e7eb;padding-top:16px;">Lectura del riesgo (IA)</h2>'
+                    . '<p style="font-size:10px;color:#6b7280;margin:0 0 8px;">Generada por tu modelo local a partir de los datos anteriores. Las cifras y prioridades son deterministas.</p>';
+                $html[] = function_exists('render_ai_markdown')
+                    ? render_ai_markdown((string)$data['aiPlan'])
+                    : nl2br(self::esc((string)$data['aiPlan']));
+            }
+
+            $html[] = '</div>';
+            return implode("\n", $html);
+        }
+
+        private static function cardHtml(array $item, string $breakStyle = ''): string
+        {
+            $cveId = (string)$item['cve_id'];
+            $severity = strtolower((string)($item['severity'] ?? ''));
+            $colors = self::SEV_COLORS[$severity] ?? self::SEV_COLORS['info'];
+            $sevLabel = self::SEV_LABELS[$severity] ?? 'SIN SEVERIDAD';
+            $grade = (string)($item['_grade'] ?? '');
+            $cvss = $item['cvss'] !== null ? (float)$item['cvss'] : null;
+            $epss = $item['epss'] !== null ? (float)$item['epss'] : null;
+            $epssPct = $epss !== null ? max(0, min(100, $epss * 100)) : 0;
+
+            $out = [];
+            $out[] = '<section style="border-left:4px solid ' . $colors[0] . ';padding:0 0 0 14px;margin:24px 0;' . $breakStyle . 'page-break-inside:avoid;break-inside:avoid;">';
+
+            // Cabecera de la tarjeta.
+            $out[] = '<div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap;">';
+            $out[] = '<h2 style="margin:0;font-size:19px;font-weight:700;font-family:Consolas,Menlo,monospace;color:#0f172a;">' . self::esc($cveId) . '</h2>';
+            $badges = [];
+            $badges[] = '<span style="display:inline-block;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:700;background:' . $colors[1] . ';color:' . $colors[2] . ';">' . $sevLabel . '</span>';
+            if ($grade !== '') {
+                $badges[] = '<span style="display:inline-block;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:700;background:' . (self::GRADE_COLORS[$grade] ?? '#6b7280') . ';color:#ffffff;">Prioridad ' . self::esc($grade) . '</span>';
+            }
+            $badges[] = '<a href="https://nvd.nist.gov/vuln/detail/' . rawurlencode($cveId) . '" target="_blank" rel="noopener noreferrer" style="display:inline-block;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:600;border:1px solid #e5e7eb;color:#6b7280;text-decoration:none;">NVD ↗</a>';
+            $out[] = '<div>' . implode(' ', $badges) . '</div>';
+            $out[] = '</div>';
+
+            $out[] = '<p style="margin:6px 0 0;font-size:11px;color:#6b7280;">' . self::esc((string)$item['_reason'])
+                . ' · ventana ' . self::esc((string)$item['_window']) . '</p>';
+
+            // Rejilla de métricas.
+            $out[] = '<table style="width:100%;border-collapse:collapse;margin:12px 0 0;font-size:12px;"><tr>';
+            $out[] = self::metricCell('CVSS', $cvss !== null ? number_format($cvss, 1, '.', '') : '—',
+                $cvss !== null ? self::meter(min(100, $cvss * 10), $colors[0]) : '');
+            $out[] = self::metricCell('EPSS', $epss !== null ? number_format($epssPct, 2, ',', '') . ' %' : '—',
+                $epss !== null ? self::meter($epssPct, '#d97706') : '');
+            $out[] = self::metricCell('CISA KEV', (int)($item['is_kev'] ?? 0) === 1 ? 'Sí' : 'No', '', (int)($item['is_kev'] ?? 0) === 1 ? '#b91c1c' : null);
+            $out[] = self::metricCell('Equipos expuestos', (string)(int)($item['exposed_machines'] ?? 0), '');
+            $out[] = '</tr></table>';
+
+            $out[] = '<p style="margin:4px 0 0;font-size:11px;color:#6b7280;">Detectado '
+                . self::esc(self::dateLabel((string)($item['first_detected_at'] ?? '')))
+                . ' · ' . (int)($item['age_days'] ?? 0) . ' días en el tenant'
+                . ((string)($item['tvm_status'] ?? '') !== '' ? ' · estado ' . self::esc((string)$item['tvm_status']) : '')
+                . '</p>';
+
+            // Descripción.
+            $desc = $item['_desc'];
+            if ((string)$desc['summary'] !== '') {
+                $out[] = '<p style="margin:10px 0 0;font-size:13px;color:#374151;">' . self::esc((string)$desc['summary']) . '</p>';
+            }
+            foreach (['impact' => 'Impacto', 'remediation' => 'Remediación'] as $key => $label) {
+                if ((string)$desc[$key] !== '') {
+                    $out[] = '<p style="margin:6px 0 0;font-size:12px;color:#4b5563;"><strong>' . $label . ':</strong> '
+                        . self::esc((string)$desc[$key]) . '</p>';
+                }
+            }
+            if ((string)$desc['fix'] !== '') {
+                $out[] = '<p style="margin:6px 0 0;font-size:12px;color:#92400e;"><strong>Versión de corrección inferida:</strong> '
+                    . self::esc((string)$desc['fix']) . ' (confirmar en el boletín del fabricante)</p>';
+            }
+
+            // Exposición y software.
+            $labels = array_values(array_filter(array_map('trim', explode(',', (string)($item['software_labels'] ?? '')))));
+            $exposure = [];
+            $exposure[] = (int)($item['exposed_machines'] ?? 0) . ' equipos';
+            if ((int)($item['has_exploit'] ?? 0) === 1) {
+                $exposure[] = 'exploit disponible';
+            }
+            if ((int)($item['has_known_threats'] ?? 0) === 1) {
+                $exposure[] = 'amenazas conocidas';
+            }
+            if ((int)($item['has_alerts'] ?? 0) === 1) {
+                $exposure[] = 'alerta activa';
+            }
+            $out[] = '<p style="margin:10px 0 0;font-size:12px;color:#374151;"><strong>Exposición en tu tenant:</strong> '
+                . self::esc(implode(' · ', $exposure))
+                . ($labels !== [] ? ' · <strong>software:</strong> ' . self::esc(implode(', ', array_slice($labels, 0, 6))) : '')
+                . '</p>';
+
+            // Relacionados.
+            $related = self::relatedFor((string)$cveId);
+            if ($related !== []) {
+                $out[] = '<p style="margin:6px 0 0;font-size:12px;color:#4b5563;"><strong>CVEs relacionados:</strong> '
+                    . self::esc(implode(', ', $related)) . '</p>';
+            }
+
+            // Informe de la IA del CVE.
+            if (isset($GLOBALS['__exposed_analyses'][$cveId])) {
+                // No se usa; el informe técnico se enlaza desde la ficha del grupo.
+            }
+            $out[] = '<p style="margin:6px 0 0;font-size:11px;color:#6b7280;">'
+                . 'Acción: ' . self::esc((string)$item['_action']) . '</p>';
+
+            $full = trim((string)($item['description'] ?? ''));
+            if ($full !== '') {
+                $out[] = '<details style="margin:8px 0 0;"><summary style="cursor:pointer;font-size:11px;color:#6b7280;">Descripción completa de Defender</summary>'
+                    . '<p style="margin:6px 0 0;font-size:12px;color:#4b5563;">' . nl2br(self::esc($full)) . '</p></details>';
+            }
+
+            $out[] = '</section>';
+            return implode('', $out);
+        }
+
+        private static function kpiCell(string $label, string $value, ?string $color = null): string
+        {
+            return '<td style="border:1px solid #e5e7eb;padding:8px 10px;vertical-align:top;">'
+                . '<span style="display:block;font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:#6b7280;font-weight:700;">' . self::esc($label) . '</span>'
+                . '<span style="display:block;font-size:18px;font-weight:700;' . ($color !== null ? 'color:' . $color . ';' : '') . '">' . self::esc($value) . '</span>'
+                . '</td>';
+        }
+
+        private static function metricCell(string $label, string $value, string $meter = '', ?string $color = null): string
+        {
+            return '<td style="border-top:1px solid #e5e7eb;padding:8px 10px 8px 0;vertical-align:top;">'
+                . '<span style="display:block;font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:#6b7280;font-weight:700;">' . self::esc($label) . '</span>'
+                . '<span style="display:block;font-size:15px;font-weight:700;' . ($color !== null ? 'color:' . $color . ';' : '') . '">' . self::esc($value) . '</span>'
+                . $meter
+                . '</td>';
+        }
+
+        private static function meter(float $percent, string $color): string
+        {
+            $width = max(0, min(100, $percent));
+            return '<span style="display:block;height:4px;background:#e5e7eb;border-radius:2px;margin-top:4px;">'
+                . '<span style="display:block;height:4px;width:' . number_format($width, 0, '.', '') . '%;background:' . $color . ';border-radius:2px;"></span></span>';
+        }
+
+        private static function workTableHtml(array $items): string
+        {
+            $out = [];
+            $out[] = '<h2 style="font-size:15px;font-weight:700;color:#0f172a;margin:28px 0 6px;border-top:1px solid #e5e7eb;padding-top:16px;">Tabla de trabajo</h2>';
+            $out[] = '<table style="width:100%;border-collapse:collapse;font-size:11.5px;">'
+                . '<thead><tr>'
+                . '<th style="border:1px solid #d1d5db;background:#f3f4f6;padding:5px 7px;text-align:left;">CVE</th>'
+                . '<th style="border:1px solid #d1d5db;background:#f3f4f6;padding:5px 7px;text-align:left;">Prioridad</th>'
+                . '<th style="border:1px solid #d1d5db;background:#f3f4f6;padding:5px 7px;text-align:right;">Equipos</th>'
+                . '<th style="border:1px solid #d1d5db;background:#f3f4f6;padding:5px 7px;text-align:left;">Acción</th>'
+                . '<th style="border:1px solid #d1d5db;background:#f3f4f6;padding:5px 7px;text-align:left;">Responsable</th>'
+                . '<th style="border:1px solid #d1d5db;background:#f3f4f6;padding:5px 7px;text-align:left;">Ventana</th>'
+                . '</tr></thead><tbody>';
+            foreach (array_slice($items, 0, self::MAX_WORK_ROWS) as $item) {
+                $out[] = '<tr>'
+                    . '<td style="border:1px solid #d1d5db;padding:5px 7px;font-family:Consolas,Menlo,monospace;">' . self::esc((string)$item['cve_id']) . '</td>'
+                    . '<td style="border:1px solid #d1d5db;padding:5px 7px;">' . self::esc((string)$item['_grade'] . ' · ' . (string)$item['_reason']) . '</td>'
+                    . '<td style="border:1px solid #d1d5db;padding:5px 7px;text-align:right;">' . (int)($item['exposed_machines'] ?? 0) . '</td>'
+                    . '<td style="border:1px solid #d1d5db;padding:5px 7px;">' . self::esc((string)$item['_action']) . '</td>'
+                    . '<td style="border:1px solid #d1d5db;padding:5px 7px;color:#6b7280;">por asignar</td>'
+                    . '<td style="border:1px solid #d1d5db;padding:5px 7px;">' . self::esc((string)$item['_window']) . '</td>'
+                    . '</tr>';
+            }
+            $out[] = '</tbody></table>';
+            if (count($items) > self::MAX_WORK_ROWS) {
+                $out[] = '<p style="font-size:10px;color:#6b7280;margin:4px 0 0;">Se listan los ' . self::MAX_WORK_ROWS
+                    . ' CVE de mayor prioridad de ' . count($items) . '.</p>';
+            }
+            return implode('', $out);
+        }
+
+        private static function clustersHtml(array $clusters): string
+        {
+            $multi = array_filter($clusters, static fn(array $c): bool => count($c['cves']) > 1);
+            $out = [];
+            if ($multi === []) {
+                $out[] = '<h2 style="font-size:15px;font-weight:700;color:#0f172a;margin:28px 0 6px;border-top:1px solid #e5e7eb;padding-top:16px;">Racimos por software</h2>';
+                $out[] = '<p style="margin:0;font-size:12px;color:#4b5563;">Ningún software agrupa a más de un CVE: '
+                    . 'no hay racimo y cada vulnerabilidad requiere su propia acción.</p>';
+                return implode('', $out);
+            }
+            $out[] = '<h2 style="font-size:15px;font-weight:700;color:#0f172a;margin:28px 0 6px;border-top:1px solid #e5e7eb;padding-top:16px;">Racimos por software</h2>';
+            $out[] = '<table style="width:100%;border-collapse:collapse;font-size:11.5px;"><thead><tr>'
+                . '<th style="border:1px solid #d1d5db;background:#f3f4f6;padding:5px 7px;text-align:left;">Software</th>'
+                . '<th style="border:1px solid #d1d5db;background:#f3f4f6;padding:5px 7px;text-align:right;">CVE</th>'
+                . '<th style="border:1px solid #d1d5db;background:#f3f4f6;padding:5px 7px;text-align:left;">Acción única</th>'
+                . '</tr></thead><tbody>';
+            foreach ($multi as $label => $cluster) {
+                $out[] = '<tr>'
+                    . '<td style="border:1px solid #d1d5db;padding:5px 7px;">' . self::esc((string)$label) . '</td>'
+                    . '<td style="border:1px solid #d1d5db;padding:5px 7px;text-align:right;">' . count($cluster['cves']) . '</td>'
+                    . '<td style="border:1px solid #d1d5db;padding:5px 7px;">' . self::esc((string)$cluster['action']) . '</td>'
+                    . '</tr>';
+            }
+            $out[] = '</tbody></table>';
+            return implode('', $out);
+        }
+
+        private static function exceptionsHtml(array $data): string
+        {
+            $items = array_values(array_filter($data['items'], static fn(array $i): bool => !empty($i['_exception'])));
+            $out = [];
+            $out[] = '<h2 style="font-size:15px;font-weight:700;color:#0f172a;margin:28px 0 6px;border-top:1px solid #e5e7eb;padding-top:16px;">Excepciones</h2>';
+            if ($items === []) {
+                $out[] = '<p style="margin:0;font-size:12px;color:#4b5563;">El export no contiene CVE en estado '
+                    . '<code>UnderException</code> ni <code>PartialException</code>.</p>';
+                return implode('', $out);
+            }
+            $out[] = '<p style="margin:0;font-size:12px;color:#4b5563;">' . count($items)
+                . ' CVE en excepción según Defender. El export no trae aprobador ni caducidad: complétalos en el registro de excepciones.</p>';
+            $out[] = '<ul style="margin:6px 0 0 18px;padding:0;font-size:12px;color:#374151;">';
+            foreach ($items as $item) {
+                $out[] = '<li>' . self::esc((string)$item['cve_id']) . ' · ' . self::esc((string)$item['tvm_status'])
+                    . ' · ' . (int)($item['exposed_machines'] ?? 0) . ' equipos</li>';
+            }
+            $out[] = '</ul>';
+            return implode('', $out);
+        }
+
+        private static function verificationHtml(array $data): string
+        {
+            $kev = (int)$data['kev'];
+            $p1 = (int)($data['tiers']['p1'] ?? 0);
+            $p2 = (int)($data['tiers']['p2'] ?? 0);
+            return '<h2 style="font-size:15px;font-weight:700;color:#0f172a;margin:28px 0 6px;border-top:1px solid #e5e7eb;padding-top:16px;">Verificación</h2>'
+                . '<ul style="margin:0 0 0 18px;padding:0;font-size:12px;color:#374151;">'
+                . '<li><strong>P1:</strong> ' . $p1 . ' → 0 en 72 h · <strong>P2:</strong> ' . $p2 . ' → 0 en 15 días.</li>'
+                . '<li><strong>CISA KEV:</strong> ' . $kev . ' → 0; son los únicos con explotación confirmada.</li>'
+                . '<li><strong>Equipos expuestos:</strong> máximo actual ' . (int)$data['maxMachines'] . '; debe bajar en el próximo export.</li>'
+                . '<li><strong>Demostración:</strong> captura del activo o del gestor de parches. Que un CVE desaparezca del export no prueba el parche.</li>'
+                . '<li><strong>Siguiente revisión:</strong> volver a importar y comparar KEV, equipos y CVE abiertos.</li>'
+                . '</ul>';
+        }
+
+        private static function decisionsHtml(array $data): string
+        {
+            return '<h2 style="font-size:15px;font-weight:700;color:#0f172a;margin:28px 0 6px;border-top:1px solid #e5e7eb;padding-top:16px;">Decisiones</h2>'
+                . '<ul style="margin:0 0 0 18px;padding:0;font-size:12px;color:#374151;">'
+                . '<li><strong>D1 · Excepciones:</strong> aprobar o renovar las ' . (int)$data['exceptions'] . ' con responsable y caducidad.</li>'
+                . '<li><strong>D2 · Responsables:</strong> asignar owner y ventana a los CVE A+/A (prioridad máxima).</li>'
+                . '<li><strong>D3 · Ciclo:</strong> confirmar la ventana de parcheo de emergencia y la verificación en el próximo export.</li>'
+                . '</ul>';
+        }
+
+        /* =================================================================
+         * Markdown (para .md y «Copiar Markdown»)
+         * ============================================================== */
+
+        private static function renderMarkdown(array $data): string
+        {
+            $items = $data['items'];
+            $total = (int)$data['total'];
+            $md = [];
+            $md[] = '# Informe de vulnerabilidad';
+            $md[] = '';
+            $md[] = $total === 1 ? '## ' . $items[0]['cve_id'] : '**' . $total . ' vulnerabilidades**';
+            $md[] = '';
+            $md[] = '- Grupo: ' . self::cell((string)$data['group']);
+            $md[] = '- Export: ' . self::cell((string)$data['date']);
+            if ((string)$data['maxGrade'] !== '') {
+                $md[] = '- Prioridad máxima: ' . self::cell((string)$data['maxGrade']);
+            }
+            if ((string)$data['filter'] !== '') {
+                $md[] = '- Filtro de origen: ' . self::cell((string)$data['filter']);
+            }
+            $md[] = '';
+            $md[] = '| CVE | En CISA KEV | CVSS máx. | Prioridad máx. |';
+            $md[] = '| --- | --- | --- | --- |';
+            $md[] = '| ' . $total . ' | ' . (int)$data['kev'] . ' | ' . self::maxCvss($items) . ' | '
+                . self::cell((string)($data['maxGrade'] ?? '—')) . ' |';
+            $md[] = '';
+
+            foreach (array_slice($items, 0, self::MAX_FICHAS) as $item) {
+                $md[] = '---';
                 $md[] = '';
-                $md[] = '**Por qué está aquí:** ' . $item['_reason'] . ' · ventana '
-                    . $item['_window'] . ' · ' . (int)($item['exposed_machines'] ?? 0) . ' equipos.';
+                $md[] = '## ' . $item['cve_id'];
+                $md[] = '';
+                $md[] = '| Métrica | Valor |';
+                $md[] = '| --- | --- |';
+                $md[] = '| Severidad | ' . self::cell((string)($item['severity'] ?? '—')) . ' |';
+                $md[] = '| CVSS | ' . ($item['cvss'] !== null ? number_format((float)$item['cvss'], 1, '.', '') : '—') . ' |';
+                $md[] = '| EPSS | ' . ($item['epss'] !== null ? number_format((float)$item['epss'], 4, '.', '') : '—') . ' |';
+                $md[] = '| CISA KEV | ' . ((int)($item['is_kev'] ?? 0) === 1 ? 'Sí' : 'No') . ' |';
+                $md[] = '| Prioridad | ' . self::cell((string)($item['_grade'] ?? '—') . ' · ' . (string)$item['_reason']) . ' |';
+                $md[] = '| Equipos expuestos | ' . (int)($item['exposed_machines'] ?? 0) . ' |';
+                $md[] = '| Antigüedad | ' . (int)($item['age_days'] ?? 0) . ' días |';
+                $md[] = '| Estado TVM | ' . self::cell((string)($item['tvm_status'] ?? '—')) . ' |';
+                $md[] = '| Software | ' . self::cell((string)($item['software_labels'] ?? '—')) . ' |';
                 $md[] = '';
                 if ((string)$item['_desc']['summary'] !== '') {
-                    $md[] = '**Qué es:** ' . $item['_desc']['summary'];
+                    $md[] = '**Qué es.** ' . (string)$item['_desc']['summary'];
                     $md[] = '';
                 }
                 if ((string)$item['_desc']['impact'] !== '') {
-                    $md[] = '**Impacto:** ' . $item['_desc']['impact'];
+                    $md[] = '**Impacto.** ' . (string)$item['_desc']['impact'];
                     $md[] = '';
                 }
-                $md[] = '**Acción:** ' . $item['_action'];
-                $md[] = '';
+                if ((string)$item['_desc']['remediation'] !== '') {
+                    $md[] = '**Remediación.** ' . (string)$item['_desc']['remediation'];
+                    $md[] = '';
+                }
                 if ((string)$item['_desc']['fix'] !== '') {
-                    $md[] = '> Versión de corrección inferida de la descripción: '
-                        . $item['_desc']['fix'] . '. Confirmar en el boletín del fabricante.';
+                    $md[] = '> Versión de corrección inferida: ' . (string)$item['_desc']['fix']
+                        . '. Confirmar en el boletín del fabricante.';
                     $md[] = '';
                 }
-                $labels = array_values(array_filter(array_map(
-                    'trim',
-                    explode(',', (string)($item['software_labels'] ?? ''))
-                )));
-                if ($labels !== []) {
-                    $md[] = '**Software afectado:** ' . implode(', ', array_slice($labels, 0, 6))
-                        . (count($labels) > 6 ? '…' : '');
-                    $md[] = '';
-                }
-                if (isset($analyses[$cveId])) {
-                    $withReport++;
-                    $md[] = '**Informe técnico de tu IA**';
-                    foreach ((array)$analyses[$cveId]['sections'] as $section) {
-                        $title = trim((string)($section['title'] ?? ''));
-                        if ($title !== '') {
-                            $md[] = '';
-                            $md[] = '**' . $title . '**';
-                        }
-                        foreach ((array)($section['bullets'] ?? []) as $bullet) {
-                            $md[] = '- ' . (string)$bullet;
-                        }
-                        foreach ((array)($section['paragraphs'] ?? []) as $paragraph) {
-                            $md[] = '';
-                            $md[] = (string)$paragraph;
-                        }
-                    }
-                    $md[] = '';
-                }
-                $full = trim((string)($item['description'] ?? ''));
-                if ($full !== '') {
-                    $md[] = '<details><summary>Descripción completa de Defender</summary>';
-                    $md[] = '';
-                    $md[] = self::paragraphs($full);
-                    $md[] = '';
-                    $md[] = '</details>';
-                    $md[] = '';
-                }
-            }
-            if (count($fiches) > self::MAX_FICHAS) {
-                $md[] = 'Se listan ' . self::MAX_FICHAS . ' de ' . count($fiches) . ' fichas P1/P2.';
+                $md[] = '**Acción:** ' . self::cell((string)$item['_action']);
                 $md[] = '';
+                $related = self::relatedFor((string)$item['cve_id']);
+                if ($related !== []) {
+                    $md[] = '**CVEs relacionados:** ' . implode(', ', $related);
+                    $md[] = '';
+                }
             }
 
-            // Anexo C. Relaciones.
-            $md[] = '## Anexo C. Relaciones entre los CVE del grupo';
-            $md[] = '';
-            $md[] = '### Por software principal';
-            $md[] = '';
-            if ($software === []) {
-                $md[] = 'Sin software asociado en el export.';
+            if ($total > 1) {
+                $md[] = '---';
                 $md[] = '';
-            } else {
-                $clusters = array_filter($software, static fn(array $c): bool => count($c['cves']) > 1);
-                if ($clusters === []) {
-                    $md[] = 'Ningún software agrupa a más de un CVE del grupo.';
-                } else {
-                    $md[] = '| Software | CVE del grupo |';
-                    $md[] = '| --- | --- |';
-                    foreach ($clusters as $label => $cluster) {
-                        $md[] = '| ' . self::cell((string)$label) . ' | '
-                            . self::cell(implode(', ', $cluster['cves'])) . ' |';
-                    }
+                $md[] = '## Tabla de trabajo';
+                $md[] = '';
+                $md[] = '| CVE | Prioridad | Equipos | Acción | Responsable | Ventana |';
+                $md[] = '| --- | --- | --- | --- | --- | --- |';
+                foreach (array_slice($items, 0, self::MAX_WORK_ROWS) as $item) {
+                    $md[] = '| ' . self::cell((string)$item['cve_id'])
+                        . ' | ' . self::cell((string)$item['_grade'] . ' · ' . (string)$item['_reason'])
+                        . ' | ' . (int)($item['exposed_machines'] ?? 0)
+                        . ' | ' . self::cell((string)$item['_action'])
+                        . ' | por asignar | ' . self::cell((string)$item['_window']) . ' |';
                 }
                 $md[] = '';
             }
 
-            $md[] = '### Menciones en la descripción de Defender';
+            $md[] = '## Verificación';
             $md[] = '';
-            $groupIds = [];
+            $md[] = '- P1: ' . (int)($data['tiers']['p1'] ?? 0) . ' → 0 en 72 h · P2: ' . (int)($data['tiers']['p2'] ?? 0) . ' → 0 en 15 días.';
+            $md[] = '- CISA KEV: ' . (int)$data['kev'] . ' → 0.';
+            $md[] = '- Equipos expuestos: máximo ' . (int)$data['maxMachines'] . '; debe bajar en el próximo export.';
+            $md[] = '- Que un CVE desaparezca del export no prueba el parche: adjuntar evidencia del activo.';
+            $md[] = '';
+            $md[] = '## Decisiones';
+            $md[] = '';
+            $md[] = '- D1 · Excepciones: aprobar o renovar las ' . (int)$data['exceptions'] . ' con responsable y caducidad.';
+            $md[] = '- D2 · Responsables: asignar owner y ventana a los CVE A+/A.';
+            $md[] = '- D3 · Ciclo: confirmar ventana de emergencia y verificación en el próximo export.';
+            $md[] = '';
+
+            if (is_string($data['aiPlan']) && trim($data['aiPlan']) !== '') {
+                $md[] = '## Lectura del riesgo (IA)';
+                $md[] = '';
+                $md[] = '> Generada por tu modelo local a partir de los datos anteriores.';
+                $md[] = '';
+                $md[] = trim((string)$data['aiPlan']);
+                $md[] = '';
+            }
+
+            return implode("\n", $md);
+        }
+
+        /* =================================================================
+         * Utilidades
+         * ============================================================== */
+
+        private static function priorityGrade(array $row): string
+        {
+            if (class_exists('CveReportAi')) {
+                $grade = CveReportAi::calculatePriority(
+                    $row['cvss'] !== null ? (float)$row['cvss'] : null,
+                    $row['epss'] !== null ? (float)$row['epss'] : null,
+                    (int)($row['is_kev'] ?? 0) === 1,
+                    (int)($row['has_exploit'] ?? 0) === 1
+                );
+                return $grade !== null ? (string)$grade : '';
+            }
+            return '';
+        }
+
+        private static function relatedFor(string $cveId): array
+        {
+            if (!class_exists('ExposedConsoleStore')) {
+                return [];
+            }
+            $index = ExposedConsoleStore::mentionIndex();
+            $ids = [];
+            foreach ((array)($index['out'][$cveId] ?? []) as $id) {
+                $ids[$id] = true;
+            }
+            foreach ((array)($index['in'][$cveId] ?? []) as $id) {
+                if ($id !== $cveId) {
+                    $ids[$id] = true;
+                }
+            }
+            return array_slice(array_keys($ids), 0, 6);
+        }
+
+        private static function maxCvss(array $items): string
+        {
+            $max = null;
             foreach ($items as $item) {
-                $groupIds[(string)$item['cve_id']] = true;
-            }
-            $mentions = class_exists('ExposedConsoleStore') ? ExposedConsoleStore::mentionIndex() : ['out' => []];
-            $pairs = [];
-            foreach ($items as $item) {
-                $id = (string)$item['cve_id'];
-                $hits = [];
-                foreach ((array)($mentions['out'][$id] ?? []) as $other) {
-                    if (isset($groupIds[$other])) {
-                        $hits[$other] = true;
-                    }
-                }
-                if ($hits !== []) {
-                    $pairs[] = '- ' . $id . ' → ' . implode(', ', array_keys($hits));
+                if ($item['cvss'] !== null) {
+                    $max = $max === null ? (float)$item['cvss'] : max($max, (float)$item['cvss']);
                 }
             }
-            if ($pairs === []) {
-                $md[] = 'Ningún CVE del grupo cita a otro del grupo en su descripción.';
-            } else {
-                foreach ($pairs as $line) {
-                    $md[] = $line;
+            return $max !== null ? number_format($max, 1, '.', '') : '—';
+        }
+
+        private static function filterLabel(array $group): string
+        {
+            $filters = safe_json_decode((string)($group['filters_json'] ?? ''), []);
+            if (!is_array($filters) || $filters === []) {
+                return '';
+            }
+            $parts = [];
+            foreach ($filters as $key => $value) {
+                if ($key === 'sort') {
+                    continue;
+                }
+                if (is_array($value)) {
+                    $parts[] = $key . '=' . implode('/', array_map('strval', $value));
+                } elseif ((string)$value !== '') {
+                    $parts[] = $key . '=' . (string)$value;
                 }
             }
-            $md[] = '';
-
-            // Anexo D. Definiciones.
-            $md[] = '## Anexo D. Definiciones y fuentes';
-            $md[] = '';
-            $md[] = '- **CVSS:** severidad técnica intrínseca. No es prioridad de remediación (FIRST CVSS v4.0).';
-            $md[] = '- **EPSS:** probabilidad de explotación en los próximos 30 días (FIRST).';
-            $md[] = '- **CISA KEV:** catálogo de vulnerabilidades con explotación confirmada.';
-            $md[] = '- **SSVC:** categorización de CISA con resultados Immediate / Out-of-cycle / Scheduled / Defer.';
-            $md[] = '- **NIST SP 800-40 r4:** planes de parcheo rutinario, de emergencia, mitigación de emergencia y activos no parcheables.';
-            $md[] = '- **Equipos expuestos:** contador agregado de Defender por CVE; no identifica servidores concretos.';
-            $md[] = '';
-
-            $markdown = implode("\n", $md);
-            $html = function_exists('render_ai_markdown')
-                ? render_ai_markdown($markdown)
-                : nl2br(e($markdown));
-
-            return [
-                'markdown'    => $markdown,
-                'html'        => $html,
-                'tiers'       => $tiers,
-                'p1p2'        => $p1p2,
-                'kev'         => $kev,
-                'with_report' => $withReport,
-                'without'     => max(0, count($fiches) - $withReport),
-            ];
+            return implode(' · ', array_slice($parts, 0, 4));
         }
 
         /**
          * Racimos por software principal.
          *
-         * @param array<int,array<string,mixed>> $items
-         * @return array<string,array{cves:array<int,string>,machines:int,tier:string,action:string}>
+         * @return array<string,array{cves:array<int,string>,machines:int,tier:string,action:string,rank:int}>
          */
         private static function softwareClusters(array $items): array
         {
@@ -485,12 +693,11 @@ if (!class_exists('ExposedReportDossier')) {
             return $clusters;
         }
 
-        /** Acción recomendada por CVE (determinista). */
         private static function actionFor(array $item): string
         {
             $fix = (string)($item['_desc']['fix'] ?? '');
             if ($fix !== '') {
-                return 'Actualizar a ' . $fix . ' (versión inferida de la descripción)';
+                return 'Actualizar a ' . $fix . ' (versión inferida)';
             }
             $remediation = (string)($item['_desc']['remediation'] ?? '');
             if ($remediation !== '') {
@@ -499,65 +706,25 @@ if (!class_exists('ExposedReportDossier')) {
             return 'Aplicar la actualización del fabricante y verificar en el activo';
         }
 
-        /** Resumen ejecutivo de cinco frases, en el orden recomendado. */
-        private static function executiveSummary(
-            string $groupName,
-            array $items,
-            array $tiers,
-            int $kev,
-            int $exceptions,
-            int $maxMachines,
-            ?array $worst,
-            int $total
-        ): string {
-            if ($total === 0) {
-                return 'El grupo «' . $groupName . '» no contiene CVE.';
-            }
-
-            $first = 'El grupo «' . $groupName . '» reúne ' . $total . ' CVE, de los que '
-                . $tiers['p1'] . ' son P1 y deben resolverse en 24-72 h y ' . $tiers['p2']
-                . ' son P2 con ventana de 7-15 días.';
-
-            $second = $kev > 0
-                ? 'Hay ' . $kev . ' CVE en CISA KEV (explotación confirmada), que es el dato que '
-                    . 'más pesa en la prioridad por delante del CVSS.'
-                : 'Ningún CVE del grupo figura en CISA KEV, así que la prioridad se apoya en exploit '
-                    . 'disponible, alertas y EPSS.';
-
-            $third = 'El dato procede del export de Defender TVM: es agregado por CVE, no identifica '
-                . 'servidores concretos ni propietarios, y el máximo de equipos expuestos es '
-                . $maxMachines . '.';
-
-            $fourth = $worst !== null
-                ? 'El mayor riesgo es ' . $worst['cve_id'] . ' (' . $worst['_label']
-                    . ', ' . (int)($worst['exposed_machines'] ?? 0) . ' equipos): ' . $worst['_reason'] . '.'
-                : 'No se ha podido determinar un CVE de mayor riesgo.';
-
-            $fifth = 'Se pide aprobar o renovar las ' . $exceptions . ' excepciones vigentes, asignar '
-                . 'responsable y ventana a los CVE P1/P2, y confirmar la verificación en el próximo export.';
-
-            return implode(' ', [$first, $second, $third, $fourth, $fifth]);
-        }
-
-        /** Texto a párrafos sin romper tablas ni listas. */
-        private static function paragraphs(string $text): string
+        private static function dateLabel(string $value): string
         {
-            $text = preg_replace('/\s+(Impact:|Remediation:|AdditionalInformation:)/u', "\n\n**$1** ", $text) ?? $text;
-            $out = [];
-            foreach (preg_split('/\n\s*\n/', trim($text)) ?: [] as $paragraph) {
-                $paragraph = trim(preg_replace('/\s+/u', ' ', $paragraph) ?? $paragraph);
-                if ($paragraph !== '') {
-                    $out[] = $paragraph;
-                }
+            $value = trim($value);
+            if ($value === '') {
+                return 'sin fecha';
             }
-            return implode("\n\n", $out);
+            $ts = strtotime($value);
+            return $ts === false ? $value : date('d/m/Y', $ts);
         }
 
-        /** Escapa una celda de tabla Markdown. */
         private static function cell(string $value): string
         {
             $value = trim(preg_replace('/\s+/u', ' ', $value) ?? $value);
             return str_replace(['|', "\n", "\r"], ['/', ' ', ' '], $value);
+        }
+
+        private static function esc(string $value): string
+        {
+            return function_exists('e') ? e($value) : htmlspecialchars($value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
         }
     }
 }
