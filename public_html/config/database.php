@@ -142,6 +142,30 @@ class Database
         $db->exec("UPDATE remediation_tasks SET eta_original = due_at WHERE eta_original IS NULL OR eta_original = ''");
         $db->exec("UPDATE remediation_tasks SET eta_actual = COALESCE(eta_original, due_at) WHERE eta_actual IS NULL OR eta_actual = ''");
 
+        // v0.4.27.1: alinear los SLA por defecto con la especificación CVE Desk
+        // (7/15/30/60) solo si siguen con los valores antiguos de fábrica. Un
+        // plazo personalizado por el cliente no se toca.
+        try {
+            $flag = $db->query("SELECT setting_value FROM settings WHERE setting_key = 'remediation_sla_migrated_v04271'")->fetchColumn();
+            if ($flag !== '1') {
+                $oldDefaults = ['critical' => '7', 'high' => '30', 'medium' => '90', 'low' => '180'];
+                $newDefaults = ['critical' => '7', 'high' => '15', 'medium' => '30', 'low' => '60'];
+                foreach ($oldDefaults as $key => $oldValue) {
+                    $stmt = $db->prepare("SELECT setting_value FROM settings WHERE setting_key = ?");
+                    $stmt->execute(['remediation_sla_' . $key]);
+                    $current = $stmt->fetchColumn();
+                    if ($current !== false && (string)$current === $oldValue && $newDefaults[$key] !== $oldValue) {
+                        $db->prepare("UPDATE settings SET setting_value = ?, updated_at = datetime('now') WHERE setting_key = ?")
+                           ->execute([$newDefaults[$key], 'remediation_sla_' . $key]);
+                    }
+                }
+                $db->prepare("INSERT OR REPLACE INTO settings (setting_key, setting_value, updated_at)
+                              VALUES ('remediation_sla_migrated_v04271', '1', datetime('now'))")->execute();
+            }
+        } catch (Throwable $e) {
+            // Instalaciones sin tabla settings: no hacer nada.
+        }
+
         // v0.4.23: cancelar un trabajo de IA en curso (el motor lo consulta
         // entre parte y parte).
         try {
@@ -810,6 +834,24 @@ class Database
             updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         )");
 
+        // v0.4.27.1 — cola de CVEs del tenant y primera vez visto (SLA).
+        $db->exec("CREATE TABLE IF NOT EXISTS remediation_queue_marks (
+            org_id INTEGER NOT NULL,
+            cve_id TEXT NOT NULL,
+            state TEXT NOT NULL DEFAULT 'en_informe',
+            marked_by INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (org_id, cve_id)
+        )");
+
+        $db->exec("CREATE TABLE IF NOT EXISTS remediation_queue_seen (
+            org_id INTEGER NOT NULL,
+            cve_id TEXT NOT NULL,
+            first_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (org_id, cve_id)
+        )");
+
 
         $db->exec("CREATE TABLE IF NOT EXISTS remediation_chats (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -861,6 +903,7 @@ class Database
         $db->exec("CREATE INDEX IF NOT EXISTS idx_remediation_risk_task ON remediation_risk_acceptances(task_id, estado)");
         $db->exec("CREATE INDEX IF NOT EXISTS idx_remediation_report_org ON remediation_reports(org_id, periodo)");
         $db->exec("CREATE INDEX IF NOT EXISTS idx_remediation_report_item ON remediation_report_items(report_id)");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_remediation_queue_state ON remediation_queue_marks(org_id, state)");
 
         // Crear usuario admin por defecto si no existe ninguno
         $stmt = $db->query("SELECT COUNT(*) as cnt FROM users");

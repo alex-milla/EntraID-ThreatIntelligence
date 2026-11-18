@@ -107,6 +107,7 @@ if ($cmd === 'seed-chat') {
 if ($cmd === 'cleanup') {
     $orgId = (int)($argv[2] ?? 0);
     if ($orgId > 0) {
+        $orgRow = Database::fetchOne("SELECT tenant_id FROM remediation_orgs WHERE id = ?", [$orgId]);
         $chats = Database::fetchAll("SELECT id FROM remediation_chats WHERE org_id = ?", [$orgId]);
         foreach ($chats as $chat) {
             Database::query("DELETE FROM remediation_messages WHERE chat_id = ?", [(int)$chat['id']]);
@@ -119,11 +120,88 @@ if ($cmd === 'cleanup') {
             Database::query("DELETE FROM remediation_risk_acceptances WHERE task_id = ?", [$tid]);
             Database::query("DELETE FROM remediation_task_checks WHERE task_id = ?", [$tid]);
         }
+        Database::query("DELETE FROM remediation_queue_marks WHERE org_id = ?", [$orgId]);
+        Database::query("DELETE FROM remediation_queue_seen WHERE org_id = ?", [$orgId]);
         Database::query("DELETE FROM remediation_chats WHERE org_id = ?", [$orgId]);
         Database::query("DELETE FROM remediation_tasks WHERE org_id = ?", [$orgId]);
         Database::query("DELETE FROM remediation_orgs WHERE id = ?", [$orgId]);
+        if ($orgRow !== null && (int)($orgRow['tenant_id'] ?? 0) > 0) {
+            $tenantId = (int)$orgRow['tenant_id'];
+            Database::query("DELETE FROM vulnerabilities WHERE tenant_id = ?", [$tenantId]);
+            Database::query("DELETE FROM machines WHERE tenant_id = ?", [$tenantId]);
+            Database::query("DELETE FROM tenants WHERE id = ?", [$tenantId]);
+        }
     }
     echo json_encode(['deleted' => $orgId], JSON_UNESCAPED_UNICODE);
+    exit(0);
+}
+
+if ($cmd === 'seed-queue') {
+    $suffix = bin2hex(random_bytes(4));
+    $tenantId = Database::insert(
+        "INSERT INTO tenants (name, slug, tenant_id, client_id, client_secret_encrypted, client_secret_iv, permissions)
+         VALUES (?, ?, ?, 'client-e2e', 'enc', 'iv', '[]')",
+        ['E2E F1 ' . $suffix, 'e2e-f1-' . $suffix, 'tenant-e2e-' . $suffix]
+    );
+    $machineA = Database::insert(
+        "INSERT INTO machines (tenant_id, machine_id, computer_dns_name, os_platform, os_version, exposure_level)
+         VALUES (?, ?, 'WEB-01', 'Windows', '11', 'High')",
+        [$tenantId, 'e2e-a-' . $suffix]
+    );
+    $machineB = Database::insert(
+        "INSERT INTO machines (tenant_id, machine_id, computer_dns_name, os_platform, os_version, exposure_level)
+         VALUES (?, ?, 'APP-02', 'Windows', 'Server 2022', 'Medium')",
+        [$tenantId, 'e2e-b-' . $suffix]
+    );
+    Database::query(
+        "INSERT INTO vulnerabilities
+         (tenant_id, machine_id, cve_id, product_name, severity, cvss_v3, epss, published_on)
+         VALUES (?, ?, 'CVE-2026-98201', 'Contoso Server', 'Critical', 9.8, 0.42, '2026-09-01')",
+        [$tenantId, $machineA]
+    );
+    Database::query(
+        "INSERT INTO vulnerabilities
+         (tenant_id, machine_id, cve_id, product_name, severity, cvss_v3, epss, published_on)
+         VALUES (?, ?, 'CVE-2026-98201', 'Contoso Server', 'Critical', 9.8, 0.42, '2026-09-01')",
+        [$tenantId, $machineB]
+    );
+    Database::query(
+        "INSERT INTO vulnerabilities
+         (tenant_id, machine_id, cve_id, product_name, severity, cvss_v3, epss, published_on)
+         VALUES (?, ?, 'CVE-2026-98202', 'Fabrikam App', 'High', 7.5, 0.10, '2026-10-01')",
+        [$tenantId, $machineA]
+    );
+
+    $orgId = Database::insert(
+        "INSERT INTO remediation_orgs (name, kind, tenant_id, created_by) VALUES (?, 'tenant', ?, 1)",
+        ['E2E F1 org ' . $suffix, $tenantId]
+    );
+    $taskId = Database::insert(
+        "INSERT INTO remediation_tasks
+         (org_id, cve_id, title, severity, cvss, status, source, created_by, importado)
+         VALUES (?, 'CVE-2026-98201', 'E2E F1 ticket', 'Critical', 9.8, 'open', 'defender', 1, datetime('now', '-6 days'))",
+        [$orgId]
+    );
+    $org = Database::fetchOne("SELECT * FROM remediation_orgs WHERE id = ?", [$orgId]);
+    RemediationWorkflow::initTask((int)$taskId, 'open', null, 1, 'Alta E2E F1');
+    Database::query(
+        "UPDATE remediation_tasks SET importado = datetime('now', '-6 days') WHERE id = ?",
+        [$taskId]
+    );
+    RemediationQueue::syncTaskAssets((int)$taskId, $org, 'CVE-2026-98201', null);
+    $asset = Database::fetchOne(
+        "SELECT id FROM remediation_task_assets WHERE task_id = ? AND asset_name = 'WEB-01'",
+        [$taskId]
+    );
+
+    echo json_encode([
+        'tenant_id' => $tenantId,
+        'org_id'    => $orgId,
+        'task_id'   => $taskId,
+        'asset_id'  => (int)($asset['id'] ?? 0),
+        'suffix'    => $suffix,
+        'due_at'    => date('Y-m-d', strtotime('+7 days')),
+    ], JSON_UNESCAPED_UNICODE);
     exit(0);
 }
 

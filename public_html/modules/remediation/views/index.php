@@ -99,9 +99,42 @@ $flashData = flash();
     </div>
 </div>
 
+<?php
+$dashboard = is_array($dashboard ?? null) ? $dashboard : [];
+$dashboard = array_merge([
+    'nuevo' => 0, 'en_informe' => 0, 'en_remediacion' => 0, 'cerrados' => 0,
+    'riesgo' => 0, 'sla_vencido' => 0, 'bloqueados_sin_eta' => 0,
+], $dashboard);
+$queueCounts = is_array($queueCounts ?? null) ? $queueCounts : ['tenant' => false];
+$counter = static function (string $label, int $value, string $href, string $tone = 'neutral'): string {
+    $tones = [
+        'neutral' => 'bg-surface border-line text-ink',
+        'info'    => 'bg-blue-50 border-blue-200 text-blue-800 dark:bg-blue-900/20 dark:border-blue-900 dark:text-blue-200',
+        'alert'   => 'bg-red-50 border-red-200 text-red-700 dark:bg-red-900/20 dark:border-red-900 dark:text-red-300',
+        'warn'    => 'bg-amber-50 border-amber-200 text-amber-800 dark:bg-amber-900/20 dark:border-amber-900 dark:text-amber-200',
+        'ok'      => 'bg-emerald-50 border-emerald-200 text-emerald-800 dark:bg-emerald-900/20 dark:border-emerald-900 dark:text-emerald-200',
+    ];
+    $class = $tones[$tone] ?? $tones['neutral'];
+    return '<a href="' . e($href) . '" class="px-3 py-2 rounded-lg border text-xs font-medium hover:opacity-90 ' . $class . '">'
+        . e($label) . ' <span class="ml-1 text-sm font-bold">' . $value . '</span></a>';
+};
+?>
+<?php if ($org !== null): ?>
+    <div class="no-print flex items-center gap-2 flex-wrap mb-4">
+        <?= $counter('Nuevos', (int)$dashboard['nuevo'], $modUrl . '?tab=queue&org=' . $selectedOrgId . '&queue=nuevo', 'info') ?>
+        <?= $counter('En informe', (int)$dashboard['en_informe'], $modUrl . '?tab=queue&org=' . $selectedOrgId . '&queue=en_informe') ?>
+        <?= $counter('En remediación', (int)$dashboard['en_remediacion'], $modUrl . '?tab=tasks&org=' . $selectedOrgId . '&view=open') ?>
+        <?= $counter('Cerrados 30 d', (int)$dashboard['cerrados'], $modUrl . '?tab=tasks&org=' . $selectedOrgId . '&view=closed', 'ok') ?>
+        <?= $counter('Riesgo aceptado', (int)$dashboard['riesgo'], $modUrl . '?tab=tasks&org=' . $selectedOrgId . '&view=risk') ?>
+        <?= $counter('SLA vencido', (int)$dashboard['sla_vencido'], $modUrl . '?tab=tasks&org=' . $selectedOrgId . '&sla=vencido', 'alert') ?>
+        <?= $counter('Bloqueados sin ETA', (int)$dashboard['bloqueados_sin_eta'], $modUrl . '?tab=tasks&org=' . $selectedOrgId . '&estado=bloqueado', 'warn') ?>
+    </div>
+<?php endif; ?>
+
 <div class="no-print flex items-center gap-2 mb-5 border-b border-line">
     <?php
     $tabs = [
+        'queue'     => 'Cola',
         'tasks'     => 'Bandeja',
         'assistant' => 'Asistente IA',
         'metrics'   => 'Métricas',
@@ -126,7 +159,9 @@ $flashData = flash();
         <p class="text-xs text-ink-muted mt-1">Crea una organización manual o vincula un tenant para empezar.</p>
     </div>
 <?php else: ?>
-    <?php if ($tab === 'assistant'): ?>
+    <?php if ($tab === 'queue'): ?>
+        <?php require __DIR__ . '/queue.php'; ?>
+    <?php elseif ($tab === 'assistant'): ?>
         <?php require __DIR__ . '/assistant.php'; ?>
     <?php elseif ($tab === 'metrics'): ?>
         <?php require __DIR__ . '/metrics.php'; ?>

@@ -36,6 +36,8 @@ class Module_Remediation extends BaseModule
         return [
             ['method' => 'GET',  'pattern' => '',              'handler' => [$this, 'index']],
             ['method' => 'GET',  'pattern' => 'cve-search',    'handler' => [$this, 'cveSearch']],
+            ['method' => 'POST', 'pattern' => 'queue/mark',    'handler' => [$this, 'markQueue']],
+            ['method' => 'POST', 'pattern' => 'tasks/assets',  'handler' => [$this, 'saveTaskAssets']],
             ['method' => 'POST', 'pattern' => 'orgs/save',     'handler' => [$this, 'saveOrg']],
             ['method' => 'POST', 'pattern' => 'orgs/delete',   'handler' => [$this, 'deleteOrg']],
             ['method' => 'POST', 'pattern' => 'tasks/save',    'handler' => [$this, 'saveTask']],
@@ -61,7 +63,7 @@ class Module_Remediation extends BaseModule
 
         $isAdmin = Auth::isAdmin();
         $tab = (string)($_GET['tab'] ?? 'tasks');
-        if (!in_array($tab, ['tasks', 'assistant', 'metrics', 'settings'], true)) {
+        if (!in_array($tab, ['tasks', 'queue', 'assistant', 'metrics', 'settings'], true)) {
             $tab = 'tasks';
         }
         if ($tab === 'settings' && !$isAdmin) {
@@ -88,6 +90,14 @@ class Module_Remediation extends BaseModule
             'severity' => (string)($_GET['severity'] ?? ''),
             'overdue'  => !empty($_GET['overdue']),
             'q'        => trim((string)($_GET['q'] ?? '')),
+            'estado'   => (string)($_GET['estado'] ?? ''),
+            'view'     => (string)($_GET['view'] ?? ''),
+            'sla'      => (string)($_GET['sla'] ?? ''),
+        ];
+        $queueFilters = [
+            'state'    => (string)($_GET['queue'] ?? ''),
+            'severity' => (string)($_GET['qseverity'] ?? ''),
+            'q'        => trim((string)($_GET['qq'] ?? '')),
         ];
 
         // v0.4.27: las aceptaciones de riesgo vencidas vuelven a la cola.
@@ -106,6 +116,45 @@ class Module_Remediation extends BaseModule
         $taskState = $selectedTask !== null ? RemediationWorkflow::ensureState((int)$selectedTask['id']) : '';
         $taskLog = $selectedTask !== null ? RemediationWorkflow::logFor((int)$selectedTask['id'], 50) : [];
 
+        // v0.4.27.1 — cola del tenant, SLA y activos.
+        $queueCounts = ['nuevo' => 0, 'en_informe' => 0, 'total' => 0, 'tenant' => false];
+        $queueRows = [];
+        if ($org !== null) {
+            $queueCounts = RemediationQueue::counts($selectedOrgId, $org);
+            if ($tab === 'queue') {
+                $queueRows = RemediationQueue::rows($selectedOrgId, $org, $queueFilters);
+            }
+        }
+
+        $taskAssets = [];
+        $taskCritical = false;
+        $taskSla = null;
+        if ($selectedTask !== null && $org !== null) {
+            $assetCount = (int)(Database::fetchOne(
+                "SELECT COUNT(*) AS c FROM remediation_task_assets WHERE task_id = ?",
+                [(int)$selectedTask['id']]
+            )['c'] ?? 0);
+            if ($assetCount === 0) {
+                $legacyMachines = safe_json_decode((string)($selectedTask['machines_json'] ?? ''), []);
+                RemediationQueue::syncTaskAssets(
+                    (int)$selectedTask['id'],
+                    $org,
+                    (string)$selectedTask['cve_id'],
+                    RemediationQueue::isTenantOrg($org)
+                        ? null
+                        : (is_array($legacyMachines) ? $legacyMachines : [])
+                );
+            }
+            $taskAssets = Database::fetchAll(
+                "SELECT * FROM remediation_task_assets WHERE task_id = ? ORDER BY asset_name LIMIT 200",
+                [(int)$selectedTask['id']]
+            );
+            $criticalMap = RemediationSla::criticalAssetsByTask([(int)$selectedTask['id']]);
+            $taskCritical = isset($criticalMap[(int)$selectedTask['id']]);
+            $taskSla = RemediationSla::forTask($selectedTask, $taskCritical);
+        }
+        $dashboard = $this->dashboardStats($selectedOrgId, $org, $queueCounts);
+
         $chats = $this->listChats($selectedOrgId);
         $chatId = (int)($_GET['chat'] ?? 0);
         $chat = $chatId > 0 ? $this->getChat($chatId) : null;
@@ -119,6 +168,7 @@ class Module_Remediation extends BaseModule
 
         $stats = $this->stats($selectedOrgId);
         $sla = $this->slaSettings();
+        $slaCritical = RemediationSla::criticalSettings();
         $llmConfigured = class_exists('Module_Llm') && (new Module_Llm())->isConfigured();
         $profiles = llm_profile_list();
         // Perfil del asistente (tarea remediation_assistant o el predeterminado)
@@ -173,6 +223,13 @@ class Module_Remediation extends BaseModule
             'selectedTask'   => $selectedTask,
             'taskState'      => $taskState,
             'taskLog'        => $taskLog,
+            'taskAssets'     => $taskAssets,
+            'taskCritical'   => $taskCritical,
+            'taskSla'        => $taskSla,
+            'queueRows'      => $queueRows,
+            'queueCounts'    => $queueCounts,
+            'queueFilters'   => $queueFilters,
+            'dashboard'      => $dashboard,
             'workflowLabels' => RemediationWorkflow::stateLabels(),
             'workflowClasses'=> RemediationWorkflow::stateClasses(),
             'logTypeLabels'  => RemediationWorkflow::logTypeLabels(),
@@ -185,6 +242,7 @@ class Module_Remediation extends BaseModule
             'messages'       => $messages,
             'stats'          => $stats,
             'sla'            => $sla,
+            'slaCritical'    => $slaCritical,
             'llmConfigured'  => $llmConfigured,
             'profiles'       => $profiles,
             'taskProfileId'  => (int)(llm_task_profile('remediation_assistant') ?? 0),
@@ -456,6 +514,15 @@ class Module_Remediation extends BaseModule
                 (int)Auth::id(),
                 'Alta manual de la tarea'
             );
+            // v0.4.27.1: equipos afectados como activos del ticket. Si no se
+            // escribieron a mano y la organización es de tenant, se cargan de
+            // Defender.
+            RemediationQueue::syncTaskAssets(
+                (int)$newId,
+                $org,
+                $cveId,
+                $machines !== [] ? $machines : null
+            );
         }
 
         log_activity('remediation.task_created', ['id' => $newId, 'org' => $orgId, 'cve' => $cveId]);
@@ -584,6 +651,7 @@ class Module_Remediation extends BaseModule
             );
             if ($newTaskId > 0) {
                 RemediationWorkflow::initTask((int)$newTaskId, 'open', $dueAt, Auth::id(), 'Importada desde Defender');
+                RemediationQueue::syncTaskAssets((int)$newTaskId, $org, $cveId, $machineList);
             }
             $imported++;
         }
@@ -1169,12 +1237,106 @@ class Module_Remediation extends BaseModule
         Auth::requireAdmin();
         Csrf::validateOrFail();
 
-        foreach (['critical' => 7, 'high' => 30, 'medium' => 90, 'low' => 180] as $key => $default) {
+        foreach (['critical' => 7, 'high' => 15, 'medium' => 30, 'low' => 60] as $key => $default) {
             $value = max(1, min(365, (int)($_POST['sla_' . $key] ?? $default)));
             setting_set('remediation_sla_' . $key, (string)$value);
         }
+        foreach (['critical' => 3, 'high' => 7, 'medium' => 15, 'low' => 30] as $key => $default) {
+            $value = max(1, min(365, (int)($_POST['sla_critical_asset_' . $key] ?? $default)));
+            setting_set('remediation_sla_critical_asset_' . $key, (string)$value);
+        }
         flash('success', 'Ajustes de SLA guardados.');
         redirect(base_url('modules/remediation?tab=settings&org=' . (int)($_POST['org_id'] ?? 0)));
+    }
+
+    /**
+     * POST queue/mark — añade o quita un CVE de la selección para informe.
+     */
+    public function markQueue(array $params = []): void
+    {
+        Auth::require();
+        Csrf::validateOrFail();
+
+        $orgId = (int)($_POST['org_id'] ?? 0);
+        $org = $this->getOrg($orgId);
+        if ($org === null) {
+            flash('error', 'La organización no existe.');
+            redirect(base_url('modules/remediation'));
+        }
+
+        $cveId = (string)($_POST['cve_id'] ?? '');
+        $mark = !empty($_POST['mark']);
+        $res = RemediationQueue::mark($orgId, $org, $cveId, $mark, (int)Auth::id());
+        if ($res['ok']) {
+            flash('success', $mark
+                ? $cveId . ' añadido al informe en borrador.'
+                : $cveId . ' devuelto a la cola.');
+        } else {
+            flash('error', $res['error']);
+        }
+
+        $state = (string)($_POST['return_state'] ?? '');
+        $query = 'tab=queue&org=' . $orgId . ($state !== '' ? '&queue=' . urlencode($state) : '');
+        redirect(base_url('modules/remediation?' . $query));
+    }
+
+    /**
+     * POST tasks/assets — entorno, criticidad y dueño de los activos del ticket.
+     */
+    public function saveTaskAssets(array $params = []): void
+    {
+        Auth::require();
+        Csrf::validateOrFail();
+
+        $orgId = (int)($_POST['org_id'] ?? 0);
+        $taskId = (int)($_POST['task_id'] ?? 0);
+        $task = $this->getTask($taskId);
+        if ($task === null || (int)$task['org_id'] !== $orgId) {
+            flash('error', 'La tarea no existe.');
+            redirect(base_url('modules/remediation?org=' . $orgId));
+        }
+
+        $assets = is_array($_POST['assets'] ?? null) ? $_POST['assets'] : [];
+        $allowedEnvironments = ['prod', 'pre', 'test', ''];
+        $allowedCriticality = ['alta', 'media', 'baja', ''];
+        $updated = 0;
+
+        foreach ($assets as $assetId => $values) {
+            $assetId = (int)$assetId;
+            if ($assetId <= 0 || !is_array($values)) {
+                continue;
+            }
+            $environment = (string)($values['environment'] ?? '');
+            if (!in_array($environment, $allowedEnvironments, true)) {
+                $environment = '';
+            }
+            $criticality = (string)($values['criticality'] ?? '');
+            if (!in_array($criticality, $allowedCriticality, true)) {
+                $criticality = '';
+            }
+            $owner = truncate(trim((string)($values['owner'] ?? '')), 120);
+            $owner = $owner !== '' ? $owner : null;
+
+            $updated += Database::update(
+                "UPDATE remediation_task_assets
+                 SET environment = ?, criticality = ?, owner = ?, updated_at = datetime('now')
+                 WHERE id = ? AND task_id = ?",
+                [
+                    $environment !== '' ? $environment : null,
+                    $criticality !== '' ? $criticality : null,
+                    $owner,
+                    $assetId,
+                    $taskId,
+                ]
+            );
+        }
+
+        log_activity('remediation.task_assets_updated', [
+            'task'  => $taskId,
+            'rows'  => $updated,
+        ]);
+        flash('success', 'Activos actualizados.');
+        redirect(base_url('modules/remediation?tab=tasks&org=' . $orgId . '&task=' . $taskId));
     }
 
     public function cveSearch(array $params = []): void
@@ -1256,14 +1418,142 @@ class Module_Remediation extends BaseModule
             $params[] = $like;
             $params[] = $like;
         }
+        $estadoFilter = (string)($filters['estado'] ?? '');
+        if ($estadoFilter !== '' && in_array($estadoFilter, RemediationWorkflow::STATES, true)) {
+            $where[] = 'estado = ?';
+            $params[] = $estadoFilter;
+        }
+        $view = (string)($filters['view'] ?? '');
+        if ($view === 'open') {
+            $where[] = "estado IN ('ticket_creado','planificado','en_curso','bloqueado','verificacion')";
+        } elseif ($view === 'closed') {
+            $where[] = "estado = 'cerrado'";
+        } elseif ($view === 'risk') {
+            $where[] = "estado = 'riesgo_aceptado'";
+        }
 
-        return Database::fetchAll(
+        $tasks = Database::fetchAll(
             "SELECT * FROM remediation_tasks WHERE " . implode(' AND ', $where) . "
              ORDER BY CASE status WHEN 'open' THEN 0 WHEN 'in_progress' THEN 1 ELSE 2 END,
                       due_at IS NULL, due_at ASC, id DESC
              LIMIT 300",
             $params
         );
+        if ($tasks === []) {
+            return [];
+        }
+
+        // SLA por tarea (una sola consulta de activos críticos, sin N+1).
+        $critical = RemediationSla::criticalAssetsByTask(array_map(
+            static fn(array $task): int => (int)$task['id'],
+            $tasks
+        ));
+        foreach ($tasks as $index => $task) {
+            $tasks[$index]['_sla'] = RemediationSla::forTask($task, isset($critical[(int)$task['id']]));
+        }
+
+        $slaFilter = (string)($filters['sla'] ?? '');
+        if (in_array($slaFilter, ['vencido', 'en_riesgo', 'en_plazo'], true)) {
+            $tasks = array_values(array_filter(
+                $tasks,
+                static fn(array $task): bool => (string)($task['_sla']['state'] ?? '') === $slaFilter
+            ));
+        }
+
+        // Orden de trabajo de la spec: vencido → en riesgo → en plazo →
+        // cerrado/riesgo; dentro del grupo, activo crítico y antigüedad.
+        $rank = ['vencido' => 0, 'en_riesgo' => 1, 'en_plazo' => 2, 'riesgo_aceptado' => 3, 'cerrado' => 4, 'sin_datos' => 5];
+        usort($tasks, static function (array $a, array $b) use ($rank): int {
+            $ra = $rank[(string)($a['_sla']['state'] ?? 'sin_datos')] ?? 5;
+            $rb = $rank[(string)($b['_sla']['state'] ?? 'sin_datos')] ?? 5;
+            if ($ra !== $rb) {
+                return $ra <=> $rb;
+            }
+            $ca = !empty($a['_sla']['critical']) ? 1 : 0;
+            $cb = !empty($b['_sla']['critical']) ? 1 : 0;
+            if ($ca !== $cb) {
+                return $cb <=> $ca;
+            }
+            $ea = (int)($a['_sla']['elapsed'] ?? 0);
+            $eb = (int)($b['_sla']['elapsed'] ?? 0);
+            if ($ea !== $eb) {
+                return $eb <=> $ea;
+            }
+            return (int)$b['id'] <=> (int)$a['id'];
+        });
+
+        return $tasks;
+    }
+
+    /**
+     * Contadores de la tira superior (spec §6.2). No depende de los filtros.
+     *
+     * @param array<string,mixed>|null $org
+     * @param array<string,mixed> $queueCounts
+     * @return array<string,int>
+     */
+    private function dashboardStats(int $orgId, ?array $org, array $queueCounts): array
+    {
+        $out = [
+            'nuevo'              => (int)($queueCounts['nuevo'] ?? 0),
+            'en_informe'         => (int)($queueCounts['en_informe'] ?? 0),
+            'en_remediacion'     => 0,
+            'cerrados'           => 0,
+            'riesgo'             => 0,
+            'sla_vencido'        => 0,
+            'bloqueados_sin_eta' => 0,
+        ];
+        if ($orgId <= 0 || $org === null) {
+            return $out;
+        }
+
+        foreach (Database::fetchAll(
+            "SELECT estado, status, COUNT(*) AS c FROM remediation_tasks WHERE org_id = ? GROUP BY estado, status",
+            [$orgId]
+        ) as $row) {
+            $state = (string)($row['estado'] ?? '');
+            if ($state === '') {
+                $state = RemediationWorkflow::stateForStatus((string)($row['status'] ?? 'open'));
+            }
+            $count = (int)($row['c'] ?? 0);
+            if (in_array($state, ['ticket_creado', 'planificado', 'en_curso', 'bloqueado', 'verificacion'], true)) {
+                $out['en_remediacion'] += $count;
+            } elseif ($state === 'riesgo_aceptado') {
+                $out['riesgo'] += $count;
+            }
+        }
+        $out['cerrados'] = (int)(Database::fetchOne(
+            "SELECT COUNT(*) AS c FROM remediation_tasks
+             WHERE org_id = ? AND estado = 'cerrado' AND resolved_at IS NOT NULL
+               AND resolved_at >= datetime('now', '-30 days')",
+            [$orgId]
+        )['c'] ?? 0);
+
+        $open = Database::fetchAll(
+            "SELECT * FROM remediation_tasks
+             WHERE org_id = ? AND (estado IS NULL OR estado NOT IN ('cerrado', 'riesgo_aceptado'))",
+            [$orgId]
+        );
+        if ($open !== []) {
+            $critical = RemediationSla::criticalAssetsByTask(array_map(
+                static fn(array $task): int => (int)$task['id'],
+                $open
+            ));
+            foreach ($open as $task) {
+                $sla = RemediationSla::forTask($task, isset($critical[(int)$task['id']]));
+                if ($sla['state'] === 'vencido') {
+                    $out['sla_vencido']++;
+                }
+                $blocked = (string)($task['estado'] ?? '') === 'bloqueado';
+                if ($blocked
+                    && trim((string)($task['eta_actual'] ?? '')) === ''
+                    && trim((string)($task['due_at'] ?? '')) === '') {
+                    $out['bloqueados_sin_eta']++;
+                }
+            }
+        }
+
+        return $out;
     }
 
     private function getTask(int $id): ?array
@@ -1467,20 +1757,13 @@ class Module_Remediation extends BaseModule
         if ($kevDue !== '') {
             return $kevDue;
         }
-        $sla = $this->slaSettings();
-        $key = strtolower($severity);
-        $days = $sla[$key] ?? $sla['medium'];
+        $days = RemediationSla::daysFor($severity);
         return date('Y-m-d', strtotime('+' . max(1, (int)$days) . ' days'));
     }
 
     private function slaSettings(): array
     {
-        return [
-            'critical' => max(1, (int)setting_get('remediation_sla_critical', '7')),
-            'high'     => max(1, (int)setting_get('remediation_sla_high', '30')),
-            'medium'   => max(1, (int)setting_get('remediation_sla_medium', '90')),
-            'low'      => max(1, (int)setting_get('remediation_sla_low', '180')),
-        ];
+        return RemediationSla::settings();
     }
 
     private function stats(int $orgId): array

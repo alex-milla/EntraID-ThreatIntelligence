@@ -8,6 +8,9 @@
 $modUrl = base_url('modules/remediation');
 $taskState = (string)($taskState ?? '');
 $taskLog = is_array($taskLog ?? null) ? $taskLog : [];
+$taskSla = is_array($taskSla ?? null) ? $taskSla : null;
+$taskAssets = is_array($taskAssets ?? null) ? $taskAssets : [];
+$taskCritical = !empty($taskCritical);
 $workflowLabels = is_array($workflowLabels ?? null) ? $workflowLabels : [];
 $workflowClasses = is_array($workflowClasses ?? null) ? $workflowClasses : [];
 $logTypeLabels = is_array($logTypeLabels ?? null) ? $logTypeLabels : [];
@@ -113,6 +116,23 @@ if ($selectedTask !== null) {
                             <?php if (!empty($task['owner'])): ?><span>· <?= e((string)$task['owner']) ?></span><?php endif; ?>
                             <span>· <?= (int)$task['machine_count'] ?> equipos</span>
                         </div>
+                        <?php $taskSlaRow = is_array($task['_sla'] ?? null) ? $task['_sla'] : null; ?>
+                        <?php if ($taskSlaRow !== null): ?>
+                            <?php
+                            $slaState = (string)($taskSlaRow['state'] ?? 'sin_datos');
+                            $slaTextMap = RemediationSla::textClasses();
+                            $slaBarMap = RemediationSla::barClasses();
+                            ?>
+                            <div class="mt-1.5 flex items-center gap-2 text-[10px]">
+                                <span class="<?= $slaTextMap[$slaState] ?? 'text-ink-muted' ?>"><?= e((string)($taskSlaRow['label'] ?? '')) ?></span>
+                                <?php if (!empty($taskSlaRow['critical'])): ?>
+                                    <span class="px-1 py-0.5 rounded bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300 text-[9px] font-semibold">activo crítico</span>
+                                <?php endif; ?>
+                            </div>
+                            <div class="mt-1 h-1 w-full rounded-full bg-muted overflow-hidden">
+                                <div class="h-full <?= $slaBarMap[$slaState] ?? 'bg-gray-300' ?>" style="width: <?= (int)($taskSlaRow['pct'] ?? 0) ?>%"></div>
+                            </div>
+                        <?php endif; ?>
                     </a>
                 <?php endforeach; ?>
             </div>
@@ -211,6 +231,39 @@ if ($selectedTask !== null) {
             </div>
             </div>
 
+            <?php if ($taskSla !== null): ?>
+                <?php
+                $slaState = (string)($taskSla['state'] ?? 'sin_datos');
+                $slaLabel = (string)($taskSla['label'] ?? '');
+                $slaPct = (int)($taskSla['pct'] ?? 0);
+                $slaDays = (int)($taskSla['days'] ?? 0);
+                $slaTextMap = RemediationSla::textClasses();
+                $slaBarMap = RemediationSla::barClasses();
+                $slaStateLabels = RemediationSla::stateLabels();
+                ?>
+                <div class="card p-4 mb-4">
+                    <div class="flex items-center justify-between gap-2 flex-wrap">
+                        <div>
+                            <p class="text-xs font-semibold m-0">
+                                SLA · <span class="<?= $slaTextMap[$slaState] ?? 'text-ink-muted' ?>"><?= e($slaStateLabels[$slaState] ?? $slaState) ?></span>
+                            </p>
+                            <p class="text-[11px] text-ink-muted m-0 mt-0.5">
+                                <?= e($slaLabel) ?>
+                                <?php if ($taskCritical): ?>
+                                    · <span class="text-orange-600 dark:text-orange-400 font-semibold">activo en producción crítico</span>
+                                <?php endif; ?>
+                            </p>
+                        </div>
+                        <span class="text-[11px] text-ink-soft">
+                            <?= $slaDays ?> días de plazo<?= $taskCritical ? ' (reforzado)' : '' ?>
+                        </span>
+                    </div>
+                    <div class="mt-2 h-1.5 w-full rounded-full bg-muted overflow-hidden">
+                        <div class="h-full <?= $slaBarMap[$slaState] ?? 'bg-gray-300' ?>" style="width: <?= $slaPct ?>%"></div>
+                    </div>
+                </div>
+            <?php endif; ?>
+
             <?php if ($catalog !== null): ?>
                 <div class="card p-5 mb-4">
                     <h3 class="text-sm font-semibold mb-3">Datos del CVE</h3>
@@ -243,7 +296,92 @@ if ($selectedTask !== null) {
                 </div>
             <?php endif; ?>
 
-            <?php if ($taskMachines !== []): ?>
+            <?php if ($taskAssets !== []): ?>
+                <div class="card p-5 mb-4">
+                    <div class="flex items-start justify-between gap-2 flex-wrap mb-3">
+                        <div>
+                            <h3 class="text-sm font-semibold m-0">Activos afectados</h3>
+                            <p class="text-[11px] text-ink-muted m-0 mt-0.5">
+                                Entorno y criticidad alimentan el SLA reforzado; el dueño es el equipo responsable.
+                            </p>
+                        </div>
+                        <?php if ($taskCritical): ?>
+                            <span class="px-2 py-0.5 rounded bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300 text-[10px] font-semibold">
+                                activo prod crítico
+                            </span>
+                        <?php endif; ?>
+                    </div>
+                    <form method="POST" action="<?= e(base_url('modules/remediation/tasks/assets')) ?>">
+                        <?= Csrf::field() ?>
+                        <input type="hidden" name="org_id" value="<?= (int)$selectedOrgId ?>">
+                        <input type="hidden" name="task_id" value="<?= (int)$task['id'] ?>">
+                        <div class="max-h-[45vh] overflow-y-auto overflow-x-auto">
+                            <table class="data-table w-full text-xs">
+                                <thead class="sticky top-0 bg-surface">
+                                    <tr class="text-[10px] uppercase text-ink-soft border-b border-line">
+                                        <th class="text-left py-1.5 pr-3">Equipo</th>
+                                        <th class="text-left py-1.5 pr-3">SO / exposición</th>
+                                        <th class="text-left py-1.5 pr-3">Entorno</th>
+                                        <th class="text-left py-1.5 pr-3">Criticidad</th>
+                                        <th class="text-left py-1.5">Dueño</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-line-subtle">
+                                    <?php foreach (array_slice($taskAssets, 0, 100) as $asset): ?>
+                                        <?php $assetId = (int)($asset['id'] ?? 0); ?>
+                                        <tr>
+                                            <td class="py-1.5 pr-3 font-medium">
+                                                <?= e((string)($asset['asset_name'] ?? '—')) ?>
+                                            </td>
+                                            <td class="py-1.5 pr-3 text-ink-muted max-w-[220px]">
+                                                <?= e((string)($asset['notes'] ?? '—')) ?>
+                                            </td>
+                                            <td class="py-1.5 pr-3">
+                                                <select name="assets[<?= $assetId ?>][environment]"
+                                                        class="px-1.5 py-1 rounded border border-line-strong bg-input text-ink text-[11px]">
+                                                    <?php foreach (['' => '—', 'prod' => 'Prod', 'pre' => 'Pre', 'test' => 'Test'] as $key => $label): ?>
+                                                        <option value="<?= e($key) ?>" <?= (string)($asset['environment'] ?? '') === $key ? 'selected' : '' ?>>
+                                                            <?= e($label) ?>
+                                                        </option>
+                                                    <?php endforeach; ?>
+                                                </select>
+                                            </td>
+                                            <td class="py-1.5 pr-3">
+                                                <select name="assets[<?= $assetId ?>][criticality]"
+                                                        class="px-1.5 py-1 rounded border border-line-strong bg-input text-ink text-[11px]">
+                                                    <?php foreach (['' => '—', 'alta' => 'Alta', 'media' => 'Media', 'baja' => 'Baja'] as $key => $label): ?>
+                                                        <option value="<?= e($key) ?>" <?= (string)($asset['criticality'] ?? '') === $key ? 'selected' : '' ?>>
+                                                            <?= e($label) ?>
+                                                        </option>
+                                                    <?php endforeach; ?>
+                                                </select>
+                                            </td>
+                                            <td class="py-1.5">
+                                                <input type="text" name="assets[<?= $assetId ?>][owner]"
+                                                       value="<?= e((string)($asset['owner'] ?? '')) ?>"
+                                                       maxlength="120" placeholder="Equipo responsable"
+                                                       class="w-40 px-1.5 py-1 rounded border border-line-strong bg-input text-ink text-[11px]">
+                                            </td>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                </tbody>
+                            </table>
+                        </div>
+                        <div class="flex items-center justify-between gap-2 mt-3 flex-wrap">
+                            <p class="text-[10px] text-ink-soft m-0">
+                                <?= count($taskAssets) ?> activo(s)<?= count($taskAssets) > 100 ? ' · se muestran 100' : '' ?>.
+                                <?php if ((int)$task['machine_count'] > count($taskAssets)): ?>
+                                    <?= (int)$task['machine_count'] ?> equipos según Defender.
+                                <?php endif; ?>
+                                Los equipos se sincronizan desde Defender al crear la tarea.
+                            </p>
+                            <button type="submit" class="px-3 py-1.5 bg-brand-500 hover:bg-brand-600 text-white text-xs font-medium rounded-lg">
+                                Guardar activos
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            <?php elseif ($taskMachines !== []): ?>
                 <div class="card p-5 mb-4">
                     <h3 class="text-sm font-semibold mb-3">Equipos afectados</h3>
                     <div class="overflow-x-auto">

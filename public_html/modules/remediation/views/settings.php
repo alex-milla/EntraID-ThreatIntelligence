@@ -11,6 +11,7 @@ foreach ($profiles as $profile) {
         break;
     }
 }
+$slaCritical = is_array($slaCritical ?? null) ? $slaCritical : ['critical' => 3, 'high' => 7, 'medium' => 15, 'low' => 30];
 ?>
 <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
     <div class="lg:col-span-2 card p-5">
@@ -46,6 +47,29 @@ foreach ($profiles as $profile) {
                     </label>
                 <?php endforeach; ?>
             </div>
+
+            <div class="mt-5 pt-4 border-t border-line">
+                <h3 class="text-xs font-semibold m-0">Activos en producción críticos</h3>
+                <p class="text-[11px] text-ink-muted mt-1">
+                    Plazo reforzado cuando el ticket afecta a algún activo con entorno
+                    <strong>prod</strong> y criticidad <strong>alta</strong>.
+                </p>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
+                    <?php foreach ($fields as $key => [$label, $hint]): ?>
+                        <label class="block">
+                            <span class="block text-xs font-medium text-ink-muted mb-1">
+                                <?= e($label) ?> <span class="text-ink-soft">(<?= e($hint) ?>)</span>
+                            </span>
+                            <div class="flex items-center gap-2">
+                                <input type="number" name="sla_critical_asset_<?= e($key) ?>" min="1" max="365" required
+                                       value="<?= (int)($slaCritical[$key] ?? 7) ?>"
+                                       class="w-24 px-3 py-2 rounded-lg border border-line-strong bg-surface text-ink text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+                                <span class="text-xs text-ink-muted">días</span>
+                            </div>
+                        </label>
+                    <?php endforeach; ?>
+                </div>
+            </div>
             <div class="pt-2">
                 <button type="submit" class="px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg">
                     Guardar SLA
@@ -71,6 +95,7 @@ foreach ($profiles as $profile) {
             <ol class="mt-2 space-y-1.5 text-xs text-ink-muted list-decimal list-inside">
                 <li>Si el CVE está en CISA KEV y tiene <em>due date</em>, se usa esa fecha.</li>
                 <li>Si no, se aplica el plazo por severidad de esta página.</li>
+                <li>Si algún activo es <strong>prod + criticidad alta</strong>, se aplica el plazo reforzado.</li>
                 <li>La fecha límite se puede ajustar manualmente en cada tarea.</li>
             </ol>
         </div>
