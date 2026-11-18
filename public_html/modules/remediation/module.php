@@ -90,12 +90,21 @@ class Module_Remediation extends BaseModule
             'q'        => trim((string)($_GET['q'] ?? '')),
         ];
 
+        // v0.4.27: las aceptaciones de riesgo vencidas vuelven a la cola.
+        try {
+            RemediationWorkflow::expireRisks();
+        } catch (Throwable $e) {
+            app_log('warning', 'remediation', 'No se pudieron caducar los riesgos', ['error' => $e->getMessage()]);
+        }
+
         $tasks = $this->listTasks($selectedOrgId, $filters);
         $taskId = (int)($_GET['task'] ?? 0);
         $selectedTask = $taskId > 0 ? $this->getTask($taskId) : null;
         if ($selectedTask !== null && (int)$selectedTask['org_id'] !== $selectedOrgId) {
             $selectedTask = null;
         }
+        $taskState = $selectedTask !== null ? RemediationWorkflow::ensureState((int)$selectedTask['id']) : '';
+        $taskLog = $selectedTask !== null ? RemediationWorkflow::logFor((int)$selectedTask['id'], 50) : [];
 
         $chats = $this->listChats($selectedOrgId);
         $chatId = (int)($_GET['chat'] ?? 0);
@@ -162,6 +171,11 @@ class Module_Remediation extends BaseModule
             'tasks'          => $tasks,
             'filters'        => $filters,
             'selectedTask'   => $selectedTask,
+            'taskState'      => $taskState,
+            'taskLog'        => $taskLog,
+            'workflowLabels' => RemediationWorkflow::stateLabels(),
+            'workflowClasses'=> RemediationWorkflow::stateClasses(),
+            'logTypeLabels'  => RemediationWorkflow::logTypeLabels(),
             'cveData'        => $cveData,
             'cveQuery'       => $cveQuery,
             'prompt'         => $promptQuery,
@@ -332,6 +346,34 @@ class Module_Remediation extends BaseModule
                     $id,
                 ]
             );
+
+            // v0.4.27: el cambio de estado deja rastro y sincroniza el ciclo.
+            if ($status !== (string)($task['status'] ?? '')) {
+                try {
+                    $change = RemediationWorkflow::recordLegacyChange(
+                        $id,
+                        (string)($task['status'] ?? ''),
+                        $status,
+                        [
+                            'nota'            => $notes,
+                            'evidencia'       => $evidence,
+                            'exception_until' => $exceptionUntil,
+                        ],
+                        (int)Auth::id()
+                    );
+                    if (empty($change['ok'])) {
+                        app_log('warning', 'remediation', 'Cambio de estado no registrado', [
+                            'task'  => $id,
+                            'error' => (string)($change['error'] ?? ''),
+                        ]);
+                    }
+                } catch (Throwable $e) {
+                    app_log('error', 'remediation', 'Workflow de remediación falló', [
+                        'task'  => $id,
+                        'error' => $e->getMessage(),
+                    ]);
+                }
+            }
             log_activity('remediation.task_updated', ['id' => $id, 'status' => $status]);
             flash('success', 'Tarea actualizada.');
             redirect(base_url('modules/remediation?org=' . $orgId . '&task=' . $id));
@@ -405,6 +447,16 @@ class Module_Remediation extends BaseModule
                 Auth::id(),
             ]
         );
+
+        if ($newId > 0) {
+            RemediationWorkflow::initTask(
+                (int)$newId,
+                $status,
+                $dueAt !== '' ? $dueAt : null,
+                (int)Auth::id(),
+                'Alta manual de la tarea'
+            );
+        }
 
         log_activity('remediation.task_created', ['id' => $newId, 'org' => $orgId, 'cve' => $cveId]);
         flash('success', 'Tarea creada.');
@@ -510,7 +562,7 @@ class Module_Remediation extends BaseModule
             $severityLabel = $labels[(int)$row['sev_rank']] ?? '';
             $dueAt = $this->computeDue($severityLabel, $kev !== null ? (string)($kev['due_date'] ?? '') : '');
 
-            Database::insert(
+            $newTaskId = Database::insert(
                 "INSERT INTO remediation_tasks
                  (org_id, cve_id, title, severity, cvss, epss, kev, status, due_at, patch_kb,
                   machine_count, machines_json, source, created_by)
@@ -530,6 +582,9 @@ class Module_Remediation extends BaseModule
                     Auth::id(),
                 ]
             );
+            if ($newTaskId > 0) {
+                RemediationWorkflow::initTask((int)$newTaskId, 'open', $dueAt, Auth::id(), 'Importada desde Defender');
+            }
             $imported++;
         }
 

@@ -6,6 +6,14 @@
  */
 
 $modUrl = base_url('modules/remediation');
+$taskState = (string)($taskState ?? '');
+$taskLog = is_array($taskLog ?? null) ? $taskLog : [];
+$workflowLabels = is_array($workflowLabels ?? null) ? $workflowLabels : [];
+$workflowClasses = is_array($workflowClasses ?? null) ? $workflowClasses : [];
+$logTypeLabels = is_array($logTypeLabels ?? null) ? $logTypeLabels : [];
+if ($taskState === '' && $selectedTask !== null && class_exists('RemediationWorkflow')) {
+    $taskState = RemediationWorkflow::stateForStatus((string)($selectedTask['status'] ?? 'open'));
+}
 $isOverdue = static function (array $task): bool {
     if (empty($task['due_at'])) {
         return false;
@@ -134,6 +142,9 @@ if ($selectedTask !== null) {
                         <p class="text-xs text-ink-muted mt-1"><?= e((string)($task['title'] ?? '')) ?></p>
                     </div>
                     <div class="flex items-center gap-2 flex-wrap">
+                        <span class="px-2 py-0.5 rounded text-[11px] font-semibold <?= $workflowClasses[$taskState] ?? 'bg-gray-100 text-gray-600' ?>">
+                            <?= e($workflowLabels[$taskState] ?? $taskState) ?>
+                        </span>
                         <span class="px-2 py-0.5 rounded text-[11px] font-semibold <?= $statusClasses[$task['status']] ?? 'bg-gray-100 text-gray-600' ?>">
                             <?= e($statusLabels[$task['status']] ?? $task['status']) ?>
                         </span>
@@ -149,21 +160,55 @@ if ($selectedTask !== null) {
                     </div>
                 </div>
 
-                <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 text-xs">
-                    <div><p class="text-ink-soft">Responsable</p><p class="font-medium mt-0.5"><?= e((string)($task['owner'] ?? '—')) ?></p></div>
-                    <div>
-                        <p class="text-ink-soft">Fecha límite</p>
-                        <p class="font-medium mt-0.5 <?= $overdue ? 'text-red-500' : '' ?>">
-                            <?= !empty($task['due_at']) ? e(format_date((string)$task['due_at'], 'd/m/Y')) : '—' ?>
-                        </p>
-                    </div>
-                    <div><p class="text-ink-soft">Equipos</p><p class="font-medium mt-0.5"><?= (int)$task['machine_count'] ?></p></div>
-                    <div><p class="text-ink-soft">Origen</p><p class="font-medium mt-0.5"><?= $task['source'] === 'defender' ? 'Defender' : 'Manual' ?></p></div>
-                    <div><p class="text-ink-soft">Parche/KB</p><p class="font-medium mt-0.5"><?= e((string)($task['patch_kb'] ?? '—')) ?></p></div>
-                    <div><p class="text-ink-soft">Versión corregida</p><p class="font-medium mt-0.5"><?= e((string)($task['fixed_version'] ?? '—')) ?></p></div>
-                    <div><p class="text-ink-soft">Creada</p><p class="font-medium mt-0.5"><?= e(format_date((string)$task['created_at'], 'd/m/Y')) ?></p></div>
-                    <div><p class="text-ink-soft">Resuelta</p><p class="font-medium mt-0.5"><?= !empty($task['resolved_at']) ? e(format_date((string)$task['resolved_at'], 'd/m/Y')) : '—' ?></p></div>
+                <?php
+            $logRows = is_array($taskLog ?? null) ? $taskLog : [];
+            $impactDays = 0;
+            $impactEntries = 0;
+            foreach ($logRows as $logEntry) {
+                if (in_array((string)($logEntry['tipo'] ?? ''), ['retraso', 'bloqueo'], true)) {
+                    $impactDays += (int)($logEntry['impacto_dias'] ?? 0);
+                    $impactEntries++;
+                }
+            }
+            $etaActual = (string)($task['eta_actual'] ?? '');
+            if ($etaActual === '') {
+                $etaActual = (string)($task['due_at'] ?? '');
+            }
+            ?>
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 text-xs">
+                <div><p class="text-ink-soft">Responsable</p><p class="font-medium mt-0.5"><?= e((string)($task['owner'] ?? '—')) ?></p></div>
+                <div>
+                    <p class="text-ink-soft">Fecha límite</p>
+                    <p class="font-medium mt-0.5 <?= $overdue ? 'text-red-500' : '' ?>">
+                        <?= !empty($task['due_at']) ? e(format_date((string)$task['due_at'], 'd/m/Y')) : '—' ?>
+                    </p>
                 </div>
+                <div>
+                    <p class="text-ink-soft">ETA actual</p>
+                    <p class="font-medium mt-0.5 <?= $overdue ? 'text-red-500' : '' ?>">
+                        <?= $etaActual !== '' ? e(format_date($etaActual, 'd/m/Y')) : '—' ?>
+                    </p>
+                </div>
+                <div>
+                    <p class="text-ink-soft">Retrasos</p>
+                    <p class="font-medium mt-0.5 <?= $impactDays > 0 ? 'text-amber-600 dark:text-amber-400' : '' ?>">
+                        <?= $impactEntries > 0 ? '+' . $impactDays . ' d · ' . $impactEntries . ' entrada(s)' : '—' ?>
+                    </p>
+                </div>
+                <div><p class="text-ink-soft">Equipos</p><p class="font-medium mt-0.5"><?= (int)$task['machine_count'] ?></p></div>
+                <div><p class="text-ink-soft">Origen</p><p class="font-medium mt-0.5"><?= $task['source'] === 'defender' ? 'Defender' : 'Manual' ?></p></div>
+                <div><p class="text-ink-soft">Parche/KB</p><p class="font-medium mt-0.5"><?= e((string)($task['patch_kb'] ?? '—')) ?></p></div>
+                <div><p class="text-ink-soft">Versión corregida</p><p class="font-medium mt-0.5"><?= e((string)($task['fixed_version'] ?? '—')) ?></p></div>
+                <div><p class="text-ink-soft">Creada</p><p class="font-medium mt-0.5"><?= e(format_date((string)$task['created_at'], 'd/m/Y')) ?></p></div>
+                <div><p class="text-ink-soft">Resuelta</p><p class="font-medium mt-0.5"><?= !empty($task['resolved_at']) ? e(format_date((string)$task['resolved_at'], 'd/m/Y')) : '—' ?></p></div>
+                <div><p class="text-ink-soft">Ventana</p><p class="font-medium mt-0.5"><?= e((string)($task['ventana_parcheo'] ?? '—')) ?></p></div>
+                <div>
+                    <p class="text-ink-soft">Bloqueado desde</p>
+                    <p class="font-medium mt-0.5 <?= !empty($task['bloqueado_desde']) ? 'text-amber-600 dark:text-amber-400' : '' ?>">
+                        <?= !empty($task['bloqueado_desde']) ? e(format_date((string)$task['bloqueado_desde'], 'd/m/Y')) : '—' ?>
+                    </p>
+                </div>
+            </div>
             </div>
 
             <?php if ($catalog !== null): ?>
@@ -233,6 +278,63 @@ if ($selectedTask !== null) {
                     <pre class="text-xs whitespace-pre-wrap text-ink-muted font-sans"><?= e((string)$task['plan']) ?></pre>
                 </div>
             <?php endif; ?>
+
+            <div class="card p-5 mb-4">
+                <?php
+                $logTypeClasses = [
+                    'cambio_estado' => 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300',
+                    'retraso'       => 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
+                    'bloqueo'       => 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300',
+                    'nota'          => 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300',
+                    'reapertura'    => 'bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300',
+                    'riesgo'        => 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400',
+                ];
+                ?>
+                <div class="flex items-center justify-between gap-2 flex-wrap mb-3">
+                    <h3 class="text-sm font-semibold m-0">Registro del ticket</h3>
+                    <span class="text-[11px] text-ink-soft"><?= count($logRows) ?> entrada(s) · no editable</span>
+                </div>
+                <?php if ($logRows === []): ?>
+                    <p class="text-xs text-ink-muted m-0">
+                        Sin entradas todavía. Cada cambio de estado queda registrado aquí con autor y fecha.
+                    </p>
+                <?php else: ?>
+                    <ol class="m-0 p-0 list-none space-y-2">
+                        <?php foreach (array_slice($logRows, 0, 20) as $entry): ?>
+                            <?php
+                            $logType = (string)($entry['tipo'] ?? 'nota');
+                            $logOrigin = (string)($entry['estado_origen'] ?? '');
+                            $logTarget = (string)($entry['estado_destino'] ?? '');
+                            $logImpact = (int)($entry['impacto_dias'] ?? 0);
+                            ?>
+                            <li class="flex items-start gap-2 text-[11px] border-b border-line-subtle pb-2 last:border-0 last:pb-0">
+                                <span class="px-1.5 py-0.5 rounded text-[9px] font-semibold whitespace-nowrap <?= $logTypeClasses[$logType] ?? $logTypeClasses['nota'] ?>">
+                                    <?= e($logTypeLabels[$logType] ?? $logType) ?>
+                                    <?php if ($logImpact > 0): ?> +<?= $logImpact ?> d<?php endif; ?>
+                                </span>
+                                <div class="min-w-0 flex-1">
+                                    <p class="m-0 text-ink">
+                                        <?php if ($logOrigin !== '' || $logTarget !== ''): ?>
+                                            <span class="text-ink-soft">
+                                                <?= e($workflowLabels[$logOrigin] ?? $logOrigin) ?> →
+                                                <?= e($workflowLabels[$logTarget] ?? $logTarget) ?> ·
+                                            </span>
+                                        <?php endif; ?>
+                                        <?= e((string)($entry['texto'] ?? '')) ?>
+                                    </p>
+                                    <p class="m-0 mt-0.5 text-[10px] text-ink-soft">
+                                        <?= e(format_date((string)$entry['created_at'], 'd/m/Y H:i')) ?>
+                                        · <?= e((string)($entry['autor'] ?? 'Sistema')) ?>
+                                    </p>
+                                </div>
+                            </li>
+                        <?php endforeach; ?>
+                    </ol>
+                    <?php if (count($logRows) > 20): ?>
+                        <p class="text-[10px] text-ink-soft mt-2 mb-0">… y <?= count($logRows) - 20 ?> entradas más antiguas.</p>
+                    <?php endif; ?>
+                <?php endif; ?>
+            </div>
 
             <div class="card p-5">
                 <h3 class="text-sm font-semibold mb-3">Actualizar tarea</h3>

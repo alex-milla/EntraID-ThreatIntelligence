@@ -106,6 +106,42 @@ class Database
         )");
         $db->exec("CREATE INDEX IF NOT EXISTS idx_remediation_task_checks_task ON remediation_task_checks(task_id)");
 
+        // v0.4.27 (CVE Desk, F0): máquina de estados y workflow del ticket.
+        // Columnas aditivas y nullable para que la migración no invente datos:
+        // el backfill traduce el `status` existente a `estado`.
+        $taskCols = [];
+        foreach ($db->query("PRAGMA table_info(remediation_tasks)") as $c) {
+            $taskCols[$c['name']] = true;
+        }
+        foreach ([
+            'estado'               => 'TEXT',
+            'eta_original'         => 'TEXT',
+            'eta_actual'           => 'TEXT',
+            'ventana_parcheo'      => 'TEXT',
+            'responsable_user_id'  => 'INTEGER',
+            'importado'            => 'TEXT',
+            'bloqueado_desde'      => 'TEXT',
+            'cierre_actor_id'      => 'INTEGER',
+        ] as $column => $type) {
+            if (!isset($taskCols[$column])) {
+                $db->exec("ALTER TABLE remediation_tasks ADD COLUMN {$column} {$type}");
+            }
+        }
+
+        // Backfill idempotente: solo filas sin estado. El orden importa: no
+        // reescribe un estado ya gestionado por el workflow.
+        $db->exec("UPDATE remediation_tasks
+                   SET estado = CASE status
+                       WHEN 'open' THEN 'ticket_creado'
+                       WHEN 'in_progress' THEN 'en_curso'
+                       WHEN 'accepted' THEN 'riesgo_aceptado'
+                       ELSE 'cerrado'
+                   END
+                   WHERE estado IS NULL OR estado = ''");
+        $db->exec("UPDATE remediation_tasks SET importado = created_at WHERE importado IS NULL OR importado = ''");
+        $db->exec("UPDATE remediation_tasks SET eta_original = due_at WHERE eta_original IS NULL OR eta_original = ''");
+        $db->exec("UPDATE remediation_tasks SET eta_actual = COALESCE(eta_original, due_at) WHERE eta_actual IS NULL OR eta_actual = ''");
+
         // v0.4.23: cancelar un trabajo de IA en curso (el motor lo consulta
         // entre parte y parte).
         try {
@@ -681,10 +717,99 @@ class Database
             source TEXT NOT NULL DEFAULT 'manual',
             software_group_id INTEGER,
             created_by INTEGER,
+            estado TEXT NOT NULL DEFAULT 'ticket_creado',
+            eta_original TEXT,
+            eta_actual TEXT,
+            ventana_parcheo TEXT,
+            responsable_user_id INTEGER,
+            importado TEXT,
+            bloqueado_desde TEXT,
+            cierre_actor_id INTEGER,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             updated_at TEXT NOT NULL DEFAULT (datetime('now')),
             UNIQUE(org_id, cve_id)
         )");
+
+        // v0.4.27 — CVE Desk: registro cronológico inmutable del ticket.
+        // Sin FK a propósito: el histórico no se borra al borrar la tarea.
+        $db->exec("CREATE TABLE IF NOT EXISTS remediation_task_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id INTEGER NOT NULL,
+            tipo TEXT NOT NULL DEFAULT 'nota',
+            texto TEXT,
+            impacto_dias INTEGER NOT NULL DEFAULT 0,
+            estado_origen TEXT,
+            estado_destino TEXT,
+            autor_id INTEGER,
+            autor TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )");
+
+        // v0.4.27 — activos afectados por el ticket (equipos del tenant y
+        // metadatos de gestión que Defender no aporta: entorno, criticidad,
+        // dueño). El ticket sigue siendo uno por CVE.
+        $db->exec("CREATE TABLE IF NOT EXISTS remediation_task_assets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id INTEGER NOT NULL,
+            machine_id INTEGER,
+            asset_name TEXT NOT NULL,
+            asset_type TEXT,
+            environment TEXT,
+            criticality TEXT,
+            owner TEXT,
+            state TEXT NOT NULL DEFAULT 'afectado',
+            verified_at TEXT,
+            verified_by INTEGER,
+            notes TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(task_id, asset_name)
+        )");
+
+        // v0.4.27 — aceptaciones de riesgo con caducidad y aprobadores.
+        $db->exec("CREATE TABLE IF NOT EXISTS remediation_risk_acceptances (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id INTEGER NOT NULL,
+            justificacion TEXT NOT NULL,
+            caducidad TEXT NOT NULL,
+            aprobado_por INTEGER,
+            segundo_aprobador INTEGER,
+            estado TEXT NOT NULL DEFAULT 'vigente',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            cancelled_at TEXT
+        )");
+
+        // v0.4.27 — informes por periodo del servicio.
+        $db->exec("CREATE TABLE IF NOT EXISTS remediation_reports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            org_id INTEGER,
+            periodo TEXT NOT NULL,
+            estado TEXT NOT NULL DEFAULT 'borrador',
+            created_by INTEGER,
+            published_at TEXT,
+            snapshot_md TEXT,
+            snapshot_html TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )");
+
+        $db->exec("CREATE TABLE IF NOT EXISTS remediation_report_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            report_id INTEGER NOT NULL,
+            task_id INTEGER,
+            cve_id TEXT NOT NULL,
+            snapshot_json TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(report_id, cve_id)
+        )");
+
+        // v0.4.27 — roles del flujo (sin tocar users.role).
+        $db->exec("CREATE TABLE IF NOT EXISTS remediation_roles (
+            user_id INTEGER PRIMARY KEY,
+            rol TEXT NOT NULL DEFAULT 'analista',
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )");
+
 
         $db->exec("CREATE TABLE IF NOT EXISTS remediation_chats (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -731,6 +856,11 @@ class Database
         $db->exec("CREATE INDEX IF NOT EXISTS idx_remediation_task_cve ON remediation_tasks(cve_id)");
         $db->exec("CREATE INDEX IF NOT EXISTS idx_remediation_chat_user ON remediation_chats(user_id, org_id)");
         $db->exec("CREATE INDEX IF NOT EXISTS idx_remediation_msg_chat ON remediation_messages(chat_id)");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_remediation_log_task ON remediation_task_logs(task_id, id)");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_remediation_asset_task ON remediation_task_assets(task_id)");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_remediation_risk_task ON remediation_risk_acceptances(task_id, estado)");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_remediation_report_org ON remediation_reports(org_id, periodo)");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_remediation_report_item ON remediation_report_items(report_id)");
 
         // Crear usuario admin por defecto si no existe ninguno
         $stmt = $db->query("SELECT COUNT(*) as cnt FROM users");

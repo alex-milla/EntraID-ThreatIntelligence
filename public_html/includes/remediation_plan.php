@@ -59,7 +59,7 @@ final class RemediationPlan
             $epss = null;
         }
 
-        return Database::insert(
+        $taskId = Database::insert(
             "INSERT INTO remediation_tasks
              (org_id, cve_id, title, severity, cvss, epss, kev, status, source, created_by)
              VALUES (?, ?, ?, ?, ?, ?, ?, 'open', 'assistant', ?)",
@@ -74,6 +74,13 @@ final class RemediationPlan
                 $userId > 0 ? $userId : null,
             ]
         );
+
+        // v0.4.27: arranca el ciclo y deja la entrada de alta en el registro.
+        if ($taskId > 0 && class_exists('RemediationWorkflow')) {
+            RemediationWorkflow::initTask((int)$taskId, 'open', null, $userId, 'Tarea creada desde otra acción');
+        }
+
+        return $taskId;
     }
 
     /** Anexa contenido al plan de una tarea existente (separador ---). */
