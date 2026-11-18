@@ -137,6 +137,9 @@ try {
     $noDays = RemediationWorkflow::addEntry($taskId, 'retraso', 'Sin días', 0, 1);
     check('retraso: exige días', empty($noDays['ok']));
 
+    // El bloqueo solo se permite desde «En curso».
+    $toCourse = RemediationWorkflow::recordLegacyChange($taskId, 'open', 'in_progress', ['nota' => 'Preparar bloqueo'], 1);
+    check('bloqueo: requiere en_curso', !empty($toCourse['ok']));
     $block = RemediationWorkflow::addEntry($taskId, 'bloqueo', 'Vendor sin parche; mitigado por WAF', 3, 1);
     check('bloqueo: ok', !empty($block['ok']) && $block['state'] === 'bloqueado');
     $task = Database::fetchOne("SELECT * FROM remediation_tasks WHERE id = ?", [$taskId]);

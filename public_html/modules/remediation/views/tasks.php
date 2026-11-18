@@ -11,6 +11,7 @@ $taskLog = is_array($taskLog ?? null) ? $taskLog : [];
 $taskSla = is_array($taskSla ?? null) ? $taskSla : null;
 $taskAssets = is_array($taskAssets ?? null) ? $taskAssets : [];
 $taskCritical = !empty($taskCritical);
+$users = is_array($users ?? null) ? $users : [];
 $workflowLabels = is_array($workflowLabels ?? null) ? $workflowLabels : [];
 $workflowClasses = is_array($workflowClasses ?? null) ? $workflowClasses : [];
 $logTypeLabels = is_array($logTypeLabels ?? null) ? $logTypeLabels : [];
@@ -229,6 +230,52 @@ if ($selectedTask !== null) {
                     </p>
                 </div>
             </div>
+            </div>
+
+            <?php
+            $steps = [
+                'ticket_creado' => 'Ticket',
+                'planificado'   => 'Planificado',
+                'en_curso'      => 'En curso',
+                'verificacion'  => 'Verificación',
+                'cerrado'       => 'Cierre',
+            ];
+            $stepKeys = array_keys($steps);
+            $stepIndex = array_search($taskState, $stepKeys, true);
+            $stepIndex = $stepIndex === false ? 0 : (int)$stepIndex;
+            $isBlocked = $taskState === 'bloqueado';
+            $isRisk = $taskState === 'riesgo_aceptado';
+            $visualIndex = $isRisk ? -1 : ($isBlocked ? 2 : $stepIndex);
+            ?>
+            <div class="card p-4 mb-4">
+                <div class="flex items-center gap-1 sm:gap-2 flex-wrap">
+                    <?php foreach ($stepKeys as $index => $stepKey): ?>
+                        <?php $label = $steps[$stepKey]; ?>
+                        <div class="flex items-center gap-1.5">
+                            <span class="w-6 h-6 rounded-full inline-flex items-center justify-center text-[10px] font-bold
+                                <?= $index <= $visualIndex ? 'bg-brand-500 text-white' : 'bg-muted text-ink-soft' ?>">
+                                <?= $index + 1 ?>
+                            </span>
+                            <span class="text-[11px] <?= $index === $visualIndex ? 'font-semibold text-ink' : 'text-ink-soft' ?>">
+                                <?= e($label) ?>
+                            </span>
+                            <?php if ($index < count($steps) - 1): ?>
+                                <span class="hidden sm:inline-block w-8 h-px <?= $index < $visualIndex ? 'bg-brand-500' : 'bg-line' ?>"></span>
+                            <?php endif; ?>
+                        </div>
+                    <?php endforeach; ?>
+                </div>
+                <?php if ($isBlocked): ?>
+                    <p class="text-[11px] text-orange-700 dark:text-orange-300 m-0 mt-2">
+                        Bloqueado<?= !empty($task['bloqueado_desde']) ? ' desde ' . e(format_date((string)$task['bloqueado_desde'], 'd/m/Y')) : '' ?>.
+                        El SLA sigue corriendo; reactiva cuando se resuelva el bloqueo.
+                    </p>
+                <?php elseif ($isRisk): ?>
+                    <p class="text-[11px] text-ink-muted m-0 mt-2">
+                        Riesgo aceptado<?= !empty($task['exception_until']) ? ' hasta ' . e(format_date((string)$task['exception_until'], 'd/m/Y')) : '' ?>.
+                        Al vencer vuelve sola a la cola.
+                    </p>
+                <?php endif; ?>
             </div>
 
             <?php if ($taskSla !== null): ?>
@@ -474,21 +521,105 @@ if ($selectedTask !== null) {
                 <?php endif; ?>
             </div>
 
+            <?php
+            $transitions = RemediationWorkflow::transitions($taskState);
+            $canIncident = in_array($taskState, ['ticket_creado', 'planificado', 'en_curso', 'bloqueado', 'verificacion'], true);
+            $canClose = isset($transitions['cerrar']);
+            $canRisk = isset($transitions['aceptar_riesgo']);
+            $actionUrl = base_url('modules/remediation/tasks/action');
+            ?>
+            <div class="card p-5 mb-4" id="task-actions">
+                <h3 class="text-sm font-semibold m-0">Acciones</h3>
+                <p class="text-[11px] text-ink-muted mt-1 mb-3">
+                    Solo se ofrecen las acciones válidas para el estado actual. Cada cambio queda en el registro.
+                </p>
+                <div class="flex items-center gap-2 flex-wrap">
+                    <?php if ($taskState === 'ticket_creado'): ?>
+                        <button type="button" onclick="openPlanModal()" class="btn">
+                            <?= icon('event_available', 16) ?> Planificar
+                        </button>
+                    <?php elseif ($taskState === 'planificado'): ?>
+                        <form method="POST" action="<?= e($actionUrl) ?>" class="m-0">
+                            <?= Csrf::field() ?>
+                            <input type="hidden" name="org_id" value="<?= (int)$selectedOrgId ?>">
+                            <input type="hidden" name="task_id" value="<?= (int)$task['id'] ?>">
+                            <input type="hidden" name="action" value="iniciar">
+                            <button type="submit" class="btn"><?= icon('play_arrow', 16) ?> Iniciar parcheo</button>
+                        </form>
+                    <?php elseif ($taskState === 'en_curso'): ?>
+                        <form method="POST" action="<?= e($actionUrl) ?>" class="m-0">
+                            <?= Csrf::field() ?>
+                            <input type="hidden" name="org_id" value="<?= (int)$selectedOrgId ?>">
+                            <input type="hidden" name="task_id" value="<?= (int)$task['id'] ?>">
+                            <input type="hidden" name="action" value="pasar_verificacion">
+                            <button type="submit" class="btn"><?= icon('fact_check', 16) ?> Pasar a verificación</button>
+                        </form>
+                    <?php elseif ($taskState === 'bloqueado'): ?>
+                        <form method="POST" action="<?= e($actionUrl) ?>" class="m-0">
+                            <?= Csrf::field() ?>
+                            <input type="hidden" name="org_id" value="<?= (int)$selectedOrgId ?>">
+                            <input type="hidden" name="task_id" value="<?= (int)$task['id'] ?>">
+                            <input type="hidden" name="action" value="reactivar">
+                            <button type="submit" class="btn"><?= icon('play_circle', 16) ?> Reactivar</button>
+                        </form>
+                    <?php elseif ($taskState === 'verificacion'): ?>
+                        <button type="button" onclick="openCloseModal()" class="btn">
+                            <?= icon('task_alt', 16) ?> Cerrar CVE
+                        </button>
+                    <?php elseif ($taskState === 'cerrado'): ?>
+                        <form method="POST" action="<?= e($actionUrl) ?>" class="m-0"
+                              data-confirm="¿Reabrir este CVE? Volverá a la cola de trabajo.">
+                            <?= Csrf::field() ?>
+                            <input type="hidden" name="org_id" value="<?= (int)$selectedOrgId ?>">
+                            <input type="hidden" name="task_id" value="<?= (int)$task['id'] ?>">
+                            <input type="hidden" name="action" value="reabrir">
+                            <button type="submit" class="btn btn-outline"><?= icon('undo', 16) ?> Reabrir</button>
+                        </form>
+                    <?php elseif ($taskState === 'riesgo_aceptado'): ?>
+                        <form method="POST" action="<?= e($actionUrl) ?>" class="m-0"
+                              data-confirm="¿Cancelar la aceptación de riesgo? El CVE vuelve a la cola.">
+                            <?= Csrf::field() ?>
+                            <input type="hidden" name="org_id" value="<?= (int)$selectedOrgId ?>">
+                            <input type="hidden" name="task_id" value="<?= (int)$task['id'] ?>">
+                            <input type="hidden" name="action" value="cancelar_riesgo">
+                            <button type="submit" class="btn btn-outline"><?= icon('cancel', 16) ?> Cancelar aceptación</button>
+                        </form>
+                    <?php endif; ?>
+
+                    <?php if ($canIncident): ?>
+                        <button type="button" onclick="openIncidentModal('nota')" class="btn btn-outline">
+                            <?= icon('note_add', 16) ?> Registrar incidencia
+                        </button>
+                    <?php endif; ?>
+
+                    <?php if ($canClose && $taskState !== 'verificacion'): ?>
+                        <button type="button" onclick="openCloseModal()" class="btn btn-outline">
+                            <?= icon('task_alt', 16) ?> Cerrar CVE
+                        </button>
+                    <?php endif; ?>
+
+                    <?php if ($taskState === 'verificacion'): ?>
+                        <button type="button" onclick="openFailureModal()" class="btn btn-outline">
+                            <?= icon('report_problem', 16) ?> Verificación fallida
+                        </button>
+                    <?php endif; ?>
+
+                    <?php if ($canRisk): ?>
+                        <button type="button" onclick="openRiskModal()"
+                                class="text-xs text-ink-muted hover:text-ink underline ml-auto">
+                            Aceptar riesgo
+                        </button>
+                    <?php endif; ?>
+                </div>
+            </div>
+
             <div class="card p-5">
-                <h3 class="text-sm font-semibold mb-3">Actualizar tarea</h3>
+                <h3 class="text-sm font-semibold mb-3">Datos de gestión</h3>
                 <form method="POST" action="<?= base_url('modules/remediation/tasks/save') ?>" class="space-y-3">
                     <?= Csrf::field() ?>
                     <input type="hidden" name="id" value="<?= (int)$task['id'] ?>">
                     <input type="hidden" name="org_id" value="<?= (int)$selectedOrgId ?>">
                     <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                        <label class="block">
-                            <span class="block text-xs font-medium text-ink-muted mb-1">Estado</span>
-                            <select name="status" class="w-full px-2 py-1.5 rounded-lg border border-line-strong bg-input text-ink text-xs">
-                                <?php foreach ($statusLabels as $key => $label): ?>
-                                    <option value="<?= e($key) ?>" <?= $task['status'] === $key ? 'selected' : '' ?>><?= e($label) ?></option>
-                                <?php endforeach; ?>
-                            </select>
-                        </label>
                         <label class="block">
                             <span class="block text-xs font-medium text-ink-muted mb-1">Responsable</span>
                             <input type="text" name="owner" value="<?= e((string)($task['owner'] ?? '')) ?>" maxlength="120"
@@ -543,6 +674,185 @@ if ($selectedTask !== null) {
         <?php endif; ?>
     </div>
 </div>
+
+<!-- Modales de acciones del ticket (F2) -->
+<?php if ($selectedTask !== null): ?>
+    <?php
+    $actionUrl = base_url('modules/remediation/tasks/action');
+    $todayIso = gmdate('Y-m-d');
+    $maxRiskIso = gmdate('Y-m-d', strtotime('+90 days'));
+    ?>
+    <div id="plan-modal" class="hidden fixed inset-0 z-50 no-print">
+        <div class="absolute inset-0 bg-black/40" onclick="closeActionModal('plan-modal')"></div>
+        <div class="relative mx-auto mt-24 w-[calc(100%-2rem)] max-w-lg card shadow-xl p-5">
+            <h3 class="text-sm font-semibold">Planificar el ticket</h3>
+            <p class="text-xs text-ink-muted mt-1">Fija la ventana acordada. Después podrás iniciar el parcheo.</p>
+            <form method="POST" action="<?= e($actionUrl) ?>" class="mt-4 space-y-3">
+                <?= Csrf::field() ?>
+                <input type="hidden" name="org_id" value="<?= (int)$selectedOrgId ?>">
+                <input type="hidden" name="task_id" value="<?= (int)$task['id'] ?>">
+                <input type="hidden" name="action" value="planificar">
+                <label class="block">
+                    <span class="block text-xs font-medium text-ink-muted mb-1">Ventana de parcheo</span>
+                    <input type="text" name="ventana_parcheo" maxlength="160" required placeholder="dom 22:00"
+                           class="w-full px-3 py-2 rounded-lg border border-line-strong bg-input text-ink text-sm">
+                </label>
+                <div class="flex justify-end gap-2">
+                    <button type="button" onclick="closeActionModal('plan-modal')" class="btn btn-outline">Cancelar</button>
+                    <button type="submit" class="btn">Planificar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="incident-modal" class="hidden fixed inset-0 z-50 no-print">
+        <div class="absolute inset-0 bg-black/40" onclick="closeActionModal('incident-modal')"></div>
+        <div class="relative mx-auto mt-20 w-[calc(100%-2rem)] max-w-lg card shadow-xl p-5">
+            <h3 class="text-sm font-semibold">Registrar incidencia</h3>
+            <p class="text-xs text-ink-muted mt-1">Retraso y bloqueo desplazan la ETA; el bloqueo congela el ticket.</p>
+            <form method="POST" action="<?= e($actionUrl) ?>" class="mt-4 space-y-3">
+                <?= Csrf::field() ?>
+                <input type="hidden" name="org_id" value="<?= (int)$selectedOrgId ?>">
+                <input type="hidden" name="task_id" value="<?= (int)$task['id'] ?>">
+                <input type="hidden" name="action" value="incidencia">
+                <label class="block">
+                    <span class="block text-xs font-medium text-ink-muted mb-1">Tipo</span>
+                    <select name="tipo" id="incident-type" onchange="toggleIncidentImpact()"
+                            class="w-full px-3 py-2 rounded-lg border border-line-strong bg-input text-ink text-sm">
+                        <option value="nota">Nota</option>
+                        <option value="retraso">Retraso</option>
+                        <?php if ($taskState === 'en_curso'): ?>
+                            <option value="bloqueo">Bloqueo</option>
+                        <?php endif; ?>
+                    </select>
+                </label>
+                <label class="block">
+                    <span class="block text-xs font-medium text-ink-muted mb-1">Motivo</span>
+                    <textarea name="texto" rows="3" required placeholder="Ventana denegada por cambio en FW"
+                              class="w-full px-3 py-2 rounded-lg border border-line-strong bg-input text-ink text-sm"></textarea>
+                </label>
+                <label class="block" id="incident-impact-row">
+                    <span class="block text-xs font-medium text-ink-muted mb-1">Días de impacto</span>
+                    <input type="number" name="impacto_dias" min="1" max="365" value="1"
+                           class="w-28 px-3 py-2 rounded-lg border border-line-strong bg-input text-ink text-sm">
+                </label>
+                <div class="flex justify-end gap-2">
+                    <button type="button" onclick="closeActionModal('incident-modal')" class="btn btn-outline">Cancelar</button>
+                    <button type="submit" class="btn">Registrar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="close-modal" class="hidden fixed inset-0 z-50 no-print">
+        <div class="absolute inset-0 bg-black/40" onclick="closeActionModal('close-modal')"></div>
+        <div class="relative mx-auto mt-20 w-[calc(100%-2rem)] max-w-lg card shadow-xl p-5">
+            <h3 class="text-sm font-semibold">Cerrar CVE</h3>
+            <p class="text-xs text-ink-muted mt-1">Sin evidencia no hay cierre: ID de cambio, KB aplicada o comprobante.</p>
+            <form method="POST" action="<?= e($actionUrl) ?>" class="mt-4 space-y-3">
+                <?= Csrf::field() ?>
+                <input type="hidden" name="org_id" value="<?= (int)$selectedOrgId ?>">
+                <input type="hidden" name="task_id" value="<?= (int)$task['id'] ?>">
+                <input type="hidden" name="action" value="cerrar">
+                <label class="block">
+                    <span class="block text-xs font-medium text-ink-muted mb-1">Evidencia de cierre</span>
+                    <input type="text" name="evidencia" maxlength="500" required
+                           value="<?= e((string)($task['evidence'] ?? '')) ?>"
+                           placeholder="CHG-2026-0123 · KB5040442 aplicada"
+                           class="w-full px-3 py-2 rounded-lg border border-line-strong bg-input text-ink text-sm">
+                </label>
+                <label class="block">
+                    <span class="block text-xs font-medium text-ink-muted mb-1">Resolución</span>
+                    <select name="resolucion" class="w-full px-3 py-2 rounded-lg border border-line-strong bg-input text-ink text-sm">
+                        <option value="patched">Parcheada</option>
+                        <option value="mitigated">Mitigada</option>
+                        <option value="false_positive">Falso positivo</option>
+                    </select>
+                </label>
+                <div class="flex justify-end gap-2">
+                    <button type="button" onclick="closeActionModal('close-modal')" class="btn btn-outline">Cancelar</button>
+                    <button type="submit" class="btn">Cerrar CVE</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="risk-modal" class="hidden fixed inset-0 z-50 no-print">
+        <div class="absolute inset-0 bg-black/40" onclick="closeActionModal('risk-modal')"></div>
+        <div class="relative mx-auto mt-16 w-[calc(100%-2rem)] max-w-xl card shadow-xl p-5">
+            <h3 class="text-sm font-semibold">Aceptar riesgo</h3>
+            <p class="text-xs text-ink-muted mt-1">
+                Justificación y caducidad (máximo 90 días). Si el CVSS es 9 o superior, hace falta un segundo aprobador.
+            </p>
+            <form method="POST" action="<?= e($actionUrl) ?>" class="mt-4 space-y-3">
+                <?= Csrf::field() ?>
+                <input type="hidden" name="org_id" value="<?= (int)$selectedOrgId ?>">
+                <input type="hidden" name="task_id" value="<?= (int)$task['id'] ?>">
+                <input type="hidden" name="action" value="aceptar_riesgo">
+                <label class="block">
+                    <span class="block text-xs font-medium text-ink-muted mb-1">Justificación</span>
+                    <textarea name="justificacion" rows="3" required
+                              placeholder="Compensado con regla WAF; sin exposición directa"
+                              class="w-full px-3 py-2 rounded-lg border border-line-strong bg-input text-ink text-sm"></textarea>
+                </label>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <label class="block">
+                        <span class="block text-xs font-medium text-ink-muted mb-1">Caducidad</span>
+                        <input type="date" name="caducidad" required
+                               min="<?= e($todayIso) ?>" max="<?= e($maxRiskIso) ?>"
+                               value="<?= e(gmdate('Y-m-d', strtotime('+30 days'))) ?>"
+                               class="w-full px-3 py-2 rounded-lg border border-line-strong bg-input text-ink text-sm">
+                    </label>
+                    <label class="block">
+                        <span class="block text-xs font-medium text-ink-muted mb-1">Segundo aprobador (CVSS ≥ 9)</span>
+                        <select name="segundo_aprobador"
+                                class="w-full px-3 py-2 rounded-lg border border-line-strong bg-input text-ink text-sm">
+                            <option value="0">— No necesario —</option>
+                            <?php foreach ($users as $user): ?>
+                                <?php if ((int)$user['id'] === (int)Auth::id()) { continue; } ?>
+                                <option value="<?= (int)$user['id'] ?>">
+                                    <?= e((string)($user['display_name'] ?: $user['username'])) ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </label>
+                </div>
+                <div class="flex justify-end gap-2">
+                    <button type="button" onclick="closeActionModal('risk-modal')" class="btn btn-outline">Cancelar</button>
+                    <button type="submit" class="btn">Aceptar riesgo</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="failure-modal" class="hidden fixed inset-0 z-50 no-print">
+        <div class="absolute inset-0 bg-black/40" onclick="closeActionModal('failure-modal')"></div>
+        <div class="relative mx-auto mt-24 w-[calc(100%-2rem)] max-w-lg card shadow-xl p-5">
+            <h3 class="text-sm font-semibold">Verificación fallida</h3>
+            <p class="text-xs text-ink-muted mt-1">El ticket vuelve a «En curso» y el motivo queda registrado.</p>
+            <form method="POST" action="<?= e($actionUrl) ?>" class="mt-4 space-y-3">
+                <?= Csrf::field() ?>
+                <input type="hidden" name="org_id" value="<?= (int)$selectedOrgId ?>">
+                <input type="hidden" name="task_id" value="<?= (int)$task['id'] ?>">
+                <input type="hidden" name="action" value="verificacion_fallida">
+                <label class="block">
+                    <span class="block text-xs font-medium text-ink-muted mb-1">Motivo</span>
+                    <textarea name="motivo" rows="3" required
+                              class="w-full px-3 py-2 rounded-lg border border-line-strong bg-input text-ink text-sm"></textarea>
+                </label>
+                <label class="block">
+                    <span class="block text-xs font-medium text-ink-muted mb-1">Días de impacto (opcional)</span>
+                    <input type="number" name="impacto_dias" min="0" max="365" value="0"
+                           class="w-28 px-3 py-2 rounded-lg border border-line-strong bg-input text-ink text-sm">
+                </label>
+                <div class="flex justify-end gap-2">
+                    <button type="button" onclick="closeActionModal('failure-modal')" class="btn btn-outline">Cancelar</button>
+                    <button type="submit" class="btn">Registrar fallo</button>
+                </div>
+            </form>
+        </div>
+    </div>
+<?php endif; ?>
 
 <!-- Modal nueva tarea -->
 <div id="task-modal" class="hidden fixed inset-0 z-50 no-print">
@@ -662,6 +972,31 @@ function closeTaskModal() {
     document.getElementById('task-modal').classList.add('hidden');
     document.getElementById('cve-results').classList.add('hidden');
 }
+
+function openActionModal(id) {
+    var modal = document.getElementById(id);
+    if (modal) modal.classList.remove('hidden');
+}
+function closeActionModal(id) {
+    var modal = document.getElementById(id);
+    if (modal) modal.classList.add('hidden');
+}
+function openPlanModal() { openActionModal('plan-modal'); }
+function openCloseModal() { openActionModal('close-modal'); }
+function openRiskModal() { openActionModal('risk-modal'); }
+function openFailureModal() { openActionModal('failure-modal'); }
+function openIncidentModal(type) {
+    var select = document.getElementById('incident-type');
+    if (select && type) { select.value = type; }
+    toggleIncidentImpact();
+    openActionModal('incident-modal');
+}
+function toggleIncidentImpact() {
+    var select = document.getElementById('incident-type');
+    var row = document.getElementById('incident-impact-row');
+    if (!select || !row) return;
+    row.style.display = select.value === 'nota' ? 'none' : '';
+}
 <?php if (($org['kind'] ?? '') === 'tenant'): ?>
 function openImportModal() { document.getElementById('import-modal').classList.remove('hidden'); }
 function closeImportModal() { document.getElementById('import-modal').classList.add('hidden'); }
@@ -716,6 +1051,7 @@ document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape') {
         closeTaskModal();
         closeImportModal();
+        ['plan-modal', 'incident-modal', 'close-modal', 'risk-modal', 'failure-modal'].forEach(closeActionModal);
     }
 });
 </script>

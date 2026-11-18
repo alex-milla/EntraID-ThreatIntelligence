@@ -475,12 +475,26 @@ final class RemediationWorkflow
         if (!in_array($tipo, ['retraso', 'bloqueo', 'nota'], true)) {
             return ['ok' => false, 'error' => 'Tipo de entrada no válido.', 'state' => self::ensureState($taskId)];
         }
+        $state = self::ensureState($taskId);
+        if (in_array($state, ['cerrado', 'riesgo_aceptado'], true)) {
+            return [
+                'ok'    => false,
+                'error' => 'Un ticket cerrado o con riesgo aceptado no admite incidencias. Reábrelo primero.',
+                'state' => $state,
+            ];
+        }
+        if ($tipo === 'bloqueo' && $state !== 'en_curso') {
+            return [
+                'ok'    => false,
+                'error' => 'Solo se puede bloquear un ticket «En curso».',
+                'state' => $state,
+            ];
+        }
         $texto = trim($texto);
         if ($texto === '') {
-            return ['ok' => false, 'error' => 'El texto del registro es obligatorio.', 'state' => self::ensureState($taskId)];
+            return ['ok' => false, 'error' => 'El texto del registro es obligatorio.', 'state' => $state];
         }
         $impactoDias = max(0, min(365, $impactoDias));
-        $state = self::ensureState($taskId);
 
         if ($tipo === 'retraso' || $tipo === 'bloqueo') {
             if ($impactoDias <= 0) {

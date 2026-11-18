@@ -41,6 +41,7 @@ class Module_Remediation extends BaseModule
             ['method' => 'POST', 'pattern' => 'orgs/save',     'handler' => [$this, 'saveOrg']],
             ['method' => 'POST', 'pattern' => 'orgs/delete',   'handler' => [$this, 'deleteOrg']],
             ['method' => 'POST', 'pattern' => 'tasks/save',    'handler' => [$this, 'saveTask']],
+            ['method' => 'POST', 'pattern' => 'tasks/action',  'handler' => [$this, 'taskAction']],
             ['method' => 'POST', 'pattern' => 'tasks/delete',  'handler' => [$this, 'deleteTask']],
             ['method' => 'POST', 'pattern' => 'tasks/import',  'handler' => [$this, 'importTasks']],
             ['method' => 'POST', 'pattern' => 'tasks/plan',    'handler' => [$this, 'savePlan']],
@@ -154,6 +155,9 @@ class Module_Remediation extends BaseModule
             $taskSla = RemediationSla::forTask($selectedTask, $taskCritical);
         }
         $dashboard = $this->dashboardStats($selectedOrgId, $org, $queueCounts);
+        $users = Database::fetchAll(
+            "SELECT id, display_name, username FROM users ORDER BY COALESCE(NULLIF(display_name, ''), username)"
+        );
 
         $chats = $this->listChats($selectedOrgId);
         $chatId = (int)($_GET['chat'] ?? 0);
@@ -230,6 +234,7 @@ class Module_Remediation extends BaseModule
             'queueCounts'    => $queueCounts,
             'queueFilters'   => $queueFilters,
             'dashboard'      => $dashboard,
+            'users'          => $users,
             'workflowLabels' => RemediationWorkflow::stateLabels(),
             'workflowClasses'=> RemediationWorkflow::stateClasses(),
             'logTypeLabels'  => RemediationWorkflow::logTypeLabels(),
@@ -356,9 +361,12 @@ class Module_Remediation extends BaseModule
             redirect(base_url('modules/remediation'));
         }
 
-        $status = (string)($_POST['status'] ?? 'open');
+        // v0.4.27.2: el cambio de estado lo hace la tarjeta de acciones
+        // (`tasks/action`). Este formulario ya no envía `status`; si no viene,
+        // se conserva el actual para no reabrir la tarea al guardar campos.
+        $status = isset($_POST['status']) ? (string)$_POST['status'] : '';
         if (!in_array($status, self::statuses(), true)) {
-            $status = 'open';
+            $status = '';
         }
         $owner = trim((string)($_POST['owner'] ?? ''));
         $dueAt = trim((string)($_POST['due_at'] ?? ''));
@@ -373,6 +381,14 @@ class Module_Remediation extends BaseModule
             if ($task === null || (int)$task['org_id'] !== $orgId) {
                 flash('error', 'La tarea no existe.');
                 redirect(base_url('modules/remediation?org=' . $orgId));
+            }
+            if ($status === '') {
+                $status = (string)$task['status'];
+            }
+            // Si la tarea está aceptada y el formulario no trae caducidad, se
+            // conserva la de la aceptación vigente (no se borra al guardar).
+            if ($exceptionUntil === '' && (string)$task['status'] === 'accepted') {
+                $exceptionUntil = (string)($task['exception_until'] ?? '');
             }
 
             $resolvedAt = $task['resolved_at'];
@@ -435,6 +451,10 @@ class Module_Remediation extends BaseModule
             log_activity('remediation.task_updated', ['id' => $id, 'status' => $status]);
             flash('success', 'Tarea actualizada.');
             redirect(base_url('modules/remediation?org=' . $orgId . '&task=' . $id));
+        }
+
+        if ($status === '') {
+            $status = 'open';
         }
 
         $cveId = strtoupper(trim((string)($_POST['cve_id'] ?? '')));
@@ -528,6 +548,76 @@ class Module_Remediation extends BaseModule
         log_activity('remediation.task_created', ['id' => $newId, 'org' => $orgId, 'cve' => $cveId]);
         flash('success', 'Tarea creada.');
         redirect(base_url('modules/remediation?org=' . $orgId . '&task=' . $newId));
+    }
+
+    /**
+     * POST tasks/action — máquina de estados del ticket (F2).
+     *
+     * Una única ruta para todas las transiciones y para las incidencias
+     * tipificadas. El servicio valida la acción y sus campos obligatorios; la
+     * UI solo pinta las acciones válidas.
+     */
+    public function taskAction(array $params = []): void
+    {
+        Auth::require();
+        Csrf::validateOrFail();
+
+        $orgId = (int)($_POST['org_id'] ?? 0);
+        $taskId = (int)($_POST['task_id'] ?? 0);
+        $task = $this->getTask($taskId);
+        if ($task === null || (int)$task['org_id'] !== $orgId) {
+            flash('error', 'La tarea no existe.');
+            redirect(base_url('modules/remediation?org=' . $orgId));
+        }
+
+        $action = (string)($_POST['action'] ?? '');
+        $userId = (int)Auth::id();
+
+        if ($action === 'incidencia') {
+            $result = RemediationWorkflow::addEntry(
+                $taskId,
+                (string)($_POST['tipo'] ?? 'nota'),
+                (string)($_POST['texto'] ?? ''),
+                (int)($_POST['impacto_dias'] ?? 0),
+                $userId
+            );
+        } else {
+            $payload = [
+                'ventana_parcheo' => trim((string)($_POST['ventana_parcheo'] ?? '')),
+                'evidencia'       => trim((string)($_POST['evidencia'] ?? '')),
+                'resolucion'      => (string)($_POST['resolucion'] ?? 'patched'),
+                'motivo'          => trim((string)($_POST['motivo'] ?? '')),
+                'impacto_dias'    => (int)($_POST['impacto_dias'] ?? 0),
+                'justificacion'   => trim((string)($_POST['justificacion'] ?? '')),
+                'caducidad'       => trim((string)($_POST['caducidad'] ?? '')),
+                'segundo_aprobador' => (int)($_POST['segundo_aprobador'] ?? 0),
+            ];
+            $result = RemediationWorkflow::transition($taskId, $action, $payload, $userId);
+        }
+
+        if (!empty($result['ok'])) {
+            $messages = [
+                'planificar'           => 'Ticket planificado.',
+                'iniciar'              => 'Parcheo iniciado.',
+                'reactivar'            => 'Bloqueo reactivado.',
+                'pasar_verificacion'   => 'Ticket en verificación.',
+                'cerrar'               => 'CVE cerrado con evidencia.',
+                'aceptar_riesgo'       => 'Riesgo aceptado y registrado.',
+                'cancelar_riesgo'      => 'Aceptación cancelada; vuelve a la cola.',
+                'reabrir'              => 'Ticket reabierto.',
+                'incidencia'           => 'Entrada añadida al registro.',
+            ];
+            flash('success', $messages[$action] ?? 'Acción aplicada.');
+            log_activity('remediation.task_action', [
+                'task'   => $taskId,
+                'action' => $action,
+                'state'  => (string)($result['state'] ?? ''),
+            ]);
+        } else {
+            flash('error', (string)($result['error'] ?? 'No se pudo aplicar la acción.'));
+        }
+
+        redirect(base_url('modules/remediation?tab=tasks&org=' . $orgId . '&task=' . $taskId));
     }
 
     public function deleteTask(array $params = []): void
