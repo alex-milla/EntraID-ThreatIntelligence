@@ -299,7 +299,12 @@ if (!class_exists('ExposedConsoleStore')) {
                 'tags'     => $list('tags', self::TAGS),
                 'status'   => $list('status', self::STATUSES),
                 'machines' => $machines,
+                // Tokens para el SQL (arrays) y texto original para la interfaz.
+                // La vista NUNCA debe hacer (string) del array de tokens: PHP
+                // devolvería «Array» y el formulario se autorellenaría con esa
+                // palabra, dejando todos los filtros a cero (v0.4.25.1).
                 'software' => array_keys($software),
+                'software_text' => substr($rawSoftware, 0, 120),
                 'q'        => substr($q, 0, 40),
                 'sort'     => $sort,
             ];

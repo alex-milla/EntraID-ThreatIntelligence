@@ -221,6 +221,72 @@ try {
     check('selección: todos los ids del filtro', count($allIds) === 3 && in_array('CVE-2026-90006', $allIds, true));
 
     /* -----------------------------------------------------------------
+     * 5 bis. Vista: el formulario no puede autorellenarse con «Array»
+     * (v0.4.25.1: (string) de un array de tokens rompía TODOS los filtros)
+     * -------------------------------------------------------------- */
+
+    $renderConsole = static function (array $consoleData) use ($module): string {
+        ob_start();
+        (static function () use ($consoleData, $module): void {
+            $console = $consoleData;
+            require dirname(__DIR__, 2) . '/public_html/modules/exposed_report/views/_console.php';
+        })();
+        return (string)ob_get_clean();
+    };
+
+    $viewFilters = ExposedConsoleStore::filtersFromInput(['severity' => ['critical']]);
+    $consoleView = [
+        'snapshots'      => ExposedConsoleStore::listSnapshots(),
+        'snapshot'       => $snapshot,
+        'snapshotId'     => $snapshotId,
+        'filters'        => $viewFilters,
+        'filterQuery'    => ExposedConsoleStore::filtersToQuery($viewFilters),
+        'rows'           => ExposedConsoleStore::rows($snapshotId, $viewFilters, 100, 0),
+        'stats'          => ExposedConsoleStore::stats($snapshotId, $viewFilters),
+        'facets'         => ExposedConsoleStore::facets($snapshotId, $viewFilters),
+        'total'          => 3,
+        'page'           => 1,
+        'pages'          => 1,
+        'perPage'        => 100,
+        'groups'         => [],
+        'maxBytesLabel'  => '30 MB',
+        'maxRowsConsole' => 20000,
+        'counts'         => ['total' => 13],
+    ];
+    $consoleHtml = $renderConsole($consoleView);
+
+    check('vista: el input de software no pinta «Array»', !str_contains($consoleHtml, 'value="Array"'));
+    check('vista: el input de software queda vacío',
+        preg_match('/name="software"[^>]*value=""/s', $consoleHtml) === 1);
+    check('vista: filtro crítica pinta sus 3 CVE',
+        substr_count($consoleHtml, 'CVE-2026-90001') >= 1
+        && substr_count($consoleHtml, 'CVE-2026-90005') >= 1
+        && substr_count($consoleHtml, 'CVE-2026-90006') >= 1);
+    check('vista: el filtro excluye las no críticas', !str_contains($consoleHtml, 'CVE-2026-90004'));
+    check('vista: checkbox de crítica marcado',
+        preg_match('/name="severity\[\]"\s+value="critical"\s+checked/', $consoleHtml) === 1
+        || preg_match('/value="critical"\s+checked/', $consoleHtml) === 1);
+    check('vista: dos botones Apply (arriba y abajo)',
+        substr_count($consoleHtml, 'Apply filters') === 2);
+
+    $viewFilters2 = ExposedConsoleStore::filtersFromInput(['machines' => '100', 'software' => 'google chrome']);
+    $consoleView2 = $consoleView;
+    $consoleView2['filters'] = $viewFilters2;
+    $consoleView2['filterQuery'] = ExposedConsoleStore::filtersToQuery($viewFilters2);
+    $consoleView2['rows'] = ExposedConsoleStore::rows($snapshotId, $viewFilters2, 100, 0);
+    $consoleView2['stats'] = ExposedConsoleStore::stats($snapshotId, $viewFilters2);
+    $consoleView2['total'] = ExposedConsoleStore::count($snapshotId, $viewFilters2);
+    $consoleHtml2 = $renderConsole($consoleView2);
+
+    check('vista: software muestra el texto original',
+        preg_match('/name="software"[^>]*value="google chrome"/s', $consoleHtml2) === 1);
+    check('vista: los ocultos del grupo no envuelven escalares en []',
+        !str_contains($consoleHtml2, 'name="machines[]"')
+        && preg_match('/name="machines"\s+value="100"/', $consoleHtml2) === 1);
+    check('vista: filtro por equipos y software devuelve filas',
+        (int)$consoleView2['total'] === 3);
+
+    /* -----------------------------------------------------------------
      * 6. Grupos
      * -------------------------------------------------------------- */
 

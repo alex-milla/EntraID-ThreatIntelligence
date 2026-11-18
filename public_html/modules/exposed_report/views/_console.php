@@ -207,7 +207,7 @@ $flashData = is_array($flashData) ? $flashData : [];
              Panel de filtros (equivalente al de Defender)
              ==================================================== -->
         <form method="GET" action="<?= e($base) ?>" id="exposed-filters"
-              class="card p-4 space-y-4 xl:sticky xl:top-4">
+              class="card p-4 space-y-4">
             <input type="hidden" name="snapshot" value="<?= $snapshotId ?>">
 
             <div class="flex items-center justify-between gap-2">
@@ -219,6 +219,10 @@ $flashData = is_array($flashData) ? $flashData : [];
                     <?= icon('filter_alt_off', 13) ?> Clear filters
                 </a>
             </div>
+
+            <button type="submit" class="btn w-full justify-center">
+                <?= icon('check', 16) ?> Apply filters
+            </button>
 
             <?php
             $blocks = [
@@ -267,7 +271,7 @@ $flashData = is_array($flashData) ? $flashData : [];
             <div>
                 <label for="exposed-software" class="block text-xs font-semibold text-ink mb-1">Software</label>
                 <input id="exposed-software" type="search" name="software"
-                       value="<?= e((string)($filters['software'] ?? '')) ?>"
+                       value="<?= e((string)($filters['software_text'] ?? '')) ?>"
                        placeholder="chrome, kernel, edge…"
                        class="w-full px-2.5 py-1.5 rounded-lg border border-line-strong bg-input text-ink text-xs focus:ring-2 focus:ring-brand-500 outline-none">
             </div>
@@ -339,9 +343,13 @@ $flashData = is_array($flashData) ? $flashData : [];
                 <?= Csrf::field() ?>
                 <input type="hidden" name="snapshot_id" value="<?= $snapshotId ?>">
                 <?php foreach ($filterQuery as $key => $value): ?>
-                    <?php foreach ((array)$value as $item): ?>
-                        <input type="hidden" name="<?= e((string)$key) ?>[]" value="<?= e((string)$item) ?>">
-                    <?php endforeach; ?>
+                    <?php if (is_array($value)): ?>
+                        <?php foreach ($value as $item): ?>
+                            <input type="hidden" name="<?= e((string)$key) ?>[]" value="<?= e((string)$item) ?>">
+                        <?php endforeach; ?>
+                    <?php else: ?>
+                        <input type="hidden" name="<?= e((string)$key) ?>" value="<?= e((string)$value) ?>">
+                    <?php endif; ?>
                 <?php endforeach; ?>
                 <input type="hidden" name="sort" value="<?= e((string)($filters['sort'] ?? 'oldest')) ?>">
                 <input type="hidden" name="select_all" id="exposed-select-all-flag" value="0">
