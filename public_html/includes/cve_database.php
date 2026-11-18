@@ -254,6 +254,79 @@ class CveDatabase
         $db->exec("CREATE INDEX IF NOT EXISTS idx_cve_tvm_imports_company ON cve_tvm_imports(company_id, created_at DESC)");
         $db->exec("CREATE INDEX IF NOT EXISTS idx_cve_tvm_rows_source ON cve_tvm_import_rows(import_id, catalog_source)");
 
+        // v0.4.25: consola de Equipos expuestos. Snapshots del export completo
+        // de Defender TVM («Vulnerabilities Export» filtrado por Affects my
+        // organization), filtros tipo portal, grupos de análisis y planes de
+        // actuación. Tablas propias: no tocan el import por empresa del módulo
+        // CVE ni el seguimiento (vm_*).
+        $db->exec("CREATE TABLE IF NOT EXISTS exposed_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            filename TEXT NOT NULL,
+            export_date TEXT,
+            bytes INTEGER NOT NULL DEFAULT 0,
+            rows_total INTEGER NOT NULL DEFAULT 0,
+            rows_imported INTEGER NOT NULL DEFAULT 0,
+            rows_skipped INTEGER NOT NULL DEFAULT 0,
+            generated_by INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )");
+        $db->exec("CREATE TABLE IF NOT EXISTS exposed_cves (
+            snapshot_id INTEGER NOT NULL,
+            cve_id TEXT NOT NULL,
+            severity TEXT,
+            cvss REAL,
+            epss REAL,
+            age_days INTEGER NOT NULL DEFAULT 0,
+            published_at TEXT,
+            first_detected_at TEXT,
+            updated_at TEXT,
+            has_exploit INTEGER NOT NULL DEFAULT 0,
+            has_known_threats INTEGER NOT NULL DEFAULT 0,
+            has_alerts INTEGER NOT NULL DEFAULT 0,
+            exposed_machines INTEGER NOT NULL DEFAULT 0,
+            tvm_status TEXT,
+            related_software TEXT,
+            software_labels TEXT,
+            software_tokens TEXT,
+            software_total INTEGER NOT NULL DEFAULT 0,
+            zero_day INTEGER NOT NULL DEFAULT 0,
+            no_security_update INTEGER NOT NULL DEFAULT 0,
+            security_update INTEGER NOT NULL DEFAULT 0,
+            exploit_kit INTEGER NOT NULL DEFAULT 0,
+            exploit_verified INTEGER NOT NULL DEFAULT 0,
+            description TEXT,
+            PRIMARY KEY (snapshot_id, cve_id)
+        ) WITHOUT ROWID");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_exposed_cves_sev ON exposed_cves(snapshot_id, severity)");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_exposed_cves_age ON exposed_cves(snapshot_id, age_days DESC)");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_exposed_cves_machines ON exposed_cves(snapshot_id, exposed_machines DESC)");
+
+        $db->exec("CREATE TABLE IF NOT EXISTS exposed_groups (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            snapshot_id INTEGER,
+            filters_json TEXT,
+            created_by INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )");
+        $db->exec("CREATE TABLE IF NOT EXISTS exposed_group_cves (
+            group_id INTEGER NOT NULL,
+            cve_id TEXT NOT NULL,
+            added_at TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (group_id, cve_id)
+        ) WITHOUT ROWID");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_exposed_group_cves_cve ON exposed_group_cves(cve_id)");
+        $db->exec("CREATE TABLE IF NOT EXISTS exposed_group_plans (
+            group_id INTEGER PRIMARY KEY,
+            content_text TEXT,
+            content_html TEXT,
+            cve_count INTEGER NOT NULL DEFAULT 0,
+            model TEXT,
+            profile_id INTEGER,
+            generated_at TEXT
+        )");
+
         // v0.3.0: seguimiento operativo de las vulnerabilidades importadas.
         // Un caso por (empresa, CVE) — el CSV de TVM es agregado por CVE y no
         // incluye identificadores de equipo. Se guarda la observación de origen

@@ -37,7 +37,7 @@ check('clave del módulo', $module !== null && $module->key() === 'exposed_repor
 check('nombre visible', $module !== null && $module->name() === 'Equipos expuestos');
 check('sin permisos Graph', $module !== null && $module->requiredPermissions() === []);
 check('no sincronizable', $module !== null && $module->isSyncable() === false);
-check('rutas registradas (3)', $module !== null && count($module->routes()) === 3);
+check('rutas registradas (11)', $module !== null && count($module->routes()) === 11);
 
 $nav = $module?->getNavItem();
 check('grupo Seguridad', is_array($nav) && ($nav['group'] ?? '') === 'Seguridad');
@@ -215,7 +215,7 @@ check('columnas: 14 y en orden',
  * ================================================================== */
 
 $catalog = llm_prompts_catalog();
-foreach (['llm.exposed.compact', 'llm.exposed.detailed', 'llm.exposed.spec'] as $key) {
+foreach (['llm.exposed.compact', 'llm.exposed.detailed', 'llm.exposed.spec', 'llm.exposed.action_plan'] as $key) {
     check('prompt: existe ' . $key, isset($catalog[$key]));
     check('prompt: scope Equipos expuestos · ' . $key,
         ($catalog[$key]['scope_label'] ?? '') === 'Equipos expuestos');

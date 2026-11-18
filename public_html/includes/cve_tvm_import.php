@@ -15,12 +15,28 @@ declare(strict_types=1);
 
 final class CveTvmImport
 {
+    /** Límites del import clásico (clasificado por empresa en el módulo CVE). */
     public const MAX_BYTES = 5 * 1024 * 1024;
     public const MAX_ROWS  = 5000;
 
     /**
+     * Límites de la consola de Equipos expuestos (v0.4.25): el export completo
+     * del tenant («Vulnerabilities Export» filtrado por Affects my organization)
+     * puede rondar 15 MB / 6.000 CVEs. Se guarda como snapshot en cve.sqlite y
+     * no se envía entero a la IA.
+     */
+    public const CONSOLE_MAX_BYTES = 30 * 1024 * 1024;
+    public const CONSOLE_MAX_ROWS  = 20000;
+
+    /**
      * Lee el CSV completo y devuelve las filas normalizadas.
      *
+     * Opciones (todas opcionales, compatibles con las llamadas anteriores):
+     *   · software_pairs: bool — si es false, no se expande «Related Software»
+     *     en pares vendor/product (ahorra memoria con exports grandes). Se
+     *     rellenan igualmente software_labels y software_tokens.
+     *
+     * @param array{software_pairs?:bool} $options
      * @return array{
      *   export_date: string,
      *   rows: array<int, array<string, mixed>>,
@@ -28,7 +44,7 @@ final class CveTvmImport
      *   total: int
      * }
      */
-    public static function parseCsv(string $csv, int $maxRows = self::MAX_ROWS): array
+    public static function parseCsv(string $csv, int $maxRows = self::MAX_ROWS, array $options = []): array
     {
         $result = ['export_date' => '', 'rows' => [], 'skipped' => 0, 'total' => 0];
         $csv = self::normalizeEncoding($csv);
@@ -74,7 +90,7 @@ final class CveTvmImport
             }
 
             $result['total']++;
-            $row = self::mapRow($cells, $header);
+            $row = self::mapRow($cells, $header, $options);
             if ($row === null) {
                 $result['skipped']++;
                 continue;
@@ -117,9 +133,10 @@ final class CveTvmImport
      *
      * @param string[]           $cells
      * @param array<string, int> $header
+     * @param array{software_pairs?:bool} $options
      * @return array<string, mixed>|null
      */
-    public static function mapRow(array $cells, array $header): ?array
+    public static function mapRow(array $cells, array $header, array $options = []): ?array
     {
         $get = static function (string $key) use ($cells, $header): string {
             $idx = $header[$key] ?? null;
@@ -133,6 +150,9 @@ final class CveTvmImport
 
         $tvmStatus = $get('status');
         $description = $get('description');
+        $related = $get('relatedsoftware');
+        $withPairs = ($options['software_pairs'] ?? true) !== false;
+        $summary = self::softwareSummary($related);
 
         return [
             'cve_id'             => $cveId,
@@ -146,12 +166,121 @@ final class CveTvmImport
             'has_exploit'        => self::boolToInt($get('hasexploit')),
             'has_known_threats'  => self::boolToInt($get('hasknownthreats')),
             'has_alerts'         => self::boolToInt($get('hasassociatedalerts')),
-            'related_software'   => $get('relatedsoftware'),
-            'software_pairs'     => self::splitSoftware($get('relatedsoftware')),
+            'related_software'   => $related,
+            'software_pairs'     => $withPairs ? self::splitSoftware($related) : [],
+            'software_labels'    => $summary['labels'],
+            'software_tokens'    => $summary['tokens'],
+            'software_total'     => $summary['total'],
+            'tags'               => self::describeTags($description),
             'exposed_machines'   => self::intOrZero($get('exposedmachines')),
             'description'        => $description,
             'tvm_status'         => $tvmStatus,
         ];
+    }
+
+    /**
+     * Resumen de «Related Software» apto para almacenar y buscar: etiquetas
+     * principales y una cadena de tokens corta. No construye un array por par
+     * (los CVE de kernel o WebKit traen cientos), así que un export completo
+     * del tenant cabe en memoria.
+     *
+     * @return array{labels:string[],tokens:string,total:int}
+     */
+    public static function softwareSummary(string $raw, int $maxLabels = 6, int $maxTokens = 120, int $maxChars = 1600): array
+    {
+        $raw = trim($raw);
+        if ($raw === '') {
+            return ['labels' => [], 'tokens' => '', 'total' => 0];
+        }
+
+        $labels = [];
+        $tokens = [];
+        $tokenChars = 0;
+        $total = 0;
+
+        foreach (preg_split('/[;,]+/', $raw) ?: [] as $item) {
+            $item = trim($item);
+            if ($item === '') {
+                continue;
+            }
+
+            if (stripos($item, 'cpe:2.3:') === 0) {
+                $parts = explode(':', $item);
+                $vendor = $parts[3] ?? '';
+                $product = $parts[4] ?? '';
+            } else {
+                $parts = explode(':', $item, 2);
+                $vendor = $parts[0] ?? '';
+                $product = $parts[1] ?? '';
+            }
+
+            $vendor = trim((string)$vendor);
+            $product = trim((string)$product);
+            if ($product === '') {
+                continue;
+            }
+
+            $total++;
+            $label = $vendor !== '' ? $vendor . ':' . $product : $product;
+            if (count($labels) < $maxLabels) {
+                $labels[$label] = true;
+            }
+
+            if (count($tokens) < $maxTokens) {
+                $token = self::token($label);
+                if ($token !== '' && !isset($tokens[$token])) {
+                    $growth = strlen($token) + 1;
+                    if ($tokenChars + $growth <= $maxChars) {
+                        $tokens[$token] = true;
+                        $tokenChars += $growth;
+                    }
+                }
+            }
+        }
+
+        return [
+            'labels' => array_keys($labels),
+            'tokens' => implode(' ', array_keys($tokens)),
+            'total'  => $total,
+        ];
+    }
+
+    /**
+     * Etiquetas que el CSV permite inferir de la descripción de Defender.
+     * Defender no exporta la columna «Tags» del portal; esto es una heurística
+     * explícita (la interfaz la marca como inferida).
+     *
+     * @return array<string,bool> clave => true (solo las presentes)
+     */
+    public static function describeTags(string $description): array
+    {
+        $text = trim($description);
+        if ($text === '') {
+            return [];
+        }
+
+        $tags = [];
+        if (preg_match('/\bzero[\s-]?day\b|\b0[\s-]?day\b/i', $text) === 1) {
+            $tags['zero_day'] = true;
+        }
+        if (preg_match('/\bexploit[\s-]kit\b/i', $text) === 1) {
+            $tags['exploit_kit'] = true;
+        }
+        if (preg_match('/\b(exploit (is )?verified|verified exploit|known exploited|actively exploited)\b/i', $text) === 1) {
+            $tags['exploit_verified'] = true;
+        }
+        if (preg_match(
+            '/\bno (security )?(update|patch|fix)( is| was| are| were)? (available|provided|released)\b'
+            . '|\bwithout (a )?(security )?(update|patch|fix)\b'
+            . '|\bsin (actualizaci[oó]n|parche|correcci[oó]n)\b/iu',
+            $text
+        ) === 1) {
+            $tags['no_security_update'] = true;
+        } elseif (preg_match('/\bsecurity update\b|\bsecurity fix\b/i', $text) === 1) {
+            $tags['security_update'] = true;
+        }
+
+        return $tags;
     }
 
     /**

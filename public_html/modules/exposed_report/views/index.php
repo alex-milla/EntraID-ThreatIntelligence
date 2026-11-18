@@ -63,8 +63,8 @@ $queueNotice = $queueNotice ?? null;
 <div class="page-header no-print">
     <h1>Equipos expuestos</h1>
     <p class="subtitle">
-        Informe de parcheo para los servidores que Defender marca como expuestos a Internet. Se genera
-        con el CSV que exportes de Advanced Hunting y, si lo pides, con el detalle de sus CVE.
+        Consola de las vulnerabilidades que afectan a tu tenant, con los filtros del portal de Defender.
+        Filtra, agrupa los CVE que te interesen y genera un plan de actuación documentado con IA.
     </p>
     <span class="spacer"></span>
     <?php if ($isAdmin): ?>
@@ -73,6 +73,44 @@ $queueNotice = $queueNotice ?? null;
         </a>
     <?php endif; ?>
 </div>
+
+<?php $activeTab = ((string)($activeTab ?? 'console')) === 'kql' ? 'kql' : 'console'; ?>
+
+<nav class="no-print mb-5 flex items-center gap-1 border-b border-line" aria-label="Vistas de Equipos expuestos">
+    <button type="button" id="exposed-tab-console" onclick="exposedTab('console')"
+            class="px-3 py-2 -mb-px text-sm font-medium border-b-2 transition-colors <?= $activeTab === 'console'
+                ? 'border-brand-500 text-brand-600 dark:text-brand-300'
+                : 'border-transparent text-ink-muted hover:text-ink' ?>">
+        <?= icon('filter_alt', 15) ?> Consola del tenant
+    </button>
+    <button type="button" id="exposed-tab-kql" onclick="exposedTab('kql')"
+            class="px-3 py-2 -mb-px text-sm font-medium border-b-2 transition-colors <?= $activeTab === 'kql'
+                ? 'border-brand-500 text-brand-600 dark:text-brand-300'
+                : 'border-transparent text-ink-muted hover:text-ink' ?>">
+        <?= icon('terminal', 15) ?> Informe KQL (servidores)
+    </button>
+</nav>
+
+<div id="exposed-pane-console" <?= $activeTab === 'console' ? '' : 'hidden' ?>>
+    <?php
+    // En un closure para que las variables del parcial no pisen las del
+    // informe KQL (mismo ámbito de require).
+    $consolePane = is_array($console ?? null) ? $console : [];
+    (static function () use ($module, $consolePane): void {
+        $console = $consolePane;
+        require __DIR__ . '/_console.php';
+    })();
+    ?>
+</div>
+
+<div id="exposed-pane-kql" <?= $activeTab === 'kql' ? '' : 'hidden' ?>>
+    <div class="mb-4 rounded-lg border border-line bg-muted/60 px-4 py-3">
+        <p class="text-[11px] text-ink-muted m-0">
+            Flujo clásico: informe de parcheo de <strong>servidores internet-exposed</strong> a partir de una
+            consulta KQL de Advanced Hunting. Para la consola de vulnerabilidades del tenant usa la pestaña
+            <button type="button" class="underline text-brand-600 dark:text-brand-300" onclick="exposedTab('console')">Consola del tenant</button>.
+        </p>
+    </div>
 
 <?php if (!$llmConfigured): ?>
     <div class="alert alert-error no-print" role="status">
@@ -399,6 +437,31 @@ $queueNotice = $queueNotice ?? null;
         </div>
     </details>
 </div>
+
+</div><!-- /exposed-pane-kql -->
+
+<script>
+(function () {
+    window.exposedTab = function (tab) {
+        var panes = { console: 'exposed-pane-console', kql: 'exposed-pane-kql' };
+        Object.keys(panes).forEach(function (key) {
+            var pane = document.getElementById(panes[key]);
+            var button = document.getElementById('exposed-tab-' + key);
+            var active = key === tab;
+            if (pane) {
+                pane.hidden = !active;
+            }
+            if (button) {
+                button.classList.toggle('border-brand-500', active);
+                button.classList.toggle('text-brand-600', active);
+                button.classList.toggle('dark:text-brand-300', active);
+                button.classList.toggle('border-transparent', !active);
+                button.classList.toggle('text-ink-muted', !active);
+            }
+        });
+    };
+})();
+</script>
 
 <script>
 (function () {

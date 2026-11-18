@@ -98,6 +98,9 @@ try {
     Check 'E2E: muestra la consulta de origen' ($page.Content -match 'DeviceTvmSoftwareVulnerabilities')
     Check 'E2E: explica el contrato de columnas' ($page.Content -match 'DiasSinParchear')
     Check 'E2E: enlace a plantillas de prompts' ($page.Content -match 'Editar prompts')
+    Check 'E2E: consola del tenant disponible' ($page.Content -match 'Consola del tenant' -and $page.Content -match 'Cargar el export del tenant')
+    Check 'E2E: consola explica el export y los grupos' ($page.Content -match 'Vulnerabilities Export' -and $page.Content -match 'Grupos de análisis')
+    Check 'E2E: pestaña del flujo KQL conservada' ($page.Content -match 'Informe KQL \(servidores\)')
 
     $csrf = [regex]::Match($page.Content, 'name="csrf_token"\s+value="([^"]+)"').Groups[1].Value
     if (-not $csrf) { throw 'No se pudo extraer el CSRF del módulo' }

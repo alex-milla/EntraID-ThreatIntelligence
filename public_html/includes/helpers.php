@@ -952,6 +952,7 @@ if (!function_exists('llm_task_catalog')) {
             'remediation_assistant' => 'Asistente de remediación',
             'incident_triage'       => 'Triaje de incidentes (Incident Story)',
             'exposed_report'        => 'Informe de equipos expuestos',
+            'exposed_action_plan'   => 'Plan de actuación (Equipos expuestos)',
             'chat'                  => 'Chat / Análisis IA',
         ];
     }
