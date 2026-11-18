@@ -338,8 +338,11 @@ class Module_ExposedReport extends BaseModule
         }
 
         $existingGroupId = (int)($_POST['group_id'] ?? 0);
-        $query = http_build_query(ExposedConsoleStore::filtersToQuery($filters));
+        $filterQuery = ExposedConsoleStore::filtersToQuery($filters);
+        $query = http_build_query($filterQuery);
         $back = base_url('modules/exposed_report') . ($query !== '' ? '?' . $query : '');
+        $backOnlyFilters = http_build_query(array_diff_key($filterQuery, ['sort' => true]));
+        $backParam = '?' . ($backOnlyFilters !== '' ? $backOnlyFilters : 'tab=console');
 
         if ($existingGroupId > 0) {
             $res = ExposedConsoleStore::addCves($existingGroupId, $ids);
@@ -352,7 +355,8 @@ class Module_ExposedReport extends BaseModule
                 'added' => (int)$res['added'],
             ]);
             flash('success', $res['added'] . ' CVE añadidos al grupo #' . $existingGroupId . '.');
-            redirect(base_url('modules/exposed_report/group/' . $existingGroupId));
+            redirect(base_url('modules/exposed_report/group/' . $existingGroupId)
+                . '?back=' . rawurlencode($backParam));
         }
 
         $name = (string)($_POST['group_name'] ?? '');
@@ -370,7 +374,8 @@ class Module_ExposedReport extends BaseModule
         ]);
 
         flash('success', 'Grupo creado con ' . count($ids) . ' CVE. Ya puedes generar su plan de actuación.');
-        redirect(base_url('modules/exposed_report/group/' . (int)$res['group_id']));
+        redirect(base_url('modules/exposed_report/group/' . (int)$res['group_id'])
+            . '?back=' . rawurlencode($backParam));
     }
 
     /** GET related/{id} — CVEs relacionados (determinista, sin IA). */
@@ -1732,6 +1737,17 @@ class Module_ExposedReport extends BaseModule
 
         $dossier = ['markdown' => '', 'html' => '', 'with_report' => 0, 'without' => 0, 'tiers' => [], 'p1p2' => 0, 'kev' => 0, 'max_priority' => '', 'count' => 0];
         $singleCve = strtoupper(trim((string)($_GET['cve'] ?? '')));
+        $baseUrl = base_url('modules/exposed_report');
+        $backParam = (string)($_GET['back'] ?? '');
+        $backUrl = $baseUrl;
+        if ($backParam !== '' && str_starts_with($backParam, '?') && strlen($backParam) <= 2000) {
+            $backUrl = $baseUrl . $backParam;
+        } elseif ($group !== null) {
+            $groupFilters = safe_json_decode((string)($group['filters_json'] ?? ''), []);
+            if (is_array($groupFilters) && $groupFilters !== []) {
+                $backUrl = $baseUrl . '?' . http_build_query($groupFilters);
+            }
+        }
         if ($group !== null) {
             $planText = $plan !== null ? (string)($plan['content_text'] ?? '') : '';
             $reportRows = $rows;
@@ -1770,6 +1786,7 @@ class Module_ExposedReport extends BaseModule
             'plan'          => $plan,
             'dossier'       => $dossier,
             'singleCve'     => $singleCve,
+            'backUrl'       => $backUrl,
             'orgs'          => $orgs,
             'profiles'      => $profiles,
             'profileId'     => $defaultProfileId,

@@ -483,6 +483,15 @@ $groupsCount = is_array($console['groups'] ?? null) ? count($console['groups']) 
                 button.classList.toggle('text-ink-muted', !active);
             }
         });
+        try {
+            var url = new URL(window.location.href);
+            if (tab === 'console') {
+                url.searchParams.delete('tab');
+            } else {
+                url.searchParams.set('tab', tab);
+            }
+            window.history.replaceState(null, '', url.toString());
+        } catch (e) { /* sin history: no pasa nada */ }
     };
 })();
 </script>

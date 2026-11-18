@@ -359,6 +359,13 @@ try {
         && str_contains($consoleHtml, 'sort=age_asc'));
     check('vista: historial de importaciones visible', str_contains($consoleHtml, 'Historial de importaciones'));
     check('vista: botón de vaciar base', str_contains($consoleHtml, 'Vaciar base'));
+    $posBar = strpos($consoleHtml, 'exposed-group-target');
+    $posTable = strpos($consoleHtml, 'Vulnerabilidades del tenant');
+    check('vista: barra de grupo encima de la tabla',
+        $posBar !== false && $posTable !== false && $posBar < $posTable);
+    check('vista: barra de grupo fija (sticky)', str_contains($consoleHtml, 'sticky top-'));
+    check('vista: memoria de filtros por snapshot', str_contains($consoleHtml, "exposed.state.")
+        && str_contains($consoleHtml, 'exposedClearState'));
 
     $viewFilters2 = ExposedConsoleStore::filtersFromInput(['machines' => '100', 'software' => 'google chrome']);
     $consoleView2 = $consoleView;
@@ -413,6 +420,8 @@ try {
     $indexGroups = $module->render('index', $indexData);
     check('pestañas: ?tab=groups abre los grupos',
         preg_match('/id="exposed-pane-groups"(?!\s+hidden)/', $indexGroups) === 1);
+    check('pestañas: la pestaña queda en la URL', str_contains($indexHtml, 'history.replaceState')
+        && str_contains($indexHtml, "url.searchParams.set('tab'"));
     unset($_GET['tab']);
 
     /* -----------------------------------------------------------------
@@ -566,6 +575,20 @@ try {
     check('vista grupo: aviso de que no es la IA', str_contains($groupHtml, 'Esto todavía no es el análisis de la IA'));
     check('vista grupo: informe renderizado', str_contains($groupHtml, 'Informe de vulnerabilidad')
         && str_contains($groupHtml, 'Sin análisis IA'));
+
+    $groupHtmlBack = $module->render('group', [
+        'module'        => $module,
+        'group'         => $group,
+        'groupId'       => $groupId,
+        'rows'          => $groupRows,
+        'plan'          => null,
+        'dossier'       => $dossier,
+        'profiles'      => [],
+        'orgs'          => [],
+        'downloadName'  => 'informe.md',
+        'backUrl'       => $baseUrlWithFilters = base_url('modules/exposed_report') . '?severity%5B%5D=critical',
+    ]);
+    check('vista grupo: volver conserva filtros', str_contains($groupHtmlBack, 'severity%5B%5D=critical'));
 
     $groupHtmlWithPlan = $module->render('group', [
         'module'        => $module,

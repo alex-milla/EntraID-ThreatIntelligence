@@ -66,6 +66,8 @@ $documentHtml = $dossierHtml;
 $hasDocument = $documentMd !== '';
 $orgs = is_array($orgs ?? null) ? $orgs : [];
 $singleCve = strtoupper(trim((string)($singleCve ?? '')));
+$backUrl = (string)($backUrl ?? $base);
+$currentBack = (string)($_GET['back'] ?? '');
 
 $filters = [];
 if ($group !== null && (string)($group['filters_json'] ?? '') !== '') {
@@ -102,7 +104,7 @@ $flashData = is_array($flashData) ? $flashData : [];
 
 <div class="page-header no-print">
     <div class="min-w-0">
-        <a href="<?= e($base) ?>" class="text-[11px] text-brand-600 dark:text-brand-300 hover:underline inline-flex items-center gap-1 mb-1">
+        <a href="<?= e($backUrl) ?>" class="text-[11px] text-brand-600 dark:text-brand-300 hover:underline inline-flex items-center gap-1 mb-1">
             <?= icon('arrow_back', 13) ?> Volver a la consola
         </a>
         <h1 class="truncate"><?= e((string)($group['name'] ?? 'Grupo de análisis')) ?></h1>
@@ -394,7 +396,8 @@ $flashData = is_array($flashData) ? $flashData : [];
                                     <?= e((string)($row['software_labels'] ?? '—')) ?>
                                 </td>
                                 <td class="px-3 py-2 text-right">
-                                    <a href="<?= e($base . '/group/' . (int)$group['id'] . '?cve=' . urlencode($cveId)) ?>"
+                                    <a href="<?= e($base . '/group/' . (int)$group['id'] . '?cve=' . urlencode($cveId)
+                                        . ($currentBack !== '' ? '&back=' . rawurlencode($currentBack) : '')) ?>"
                                        class="mr-2 text-[11px] text-brand-600 dark:text-brand-300 hover:underline"
                                        title="Ver solo esta vulnerabilidad">
                                         Informe

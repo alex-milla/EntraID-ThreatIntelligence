@@ -310,7 +310,7 @@ $flashData = is_array($flashData) ? $flashData : [];
                 <h2 class="text-sm font-bold m-0 inline-flex items-center gap-1.5">
                     <?= icon('filter_alt', 16) ?> Filter
                 </h2>
-                <a href="<?= e($base) ?>"
+                <a href="<?= e($base) ?>" onclick="exposedClearState()"
                    class="text-[11px] text-brand-600 dark:text-brand-300 hover:underline inline-flex items-center gap-1">
                     <?= icon('filter_alt_off', 13) ?> Clear filters
                 </a>
@@ -448,6 +448,57 @@ $flashData = is_array($flashData) ? $flashData : [];
                 <?php endforeach; ?>
                 <input type="hidden" name="select_all" id="exposed-select-all-flag" value="0">
 
+                <?php if ($rows !== []): ?>
+                    <!-- Barra de acciones del grupo: fija arriba, siempre visible. -->
+                    <div class="sticky top-[69px] z-10 mb-3">
+                        <div class="card p-3 shadow-sm">
+                            <div class="flex items-end justify-between gap-3 flex-wrap">
+                                <div class="flex items-end gap-3 flex-wrap">
+                                    <div>
+                                        <label for="exposed-group-target" class="block text-[10px] uppercase tracking-wide text-ink-soft mb-1">
+                                            Grupo destino
+                                        </label>
+                                        <select id="exposed-group-target" name="group_id"
+                                                class="px-3 py-2 rounded-lg border border-line-strong bg-input text-ink text-xs w-64 max-w-full">
+                                            <option value="0">+ Crear un grupo nuevo</option>
+                                            <?php foreach ($groups as $groupOption): ?>
+                                                <option value="<?= (int)$groupOption['id'] ?>">
+                                                    <?= e((string)($groupOption['name'] ?? ('Grupo #' . (int)$groupOption['id']))) ?>
+                                                    (<?= (int)($groupOption['cve_count'] ?? 0) ?> CVE)
+                                                </option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label for="exposed-group-name" class="block text-[10px] uppercase tracking-wide text-ink-soft mb-1">
+                                            Nombre del grupo nuevo
+                                        </label>
+                                        <input id="exposed-group-name" type="text" name="group_name" maxlength="120"
+                                               placeholder="Ej.: Críticos +90 días con exploit"
+                                               class="px-3 py-2 rounded-lg border border-line-strong bg-input text-ink text-xs w-72 max-w-full">
+                                    </div>
+                                    <label class="inline-flex items-center gap-2 text-[11px] text-ink-muted pb-2">
+                                        <input type="checkbox" id="exposed-select-all" class="rounded border-line-strong"
+                                               onchange="exposedSelectAllFiltered(this)">
+                                        Incluir los <?= $total ?> CVE del filtro
+                                    </label>
+                                    <label class="inline-flex items-center gap-2 text-[11px] text-ink-muted pb-2">
+                                        <input type="checkbox" id="exposed-check-all" class="rounded border-line-strong"
+                                               onchange="exposedToggleAll(this)">
+                                        Seleccionar página
+                                    </label>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <span id="exposed-selected-count" class="text-[11px] text-ink-soft">0 seleccionados</span>
+                                    <button type="submit" class="btn">
+                                        <?= icon('group_add', 16) ?> Crear grupo
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                <?php endif; ?>
+
                 <div class="card overflow-hidden">
                     <div class="px-4 py-3 border-b border-line flex items-center justify-between gap-3 flex-wrap">
                         <div class="min-w-0">
@@ -460,17 +511,12 @@ $flashData = is_array($flashData) ? $flashData : [];
                                 · P4 <?= (int)($console['tierCounts']['p4'] ?? 0) ?>
                             </p>
                         </div>
-                        <label class="inline-flex items-center gap-2 text-xs text-ink-muted">
-                            <input type="checkbox" id="exposed-check-all" class="rounded border-line-strong"
-                                   onchange="exposedToggleAll(this)">
-                            Seleccionar página
-                        </label>
                     </div>
 
                     <?php if ($rows === []): ?>
                         <p class="p-6 text-sm text-ink-muted m-0">
                             Ningún CVE cumple el filtro actual.
-                            <a class="underline" href="<?= e($base) ?>">Quitar filtros</a>.
+                            <a class="underline" href="<?= e($base) ?>" onclick="exposedClearState()">Quitar filtros</a>.
                         </p>
                     <?php else: ?>
                         <div class="overflow-x-auto">
@@ -598,47 +644,6 @@ $flashData = is_array($flashData) ? $flashData : [];
                             </table>
                         </div>
                     <?php endif; ?>
-
-                    <?php if ($rows !== []): ?>
-                        <div class="px-4 py-3 border-t border-line flex items-end justify-between gap-3 flex-wrap bg-muted/40">
-                            <div class="flex items-end gap-3 flex-wrap">
-                                <div>
-                                    <label for="exposed-group-target" class="block text-[10px] uppercase tracking-wide text-ink-soft mb-1">
-                                        Grupo destino
-                                    </label>
-                                    <select id="exposed-group-target" name="group_id"
-                                            class="px-3 py-2 rounded-lg border border-line-strong bg-input text-ink text-xs w-64 max-w-full">
-                                        <option value="0">+ Crear un grupo nuevo</option>
-                                        <?php foreach ($groups as $groupOption): ?>
-                                            <option value="<?= (int)$groupOption['id'] ?>">
-                                                <?= e((string)($groupOption['name'] ?? ('Grupo #' . (int)$groupOption['id']))) ?>
-                                                (<?= (int)($groupOption['cve_count'] ?? 0) ?> CVE)
-                                            </option>
-                                        <?php endforeach; ?>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label for="exposed-group-name" class="block text-[10px] uppercase tracking-wide text-ink-soft mb-1">
-                                        Nombre del grupo nuevo
-                                    </label>
-                                    <input id="exposed-group-name" type="text" name="group_name" maxlength="120"
-                                           placeholder="Ej.: Críticos +90 días con exploit"
-                                           class="px-3 py-2 rounded-lg border border-line-strong bg-input text-ink text-xs w-72 max-w-full">
-                                </div>
-                                <label class="inline-flex items-center gap-2 text-[11px] text-ink-muted pb-2">
-                                    <input type="checkbox" id="exposed-select-all" class="rounded border-line-strong"
-                                           onchange="exposedSelectAllFiltered(this)">
-                                    Incluir los <?= $total ?> CVE del filtro actual
-                                </label>
-                            </div>
-                            <div class="flex items-center gap-2">
-                                <span id="exposed-selected-count" class="text-[11px] text-ink-soft">0 seleccionados</span>
-                                <button type="submit" class="btn">
-                                    <?= icon('group_add', 16) ?> Crear grupo
-                                </button>
-                            </div>
-                        </div>
-                    <?php endif; ?>
                 </div>
             </form>
 
@@ -737,5 +742,38 @@ $flashData = is_array($flashData) ? $flashData : [];
     });
 
     countSelected();
+})();
+
+/* Estado de navegación (v0.4.26.4): recuerda los filtros por snapshot. */
+(function () {
+    var BASE = <?= json_encode($base, JSON_UNESCAPED_SLASHES) ?>;
+    var SNAPSHOT = <?= (int)$snapshotId ?>;
+    var CURRENT = <?= json_encode($filterQuery, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
+
+    function hasFilters(obj) {
+        return Object.keys(obj || {}).some(function (k) { return k !== 'sort'; });
+    }
+
+    try {
+        if (SNAPSHOT > 0 && hasFilters(CURRENT)) {
+            sessionStorage.setItem('exposed.state.' + SNAPSHOT, window.location.search.replace(/^\?/, ''));
+        } else if (SNAPSHOT > 0) {
+            var tab = new URLSearchParams(window.location.search).get('tab') || 'console';
+            var saved = sessionStorage.getItem('exposed.state.' + SNAPSHOT);
+            if (tab === 'console' && saved) {
+                window.location.replace(BASE + '?' + saved);
+            }
+        }
+    } catch (e) { /* sin storage: se sigue sin memoria */ }
+
+    window.exposedClearState = function () {
+        try {
+            Object.keys(sessionStorage).forEach(function (k) {
+                if (k.indexOf('exposed.state.') === 0) {
+                    sessionStorage.removeItem(k);
+                }
+            });
+        } catch (e) { /* nada */ }
+    };
 })();
 </script>
