@@ -54,6 +54,18 @@ if ($planText !== '') {
         : (function_exists('render_markdown') ? render_markdown($planText) : '<pre>' . e($planText) . '</pre>');
 }
 
+// Anexo B: fichas técnicas por CVE (deterministas + informes de la app).
+$dossier = is_array($dossier ?? null) ? $dossier : [];
+$dossierMd = trim((string)($dossier['markdown'] ?? ''));
+$dossierHtml = (string)($dossier['html'] ?? '');
+$dossierWith = (int)($dossier['with_report'] ?? 0);
+$dossierWithout = (int)($dossier['without'] ?? 0);
+
+$documentMd = trim($planText . ($dossierMd !== '' ? "\n\n---\n\n" . $dossierMd : ''));
+$documentHtml = $planHtml . ($dossierHtml !== '' ? "\n" . $dossierHtml : '');
+$hasDocument = $documentMd !== '';
+$orgs = is_array($orgs ?? null) ? $orgs : [];
+
 $filters = [];
 if ($group !== null && (string)($group['filters_json'] ?? '') !== '') {
     $decoded = safe_json_decode((string)$group['filters_json'], []);
@@ -185,9 +197,42 @@ $flashData = is_array($flashData) ? $flashData : [];
                 <a class="underline" href="<?= e(base_url('admin/apis')) ?>">Admin → APIs</a>.
             </p>
         <?php endif; ?>
+
+        <div class="mt-4 pt-4 border-t border-line flex items-end justify-between gap-3 flex-wrap">
+            <div class="min-w-0 max-w-xl">
+                <p class="text-xs font-semibold m-0">Enviar a Remediación</p>
+                <p class="text-[11px] text-ink-soft m-0 mt-0.5">
+                    Crea una tarea por CVE en el módulo Remediación (con su SLA y checklist) para
+                    que el equipo de sistemas las ejecute y las marque como verificadas.
+                </p>
+            </div>
+            <form method="POST" action="<?= e($base . '/group/' . (int)$group['id'] . '/remediation') ?>"
+                  class="flex items-end gap-2 flex-wrap">
+                <?= Csrf::field() ?>
+                <div>
+                    <label for="exposed-org" class="block text-[10px] uppercase tracking-wide text-ink-soft mb-1">Organización</label>
+                    <select id="exposed-org" name="org_id"
+                            class="px-3 py-2 rounded-lg border border-line-strong bg-input text-ink text-xs">
+                        <option value="0">— Primera / crear automática —</option>
+                        <?php foreach ($orgs as $org): ?>
+                            <option value="<?= (int)$org['id'] ?>"><?= e((string)$org['name']) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div>
+                    <label for="exposed-org-name" class="block text-[10px] uppercase tracking-wide text-ink-soft mb-1">…o nueva</label>
+                    <input id="exposed-org-name" type="text" name="org_name" maxlength="120"
+                           placeholder="Nombre de la organización"
+                           class="px-3 py-2 rounded-lg border border-line-strong bg-input text-ink text-xs w-56">
+                </div>
+                <button type="submit" class="btn btn-outline">
+                    <?= icon('assignment_turned_in', 16) ?> Crear tareas
+                </button>
+            </form>
+        </div>
     </div>
 
-    <?php if ($planText === ''): ?>
+    <?php if (!$hasDocument): ?>
         <div class="card p-6 mb-6">
             <div class="flex items-start gap-3">
                 <span class="inline-flex items-center justify-center w-9 h-9 rounded-lg bg-brand-100 dark:bg-brand-900/30 text-brand-600 dark:text-brand-300">
@@ -205,17 +250,23 @@ $flashData = is_array($flashData) ? $flashData : [];
     <?php endif; ?>
 
     <!-- ============================================================
-         Plan guardado (documento)
+         Dossier (plan + fichas por CVE)
          ============================================================ -->
-    <?php if ($planText !== ''): ?>
+    <?php if ($hasDocument): ?>
         <div class="card overflow-hidden mb-6" id="exposed-plan-card">
             <div class="px-5 py-4 border-b border-line flex items-center justify-between gap-3 flex-wrap no-print">
                 <div class="min-w-0">
-                    <h2 class="text-sm font-semibold m-0">Plan de actuación</h2>
+                    <h2 class="text-sm font-semibold m-0">Dossier de parcheo</h2>
                     <p class="text-[11px] text-ink-soft m-0 mt-1">
-                        Generado el <?= e($fmtDate((string)($plan['generated_at'] ?? ''))) ?>
-                        · <?= (int)($plan['cve_count'] ?? 0) ?> CVE
-                        <?php if (!empty($plan['model'])): ?> · <?= e((string)$plan['model']) ?><?php endif; ?>
+                        <?php if ($planText !== ''): ?>
+                            Plan generado el <?= e($fmtDate((string)($plan['generated_at'] ?? ''))) ?>
+                            · <?= (int)($plan['cve_count'] ?? 0) ?> CVE
+                            <?php if (!empty($plan['model'])): ?> · <?= e((string)$plan['model']) ?><?php endif; ?>
+                        <?php else: ?>
+                            Sin plan de IA: dossier con las fichas técnicas.
+                        <?php endif; ?>
+                        · <?= $dossierWith ?> con informe técnico
+                        <?php if ($dossierWithout > 0): ?> · <?= $dossierWithout ?> con ficha de Defender<?php endif; ?>
                         <?php if ($planFresh): ?>
                             <span class="ml-1 inline-flex px-1.5 py-0.5 rounded bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300 text-[9px] font-semibold">recién generado</span>
                         <?php endif; ?>
@@ -237,10 +288,10 @@ $flashData = is_array($flashData) ? $flashData : [];
             </div>
             <div class="doc-stage p-5">
                 <div id="exposed-plan-document">
-                    <div id="exposed-plan-sheet" class="doc-sheet md-body"><?= $planHtml ?></div>
+                    <div id="exposed-plan-sheet" class="doc-sheet md-body"><?= $documentHtml ?></div>
                 </div>
                 <div id="exposed-plan-markdown" hidden>
-                    <pre id="exposed-plan-raw" class="doc-raw"><?= e($planText) ?></pre>
+                    <pre id="exposed-plan-raw" class="doc-raw"><?= e($documentMd) ?></pre>
                 </div>
             </div>
         </div>
@@ -372,7 +423,7 @@ $flashData = is_array($flashData) ? $flashData : [];
 <script>
 (function () {
     var PLAN_NAME = <?= json_encode((string)($downloadName ?? 'plan-actuacion.md'), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
-    var PLAN_MD = <?= json_encode($planText, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
+    var PLAN_MD = <?= json_encode($documentMd, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
     var SHEET = document.getElementById('exposed-plan-sheet');
 
     var STYLES = {

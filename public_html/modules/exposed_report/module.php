@@ -90,12 +90,14 @@ class Module_ExposedReport extends BaseModule
         return [
             ['method' => 'GET',  'pattern' => '',                     'handler' => [$this, 'index']],
             ['method' => 'GET',  'pattern' => 'group/{id}',            'handler' => [$this, 'showGroup']],
+            ['method' => 'GET',  'pattern' => 'related/{id}',          'handler' => [$this, 'showRelated']],
             ['method' => 'POST', 'pattern' => 'upload',                'handler' => [$this, 'upload']],
             ['method' => 'POST', 'pattern' => 'snapshot/delete',       'handler' => [$this, 'deleteSnapshot']],
             ['method' => 'POST', 'pattern' => 'clear',                 'handler' => [$this, 'clearAll']],
             ['method' => 'POST', 'pattern' => 'groups/create',         'handler' => [$this, 'createGroup']],
             ['method' => 'POST', 'pattern' => 'group/{id}/plan',       'handler' => [$this, 'generatePlan']],
             ['method' => 'POST', 'pattern' => 'group/{id}/analyze',    'handler' => [$this, 'analyzeGroup']],
+            ['method' => 'POST', 'pattern' => 'group/{id}/remediation','handler' => [$this, 'createRemediation']],
             ['method' => 'POST', 'pattern' => 'group/{id}/remove-cve', 'handler' => [$this, 'removeGroupCve']],
             ['method' => 'POST', 'pattern' => 'group/{id}/delete',     'handler' => [$this, 'deleteGroup']],
             // Flujo clásico (sin cambios de contrato).
@@ -318,7 +320,7 @@ class Module_ExposedReport extends BaseModule
         redirect(base_url('modules/exposed_report'));
     }
 
-    /** POST groups/create — crea un grupo a partir de la selección o del filtro. */
+    /** POST groups/create — crea un grupo o añade la selección a uno existente. */
     public function createGroup(array $params = []): void
     {
         Auth::require();
@@ -333,11 +335,26 @@ class Module_ExposedReport extends BaseModule
             $ids = array_merge($ids, ExposedConsoleStore::allIds($filters));
         }
 
-        $name = (string)($_POST['group_name'] ?? '');
-        $res = ExposedConsoleStore::createGroup($name, $filters, $ids, Auth::id());
-
+        $existingGroupId = (int)($_POST['group_id'] ?? 0);
         $query = http_build_query(ExposedConsoleStore::filtersToQuery($filters));
         $back = base_url('modules/exposed_report') . ($query !== '' ? '?' . $query : '');
+
+        if ($existingGroupId > 0) {
+            $res = ExposedConsoleStore::addCves($existingGroupId, $ids);
+            if (!$res['ok']) {
+                flash('error', $res['error']);
+                redirect($back);
+            }
+            log_activity('exposed_report.group_extended', [
+                'group' => $existingGroupId,
+                'added' => (int)$res['added'],
+            ]);
+            flash('success', $res['added'] . ' CVE añadidos al grupo #' . $existingGroupId . '.');
+            redirect(base_url('modules/exposed_report/group/' . $existingGroupId));
+        }
+
+        $name = (string)($_POST['group_name'] ?? '');
+        $res = ExposedConsoleStore::createGroup($name, $filters, $ids, Auth::id());
 
         if (!$res['ok']) {
             flash('error', $res['error']);
@@ -352,6 +369,32 @@ class Module_ExposedReport extends BaseModule
 
         flash('success', 'Grupo creado con ' . count($ids) . ' CVE. Ya puedes generar su plan de actuación.');
         redirect(base_url('modules/exposed_report/group/' . (int)$res['group_id']));
+    }
+
+    /** GET related/{id} — CVEs relacionados (determinista, sin IA). */
+    public function showRelated(array $params = []): void
+    {
+        Auth::require();
+        $cveId = strtoupper(trim((string)($params['id'] ?? '')));
+        $related = ExposedConsoleStore::relatedCves($cveId);
+
+        if ($related['row'] === null) {
+            http_response_code(404);
+            $this->renderPage(['error' => 'Ese CVE no está en la base del tenant.']);
+            return;
+        }
+
+        echo $this->page('related', [
+            'module'     => $this,
+            'cveId'      => $cveId,
+            'row'        => $related['row'],
+            'description'=> $related['description'],
+            'batch'      => $related['batch'],
+            'software'   => $related['software'],
+            'groups'     => ExposedConsoleStore::listGroups(100),
+            'isAdmin'    => Auth::isAdmin(),
+            'base'       => base_url('modules/exposed_report'),
+        ]);
     }
 
     /** GET group/{id} */
@@ -480,6 +523,105 @@ class Module_ExposedReport extends BaseModule
                 'error' => 'No se pudieron encolar los análisis: ' . $e->getMessage(),
             ]);
         }
+    }
+
+    /**
+     * POST group/{id}/remediation — crea las tareas del grupo en el módulo
+     * Remediación (organización manual + una tarea por CVE).
+     */
+    public function createRemediation(array $params = []): void
+    {
+        Auth::require();
+        Csrf::validateOrFail();
+
+        $groupId = (int)($params['id'] ?? 0);
+        $group = ExposedConsoleStore::getGroup($groupId);
+        if ($group === null) {
+            flash('error', 'El grupo no existe.');
+            redirect(base_url('modules/exposed_report'));
+        }
+
+        $rows = ExposedConsoleStore::groupRows($groupId);
+        $ids = array_values(array_filter(array_map(
+            static fn(array $row): string => (string)($row['cve_id'] ?? ''),
+            $rows
+        ), static fn(string $id): bool => $id !== ''));
+        if ($ids === []) {
+            flash('error', 'El grupo no tiene CVE.');
+            redirect(base_url('modules/exposed_report/group/' . $groupId));
+        }
+
+        require_once INCLUDES_PATH . '/remediation_plan.php';
+
+        $orgId = (int)($_POST['org_id'] ?? 0);
+        $orgName = trim((string)($_POST['org_name'] ?? ''));
+        $orgCreated = false;
+
+        try {
+            if ($orgName !== '') {
+                $orgId = Database::insert(
+                    "INSERT INTO remediation_orgs (name, kind, notes, created_by)
+                     VALUES (?, 'manual', ?, ?)",
+                    [
+                        self::clipText($orgName, 120),
+                        'Creada desde Equipos expuestos · grupo «' . (string)($group['name'] ?? '') . '»',
+                        Auth::id(),
+                    ]
+                );
+                $orgCreated = true;
+            } elseif ($orgId <= 0) {
+                $first = Database::fetchOne("SELECT id FROM remediation_orgs ORDER BY id LIMIT 1");
+                if ($first !== null) {
+                    $orgId = (int)$first['id'];
+                } else {
+                    $orgId = Database::insert(
+                        "INSERT INTO remediation_orgs (name, kind, notes, created_by)
+                         VALUES (?, 'manual', ?, ?)",
+                        [
+                            self::clipText('Remediación · ' . (string)($group['name'] ?? 'Equipos expuestos'), 120),
+                            'Creada desde Equipos expuestos',
+                            Auth::id(),
+                        ]
+                    );
+                    $orgCreated = true;
+                }
+            }
+
+            if ($orgId <= 0) {
+                throw new RuntimeException('No se pudo resolver la organización de Remediación.');
+            }
+
+            $created = 0;
+            $skipped = 0;
+            foreach ($ids as $cveId) {
+                $before = RemediationPlan::findTask($orgId, $cveId);
+                RemediationPlan::ensureTask($orgId, $cveId, (int)Auth::id());
+                if ($before === null) {
+                    $created++;
+                } else {
+                    $skipped++;
+                }
+            }
+
+            log_activity('exposed_report.remediation_tasks', [
+                'group'   => $groupId,
+                'org'     => $orgId,
+                'created' => $created,
+                'skipped' => $skipped,
+            ]);
+
+            flash('success', $created . ' tareas creadas en Remediación ('
+                . $skipped . ' ya existían) · organización #' . $orgId
+                . ($orgCreated ? ' (nueva)' : '') . '.');
+        } catch (Throwable $e) {
+            app_log('error', 'exposed_report', 'No se pudieron crear las tareas de Remediación', [
+                'group' => $groupId,
+                'error' => $e->getMessage(),
+            ]);
+            flash('error', 'No se pudieron crear las tareas: ' . $e->getMessage());
+        }
+
+        redirect(base_url('modules/exposed_report/group/' . $groupId));
     }
 
     /* =====================================================================
@@ -747,6 +889,102 @@ class Module_ExposedReport extends BaseModule
             'total'     => $total,
             'detailed'  => $used,
             'truncated' => $total - $used,
+        ];
+    }
+
+    /**
+     * Anexo B del dossier: una ficha determinista por CVE del grupo, con el
+     * informe técnico de la aplicación cuando existe. No usa IA aquí.
+     *
+     * @param array<int,array<string,mixed>> $rows
+     * @return array{markdown:string,html:string,with_report:int,without:int}
+     */
+    private function buildCveDossiers(array $rows): array
+    {
+        $ids = array_values(array_map(
+            static fn(array $row): string => (string)($row['cve_id'] ?? ''),
+            $rows
+        ));
+
+        $analyses = [];
+        if ($ids !== [] && class_exists('ExposedReportEnrichment')) {
+            try {
+                $analyses = ExposedReportEnrichment::storedAnalyses($ids);
+            } catch (Throwable $e) {
+                $analyses = [];
+            }
+        }
+
+        $md = [];
+        $md[] = '## Anexo B. Fichas técnicas por CVE';
+        $md[] = '';
+        $md[] = 'Datos del export de Defender. Si el CVE tiene informe técnico generado en la '
+            . 'aplicación, se reproduce a continuación.';
+        $md[] = '';
+
+        $withReport = 0;
+        foreach ($rows as $row) {
+            $cveId = (string)($row['cve_id'] ?? '');
+            if ($cveId === '') {
+                continue;
+            }
+            $md[] = '### ' . $cveId;
+            $md[] = '';
+            $md[] = '| Severidad | CVSS | EPSS | Edad | Equipos | Estado TVM | Software |';
+            $md[] = '| --- | --- | --- | --- | --- | --- | --- |';
+            $md[] = '| ' . ($row['severity'] !== null ? (string)$row['severity'] : '—')
+                . ' | ' . ($row['cvss'] !== null ? number_format((float)$row['cvss'], 1) : '—')
+                . ' | ' . ($row['epss'] !== null ? number_format((float)$row['epss'], 4) : '—')
+                . ' | ' . ($row['age_days'] !== null ? (int)$row['age_days'] . ' d' : '—')
+                . ' | ' . (int)($row['exposed_machines'] ?? 0)
+                . ' | ' . ((string)($row['tvm_status'] ?? '') !== '' ? (string)$row['tvm_status'] : '—')
+                . ' | ' . ((string)($row['software_labels'] ?? '') !== '' ? (string)$row['software_labels'] : '—')
+                . ' |';
+
+            $description = trim((string)($row['description'] ?? ''));
+            if ($description !== '') {
+                $md[] = '';
+                $md[] = '**Descripción de Defender**';
+                $md[] = '';
+                $md[] = $this->clipText($description, 1200);
+            }
+
+            if (isset($analyses[$cveId])) {
+                $withReport++;
+                $md[] = '';
+                $md[] = '**Informe técnico de la aplicación**';
+                foreach ((array)$analyses[$cveId]['sections'] as $section) {
+                    $title = trim((string)($section['title'] ?? ''));
+                    if ($title !== '') {
+                        $md[] = '';
+                        $md[] = '**' . $title . '**';
+                    }
+                    foreach ((array)($section['bullets'] ?? []) as $bullet) {
+                        $md[] = '- ' . (string)$bullet;
+                    }
+                    foreach ((array)($section['paragraphs'] ?? []) as $paragraph) {
+                        $md[] = '';
+                        $md[] = (string)$paragraph;
+                    }
+                }
+            } else {
+                $md[] = '';
+                $md[] = '> Sin informe técnico generado en la aplicación: los datos de arriba '
+                    . 'son los del export de Defender.';
+            }
+            $md[] = '';
+        }
+
+        $markdown = implode("\n", $md);
+        $html = function_exists('render_ai_markdown')
+            ? render_ai_markdown($markdown)
+            : nl2br(e($markdown));
+
+        return [
+            'markdown'    => $markdown,
+            'html'        => $html,
+            'with_report' => $withReport,
+            'without'     => max(0, count($rows) - $withReport),
         ];
     }
 
@@ -1278,12 +1516,22 @@ class Module_ExposedReport extends BaseModule
             ? $llm->isConfigured($defaultProfileId > 0 ? $defaultProfileId : null)
             : false;
 
+        $dossier = $group !== null ? $this->buildCveDossiers($rows) : ['markdown' => '', 'html' => '', 'with_report' => 0, 'without' => 0];
+        $orgs = [];
+        try {
+            $orgs = Database::fetchAll("SELECT id, name FROM remediation_orgs ORDER BY name");
+        } catch (Throwable $e) {
+            $orgs = [];
+        }
+
         echo $this->page('group', array_merge([
             'module'        => $this,
             'group'         => $group,
             'groupId'       => $groupId,
             'rows'          => $rows,
             'plan'          => $plan,
+            'dossier'       => $dossier,
+            'orgs'          => $orgs,
             'profiles'      => $profiles,
             'profileId'     => $defaultProfileId,
             'llmConfigured' => $configured,
@@ -1294,7 +1542,7 @@ class Module_ExposedReport extends BaseModule
             'elapsedMs'     => 0,
             'planContext'   => null,
             'maxAnalysis'   => ExposedReportEnrichment::MAX_ANALYSIS_QUEUE,
-            'downloadName'  => 'plan-actuacion-' . preg_replace('/[^a-z0-9]+/i', '-', (string)($group['name'] ?? 'grupo'))
+            'downloadName'  => 'dossier-parcheo-' . preg_replace('/[^a-z0-9]+/i', '-', (string)($group['name'] ?? 'grupo'))
                 . '-' . gmdate('Ymd-Hi') . '.md',
         ], $extra));
     }

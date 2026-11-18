@@ -803,6 +803,163 @@ if (!class_exists('ExposedConsoleStore')) {
             return $facets;
         }
 
+        /**
+         * Índice de menciones entre CVEs a partir de las descripciones de
+         * Defender (determinista, sin IA). Se calcula una vez por petición.
+         *
+         * @return array{out:array<string,array<int,string>>,in:array<string,array<int,string>>}
+         */
+        public static function mentionIndex(): array
+        {
+            static $index = null;
+            if (is_array($index)) {
+                return $index;
+            }
+
+            $index = ['out' => [], 'in' => []];
+            $rows = CveDatabase::fetchAll(
+                "SELECT cve_id, description FROM exposed_cves
+                 WHERE description IS NOT NULL AND description LIKE '%CVE-%'"
+            );
+            foreach ($rows as $row) {
+                $self = (string)$row['cve_id'];
+                if (preg_match_all('/\bCVE-\d{4}-\d{4,7}\b/i', (string)$row['description'], $matches) === 0) {
+                    continue;
+                }
+                $found = [];
+                foreach ($matches[0] as $match) {
+                    $id = strtoupper($match);
+                    if ($id !== $self) {
+                        $found[$id] = true;
+                    }
+                }
+                if ($found === []) {
+                    continue;
+                }
+                $index['out'][$self] = array_keys($found);
+                foreach (array_keys($found) as $id) {
+                    $index['in'][$id][] = $self;
+                }
+            }
+
+            return $index;
+        }
+
+        /**
+         * Nº de CVEs del tenant citados en la descripción de este CVE (o que lo
+         * citan a él). Es el contador de la columna «Relacionados».
+         */
+        public static function relatedMentionsCount(string $cveId): int
+        {
+            $index = self::mentionIndex();
+            $ids = [];
+            foreach ((array)($index['out'][$cveId] ?? []) as $id) {
+                $ids[$id] = true;
+            }
+            foreach ((array)($index['in'][$cveId] ?? []) as $id) {
+                if ($id !== $cveId) {
+                    $ids[$id] = true;
+                }
+            }
+            return count($ids);
+        }
+
+        /**
+         * CVEs relacionados dentro de la lista maestra, en tres bloques:
+         *   · description: se citan en la descripción (en cualquier dirección)
+         *   · batch:       mismo software principal y misma fecha de detección
+         *   · software:    mismo software principal
+         *
+         * @return array{description:array<int,array<string,mixed>>,batch:array<int,array<string,mixed>>,software:array<int,array<string,mixed>>,row:?array<string,mixed>}
+         */
+        public static function relatedCves(string $cveId, int $limit = 50): array
+        {
+            $cveId = strtoupper(trim($cveId));
+            $out = ['description' => [], 'batch' => [], 'software' => [], 'row' => null];
+            if (preg_match('/^CVE-\d{4}-\d{4,7}$/', $cveId) !== 1) {
+                return $out;
+            }
+
+            $row = CveDatabase::fetchOne("SELECT * FROM exposed_cves WHERE cve_id = ?", [$cveId]);
+            if ($row === null) {
+                return $out;
+            }
+            $out['row'] = $row;
+
+            // 1) Menciones en descripciones (directas e inversas).
+            $index = self::mentionIndex();
+            $candidates = [];
+            foreach ((array)($index['out'][$cveId] ?? []) as $id) {
+                $candidates[$id] = 'cita';
+            }
+            foreach ((array)($index['in'][$cveId] ?? []) as $id) {
+                if ($id !== $cveId && !isset($candidates[$id])) {
+                    $candidates[$id] = 'citado por';
+                }
+            }
+            if ($candidates !== []) {
+                $ids = array_keys($candidates);
+                foreach (array_chunk($ids, 200) as $chunk) {
+                    $rows = CveDatabase::fetchAll(
+                        "SELECT * FROM exposed_cves WHERE cve_id IN ("
+                        . implode(',', array_fill(0, count($chunk), '?')) . ")",
+                        $chunk
+                    );
+                    foreach ($rows as $related) {
+                        $related['relation'] = $candidates[(string)$related['cve_id']] ?? 'relacionado';
+                        $out['description'][(string)$related['cve_id']] = $related;
+                    }
+                }
+                $out['description'] = array_slice($out['description'], 0, $limit, true);
+            }
+
+            // 2 y 3) Mismo software principal (primera etiqueta).
+            $main = self::mainSoftware((string)($row['software_labels'] ?? ''));
+            if ($main !== '') {
+                $rows = CveDatabase::fetchAll(
+                    "SELECT * FROM exposed_cves
+                     WHERE cve_id <> ?
+                       AND (software_labels = ? OR software_labels LIKE ?)
+                     ORDER BY exposed_machines DESC, age_days DESC, cve_id ASC
+                     LIMIT " . max(1, min(300, $limit * 4)),
+                    [$cveId, $main, $main . ',%']
+                );
+
+                $batchDate = trim((string)($row['first_detected_at'] ?? ''));
+                $batchMachines = (int)($row['exposed_machines'] ?? 0);
+                foreach ($rows as $related) {
+                    $id = (string)$related['cve_id'];
+                    if (isset($out['description'][$id])) {
+                        continue;
+                    }
+                    $sameDate = $batchDate !== '' && (string)($related['first_detected_at'] ?? '') === $batchDate;
+                    $sameMachines = $batchMachines > 0
+                        && (int)($related['exposed_machines'] ?? 0) === $batchMachines;
+                    if (($sameDate || $sameMachines) && count($out['batch']) < $limit) {
+                        $related['relation'] = 'mismo lote';
+                        $out['batch'][$id] = $related;
+                        continue;
+                    }
+                    if (count($out['software']) < $limit) {
+                        $related['relation'] = 'mismo software';
+                        $out['software'][$id] = $related;
+                    }
+                }
+            }
+
+            $out['description'] = array_values($out['description']);
+            $out['batch'] = array_values($out['batch']);
+            $out['software'] = array_values($out['software']);
+            return $out;
+        }
+
+        /** Primera etiqueta de software («vendor:product») de una fila. */
+        public static function mainSoftware(string $labels): string
+        {
+            $first = trim(explode(',', $labels)[0] ?? '');
+            return $first;
+        }
+
         /** Totales de la lista maestra completa (cabecera de la consola). */
         public static function masterTotals(): array
         {

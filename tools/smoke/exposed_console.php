@@ -72,8 +72,8 @@ $header = [
 ];
 
 $data = [
-    ['CVE-2026-90001', 'Critical', '9.8', '0.95000', 200, '01 May, 2026', '02 May, 2026', '18 Nov, 2026', 'True', 'True', 'True', 'microsoft:chrome;google:chrome', 600, 'Summary: zero-day en Chrome. No security update available.', 'RemediationRequired'],
-    ['CVE-2026-90002', 'High', '8.8', '0.50000', 100, '10 Jul, 2026', '11 Jul, 2026', '18 Nov, 2026', 'False', 'False', 'False', 'linux:kernel', 50, 'Summary: fallo en el kernel. No security update available.', 'RemediationRequired'],
+    ['CVE-2026-90001', 'Critical', '9.8', '0.95000', 200, '01 May, 2026', '02 May, 2026', '18 Nov, 2026', 'True', 'True', 'True', 'microsoft:chrome;google:chrome', 600, 'Summary: zero-day en Chrome. No security update available. Ver CVE-2026-90006.', 'RemediationRequired'],
+    ['CVE-2026-90002', 'High', '8.8', '0.50000', 100, '10 Jul, 2026', '11 Jul, 2026', '18 Nov, 2026', 'False', 'False', 'False', 'linux:kernel', 50, 'Summary: fallo en el kernel. No security update available. Relacionado con CVE-2026-90001.', 'RemediationRequired'],
     ['CVE-2026-90003', 'Medium', '6.5', '0.20000', 75, '01 Aug, 2026', '02 Aug, 2026', '18 Nov, 2026', 'False', 'False', 'False', 'microsoft:chrome', 5, 'Summary: fallo de validación.', 'RemediationRequired'],
     ['CVE-2026-90004', 'Low', '3.1', '0.01000', 45, '01 Sep, 2026', '02 Sep, 2026', '18 Nov, 2026', 'False', 'False', 'False', 'nginx:nginx', 0, 'Summary: error menor.', 'RemediationRequired'],
     ['CVE-2026-90005', 'Critical', '9.1', '0.70000', 10, '01 Oct, 2026', '02 Oct, 2026', '18 Nov, 2026', 'False', 'False', 'False', 'microsoft:edge_chromium-based', 10, 'Summary: corrupción de memoria.', 'RemediationRequired'],
@@ -285,6 +285,31 @@ try {
         && (int)$master['machines_max'] === 600
         && $master['last_seen_at'] !== '');
 
+    /* -----------------------------------------------------------------
+     * 6 bis. CVEs relacionados (determinista, sin IA)
+     * -------------------------------------------------------------- */
+
+    check('relacionados: menciones salientes y entrantes', ExposedConsoleStore::relatedMentionsCount('CVE-2026-90001') === 2);
+    $related = ExposedConsoleStore::relatedCves('CVE-2026-90001');
+    $descIds = array_map(static fn(array $r): string => (string)$r['cve_id'], (array)$related['description']);
+    sort($descIds);
+    check('relacionados: descripción en ambos sentidos', $descIds === ['CVE-2026-90002', 'CVE-2026-90006'], implode(',', $descIds));
+    check('relacionados: relación anotada', in_array(
+        'citado por',
+        array_map(static fn(array $r): string => (string)($r['relation'] ?? ''), (array)$related['description']),
+        true
+    ));
+    $softwareIds = array_map(
+        static fn(array $r): string => (string)$r['cve_id'],
+        (array)$related['software']
+    );
+    sort($softwareIds);
+    check('relacionados: mismo software', $softwareIds === ['CVE-2026-90003', 'CVE-2026-90011'], implode(',', $softwareIds));
+    check('relacionados: sin lote (fechas y equipos distintos)', (array)$related['batch'] === []);
+    check('relacionados: software principal', ExposedConsoleStore::mainSoftware('microsoft:chrome, google:chrome') === 'microsoft:chrome');
+    $missingRelated = ExposedConsoleStore::relatedCves('CVE-2099-0001');
+    check('relacionados: CVE inexistente', $missingRelated['row'] === null);
+
     $module = ModuleManager::get('exposed_report');
 
     $renderConsole = static function (array $consoleData) use ($module): string {
@@ -467,6 +492,17 @@ try {
         [$groupId]
     )['c'] === 1);
 
+    // Dossier: plan + anexo de fichas por CVE (determinista).
+    $dossierMethod = new ReflectionMethod('Module_ExposedReport', 'buildCveDossiers');
+    $dossierMethod->setAccessible(true);
+    $dossier = $dossierMethod->invoke($module, $groupRows);
+    check('dossier: anexo de fichas', str_contains((string)$dossier['markdown'], 'Anexo B. Fichas técnicas por CVE'));
+    check('dossier: incluye cada CVE', str_contains((string)$dossier['markdown'], '### CVE-2026-90001')
+        && str_contains((string)$dossier['markdown'], '### CVE-2026-90006'));
+    check('dossier: explicita las fichas sin informe', (int)$dossier['without'] >= 1
+        && str_contains((string)$dossier['markdown'], 'Sin informe técnico generado'));
+    check('dossier: HTML generado', trim((string)$dossier['html']) !== '');
+
     /* -----------------------------------------------------------------
      * 10. Esquema y prompts
      * -------------------------------------------------------------- */
@@ -498,7 +534,7 @@ try {
 
     $module = ModuleManager::get('exposed_report');
     check('módulo: versión 2', $module instanceof Module_ExposedReport && $module->version() === '2.0.0');
-    check('módulo: 12 rutas', $module !== null && count($module->routes()) === 12);
+    check('módulo: 14 rutas', $module !== null && count($module->routes()) === 14);
 
     /* -----------------------------------------------------------------
      * 11. Orden numérico del CVE (distinta longitud de secuencia)

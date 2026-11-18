@@ -484,6 +484,7 @@ $flashData = is_array($flashData) ? $flashData : [];
                                         <th class="px-3 py-2 text-right"><?= $sortHeader('Equipos', 'machines_asc', 'machines_desc', null, 'right') ?></th>
                                         <th class="px-3 py-2 text-left">Threats / Tags</th>
                                         <th class="px-3 py-2 text-left">Software</th>
+                                        <th class="px-3 py-2 text-left">Relacionados</th>
                                     </tr>
                                 </thead>
                                 <tbody class="divide-y divide-line">
@@ -559,6 +560,15 @@ $flashData = is_array($flashData) ? $flashData : [];
                                                     <span class="text-[10px] text-ink-soft">+<?= (int)$row['software_total'] - 6 ?></span>
                                                 <?php endif; ?>
                                             </td>
+                                            <td class="px-3 py-2 whitespace-nowrap">
+                                                <?php $relatedCount = ExposedConsoleStore::relatedMentionsCount($cveId); ?>
+                                                <a href="<?= e($base . '/related/' . urlencode($cveId)) ?>"
+                                                   class="inline-flex items-center gap-1 text-[11px] text-brand-600 dark:text-brand-300 hover:underline"
+                                                   title="Ver CVEs relacionados (descripción, mismo lote y mismo software)">
+                                                    <?= icon('link', 13) ?>
+                                                    <?= $relatedCount > 0 ? $relatedCount : 'Ver' ?>
+                                                </a>
+                                            </td>
                                         </tr>
                                     <?php endforeach; ?>
                                 </tbody>
@@ -570,8 +580,23 @@ $flashData = is_array($flashData) ? $flashData : [];
                         <div class="px-4 py-3 border-t border-line flex items-end justify-between gap-3 flex-wrap bg-muted/40">
                             <div class="flex items-end gap-3 flex-wrap">
                                 <div>
+                                    <label for="exposed-group-target" class="block text-[10px] uppercase tracking-wide text-ink-soft mb-1">
+                                        Grupo destino
+                                    </label>
+                                    <select id="exposed-group-target" name="group_id"
+                                            class="px-3 py-2 rounded-lg border border-line-strong bg-input text-ink text-xs w-64 max-w-full">
+                                        <option value="0">+ Crear un grupo nuevo</option>
+                                        <?php foreach ($groups as $groupOption): ?>
+                                            <option value="<?= (int)$groupOption['id'] ?>">
+                                                <?= e((string)($groupOption['name'] ?? ('Grupo #' . (int)$groupOption['id']))) ?>
+                                                (<?= (int)($groupOption['cve_count'] ?? 0) ?> CVE)
+                                            </option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                </div>
+                                <div>
                                     <label for="exposed-group-name" class="block text-[10px] uppercase tracking-wide text-ink-soft mb-1">
-                                        Nuevo grupo de análisis
+                                        Nombre del grupo nuevo
                                     </label>
                                     <input id="exposed-group-name" type="text" name="group_name" maxlength="120"
                                            placeholder="Ej.: Críticos +90 días con exploit"
