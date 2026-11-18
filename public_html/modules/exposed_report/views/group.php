@@ -61,8 +61,8 @@ $dossierHtml = (string)($dossier['html'] ?? '');
 $dossierWith = (int)($dossier['with_report'] ?? 0);
 $dossierWithout = (int)($dossier['without'] ?? 0);
 
-$documentMd = trim($planText . ($dossierMd !== '' ? "\n\n---\n\n" . $dossierMd : ''));
-$documentHtml = $planHtml . ($dossierHtml !== '' ? "\n" . $dossierHtml : '');
+$documentMd = $dossierMd;
+$documentHtml = $dossierHtml;
 $hasDocument = $documentMd !== '';
 $orgs = is_array($orgs ?? null) ? $orgs : [];
 
@@ -260,6 +260,7 @@ $flashData = is_array($flashData) ? $flashData : [];
                             dossier con los datos importados (Anexo A y B)
                         <?php endif; ?>
                         · Anexo C de relaciones
+                        · <?= (int)($dossier['tiers']['p1'] ?? 0) ?> P1 · <?= (int)($dossier['tiers']['p2'] ?? 0) ?> P2
                         · <?= $dossierWith ?> con informe técnico
                         <?php if ($dossierWithout > 0): ?> · <?= $dossierWithout ?> con ficha de Defender<?php endif; ?>
                         <?php if ($planFresh): ?>

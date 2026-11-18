@@ -74,7 +74,13 @@ $queueNotice = $queueNotice ?? null;
     <?php endif; ?>
 </div>
 
-<?php $activeTab = ((string)($activeTab ?? 'console')) === 'kql' ? 'kql' : 'console'; ?>
+<?php
+$requestedTab = (string)($_GET['tab'] ?? '');
+$activeTab = in_array($requestedTab, ['console', 'groups', 'kql'], true)
+    ? $requestedTab
+    : (((string)($activeTab ?? 'console')) === 'kql' ? 'kql' : 'console');
+$groupsCount = is_array($console['groups'] ?? null) ? count($console['groups']) : 0;
+?>
 
 <nav class="no-print mb-5 flex items-center gap-1 border-b border-line" aria-label="Vistas de Equipos expuestos">
     <button type="button" id="exposed-tab-console" onclick="exposedTab('console')"
@@ -82,6 +88,15 @@ $queueNotice = $queueNotice ?? null;
                 ? 'border-brand-500 text-brand-600 dark:text-brand-300'
                 : 'border-transparent text-ink-muted hover:text-ink' ?>">
         <?= icon('filter_alt', 15) ?> Consola del tenant
+    </button>
+    <button type="button" id="exposed-tab-groups" onclick="exposedTab('groups')"
+            class="px-3 py-2 -mb-px text-sm font-medium border-b-2 transition-colors <?= $activeTab === 'groups'
+                ? 'border-brand-500 text-brand-600 dark:text-brand-300'
+                : 'border-transparent text-ink-muted hover:text-ink' ?>">
+        <?= icon('groups', 15) ?> Grupos de análisis
+        <?php if ($groupsCount > 0): ?>
+            <span class="ml-1 inline-flex items-center justify-center px-1.5 py-0.5 rounded-full bg-muted text-[10px] font-semibold text-ink-muted"><?= $groupsCount ?></span>
+        <?php endif; ?>
     </button>
     <button type="button" id="exposed-tab-kql" onclick="exposedTab('kql')"
             class="px-3 py-2 -mb-px text-sm font-medium border-b-2 transition-colors <?= $activeTab === 'kql'
@@ -99,6 +114,15 @@ $queueNotice = $queueNotice ?? null;
     (static function () use ($module, $consolePane): void {
         $console = $consolePane;
         require __DIR__ . '/_console.php';
+    })();
+    ?>
+</div>
+
+<div id="exposed-pane-groups" <?= $activeTab === 'groups' ? '' : 'hidden' ?>>
+    <?php
+    (static function () use ($module, $consolePane): void {
+        $console = $consolePane;
+        require __DIR__ . '/_groups.php';
     })();
     ?>
 </div>
@@ -443,7 +467,7 @@ $queueNotice = $queueNotice ?? null;
 <script>
 (function () {
     window.exposedTab = function (tab) {
-        var panes = { console: 'exposed-pane-console', kql: 'exposed-pane-kql' };
+        var panes = { console: 'exposed-pane-console', groups: 'exposed-pane-groups', kql: 'exposed-pane-kql' };
         Object.keys(panes).forEach(function (key) {
             var pane = document.getElementById(panes[key]);
             var button = document.getElementById('exposed-tab-' + key);

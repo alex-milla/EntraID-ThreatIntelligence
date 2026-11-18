@@ -390,6 +390,31 @@ try {
         str_contains($consoleHtml3, 'sort=cve_desc')
         && str_contains($consoleHtml3, '↕'));
 
+    // Pestañas: los grupos de análisis ya no viven al final de la consola.
+    $indexData = [
+        'module' => $module, 'console' => $consoleView, 'profiles' => [], 'defaultProfileId' => null,
+        'profileId' => null, 'llmConfigured' => true, 'isAdmin' => false, 'activeTab' => 'console',
+        'kql' => 'KQL', 'columns' => [], 'maxUploadLabel' => '30 MB', 'maxRows' => 500,
+        'error' => null, 'errors' => [], 'warnings' => [], 'warningsTotal' => 0, 'stats' => null,
+        'reportMd' => '', 'reportHtml' => '', 'mode' => 'compact', 'filename' => '', 'elapsedMs' => 0,
+        'downloadName' => '', 'enrich' => 'catalog', 'enrichNotice' => null, 'enrichSources' => [],
+        'catalogAvailable' => true, 'inventoryAvailable' => false, 'specJson' => '',
+        'specCustom' => false, 'specNotice' => null, 'cveIds' => [], 'analysesMissing' => [],
+        'queueNotice' => null,
+    ];
+    unset($_GET['tab']);
+    $indexHtml = $module->render('index', $indexData);
+    check('pestañas: grupos arriba', str_contains($indexHtml, 'exposed-tab-groups')
+        && str_contains($indexHtml, 'id="exposed-pane-groups"'));
+    check('pestañas: la consola arranca activa', str_contains($indexHtml, 'id="exposed-pane-console"')
+        && preg_match('/id="exposed-pane-groups"\s+hidden/', $indexHtml) === 1);
+
+    $_GET['tab'] = 'groups';
+    $indexGroups = $module->render('index', $indexData);
+    check('pestañas: ?tab=groups abre los grupos',
+        preg_match('/id="exposed-pane-groups"(?!\s+hidden)/', $indexGroups) === 1);
+    unset($_GET['tab']);
+
     /* -----------------------------------------------------------------
      * 7. Ingesta incremental: nuevo / actualizado / sin cambios
      * -------------------------------------------------------------- */
@@ -492,21 +517,30 @@ try {
         [$groupId]
     )['c'] === 1);
 
-    // Dossier: plan + anexo de fichas por CVE (determinista).
-    $dossierMethod = new ReflectionMethod('Module_ExposedReport', 'buildCveDossiers');
-    $dossierMethod->setAccessible(true);
-    $dossier = $dossierMethod->invoke($module, $groupRows);
-    check('dossier: anexo de fichas', str_contains((string)$dossier['markdown'], 'Anexo B. Fichas técnicas por CVE'));
-    check('dossier: incluye cada CVE', str_contains((string)$dossier['markdown'], '### CVE-2026-90001')
-        && str_contains((string)$dossier['markdown'], '### CVE-2026-90006'));
-    check('dossier: explicita las fichas sin informe', (int)$dossier['without'] >= 1
-        && str_contains((string)$dossier['markdown'], 'Sin informe técnico de la IA'));
-    check('dossier: HTML generado', trim((string)$dossier['html']) !== '');
-    check('dossier: ficha vertical con software', str_contains((string)$dossier['markdown'], '**Software afectado**')
-        && !str_contains((string)$dossier['markdown'], '| Severidad | CVSS | EPSS |'));
-    check('dossier: relaciones por CVE', str_contains((string)$dossier['markdown'], '**CVEs relacionados en tu tenant**'));
-    check('dossier: anexo C de relaciones del grupo', str_contains((string)$dossier['markdown'], 'Anexo C. Relaciones dentro del grupo')
-        && str_contains((string)$dossier['markdown'], '### Por software principal'));
+    // Informe de remediación completo (v0.4.26.2).
+    $dossier = ExposedReportDossier::build(
+        $group,
+        $groupRows,
+        ExposedPriority::defaults(),
+        "## Lectura del riesgo\n\nTexto de prueba de la IA."
+    );
+    check('informe: control del documento', str_contains((string)$dossier['markdown'], '## 1. Control del documento'));
+    check('informe: resumen ejecutivo', str_contains((string)$dossier['markdown'], '## 2. Resumen ejecutivo')
+        && str_contains((string)$dossier['markdown'], 'Se pide aprobar'));
+    check('informe: tablero y prioridad', str_contains((string)$dossier['markdown'], '## 3. Tablero')
+        && str_contains((string)$dossier['markdown'], '## 4. Modelo de prioridad'));
+    check('informe: fases y escenarios NIST', str_contains((string)$dossier['markdown'], '## 5. Plan de actuación por fases')
+        && str_contains((string)$dossier['markdown'], 'NIST SP 800-40'));
+    check('informe: análisis de la IA', str_contains((string)$dossier['markdown'], '## 6. Análisis de la IA')
+        && str_contains((string)$dossier['markdown'], 'Texto de prueba de la IA'));
+    check('informe: racimos por software', str_contains((string)$dossier['markdown'], '## 7. Agrupación por software'));
+    check('informe: tabla de trabajo', str_contains((string)$dossier['markdown'], '## 8. Tabla de trabajo'));
+    check('informe: decisiones', str_contains((string)$dossier['markdown'], '## 11. Decisiones que se piden'));
+    check('informe: fichas solo P1/P2', str_contains((string)$dossier['markdown'], '## Anexo B. Fichas de los CVE P1 y P2'));
+    check('informe: definiciones', str_contains((string)$dossier['markdown'], '## Anexo D. Definiciones y fuentes'));
+    check('informe: tiers calculados', (int)($dossier['tiers']['p1'] ?? 0) >= 1
+        && (int)($dossier['tiers']['p1'] ?? 0) + (int)($dossier['tiers']['p2'] ?? 0) >= 2);
+    check('informe: HTML generado', trim((string)$dossier['html']) !== '');
 
     // Vista del grupo: la hoja no debe llevar «md-body» (rompía el modo oscuro)
     // y debe avisar de que aún no hay plan de IA.
@@ -523,14 +557,15 @@ try {
     ]);
     check('vista grupo: hoja sin md-body', !str_contains($groupHtml, 'doc-sheet md-body'));
     check('vista grupo: aviso de que no es la IA', str_contains($groupHtml, 'Esto todavía no es el informe de la IA'));
-    check('vista grupo: anexo C renderizado', str_contains($groupHtml, 'Anexo C. Relaciones dentro del grupo'));
+    check('vista grupo: informe renderizado', str_contains($groupHtml, 'Modelo de prioridad')
+        && str_contains($groupHtml, 'P1 · Immediate'));
 
     $groupHtmlWithPlan = $module->render('group', [
         'module'        => $module,
         'group'         => $group,
         'groupId'       => $groupId,
         'rows'          => $groupRows,
-        'plan'          => ['content_text' => "## 1. Resumen\n\nPlan.", 'content_html' => '<p>Plan.</p>',
+        'plan'          => ['content_text' => "## Lectura del riesgo\n\nPlan.", 'content_html' => '<p>Plan.</p>',
                             'generated_at' => '2026-11-18 10:00:00', 'cve_count' => 3, 'model' => 'modelo-x'],
         'dossier'       => $dossier,
         'profiles'      => [],
@@ -567,8 +602,11 @@ try {
     check('prompts: plan en scope Equipos expuestos',
         ($catalog['llm.exposed.action_plan']['scope_label'] ?? '') === 'Equipos expuestos');
     $planPrompt = (string)($catalog['llm.exposed.action_plan']['default'] ?? '');
-    check('prompts: el plan exige fases', str_contains($planPrompt, 'Fase 1') && str_contains($planPrompt, 'Fase 2'));
-    check('prompts: el plan prohíbe inventar', str_contains($planPrompt, 'no inventes'));
+    check('prompts: el informe pide lectura del riesgo y notas',
+        str_contains($planPrompt, 'Lectura del riesgo') && str_contains($planPrompt, 'Notas de ejecución'));
+    check('prompts: el informe prohíbe inventar', stripos($planPrompt, 'no inventes') !== false);
+    check('prompts: el informe no repite las tablas',
+        stripos($planPrompt, 'no debes repetir') !== false);
     check('tareas: plan asignable', array_key_exists('exposed_action_plan', llm_task_catalog()));
 
     $module = ModuleManager::get('exposed_report');

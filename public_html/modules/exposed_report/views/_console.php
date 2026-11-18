@@ -454,7 +454,10 @@ $flashData = is_array($flashData) ? $flashData : [];
                             <h2 class="text-sm font-semibold m-0">Vulnerabilidades del tenant</h2>
                             <p class="text-[11px] text-ink-soft m-0 mt-0.5">
                                 <?= $total ?> CVE · página <?= $page ?> de <?= $pages ?>
-                                · elige filas y crea un grupo para analizarlo con IA
+                                · P1 <?= (int)($console['tierCounts']['p1'] ?? 0) ?>
+                                · P2 <?= (int)($console['tierCounts']['p2'] ?? 0) ?>
+                                · P3 <?= (int)($console['tierCounts']['p3'] ?? 0) ?>
+                                · P4 <?= (int)($console['tierCounts']['p4'] ?? 0) ?>
                             </p>
                         </div>
                         <label class="inline-flex items-center gap-2 text-xs text-ink-muted">
@@ -476,6 +479,7 @@ $flashData = is_array($flashData) ? $flashData : [];
                                     <tr>
                                         <th class="px-3 py-2 text-left w-8"></th>
                                         <th class="px-3 py-2 text-left"><?= $sortHeader('CVE', 'cve_asc', 'cve_desc') ?></th>
+                                        <th class="px-3 py-2 text-left">Prioridad</th>
                                         <th class="px-3 py-2 text-left"><?= $sortHeader('Severity', 'sev_asc', 'sev_desc', 'sev_asc') ?></th>
                                         <th class="px-3 py-2 text-right"><?= $sortHeader('CVSS', 'cvss_asc', 'cvss_desc', null, 'right') ?></th>
                                         <th class="px-3 py-2 text-right"><?= $sortHeader('EPSS', 'epss_asc', 'epss_desc', null, 'right') ?></th>
@@ -522,6 +526,25 @@ $flashData = is_array($flashData) ? $flashData : [];
                                                    class="font-mono font-medium text-brand-600 dark:text-brand-300 hover:underline">
                                                     <?= e($cveId) ?>
                                                 </a>
+                                            </td>
+                                            <td class="px-3 py-2 whitespace-nowrap">
+                                                <?php
+                                                $tier = (string)($row['_tier'] ?? '');
+                                                $tierClasses = [
+                                                    'p1' => 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',
+                                                    'p2' => 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300',
+                                                    'p3' => 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300',
+                                                    'p4' => 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300',
+                                                ];
+                                                ?>
+                                                <?php if ($tier !== ''): ?>
+                                                    <span class="inline-flex px-1.5 py-0.5 rounded text-[10px] font-semibold <?= $tierClasses[$tier] ?? $tierClasses['p4'] ?>"
+                                                          title="<?= e((string)($row['_reason'] ?? '')) ?>">
+                                                        <?= e((string)($row['_priority'] ?? strtoupper($tier))) ?>
+                                                    </span>
+                                                <?php else: ?>
+                                                    <span class="text-ink-soft">—</span>
+                                                <?php endif; ?>
                                             </td>
                                             <td class="px-3 py-2">
                                                 <span class="inline-flex px-1.5 py-0.5 rounded text-[10px] font-semibold <?= $sevClasses[$severity] ?? $sevClasses['info'] ?>">
@@ -662,71 +685,6 @@ $flashData = is_array($flashData) ? $flashData : [];
     </div>
 
 <?php endif; ?>
-
-    <!-- ============================================================
-         Grupos de análisis
-         ============================================================ -->
-    <div class="card overflow-hidden">
-        <div class="px-5 py-4 border-b border-line">
-            <h2 class="text-sm font-semibold m-0">Grupos de análisis</h2>
-            <p class="text-[11px] text-ink-soft m-0 mt-1">
-                Cada grupo guarda los CVE que seleccionaste y su contexto TVM. Desde su ficha se generan
-                los informes por CVE y el plan de actuación documentado.
-            </p>
-        </div>
-        <?php if ($groups === []): ?>
-            <p class="p-5 text-sm text-ink-muted m-0">
-                Todavía no hay grupos. Filtra, selecciona los CVE que te interesen y pulsa
-                <strong>Crear grupo</strong>.
-            </p>
-        <?php else: ?>
-            <div class="overflow-x-auto">
-                <table class="w-full text-xs">
-                    <thead class="bg-muted text-ink-muted">
-                        <tr>
-                            <th class="px-3 py-2 text-left">Grupo</th>
-                            <th class="px-3 py-2 text-right">CVE</th>
-                            <th class="px-3 py-2 text-left">Plan de actuación</th>
-                            <th class="px-3 py-2 text-left">Creado</th>
-                            <th class="px-3 py-2"></th>
-                        </tr>
-                    </thead>
-                    <tbody class="divide-y divide-line">
-                        <?php foreach ($groups as $group): ?>
-                            <?php $gid = (int)$group['id']; ?>
-                            <tr class="hover:bg-muted/50">
-                                <td class="px-3 py-2">
-                                    <a href="<?= e($base . '/group/' . $gid) ?>"
-                                       class="font-medium text-brand-600 dark:text-brand-300 hover:underline">
-                                        <?= e((string)($group['name'] ?? ('Grupo #' . $gid))) ?>
-                                    </a>
-                                </td>
-                                <td class="px-3 py-2 text-right font-mono"><?= (int)($group['cve_count'] ?? 0) ?></td>
-                                <td class="px-3 py-2">
-                                    <?php if (!empty($group['plan_generated_at'])): ?>
-                                        <span class="inline-flex items-center gap-1 text-green-700 dark:text-green-300">
-                                            <?= icon('check_circle', 13) ?>
-                                            <?= e($fmtDate((string)$group['plan_generated_at'])) ?>
-                                        </span>
-                                    <?php else: ?>
-                                        <span class="text-ink-soft">Sin generar</span>
-                                    <?php endif; ?>
-                                </td>
-                                <td class="px-3 py-2 text-ink-soft whitespace-nowrap">
-                                    <?= e($fmtDate((string)($group['created_at'] ?? ''), 'd/m/Y')) ?>
-                                </td>
-                                <td class="px-3 py-2 text-right">
-                                    <a href="<?= e($base . '/group/' . $gid) ?>" class="text-[11px] text-brand-600 dark:text-brand-300 hover:underline">
-                                        Abrir
-                                    </a>
-                                </td>
-                            </tr>
-                        <?php endforeach; ?>
-                    </tbody>
-                </table>
-            </div>
-        <?php endif; ?>
-    </div>
 </div>
 
 <script>

@@ -174,8 +174,17 @@ final class CveTvmImport
             'tags'               => self::describeTags($description),
             'exposed_machines'   => self::intOrZero($get('exposedmachines')),
             'description'        => $description,
-            'tvm_status'         => $tvmStatus,
+            'tvm_status'         => self::cleanLabel($tvmStatus),
         ];
+    }
+
+    /**
+     * Limpia comillas o espacios sueltos en etiquetas del CSV (algunos exports
+     * manuales llegan con `"RemediationRequired"` o con una comilla final).
+     */
+    public static function cleanLabel(string $value): string
+    {
+        return trim(trim($value), "\"'");
     }
 
     /**

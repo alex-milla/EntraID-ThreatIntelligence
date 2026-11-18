@@ -31,6 +31,8 @@ declare(strict_types=1);
 require_once INCLUDES_PATH . '/exposed_report_parser.php';
 require_once INCLUDES_PATH . '/exposed_report_enrichment.php';
 require_once INCLUDES_PATH . '/exposed_console_store.php';
+require_once INCLUDES_PATH . '/exposed_priority.php';
+require_once INCLUDES_PATH . '/exposed_report_dossier.php';
 
 class Module_ExposedReport extends BaseModule
 {
@@ -1636,6 +1638,7 @@ class Module_ExposedReport extends BaseModule
         $imports = ExposedConsoleStore::listSnapshots(50);
         $latestImport = $imports[0] ?? null;
         $totals = ExposedConsoleStore::masterTotals();
+        $priorityOptions = $this->priorityOptions();
 
         $filters = ExposedConsoleStore::filtersFromInput($_GET);
         $perPage = ExposedConsoleStore::PER_PAGE;
@@ -1645,6 +1648,7 @@ class Module_ExposedReport extends BaseModule
         $facets = ['severity' => [], 'age' => [], 'threats' => [], 'tags' => [], 'status' => []];
         $page = 1;
         $pages = 1;
+        $tierCounts = ['p1' => 0, 'p2' => 0, 'p3' => 0, 'p4' => 0];
 
         if ((int)$totals['total'] > 0) {
             $total = ExposedConsoleStore::count($filters);
@@ -1653,6 +1657,14 @@ class Module_ExposedReport extends BaseModule
             $rows = ExposedConsoleStore::rows($filters, $perPage, ($page - 1) * $perPage);
             $stats = ExposedConsoleStore::stats($filters);
             $facets = ExposedConsoleStore::facets($filters);
+
+            foreach ($rows as $index => $row) {
+                $priority = ExposedPriority::classify($row, $priorityOptions);
+                $rows[$index]['_priority'] = $priority['label'];
+                $rows[$index]['_tier'] = $priority['tier'];
+                $rows[$index]['_reason'] = $priority['reason'];
+                $tierCounts[$priority['tier']] = ($tierCounts[$priority['tier']] ?? 0) + 1;
+            }
         }
 
         return [
@@ -1669,10 +1681,28 @@ class Module_ExposedReport extends BaseModule
             'pages'       => $pages,
             'perPage'     => $perPage,
             'groups'      => ExposedConsoleStore::listGroups(100),
+            'tierCounts'  => $tierCounts,
             'maxBytesLabel' => ExposedConsoleStore::formatBytes(ExposedConsoleStore::maxUploadBytes()),
             'iniLimited'  => ExposedConsoleStore::maxUploadBytes() < CveTvmImport::CONSOLE_MAX_BYTES,
             'maxRowsConsole' => CveTvmImport::CONSOLE_MAX_ROWS,
         ];
+    }
+
+    /**
+     * Umbrales de prioridad: settings si existen, valores por defecto si no.
+     *
+     * @return array<string,mixed>
+     */
+    private function priorityOptions(): array
+    {
+        $options = ExposedPriority::defaults();
+        foreach ($options as $key => $default) {
+            $value = setting_get('exposed_' . $key);
+            if ($value !== null && $value !== '') {
+                $options[$key] = is_float($default) ? (float)$value : (int)$value;
+            }
+        }
+        return $options;
     }
 
     /**
@@ -1700,7 +1730,18 @@ class Module_ExposedReport extends BaseModule
             ? $llm->isConfigured($defaultProfileId > 0 ? $defaultProfileId : null)
             : false;
 
-        $dossier = $group !== null ? $this->buildCveDossiers($rows) : ['markdown' => '', 'html' => '', 'with_report' => 0, 'without' => 0];
+        $dossier = ['markdown' => '', 'html' => '', 'with_report' => 0, 'without' => 0, 'tiers' => [], 'p1p2' => 0, 'kev' => 0];
+        if ($group !== null) {
+            $planText = $plan !== null ? (string)($plan['content_text'] ?? '') : '';
+            try {
+                $dossier = ExposedReportDossier::build($group, $rows, $this->priorityOptions(), $planText);
+            } catch (Throwable $e) {
+                app_log('error', 'exposed_report', 'No se pudo componer el informe', [
+                    'group' => $groupId,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
         $orgs = [];
         try {
             $orgs = Database::fetchAll("SELECT id, name FROM remediation_orgs ORDER BY name");
