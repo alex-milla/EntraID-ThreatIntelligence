@@ -228,6 +228,37 @@ try {
     );
     check('orden: más equipos primero', (int)($byMachines[0]['exposed_machines'] ?? 0) === 600);
 
+    // Ordenación por cabecera (v0.4.25.4)
+    $cveAsc = ExposedConsoleStore::rows(ExposedConsoleStore::filtersFromInput(['sort' => 'cve_asc']), 1, 0);
+    check('orden: CVE ascendente', (string)($cveAsc[0]['cve_id'] ?? '') === 'CVE-2026-90001');
+    $cveDesc = ExposedConsoleStore::rows(ExposedConsoleStore::filtersFromInput(['sort' => 'cve_desc']), 1, 0);
+    check('orden: CVE descendente', (string)($cveDesc[0]['cve_id'] ?? '') === 'CVE-2026-90013');
+
+    $cvssDesc = ExposedConsoleStore::rows(ExposedConsoleStore::filtersFromInput(['sort' => 'cvss_desc']), 1, 0);
+    check('orden: CVSS descendente', (string)($cvssDesc[0]['cve_id'] ?? '') === 'CVE-2026-90006');
+    $cvssAsc = ExposedConsoleStore::rows(ExposedConsoleStore::filtersFromInput(['sort' => 'cvss_asc']), 1, 0);
+    check('orden: CVSS ascendente', (string)($cvssAsc[0]['cve_id'] ?? '') === 'CVE-2026-90010');
+
+    $sevAsc = ExposedConsoleStore::rows(ExposedConsoleStore::filtersFromInput(['sort' => 'sev_asc']), 1, 0);
+    check('orden: severidad, crítica primero', (string)($sevAsc[0]['cve_id'] ?? '') === 'CVE-2026-90001');
+
+    $epssDesc = ExposedConsoleStore::rows(ExposedConsoleStore::filtersFromInput(['sort' => 'epss_desc']), 1, 0);
+    check('orden: EPSS descendente', (string)($epssDesc[0]['cve_id'] ?? '') === 'CVE-2026-90001');
+
+    $machinesAsc = ExposedConsoleStore::rows(ExposedConsoleStore::filtersFromInput(['sort' => 'machines_asc']), 1, 0);
+    check('orden: equipos ascendente', (string)($machinesAsc[0]['cve_id'] ?? '') === 'CVE-2026-90004');
+
+    $detectedDesc = ExposedConsoleStore::rows(ExposedConsoleStore::filtersFromInput(['sort' => 'detected_desc']), 1, 0);
+    check('orden: detectado, más reciente primero', (string)($detectedDesc[0]['cve_id'] ?? '') === 'CVE-2026-90013');
+    $detectedAsc = ExposedConsoleStore::rows(ExposedConsoleStore::filtersFromInput(['sort' => 'detected_asc']), 1, 0);
+    check('orden: detectado, más antiguo primero', (string)($detectedAsc[0]['cve_id'] ?? '') === 'CVE-2026-90001');
+
+    check('orden: todos los modos admitidos', in_array('cve_desc', ExposedConsoleStore::SORTS, true)
+        && in_array('cvss_asc', ExposedConsoleStore::SORTS, true)
+        && in_array('detected_desc', ExposedConsoleStore::SORTS, true));
+    check('orden: se conserva en la URL', (ExposedConsoleStore::filtersToQuery(
+        ExposedConsoleStore::filtersFromInput(['sort' => 'cvss_asc'])
+    )['sort'] ?? '') === 'cvss_asc');
     $stats = ExposedConsoleStore::stats($empty);
     check('stats: total', (int)$stats['total'] === 13);
     check('stats: críticas', (int)$stats['critical'] === 3);
@@ -298,6 +329,9 @@ try {
         || preg_match('/value="critical"\s+checked/', $consoleHtml) === 1);
     check('vista: dos botones Apply (arriba y abajo)',
         substr_count($consoleHtml, 'Apply filters') === 2);
+    check('vista: cabeceras ordenables', str_contains($consoleHtml, 'sort=cve_desc')
+        && str_contains($consoleHtml, 'sort=cvss_desc')
+        && str_contains($consoleHtml, 'sort=age_asc'));
     check('vista: historial de importaciones visible', str_contains($consoleHtml, 'Historial de importaciones'));
     check('vista: botón de vaciar base', str_contains($consoleHtml, 'Vaciar base'));
 
@@ -317,6 +351,19 @@ try {
         && preg_match('/name="machines"\s+value="100"/', $consoleHtml2) === 1);
     check('vista: filtro por equipos y software devuelve filas',
         (int)$consoleView2['total'] === 3);
+
+    $viewFilters3 = ExposedConsoleStore::filtersFromInput(['sort' => 'cvss_asc']);
+    $consoleView3 = $consoleView;
+    $consoleView3['filters'] = $viewFilters3;
+    $consoleView3['filterQuery'] = ExposedConsoleStore::filtersToQuery($viewFilters3);
+    $consoleView3['rows'] = ExposedConsoleStore::rows($viewFilters3, 5, 0);
+    $consoleHtml3 = $renderConsole($consoleView3);
+    check('vista: CVSS ascendente activo con flecha ↑',
+        str_contains($consoleHtml3, 'sort=cvss_desc')
+        && str_contains($consoleHtml3, 'CVSS <span aria-hidden="true" class="text-[10px]">↑</span>'));
+    check('vista: el resto de cabeceras invita a ordenar',
+        str_contains($consoleHtml3, 'sort=cve_desc')
+        && str_contains($consoleHtml3, '↕'));
 
     /* -----------------------------------------------------------------
      * 7. Ingesta incremental: nuevo / actualizado / sin cambios
@@ -450,7 +497,27 @@ try {
     check('tareas: plan asignable', array_key_exists('exposed_action_plan', llm_task_catalog()));
 
     $module = ModuleManager::get('exposed_report');
-    check('módulo: versión 2', $module instanceof Module_ExposedReport && $module->version() === '2.0.0');    check('módulo: 12 rutas', $module !== null && count($module->routes()) === 12);
+    check('módulo: versión 2', $module instanceof Module_ExposedReport && $module->version() === '2.0.0');
+    check('módulo: 12 rutas', $module !== null && count($module->routes()) === 12);
+
+    /* -----------------------------------------------------------------
+     * 11. Orden numérico del CVE (distinta longitud de secuencia)
+     * -------------------------------------------------------------- */
+
+    $numericCsv = $buildCsv([
+        ['CVE-2026-10000', 'Low', '1.0', '0.0', 5, '01 Nov, 2026', '02 Nov, 2026', '18 Nov, 2026', 'False', 'False', 'False', 'x:y', 1, 'menor', 'RemediationRequired'],
+        ['CVE-2026-9000', 'Low', '1.0', '0.0', 5, '01 Nov, 2026', '02 Nov, 2026', '18 Nov, 2026', 'False', 'False', 'False', 'x:y', 1, 'menor', 'RemediationRequired'],
+    ], $header);
+    ExposedConsoleStore::importCsv($numericCsv, 'numeric.csv', 0);
+    $numericAsc = array_map(
+        static fn(array $row): string => (string)$row['cve_id'],
+        array_slice(ExposedConsoleStore::rows(ExposedConsoleStore::filtersFromInput(['sort' => 'cve_asc']), 2, 0), 0, 2)
+    );
+    check('orden: CVE numérico (9000 antes que 10000)',
+        $numericAsc === ['CVE-2026-9000', 'CVE-2026-10000'],
+        implode(',', $numericAsc));
+    check('orden: expresión SQL numérica',
+        str_contains(ExposedConsoleStore::orderBy('cve_asc'), 'CAST(SUBSTR(e.cve_id, 5, 4) AS INTEGER)'));
 } finally {
     if ($groupId > 0) {
         ExposedConsoleStore::deleteGroup($groupId);

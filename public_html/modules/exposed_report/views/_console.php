@@ -76,11 +76,22 @@ $machineOptions = [
     500 => '>= 500 exposed devices',
 ];
 $sortOptions = [
-    'oldest'   => 'Más antiguo a más nuevo (Age desc)',
-    'newest'   => 'Más nuevo a más antiguo (Age asc)',
-    'machines' => 'Más equipos expuestos',
-    'cvss'     => 'Mayor CVSS',
-    'epss'     => 'Mayor EPSS',
+    'oldest'        => 'Más antiguo a más nuevo (Age desc)',
+    'newest'        => 'Más nuevo a más antiguo (Age asc)',
+    'age_desc'      => 'Age ↓ (más antiguo primero)',
+    'age_asc'       => 'Age ↑ (más nuevo primero)',
+    'cve_desc'      => 'CVE ↓ (número mayor primero)',
+    'cve_asc'       => 'CVE ↑ (número menor primero)',
+    'cvss_desc'     => 'CVSS ↓ (mayor primero)',
+    'cvss_asc'      => 'CVSS ↑ (menor primero)',
+    'epss_desc'     => 'EPSS ↓ (mayor primero)',
+    'epss_asc'      => 'EPSS ↑ (menor primero)',
+    'sev_asc'       => 'Severity ↑ (crítica primero)',
+    'sev_desc'      => 'Severity ↓ (informativa primero)',
+    'machines_desc' => 'Equipos ↓ (más equipos primero)',
+    'machines_asc'  => 'Equipos ↑ (menos equipos primero)',
+    'detected_desc' => 'Detectado ↓ (más reciente primero)',
+    'detected_asc'  => 'Detectado ↑ (más antiguo primero)',
 ];
 
 $consoleUrl = static function (array $extra = []) use ($base, $filterQuery): string {
@@ -94,6 +105,54 @@ $fmtDate = static function (?string $value, string $format = 'd/m/Y H:i'): strin
     }
     $ts = strtotime($value);
     return $ts === false ? $value : date($format, $ts);
+};
+
+// --- Ordenación por cabecera (v0.4.25.4) --------------------------------
+// Los alias históricos se normalizan a su variante direccional para que la
+// flecha de la cabecera muestre el estado real.
+$normalizeSort = static function (string $sort): string {
+    return match ($sort) {
+        'oldest'   => 'age_desc',
+        'newest'   => 'age_asc',
+        'machines' => 'machines_desc',
+        'cvss'     => 'cvss_desc',
+        'epss'     => 'epss_desc',
+        default    => $sort,
+    };
+};
+$currentSort = $normalizeSort((string)($filters['sort'] ?? 'oldest'));
+$sortUrl = static fn(string $sort): string => $consoleUrl(['sort' => $sort, 'page' => 1]);
+/**
+ * Estado de una columna ordenable: enlace siguiente, flecha y si está activa.
+ *
+ * @return array{next:string,arrow:string,active:bool,title:string}
+ */
+$sortState = static function (string $asc, string $desc, ?string $first = null) use ($currentSort): array {
+    if ($currentSort === $asc) {
+        return ['next' => $desc, 'arrow' => '↑', 'active' => true,
+            'title' => 'Orden ascendente; pulsa para descendente'];
+    }
+    if ($currentSort === $desc) {
+        return ['next' => $asc, 'arrow' => '↓', 'active' => true,
+            'title' => 'Orden descendente; pulsa para ascendente'];
+    }
+    return ['next' => $first ?? $desc, 'arrow' => '↕', 'active' => false,
+        'title' => 'Ordenar por esta columna'];
+};
+
+/**
+ * Cabecera ordenable: enlace GET que conserva filtros y vuelve a la página 1.
+ */
+$sortHeader = static function (string $label, string $asc, string $desc, ?string $first = null, string $align = 'left') use ($sortState, $sortUrl): string {
+    $state = $sortState($asc, $desc, $first);
+    $classes = 'inline-flex items-center gap-1 whitespace-nowrap '
+        . ($align === 'right' ? 'justify-end w-full ' : '')
+        . ($state['active']
+            ? 'text-brand-600 dark:text-brand-300 font-semibold'
+            : 'hover:text-ink');
+    return '<a href="' . e($sortUrl($state['next'])) . '" class="' . $classes . '"'
+        . ' title="' . e($state['title']) . '">'
+        . e($label) . ' <span aria-hidden="true" class="text-[10px]">' . $state['arrow'] . '</span></a>';
 };
 
 $flashData = function_exists('flash') ? flash() : [];
@@ -416,13 +475,13 @@ $flashData = is_array($flashData) ? $flashData : [];
                                 <thead class="bg-muted text-ink-muted">
                                     <tr>
                                         <th class="px-3 py-2 text-left w-8"></th>
-                                        <th class="px-3 py-2 text-left">CVE</th>
-                                        <th class="px-3 py-2 text-left">Severity</th>
-                                        <th class="px-3 py-2 text-right">CVSS</th>
-                                        <th class="px-3 py-2 text-right">EPSS</th>
-                                        <th class="px-3 py-2 text-right">Age</th>
-                                        <th class="px-3 py-2 text-left">Detectado</th>
-                                        <th class="px-3 py-2 text-right">Equipos</th>
+                                        <th class="px-3 py-2 text-left"><?= $sortHeader('CVE', 'cve_asc', 'cve_desc') ?></th>
+                                        <th class="px-3 py-2 text-left"><?= $sortHeader('Severity', 'sev_asc', 'sev_desc', 'sev_asc') ?></th>
+                                        <th class="px-3 py-2 text-right"><?= $sortHeader('CVSS', 'cvss_asc', 'cvss_desc', null, 'right') ?></th>
+                                        <th class="px-3 py-2 text-right"><?= $sortHeader('EPSS', 'epss_asc', 'epss_desc', null, 'right') ?></th>
+                                        <th class="px-3 py-2 text-right"><?= $sortHeader('Age', 'age_asc', 'age_desc', null, 'right') ?></th>
+                                        <th class="px-3 py-2 text-left"><?= $sortHeader('Detectado', 'detected_asc', 'detected_desc') ?></th>
+                                        <th class="px-3 py-2 text-right"><?= $sortHeader('Equipos', 'machines_asc', 'machines_desc', null, 'right') ?></th>
                                         <th class="px-3 py-2 text-left">Threats / Tags</th>
                                         <th class="px-3 py-2 text-left">Software</th>
                                     </tr>

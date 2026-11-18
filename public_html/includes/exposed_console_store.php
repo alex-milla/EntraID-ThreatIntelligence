@@ -33,7 +33,20 @@ if (!class_exists('ExposedConsoleStore')) {
 
         public const STATUSES = ['RemediationRequired', 'UnderException', 'NoActionRequired', 'PartialException'];
 
-        public const SORTS = ['oldest', 'newest', 'machines', 'cvss', 'epss'];
+        /**
+         * Órdenes admitidos. Los cinco primeros son los históricos (alias) y el
+         * resto son las variantes direccionales de las cabeceras de la tabla.
+         */
+        public const SORTS = [
+            'oldest', 'newest', 'machines', 'cvss', 'epss',
+            'cve_asc', 'cve_desc',
+            'cvss_asc', 'cvss_desc',
+            'epss_asc', 'epss_desc',
+            'age_asc', 'age_desc',
+            'machines_asc', 'machines_desc',
+            'sev_asc', 'sev_desc',
+            'detected_asc', 'detected_desc',
+        ];
 
         public const MACHINE_THRESHOLDS = [0, 10, 100, 500];
 
@@ -546,6 +559,10 @@ if (!class_exists('ExposedConsoleStore')) {
             if ((string)($filters['q'] ?? '') !== '') {
                 $out['q'] = (string)$filters['q'];
             }
+            $sort = (string)($filters['sort'] ?? '');
+            if ($sort !== '' && in_array($sort, self::SORTS, true)) {
+                $out['sort'] = $sort;
+            }
             return $out;
         }
 
@@ -645,12 +662,32 @@ if (!class_exists('ExposedConsoleStore')) {
 
         public static function orderBy(string $sort): string
         {
+            // CVE-YYYY-NNNN: orden numérico por año y secuencia, no alfabético
+            // (si no, CVE-2026-10000 quedaría antes que CVE-2026-9999).
+            $cveYear = "CAST(SUBSTR(e.cve_id, 5, 4) AS INTEGER)";
+            $cveSeq  = "CAST(SUBSTR(e.cve_id, 10) AS INTEGER)";
+
             return match ($sort) {
-                'newest'   => 'e.age_days ASC, e.exposed_machines DESC, e.cve_id ASC',
-                'machines' => 'e.exposed_machines DESC, e.age_days DESC, e.cve_id ASC',
-                'cvss'     => 'e.cvss DESC, e.exposed_machines DESC, e.age_days DESC',
-                'epss'     => 'e.epss DESC, e.exposed_machines DESC, e.age_days DESC',
-                default    => 'e.age_days DESC, e.exposed_machines DESC, e.cve_id ASC',
+                'cve_asc'      => "{$cveYear} ASC, {$cveSeq} ASC, e.cve_id ASC",
+                'cve_desc'     => "{$cveYear} DESC, {$cveSeq} DESC, e.cve_id DESC",
+                'cvss_asc'     => "CASE WHEN e.cvss IS NULL THEN 1 ELSE 0 END ASC, e.cvss ASC, e.exposed_machines DESC, e.cve_id ASC",
+                'cvss_desc', 'cvss'
+                               => "COALESCE(e.cvss, -1) DESC, e.exposed_machines DESC, e.age_days DESC, e.cve_id ASC",
+                'epss_asc'     => "CASE WHEN e.epss IS NULL THEN 1 ELSE 0 END ASC, e.epss ASC, e.exposed_machines DESC, e.cve_id ASC",
+                'epss_desc', 'epss'
+                               => "COALESCE(e.epss, -1) DESC, e.exposed_machines DESC, e.age_days DESC, e.cve_id ASC",
+                'age_asc', 'newest'
+                               => 'e.age_days ASC, e.exposed_machines DESC, e.cve_id ASC',
+                'age_desc', 'oldest'
+                               => 'e.age_days DESC, e.exposed_machines DESC, e.cve_id ASC',
+                'machines_asc' => 'e.exposed_machines ASC, e.age_days DESC, e.cve_id ASC',
+                'machines_desc', 'machines'
+                               => 'e.exposed_machines DESC, e.age_days DESC, e.cve_id ASC',
+                'sev_asc'      => self::severityRankSql('e.severity') . ' ASC, e.exposed_machines DESC, e.age_days DESC, e.cve_id ASC',
+                'sev_desc'     => self::severityRankSql('e.severity') . ' DESC, e.exposed_machines DESC, e.age_days DESC, e.cve_id ASC',
+                'detected_asc' => "COALESCE(NULLIF(e.first_detected_at, ''), '9999-12-31') ASC, e.cve_id ASC",
+                'detected_desc' => "COALESCE(NULLIF(e.first_detected_at, ''), '0000-01-01') DESC, e.cve_id ASC",
+                default        => 'e.age_days DESC, e.exposed_machines DESC, e.cve_id ASC',
             };
         }
 
