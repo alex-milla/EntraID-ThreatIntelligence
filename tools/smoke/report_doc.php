@@ -186,6 +186,8 @@ try {
     check('cuerpo: KPIs y métricas marcadas para apilar', substr_count($html, 'data-rd-stack="metrics"') === 3);
     check('cuerpo: tarjetas marcadas como bloques', substr_count($html, 'data-rd-stack="blocks"') === 3);
     check('cuerpo: badges y chips marcados en línea', substr_count($html, 'data-rd-stack="inline"') >= 3);
+    check('cuerpo: tarjetas con caja marcadas', substr_count($html, 'data-rd-card') >= 4);
+    check('cuerpo: el chip duplicado del CVE no viaja', substr_count($html, 'data-rd-drop') === 1);
 
     // ---------------------------------------------------------------
     // 3. Vistas y helper
@@ -202,6 +204,11 @@ try {
         && str_contains($helper, 'data-rd-stack="inline"'));
     check('helper: construye líneas de métrica', str_contains($helper, 'function metricLine'));
     check('helper: reconstruye las barras como tabla', str_contains($helper, 'function buildBar'));
+    check('helper: barras con caracteres de bloque', str_contains($helper, '\u2588') && str_contains($helper, '\u2591'));
+    check('helper: tarjetas como tabla de una celda', str_contains($helper, 'function cardToTable'));
+    check('helper: detecta el badge numérico', str_contains($helper, 'function isNumberBadge'));
+    check('helper: bordes por lado para Word', str_contains($helper, 'function borderShorthand'));
+    check('helper: descarta lo marcado con data-rd-drop', str_contains($helper, "'[data-rd-drop]'"));
     check('helper: ya no convierte columnas en tablas', !str_contains($helper, 'toTable'));
     check('helper: no arrastra el modo oscuro', str_contains($helper, 'withLightTheme'));
     check('helper: respeta los estilos en línea del servidor', str_contains($helper, 'dst.style.getPropertyValue(prop)'));

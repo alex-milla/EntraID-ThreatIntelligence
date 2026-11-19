@@ -145,7 +145,41 @@ const cleaned = I.cleanInlineStyle(
 check('estilo: limita el tamaño de fuente', cleaned.includes('font-size:18px'), cleaned);
 check('estilo: conserva el color', cleaned.includes('color:#b91c1c'), cleaned);
 check('estilo: quita display/margin/width', !cleaned.includes('display:block') && !cleaned.includes('margin') && !cleaned.includes('width'), cleaned);
-check('estilo: fuerza inline-block', cleaned.includes('display:inline-block'), cleaned);
+check('estilo: usa display en línea (Word pinta el fondo)', cleaned.includes('display:inline') && !cleaned.includes('inline-block'), cleaned);
+
+/* --- isNumberBadge ------------------------------------------------------ */
+check('número: círculo oscuro con una cifra se detecta',
+    I.isNumberBadge(el('span', '1', {
+        style: { 'background-color': '#111827', 'border-top-left-radius': '9999px' }
+    })) === true);
+
+check('número: un badge normal no se toca',
+    I.isNumberBadge(el('span', '1', {
+        style: { 'background-color': '#fee2e2', 'border-top-left-radius': '6px' }
+    })) === false);
+
+check('número: sin fondo no se considera círculo',
+    I.isNumberBadge(el('span', '1', { style: { 'border-top-left-radius': '9999px' } })) === false);
+
+/* --- borderShorthand ---------------------------------------------------- */
+const border = I.borderShorthand(el('div', '', {
+    style: {
+        'border-top-width': '1px', 'border-top-style': 'solid', 'border-top-color': '#e5e7eb',
+        'border-right-width': '1px', 'border-right-style': 'solid', 'border-right-color': '#e5e7eb',
+        'border-bottom-width': '1px', 'border-bottom-style': 'solid', 'border-bottom-color': '#e5e7eb',
+        'border-left-width': '4px', 'border-left-style': 'solid', 'border-left-color': '#ef4444'
+    }
+}));
+check('borde: genera los cuatro lados', border.length === 4, JSON.stringify(border));
+check('borde: conserva el grosor del lado izquierdo', border.join(';').includes('border-left:4px solid #ef4444'), JSON.stringify(border));
+
+const noBorder = I.borderShorthand(el('div', '', {
+    style: {
+        'border-top-width': '0px', 'border-top-style': 'none',
+        'border-bottom-width': '1px', 'border-bottom-style': 'solid', 'border-bottom-color': '#e5e7eb'
+    }
+}));
+check('borde: ignora los lados sin borde', noBorder.length === 1 && noBorder[0].includes('border-bottom'), JSON.stringify(noBorder));
 
 console.log('');
 console.log(`${total - fail}/${total} OK`);

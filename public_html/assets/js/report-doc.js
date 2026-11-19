@@ -99,6 +99,7 @@
     ];
 
     var PURGE_SELECTOR = [
+        '[data-rd-drop]',
         '.no-print',
         '.print-hide',
         '.print-url',
@@ -338,7 +339,11 @@
         return 100;
     }
 
-    /* Barra de progreso → mini-tabla de dos celdas: Word la dibuja bien. */
+    /* Barra de progreso → mini-tabla de dos celdas con la barra de caracteres
+     * dentro. Si Word respeta la tabla se ve una barra sólida de dos tonos; si
+     * la colapsa, los caracteres siguen dibujando la barra con la proporción
+     * correcta. El color del carácter es el de su celda: invisible cuando el
+     * fondo se pinta, visible cuando no. */
     function buildBar(meterEl) {
         var fill = null;
         elChildren(meterEl).forEach(function (child) {
@@ -360,12 +365,14 @@
             fillColor = meterEl.style.getPropertyValue('background-color') || '#ef4444';
         }
 
-        var height = parseFloat(meterEl.style.getPropertyValue('height') || '0');
-        height = height > 0 ? Math.max(2, Math.min(9, height)) : 5;
+        var total = 20;
+        var filledCount = Math.round(total * percent / 100);
+        var emptyCount = Math.max(0, total - filledCount);
 
         var cellStyle = function (width, color) {
-            return 'width:' + width + '%;background-color:' + color + ';height:' + height + 'px;'
-                + 'font-size:1px;line-height:1px;border:0;padding:0;';
+            return 'width:' + width + '%;border:0;padding:0;vertical-align:middle;'
+                + 'font-family:Consolas,Menlo,monospace;font-size:8pt;line-height:1;'
+                + 'letter-spacing:0;background-color:' + color + ';color:' + color + ';';
         };
 
         var table = document.createElement('table');
@@ -376,10 +383,10 @@
         var row = document.createElement('tr');
         var filled = document.createElement('td');
         filled.setAttribute('style', cellStyle(percent, fillColor));
-        filled.innerHTML = '&nbsp;';
+        filled.textContent = new Array(filledCount + 1).join('\u2588');
         var rest = document.createElement('td');
         rest.setAttribute('style', cellStyle(100 - percent, trackColor));
-        rest.innerHTML = '&nbsp;';
+        rest.textContent = new Array(emptyCount + 1).join('\u2591');
 
         row.appendChild(filled);
         row.appendChild(rest);
@@ -415,7 +422,7 @@
             parts.push(prop + ':' + value);
         });
 
-        parts.push('display:inline-block');
+        parts.push('display:inline');
         parts.push('vertical-align:baseline');
         return parts.join(';') + ';';
     }
@@ -439,7 +446,13 @@
 
         var label = document.createElement('span');
         label.setAttribute('style', cleanInlineStyle(labelEl));
-        label.textContent = textOf(labelEl) + ':';
+        /* Word ignora text-transform: las mayúsculas se aplican al texto. */
+        var labelText = textOf(labelEl);
+        var transform = (labelEl.style.getPropertyValue('text-transform') || '').toLowerCase();
+        if (transform === 'uppercase') {
+            labelText = labelText.toUpperCase();
+        }
+        label.textContent = labelText + ':\u00A0';
         line.appendChild(label);
 
         var value = document.createElement('span');
@@ -449,7 +462,7 @@
         if (valueEl.children.length === 1 && textOf(valueEl) === textOf(valueEl.children[0])) {
             styleSource = valueEl.children[0];
         }
-        value.setAttribute('style', cleanInlineStyle(styleSource, 18) + 'margin-left:6px;');
+        value.setAttribute('style', cleanInlineStyle(styleSource, 18));
         value.textContent = textOf(valueEl);
         line.appendChild(value);
 
@@ -479,7 +492,33 @@
         });
     }
 
-    /* Chips y badges: se quedan en una sola línea. */
+    /* Número dentro de un círculo (bg oscuro + texto blanco). En Word el fondo
+     * puede caerse y quedaría blanco sobre blanco: se exporta como «1.». */
+    function isNumberBadge(el) {
+        if (!/^\d{1,2}$/.test(textOf(el))) {
+            return false;
+        }
+        if ((el.style.getPropertyValue('background-color') || '') === '') {
+            return false;
+        }
+        var radius = (el.style.getPropertyValue('border-top-left-radius') || '').trim();
+        var px = parseFloat(radius);
+        return radius === '50%' || (!isNaN(px) && px >= 20);
+    }
+
+    /* Pone un espacio real entre dos hijos en línea (Word ignora los márgenes). */
+    function insertSpaceAfter(node) {
+        var next = node.nextSibling;
+        if (!next || next.nodeType !== 1) {
+            return;
+        }
+        var space = document.createTextNode(' ');
+        node.parentNode.insertBefore(space, next);
+    }
+
+    /* Chips y badges: se quedan en una línea, con espacio real entre ellos.
+     * `display:inline` es lo que hace que Word pinte el fondo como resaltado
+     * ajustado al texto; con `inline-block` lo convierte en banda de párrafo. */
     function inlineChildren(container) {
         container.style.setProperty('display', 'block');
         elChildren(container).forEach(function (child) {
@@ -487,12 +526,79 @@
             if (tag === 'table' || tag === 'ul' || tag === 'ol' || tag === 'div' || tag === 'p' || /^h[1-6]$/.test(tag)) {
                 return;
             }
-            child.style.setProperty('display', 'inline-block');
-            var marginRight = parseFloat(child.style.getPropertyValue('margin-right') || '0');
-            if (!(marginRight > 0)) {
-                child.style.setProperty('margin-right', '6px');
+            if (isNumberBadge(child)) {
+                var number = document.createElement('span');
+                number.setAttribute('style', 'font-weight:700;color:#0f172a;');
+                number.textContent = textOf(child) + '.';
+                child.parentNode.replaceChild(number, child);
+                insertSpaceAfter(number);
+                return;
+            }
+            child.style.setProperty('display', 'inline');
+            insertSpaceAfter(child);
+        });
+    }
+
+    /* Bordes por lado (ya inlinados) listos para una celda de Word. */
+    function borderShorthand(el) {
+        var out = [];
+        ['top', 'right', 'bottom', 'left'].forEach(function (side) {
+            var width = el.style.getPropertyValue('border-' + side + '-width') || '';
+            var style = (el.style.getPropertyValue('border-' + side + '-style') || '').trim();
+            var color = el.style.getPropertyValue('border-' + side + '-color') || '';
+            var px = parseFloat(width);
+            if (px > 0 && style !== '' && style !== 'none' && style !== 'hidden') {
+                out.push('border-' + side + ':' + width + ' ' + style + ' ' + color);
             }
         });
+        return out;
+    }
+
+    /* Una tarjeta con caja → tabla de una celda. Word solo pinta bordes y
+     * fondos en celdas de tabla, no en `div`. */
+    function cardToTable(card) {
+        if (!card.parentNode) {
+            return;
+        }
+
+        var tableStyle = ['width:100%', 'border-collapse:collapse'].concat(borderShorthand(card));
+        ['top', 'right', 'bottom', 'left'].forEach(function (side) {
+            var margin = card.style.getPropertyValue('margin-' + side);
+            if (margin) {
+                tableStyle.push('margin-' + side + ':' + margin);
+            }
+        });
+        var background = card.style.getPropertyValue('background-color');
+        if (background && background !== 'transparent' && background !== 'rgba(0, 0, 0, 0)') {
+            tableStyle.push('background-color:' + background);
+        }
+
+        var cellStyle = ['vertical-align:top', 'border:0'];
+        ['top', 'right', 'bottom', 'left'].forEach(function (side) {
+            var padding = card.style.getPropertyValue('padding-' + side);
+            if (padding) {
+                cellStyle.push('padding-' + side + ':' + padding);
+            }
+        });
+
+        var table = document.createElement('table');
+        table.setAttribute('cellspacing', '0');
+        table.setAttribute('cellpadding', '0');
+        table.setAttribute('style', tableStyle.join(';') + ';');
+
+        var tbody = document.createElement('tbody');
+        var row = document.createElement('tr');
+        var cell = document.createElement('td');
+        cell.setAttribute('style', cellStyle.join(';') + ';');
+
+        while (card.firstChild) {
+            cell.appendChild(card.firstChild);
+        }
+
+        row.appendChild(cell);
+        tbody.appendChild(row);
+        table.appendChild(tbody);
+        card.parentNode.replaceChild(table, card);
     }
 
     function applyMetrics(container) {
@@ -534,6 +640,13 @@
     /* Aplica los marcadores del servidor y, para lo que no esté marcado,
      * apila: el documento exportado nunca va en columnas. */
     function normalizeLayout(clone) {
+        /* Las tarjetas con caja se convierten primero: así los pases
+         * siguientes ya trabajan sobre la tabla. */
+        Array.prototype.slice.call(clone.querySelectorAll('[data-rd-card]')).forEach(function (el) {
+            el.removeAttribute('data-rd-card');
+            cardToTable(el);
+        });
+
         Array.prototype.slice.call(clone.querySelectorAll('[data-rd-stack="metrics"]')).forEach(function (el) {
             applyMetrics(el);
         });
@@ -782,8 +895,10 @@
      * No se usa en la interfaz. */
     ReportDoc._internals = {
         isMetricCell: isMetricCell,
+        isNumberBadge: isNumberBadge,
         percentFrom: percentFrom,
-        cleanInlineStyle: cleanInlineStyle
+        cleanInlineStyle: cleanInlineStyle,
+        borderShorthand: borderShorthand
     };
 
     /* Delegación: los botones declaran su acción y su documento.
