@@ -295,9 +295,16 @@
         return labelSize > 0 && valueSize > 0 && labelSize < valueSize;
     }
 
-    /* Estilo en línea reutilizable dentro de una línea de texto. */
-    function cleanInlineStyle(el, maxFontPx) {
+    /* Estilo en línea reutilizable dentro de una línea de texto.
+     *
+     * No se emite `display` ni `vertical-align`: el valor por defecto de un
+     * `<span>` ya es en línea, y el importador de Word descarta lo que va
+     * detrás de un `display`. Las sustituciones van al final para que el color
+     * sea la última declaración. */
+    function cleanInlineStyle(el, maxFontPx, overrides) {
+        var over = overrides || {};
         var parts = [];
+        var seen = {};
         var declarations = (el.getAttribute('style') || '').split(';');
 
         declarations.forEach(function (declaration) {
@@ -310,8 +317,12 @@
             if (prop === '' || value === '') {
                 return;
             }
-            if (prop === 'display' || prop.indexOf('margin') === 0 || prop.indexOf('width') === 0
-                || prop === 'height' || prop === 'min-width' || prop === 'max-width') {
+            if (prop === 'display' || prop === 'vertical-align'
+                || prop.indexOf('margin') === 0 || prop.indexOf('width') === 0
+                || prop === 'height') {
+                return;
+            }
+            if (seen[prop] || Object.prototype.hasOwnProperty.call(over, prop)) {
                 return;
             }
             if (prop === 'font-size' && maxFontPx > 0) {
@@ -320,11 +331,21 @@
                     value = maxFontPx + 'px';
                 }
             }
+            seen[prop] = true;
             parts.push(prop + ':' + value);
         });
 
-        parts.push('display:inline');
-        parts.push('vertical-align:baseline');
+        /* El color siempre el último: es lo que Word no debe perder. */
+        var keys = Object.keys(over).filter(function (prop) {
+            return prop !== 'color';
+        });
+        if (Object.prototype.hasOwnProperty.call(over, 'color')) {
+            keys.push('color');
+        }
+        keys.forEach(function (prop) {
+            parts.push(prop + ':' + over[prop]);
+        });
+
         return parts.join(';') + ';';
     }
 
@@ -383,11 +404,16 @@
             styleSource = valueEl.children[0];
         }
 
-        var valueStyle = cleanInlineStyle(styleSource, 18);
+        /* Cuando la cifra lleva tono, el color se pone al final y una sola vez:
+         * Word descarta lo que va detrás de un `display`. */
+        var overrides = {};
         var tone = attrFrom(valueEl, 'data-rd-color');
         if (tone) {
-            valueStyle += 'color:' + tone + ';font-weight:700;';
+            overrides.color = tone;
+            overrides['font-weight'] = '700';
         }
+
+        var valueStyle = cleanInlineStyle(styleSource, 18, overrides);
         value.setAttribute('style', valueStyle);
         value.textContent = textOf(valueEl);
         line.appendChild(value);
@@ -719,24 +745,43 @@
         return ok;
     }
 
+    /* Copia con formato. Si la escritura asíncrona falla (permiso denegado,
+     * pestaña sin foco, dato demasiado grande), cae al copiador heredado y,
+     * como último recurso, a texto plano. Nunca deja al usuario sin nada. */
     function writeRich(html, text) {
+        var pending = null;
+
         if (navigator.clipboard && window.ClipboardItem && window.isSecureContext) {
             try {
-                return navigator.clipboard.write([new ClipboardItem({
+                pending = navigator.clipboard.write([new ClipboardItem({
                     'text/html': new Blob([html], { type: 'text/html' }),
                     'text/plain': new Blob([text], { type: 'text/plain' })
                 })]);
             } catch (err) {
-                /* continúa con el método heredado */
+                pending = null;
             }
         }
-        if (legacyCopyRich(html)) {
-            return Promise.resolve();
-        }
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-            return navigator.clipboard.writeText(text);
-        }
-        return Promise.reject(new Error('El navegador no permite escribir en el portapapeles.'));
+
+        var copy = pending
+            ? pending.then(function () {
+                return true;
+            }).catch(function () {
+                /* La escritura asíncrona rechazó: se intenta el método heredado. */
+                return legacyCopyRich(html);
+            })
+            : Promise.resolve(legacyCopyRich(html));
+
+        return copy.then(function (ok) {
+            if (ok) {
+                return true;
+            }
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                return navigator.clipboard.writeText(text).then(function () {
+                    return true;
+                });
+            }
+            return Promise.reject(new Error('El navegador no permite escribir en el portapapeles.'));
+        });
     }
 
     var ReportDoc = window.ReportDoc = window.ReportDoc || {};

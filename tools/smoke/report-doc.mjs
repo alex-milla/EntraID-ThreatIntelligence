@@ -158,8 +158,20 @@ const cleaned = I.cleanInlineStyle(
 );
 check('estilo: limita el tamaño de fuente', cleaned.includes('font-size:18px'), cleaned);
 check('estilo: conserva el color', cleaned.includes('color:#b91c1c'), cleaned);
-check('estilo: quita display/margin/width', !cleaned.includes('display:block') && !cleaned.includes('margin') && !cleaned.includes('width'), cleaned);
-check('estilo: usa display en línea (Word pinta el fondo)', cleaned.includes('display:inline') && !cleaned.includes('inline-block'), cleaned);
+check('estilo: quita display/margin/width', !cleaned.includes('display') && !cleaned.includes('margin') && !cleaned.includes('width'), cleaned);
+check('estilo: no emite display (Word corta ahí)', !cleaned.includes('display') && !cleaned.includes('vertical-align'), cleaned);
+
+/* El tono sustituye el color de origen: una sola declaración y al final. */
+const toned = I.cleanInlineStyle(
+    el('dd', '9.8', { styleAttr: 'font-size:30px;font-weight:700;color:#111827;display:block' }),
+    18,
+    { color: '#dc2626', 'font-weight': '700' }
+);
+check('estilo: un solo color', (toned.match(/color:/g) || []).length === 1, toned);
+check('estilo: un solo font-weight', (toned.match(/font-weight:/g) || []).length === 1, toned);
+check('estilo: el color va al final', /color:#dc2626;\s*$/.test(toned), toned);
+check('estilo: conserva el tamaño limitado', toned.includes('font-size:18px'), toned);
+check('estilo: sin display cuando lleva tono', !toned.includes('display'), toned);
 
 /* --- isNumberBadge ------------------------------------------------------ */
 check('número: círculo oscuro con una cifra se detecta',

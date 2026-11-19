@@ -206,7 +206,9 @@ try {
         && str_contains($helper, 'data-rd-stack="inline"'));
     check('helper: construye líneas de métrica', str_contains($helper, 'function metricLine'));
     check('helper: ya no dibuja barras en el documento', !str_contains($helper, 'buildBar') && !str_contains($helper, '\u2588'));
-    check('helper: aplica el color de la cifra', str_contains($helper, 'data-rd-color') && str_contains($helper, 'data-rd-level'));
+    check('helper: el color de la cifra va al final del estilo', str_contains($helper, 'El color siempre el último'));
+    check('helper: no emite display en el estilo de la cifra', !str_contains($helper, "parts.push('display:inline')"));
+    check('helper: cae al copiado heredado si la escritura falla', str_contains($helper, 'return legacyCopyRich(html);'));
     check('helper: tarjetas como tabla de una celda', str_contains($helper, 'function cardToTable'));
     check('helper: detecta el badge numérico', str_contains($helper, 'function isNumberBadge'));
     check('helper: bordes por lado para Word', str_contains($helper, 'function borderShorthand'));
