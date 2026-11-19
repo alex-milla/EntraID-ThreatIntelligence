@@ -212,7 +212,7 @@ if (!class_exists('ExposedReportDossier')) {
             $html[] = '<p style="margin:8px 0 0;font-size:11px;color:#6b7280;">' . implode(' · ', $meta) . '</p>';
 
             // Tira de KPIs (tabla: se copia e imprime bien).
-            $html[] = '<table style="width:100%;border-collapse:collapse;margin:18px 0 6px;font-size:12px;">'
+            $html[] = '<table data-rd-stack="metrics" style="width:100%;border-collapse:collapse;margin:18px 0 6px;font-size:12px;">'
                 . '<tr>'
                 . self::kpiCell('CVE', (string)$total)
                 . self::kpiCell('En CISA KEV', (string)$data['kev'], (int)$data['kev'] > 0 ? '#b91c1c' : null)
@@ -266,7 +266,7 @@ if (!class_exists('ExposedReportDossier')) {
             $out[] = '<section style="border-left:4px solid ' . $colors[0] . ';padding:0 0 0 14px;margin:24px 0;' . $breakStyle . 'page-break-inside:avoid;break-inside:avoid;">';
 
             // Cabecera de la tarjeta.
-            $out[] = '<div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap;">';
+            $out[] = '<div data-rd-stack="blocks" style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap;">';
             $out[] = '<h2 style="margin:0;font-size:19px;font-weight:700;font-family:Consolas,Menlo,monospace;color:#0f172a;">' . self::esc($cveId) . '</h2>';
             $badges = [];
             $badges[] = '<span style="display:inline-block;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:700;background:' . $colors[1] . ';color:' . $colors[2] . ';">' . $sevLabel . '</span>';
@@ -281,7 +281,7 @@ if (!class_exists('ExposedReportDossier')) {
                 . ' · ventana ' . self::esc((string)$item['_window']) . '</p>';
 
             // Rejilla de métricas.
-            $out[] = '<table style="width:100%;border-collapse:collapse;margin:12px 0 0;font-size:12px;"><tr>';
+            $out[] = '<table data-rd-stack="metrics" style="width:100%;border-collapse:collapse;margin:12px 0 0;font-size:12px;"><tr>';
             $out[] = self::metricCell('CVSS', $cvss !== null ? number_format($cvss, 1, '.', '') : '—',
                 $cvss !== null ? self::meter(min(100, $cvss * 10), $colors[0]) : '');
             $out[] = self::metricCell('EPSS', $epss !== null ? number_format($epssPct, 2, ',', '') . ' %' : '—',

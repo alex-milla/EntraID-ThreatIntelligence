@@ -3,8 +3,15 @@
  *
  * Convierte el DOM de un informe (.report-doc, .doc-sheet) en HTML con estilos
  * en línea para pegarlo en Word o en un correo sin perder colores, badges,
- * bordes ni tablas. Los layouts CSS Grid/Flex se reescriben como tablas porque
- * Word y Outlook no los implementan.
+ * bordes ni barras.
+ *
+ * El documento exportado va SIEMPRE en una columna (la pantalla conserva sus
+ * columnas): Word y Outlook no implementan CSS Grid/Flex. El servidor marca
+ * cada contenedor con `data-rd-stack`:
+ *   - "metrics": cada métrica en una línea «Etiqueta: valor» (+ su barra).
+ *   - "blocks":  los hijos se apilan uno debajo del otro.
+ *   - "inline":  chips y badges se quedan en una línea.
+ * Las tablas de datos no se tocan.
  *
  * Uso:
  *   ReportDoc.copyRich('mi-documento', { markdown: '...' });
@@ -89,15 +96,6 @@
         'border-top-right-radius',
         'border-bottom-right-radius',
         'border-bottom-left-radius'
-    ];
-
-    /* Contenedores del informe CVE que deben viajar como tabla. */
-    var TABLE_LAYOUTS = [
-        ['.report-summary', 0],
-        ['.report-cve dl', 0],
-        ['.report-exposure > .grid', 0],
-        ['.report-ai > .grid', 2],
-        ['.report-cve > .grid', 2]
     ];
 
     var PURGE_SELECTOR = [
@@ -232,14 +230,18 @@
         });
     }
 
-    function tableStyle(extra) {
-        var style = 'width:100%;border-collapse:collapse;margin:0;';
-        if (extra) {
-            style += String(extra)
-                .replace(/display\s*:\s*[^;]+;?/gi, '')
-                .replace(/width\s*:\s*[^;]+;?/gi, '');
-        }
-        return style;
+    /* ------------------------------------------------------------------
+     * Layout: el documento exportado va SIEMPRE en una columna.
+     * El marcado del servidor decide qué es una tira de métricas, qué se
+     * apila y qué se queda en línea (chips y badges).
+     * ------------------------------------------------------------------ */
+
+    function elChildren(el) {
+        return Array.prototype.slice.call(el.children || []);
+    }
+
+    function textOf(el) {
+        return (el.textContent || '').replace(/\s+/g, ' ').trim();
     }
 
     function hasLooseText(el) {
@@ -248,53 +250,304 @@
         });
     }
 
-    function toTable(el, columns) {
-        if (!el.parentNode || !el.children.length || hasLooseText(el)) {
+    function replaceNode(node, nodes) {
+        if (!node.parentNode) {
+            return;
+        }
+        var frag = document.createDocumentFragment();
+        nodes.forEach(function (child) {
+            frag.appendChild(child);
+        });
+        node.parentNode.replaceChild(frag, node);
+    }
+
+    /* ¿La parte es texto simple? (no es un bloque de contenido) */
+    function isPlainPart(el) {
+        if (!el) {
             return false;
         }
+        return !el.querySelector('ul,ol,table,dl,pre,section,article,div');
+    }
 
-        var children = Array.prototype.slice.call(el.children);
-        var perRow = columns > 0 ? columns : children.length;
-        if (perRow < 1) {
+    /* ¿El elemento es una barra de progreso? */
+    function isMeter(el) {
+        if (!el || textOf(el) !== '') {
             return false;
         }
+        if (el.classList && el.classList.contains('report-meter')) {
+            return true;
+        }
+        var height = parseFloat(el.style.getPropertyValue('height') || '0');
+        return height > 0 && height <= 8;
+    }
 
-        var table = document.createElement('table');
-        table.setAttribute('style', tableStyle(el.getAttribute('style')));
-        table.setAttribute('cellspacing', '0');
-        table.setAttribute('cellpadding', '0');
-
-        var tbody = document.createElement('tbody');
-        var row = null;
-        var inRow = 0;
-
-        children.forEach(function (child) {
-            if (!row || inRow >= perRow) {
-                row = document.createElement('tr');
-                tbody.appendChild(row);
-                inRow = 0;
+    function findMeter(cell, valueEl) {
+        var kids = elChildren(cell);
+        var i;
+        for (i = 0; i < kids.length; i++) {
+            if (kids[i] !== valueEl && isMeter(kids[i])) {
+                return kids[i];
             }
-            var cell = document.createElement('td');
-            cell.setAttribute('style', 'vertical-align:top;border:0;padding:0;width:'
-                + Math.floor(100 / perRow) + '%;');
-            cell.appendChild(child);
-            row.appendChild(cell);
-            inRow++;
+        }
+        if (valueEl) {
+            var nested = valueEl.querySelector ? valueEl.querySelector('.report-meter') : null;
+            if (nested) {
+                return nested;
+            }
+            for (i = 0; i < valueEl.children.length; i++) {
+                if (isMeter(valueEl.children[i])) {
+                    return valueEl.children[i];
+                }
+            }
+        }
+        return null;
+    }
+
+    /* Una celda de métrica: etiqueta + valor, ambos texto plano. */
+    function isMetricCell(cell) {
+        var texts = elChildren(cell).filter(function (child) {
+            return textOf(child) !== '';
+        });
+        if (texts.length !== 2) {
+            return false;
+        }
+        var label = texts[0];
+        var value = texts[1];
+        if (!isPlainPart(label) || !isPlainPart(value)) {
+            return false;
+        }
+        if (textOf(label).length > 40) {
+            return false;
+        }
+        var tag = (label.tagName || '').toLowerCase();
+        var transform = (label.style.getPropertyValue('text-transform') || '').toLowerCase();
+        var labelSize = parseFloat(label.style.getPropertyValue('font-size') || '0');
+        var valueSize = parseFloat(value.style.getPropertyValue('font-size') || '0');
+        if (tag === 'dt' || transform === 'uppercase') {
+            return true;
+        }
+        return labelSize > 0 && valueSize > 0 && labelSize < valueSize;
+    }
+
+    function percentFrom(el) {
+        var width = (el.style.getPropertyValue('width') || '').trim();
+        var match = width.match(/^([\d.]+)%$/);
+        if (match) {
+            return Math.max(0, Math.min(100, parseFloat(match[1])));
+        }
+        return 100;
+    }
+
+    /* Barra de progreso → mini-tabla de dos celdas: Word la dibuja bien. */
+    function buildBar(meterEl) {
+        var fill = null;
+        elChildren(meterEl).forEach(function (child) {
+            if (!fill && textOf(child) === '' && /%\s*$/.test(child.style.getPropertyValue('width') || '')) {
+                fill = child;
+            }
         });
 
-        table.appendChild(tbody);
-        el.parentNode.replaceChild(table, el);
+        var percent;
+        var fillColor;
+        var trackColor = '#e5e7eb';
+
+        if (fill) {
+            percent = percentFrom(fill);
+            fillColor = fill.style.getPropertyValue('background-color') || '#ef4444';
+            trackColor = meterEl.style.getPropertyValue('background-color') || trackColor;
+        } else {
+            percent = percentFrom(meterEl);
+            fillColor = meterEl.style.getPropertyValue('background-color') || '#ef4444';
+        }
+
+        var height = parseFloat(meterEl.style.getPropertyValue('height') || '0');
+        height = height > 0 ? Math.max(2, Math.min(9, height)) : 5;
+
+        var cellStyle = function (width, color) {
+            return 'width:' + width + '%;background-color:' + color + ';height:' + height + 'px;'
+                + 'font-size:1px;line-height:1px;border:0;padding:0;';
+        };
+
+        var table = document.createElement('table');
+        table.setAttribute('cellspacing', '0');
+        table.setAttribute('cellpadding', '0');
+        table.setAttribute('style', 'width:100%;border-collapse:collapse;margin:4px 0 0;');
+
+        var row = document.createElement('tr');
+        var filled = document.createElement('td');
+        filled.setAttribute('style', cellStyle(percent, fillColor));
+        filled.innerHTML = '&nbsp;';
+        var rest = document.createElement('td');
+        rest.setAttribute('style', cellStyle(100 - percent, trackColor));
+        rest.innerHTML = '&nbsp;';
+
+        row.appendChild(filled);
+        row.appendChild(rest);
+        table.appendChild(row);
+        return table;
+    }
+
+    /* Estilo en línea reutilizable dentro de una línea de texto. */
+    function cleanInlineStyle(el, maxFontPx) {
+        var parts = [];
+        var declarations = (el.getAttribute('style') || '').split(';');
+
+        declarations.forEach(function (declaration) {
+            var idx = declaration.indexOf(':');
+            if (idx < 0) {
+                return;
+            }
+            var prop = declaration.slice(0, idx).trim().toLowerCase();
+            var value = declaration.slice(idx + 1).trim();
+            if (prop === '' || value === '') {
+                return;
+            }
+            if (prop === 'display' || prop.indexOf('margin') === 0 || prop.indexOf('width') === 0
+                || prop === 'height' || prop === 'min-width' || prop === 'max-width') {
+                return;
+            }
+            if (prop === 'font-size' && maxFontPx > 0) {
+                var px = parseFloat(value);
+                if (!isNaN(px) && px > maxFontPx) {
+                    value = maxFontPx + 'px';
+                }
+            }
+            parts.push(prop + ':' + value);
+        });
+
+        parts.push('display:inline-block');
+        parts.push('vertical-align:baseline');
+        return parts.join(';') + ';';
+    }
+
+    /* Celda de métrica → «Etiqueta: valor» (+ su barra, si la tiene). */
+    function metricLine(cell) {
+        var texts = elChildren(cell).filter(function (child) {
+            return textOf(child) !== '';
+        });
+        if (texts.length < 2) {
+            return null;
+        }
+
+        var labelEl = texts[0];
+        var valueEl = texts[1];
+        var block = document.createElement('div');
+        block.setAttribute('style', 'display:block;margin:0 0 8px;');
+
+        var line = document.createElement('p');
+        line.setAttribute('style', 'margin:0;line-height:1.35;');
+
+        var label = document.createElement('span');
+        label.setAttribute('style', cleanInlineStyle(labelEl));
+        label.textContent = textOf(labelEl) + ':';
+        line.appendChild(label);
+
+        var value = document.createElement('span');
+        /* Si el valor es una única insignia (KEV «Sí/No»), se conserva su
+         * color de fondo y su borde en lugar del estilo del contenedor. */
+        var styleSource = valueEl;
+        if (valueEl.children.length === 1 && textOf(valueEl) === textOf(valueEl.children[0])) {
+            styleSource = valueEl.children[0];
+        }
+        value.setAttribute('style', cleanInlineStyle(styleSource, 18) + 'margin-left:6px;');
+        value.textContent = textOf(valueEl);
+        line.appendChild(value);
+
+        block.appendChild(line);
+
+        var meter = findMeter(cell, valueEl);
+        if (meter) {
+            block.appendChild(buildBar(meter));
+        }
+        return block;
+    }
+
+    function stackBlocks(container) {
+        container.style.setProperty('display', 'block');
+        container.style.removeProperty('gap');
+
+        var kids = elChildren(container);
+        kids.forEach(function (child, index) {
+            var tag = (child.tagName || '').toLowerCase();
+            if (tag !== 'table') {
+                child.style.setProperty('display', 'block');
+            }
+            var marginBottom = parseFloat(child.style.getPropertyValue('margin-bottom') || '0');
+            if (index < kids.length - 1 && !(marginBottom > 0)) {
+                child.style.setProperty('margin-bottom', '10px');
+            }
+        });
+    }
+
+    /* Chips y badges: se quedan en una sola línea. */
+    function inlineChildren(container) {
+        container.style.setProperty('display', 'block');
+        elChildren(container).forEach(function (child) {
+            var tag = (child.tagName || '').toLowerCase();
+            if (tag === 'table' || tag === 'ul' || tag === 'ol' || tag === 'div' || tag === 'p' || /^h[1-6]$/.test(tag)) {
+                return;
+            }
+            child.style.setProperty('display', 'inline-block');
+            var marginRight = parseFloat(child.style.getPropertyValue('margin-right') || '0');
+            if (!(marginRight > 0)) {
+                child.style.setProperty('margin-right', '6px');
+            }
+        });
+    }
+
+    function applyMetrics(container) {
+        var lines = [];
+
+        if ((container.tagName || '').toLowerCase() === 'table') {
+            Array.prototype.forEach.call(container.rows, function (row) {
+                Array.prototype.slice.call(row.cells).forEach(function (cell) {
+                    var line = metricLine(cell);
+                    if (line) {
+                        lines.push(line);
+                    } else if (textOf(cell) !== '') {
+                        var block = document.createElement('div');
+                        block.setAttribute('style', 'display:block;margin:0 0 8px;');
+                        while (cell.firstChild) {
+                            block.appendChild(cell.firstChild);
+                        }
+                        lines.push(block);
+                    }
+                });
+            });
+        } else {
+            elChildren(container).forEach(function (cell) {
+                var line = metricLine(cell);
+                if (line) {
+                    lines.push(line);
+                }
+            });
+        }
+
+        if (!lines.length) {
+            return false;
+        }
+
+        replaceNode(container, lines);
         return true;
     }
 
-    /* Convierte los layouts conocidos y, después, cualquier flex/grid que
-     * quede: filas de badges en línea y grupos de bloques como tabla. */
+    /* Aplica los marcadores del servidor y, para lo que no esté marcado,
+     * apila: el documento exportado nunca va en columnas. */
     function normalizeLayout(clone) {
-        TABLE_LAYOUTS.forEach(function (entry) {
-            Array.prototype.slice.call(clone.querySelectorAll(entry[0])).forEach(function (el) {
-                el.removeAttribute('data-rd-layout');
-                toTable(el, entry[1]);
-            });
+        Array.prototype.slice.call(clone.querySelectorAll('[data-rd-stack="metrics"]')).forEach(function (el) {
+            applyMetrics(el);
+        });
+
+        Array.prototype.slice.call(clone.querySelectorAll('[data-rd-stack="blocks"]')).forEach(function (el) {
+            el.removeAttribute('data-rd-stack');
+            el.removeAttribute('data-rd-layout');
+            stackBlocks(el);
+        });
+
+        Array.prototype.slice.call(clone.querySelectorAll('[data-rd-stack="inline"]')).forEach(function (el) {
+            el.removeAttribute('data-rd-stack');
+            el.removeAttribute('data-rd-layout');
+            inlineChildren(el);
         });
 
         Array.prototype.slice.call(clone.querySelectorAll('[data-rd-layout]')).forEach(function (el) {
@@ -303,35 +556,29 @@
 
             if (display === 'inline-flex' || display === 'inline-grid') {
                 el.style.setProperty('display', 'inline-block');
-                Array.prototype.slice.call(el.children).forEach(function (child) {
-                    child.style.removeProperty('display');
-                });
                 return;
             }
 
-            var children = Array.prototype.slice.call(el.children);
-            if (!children.length) {
+            var kids = elChildren(el);
+            if (!kids.length) {
                 el.style.setProperty('display', 'block');
                 return;
             }
 
-            var allInline = children.every(function (child) {
+            var allInline = kids.every(function (child) {
                 var tag = (child.tagName || '').toLowerCase();
                 return tag === 'a' || tag === 'span' || tag === 'em' || tag === 'strong' || tag === 'b' || tag === 'i';
             });
 
-            /* Texto suelto (títulos con numeración) o badges: flujo en línea. */
             if (allInline || hasLooseText(el)) {
-                el.style.setProperty('display', 'block');
-                children.forEach(function (child) {
-                    child.style.setProperty('display', 'inline-block');
-                });
-                return;
+                inlineChildren(el);
+            } else {
+                stackBlocks(el);
             }
+        });
 
-            if (!toTable(el, children.length === 2 ? 2 : 0)) {
-                el.style.setProperty('display', 'block');
-            }
+        Array.prototype.slice.call(clone.querySelectorAll('[data-rd-stack]')).forEach(function (el) {
+            el.removeAttribute('data-rd-stack');
         });
     }
 
@@ -529,6 +776,14 @@
         }
         saveFile(filename || 'informe.md', text, 'text/markdown;charset=utf-8');
         notify('Markdown descargado.', 'success');
+    };
+
+    /* Punto de prueba para las comprobaciones automáticas (tools/smoke/report-doc.mjs).
+     * No se usa en la interfaz. */
+    ReportDoc._internals = {
+        isMetricCell: isMetricCell,
+        percentFrom: percentFrom,
+        cleanInlineStyle: cleanInlineStyle
     };
 
     /* Delegación: los botones declaran su acción y su documento.

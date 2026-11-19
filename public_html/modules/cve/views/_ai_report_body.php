@@ -236,7 +236,7 @@ $exposureLabel = static function (string $value): string {
             </h1>
 
             <?php if ($cveIds !== []): ?>
-                <div class="flex items-center gap-1.5 flex-wrap mt-3">
+                <div class="flex items-center gap-1.5 flex-wrap mt-3" data-rd-stack="inline">
                     <?php foreach ($cveIds as $cveId): ?>
                         <a href="https://nvd.nist.gov/vuln/detail/<?= e(rawurlencode($cveId)) ?>"
                            target="_blank" rel="noopener noreferrer"
@@ -248,7 +248,7 @@ $exposureLabel = static function (string $value): string {
             <?php endif; ?>
 
             <?php if ($reportTags !== []): ?>
-                <div class="flex items-center gap-1.5 flex-wrap mt-2">
+                <div class="flex items-center gap-1.5 flex-wrap mt-2" data-rd-stack="inline">
                     <span class="text-[10px] font-semibold uppercase tracking-wide text-ink-soft">Tags</span>
                     <?php foreach ($reportTags as $tag): ?>
                         <span class="report-badge inline-flex px-2 py-0.5 rounded-full border border-brand-200 bg-brand-50 text-[10px] font-medium text-brand-700">
@@ -264,7 +264,7 @@ $exposureLabel = static function (string $value): string {
         </header>
 
         <?php if ($items !== []): ?>
-            <div class="report-summary grid grid-cols-2 sm:grid-cols-4 border-b border-line divide-x divide-line">
+            <div class="report-summary grid grid-cols-2 sm:grid-cols-4 border-b border-line divide-x divide-line" data-rd-stack="metrics">
                 <div class="px-5 py-4">
                     <p class="text-[10px] font-semibold uppercase tracking-wide text-ink-soft">CVEs</p>
                     <p class="text-xl font-bold mt-0.5"><?= count($items) ?></p>
@@ -344,7 +344,7 @@ $exposureLabel = static function (string $value): string {
                     <?php endif; ?>
 
                     <?php if ($itemTags !== [] || $itemGroup !== ''): ?>
-                        <div class="flex items-center gap-1.5 flex-wrap mb-2">
+                        <div class="flex items-center gap-1.5 flex-wrap mb-2" data-rd-stack="inline">
                             <?php foreach ($itemTags as $tag): ?>
                                 <span class="report-badge inline-flex px-2 py-0.5 rounded-full border border-brand-200 bg-brand-50 text-[10px] font-medium text-brand-700">
                                     #<?= e($tag) ?>
@@ -361,7 +361,7 @@ $exposureLabel = static function (string $value): string {
                             <p class="text-[10px] font-semibold uppercase tracking-wide text-ink-soft">Vulnerabilidad</p>
                             <h2 class="text-xl font-bold mt-0.5 font-mono"><?= e($cveId) ?></h2>
                         </div>
-                        <div class="flex items-center gap-2 flex-wrap">
+                        <div class="flex items-center gap-2 flex-wrap" data-rd-stack="inline">
                             <span class="report-badge px-2.5 py-1 rounded-md border text-[11px] font-semibold <?= $severityClasses[$severity] ?? $severityClasses['None'] ?>">
                                 <?= e($severityLabels[$severity] ?? ($severity !== '' ? strtoupper($severity) : 'SIN DATOS')) ?>
                             </span>
@@ -378,7 +378,7 @@ $exposureLabel = static function (string $value): string {
                         </div>
                     </div>
 
-                    <dl class="grid grid-cols-2 sm:grid-cols-4 gap-4 mt-5 pb-5 border-b border-line-subtle">
+                    <dl class="grid grid-cols-2 sm:grid-cols-4 gap-4 mt-5 pb-5 border-b border-line-subtle" data-rd-stack="metrics">
                         <div>
                             <dt class="text-[10px] font-semibold uppercase tracking-wide text-ink-soft">CVSS</dt>
                             <dd class="text-3xl font-bold mt-0.5 leading-none"><?= $cvss !== null ? e(number_format($cvss, 1, '.', '')) : '—' ?></dd>
@@ -430,7 +430,7 @@ $exposureLabel = static function (string $value): string {
 
                     <?php if ($isKev && (!empty($item['kev_action']) || !empty($item['kev_due']) || strcasecmp((string)($item['kev_ransomware'] ?? ''), 'Known') === 0)): ?>
                         <div class="report-kev-action mt-4 px-4 py-3 rounded-lg bg-danger-bg border border-red-100">
-                            <div class="flex items-center gap-2 flex-wrap">
+                            <div class="flex items-center gap-2 flex-wrap" data-rd-stack="inline">
                                 <p class="text-[10px] font-semibold uppercase tracking-wide text-red-500">Acción requerida (CISA)</p>
                                 <?php if ($kevActionEs === '' && $kevAction !== ''): ?>
                                     <span class="text-[10px] text-red-400">original (inglés)</span>
@@ -452,7 +452,7 @@ $exposureLabel = static function (string $value): string {
                                 <p class="text-[10px] font-semibold uppercase tracking-wide text-info">Exposición en tu entorno · Defender</p>
                                 <span class="text-[10px] text-ink-soft">Foto: <?= e(format_db_date((string)($defender['generated_at'] ?? ''), 'd/m/Y H:i')) ?></span>
                             </div>
-                            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-3 text-xs">
+                            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-3 text-xs" data-rd-stack="metrics">
                                 <div>
                                     <p class="text-ink-muted">Equipos afectados</p>
                                     <p class="text-lg font-bold"><?= (int)($exposure['machine_total'] ?? 0) ?></p>
@@ -520,7 +520,7 @@ $exposureLabel = static function (string $value): string {
                         </div>
                     <?php endif; ?>
 
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-5">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-5" data-rd-stack="blocks">
                         <div class="report-links-card rounded-lg border border-line p-4">
                             <p class="text-[10px] font-semibold uppercase tracking-wide text-ink-soft">
                                 Exploits públicos (<?= count($exploitItems) ?>)
@@ -626,13 +626,13 @@ $exposureLabel = static function (string $value): string {
                         </div>
                     <?php elseif ($itemSections !== []): ?>
                         <div class="report-ai report-ai-cve mt-5 pt-4 border-t border-line-subtle">
-                            <div class="flex items-center gap-2 flex-wrap">
+                            <div class="flex items-center gap-2 flex-wrap" data-rd-stack="inline">
                                 <h3 class="text-sm font-semibold">Análisis con IA</h3>
                             </div>
-                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3">
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3" data-rd-stack="blocks">
                                 <?php foreach ($itemSections as $sectionIndex => $itemSection): ?>
                                     <div class="report-ai-block rounded-lg border border-line p-3">
-                                        <h4 class="text-xs font-semibold flex items-center gap-2">
+                                        <h4 class="text-xs font-semibold flex items-center gap-2" data-rd-stack="inline">
                                             <span class="inline-flex items-center justify-center w-4 h-4 rounded-full bg-gray-900 text-white text-[9px] font-bold">
                                                 <?= (int)$sectionIndex + 1 ?>
                                             </span>
@@ -672,7 +672,7 @@ $exposureLabel = static function (string $value): string {
                         <h2 class="text-base font-semibold">Análisis con IA</h2>
                         <span class="text-[10px] px-2 py-0.5 rounded-full bg-muted text-ink-muted">Generado automáticamente</span>
                     </div>
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4" data-rd-stack="blocks">
                         <?php foreach ($sections as $i => $section): ?>
                             <div class="report-ai-block rounded-lg border border-line p-4">
                                 <h3 class="text-sm font-semibold flex items-center gap-2">

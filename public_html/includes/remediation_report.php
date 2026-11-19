@@ -565,7 +565,7 @@ final class RemediationReport
         $h[] = '<h1 style="font-size:22px;margin:0 0 6px;">Informe de remediación · ' . $esc($period) . '</h1>';
         $h[] = '<p style="margin:0;color:#4b5563;font-size:12px;">' . $esc($org) . ' · '
             . ($state === 'publicado' ? 'publicado' : 'borrador') . '</p>';
-        $h[] = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin:14px 0;">';
+        $h[] = '<div data-rd-stack="metrics" style="display:flex;gap:8px;flex-wrap:wrap;margin:14px 0;">';
         foreach ([
             'CVE' => count($items),
             'Críticos' => $critical,

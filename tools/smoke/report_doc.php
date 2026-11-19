@@ -141,9 +141,26 @@ try {
     // ---------------------------------------------------------------
     $report = fixtureReport();
     $items = fixtureItems();
-    $aiText = '';
-    $sections = [];
-    $defender = null;
+    $aiText = 'Análisis global de prueba.';
+    $sections = [[
+        'title'      => 'Resumen del conjunto',
+        'bullets'    => ['Un punto del resumen.'],
+        'paragraphs' => [],
+    ]];
+    $defender = [
+        'generated_at' => '2026-11-18 10:00:00',
+        'cves'         => [
+            'CVE-2024-8522' => [
+                'machine_total'    => 3,
+                'exposed_machines' => 2,
+                'public_exploit'   => true,
+                'exploit_verified' => false,
+                'products'         => ['SQL Server'],
+                'tenants'          => ['Contoso'],
+                'machines'         => [],
+            ],
+        ],
+    ];
     $interactive = false;
     $isAdmin = false;
     $perItemMode = true;
@@ -166,6 +183,9 @@ try {
     check('cuerpo: el badge del modelo sale de «Análisis con IA»', !str_contains($article, 'Qwen_Qwen3.5-2B'));
     check('cuerpo: la ficha del informe no se imprime', str_contains($html, 'ai-report-meta no-print'));
     check('cuerpo: los metadatos van antes del documento', strpos($html, 'ai-report-meta') < strpos($html, '<article'));
+    check('cuerpo: KPIs y métricas marcadas para apilar', substr_count($html, 'data-rd-stack="metrics"') === 3);
+    check('cuerpo: tarjetas marcadas como bloques', substr_count($html, 'data-rd-stack="blocks"') === 3);
+    check('cuerpo: badges y chips marcados en línea', substr_count($html, 'data-rd-stack="inline"') >= 3);
 
     // ---------------------------------------------------------------
     // 3. Vistas y helper
@@ -177,7 +197,12 @@ try {
     check('helper: expone copyRich', str_contains($helper, 'ReportDoc.copyRich'));
     check('helper: expone downloadHtml', str_contains($helper, 'ReportDoc.downloadHtml'));
     check('helper: delega en data-rd-action', str_contains($helper, 'data-rd-action'));
-    check('helper: convierte layouts a tabla', str_contains($helper, 'toTable'));
+    check('helper: exporta en columna única', str_contains($helper, 'data-rd-stack="metrics"')
+        && str_contains($helper, 'data-rd-stack="blocks"')
+        && str_contains($helper, 'data-rd-stack="inline"'));
+    check('helper: construye líneas de métrica', str_contains($helper, 'function metricLine'));
+    check('helper: reconstruye las barras como tabla', str_contains($helper, 'function buildBar'));
+    check('helper: ya no convierte columnas en tablas', !str_contains($helper, 'toTable'));
     check('helper: no arrastra el modo oscuro', str_contains($helper, 'withLightTheme'));
     check('helper: respeta los estilos en línea del servidor', str_contains($helper, 'dst.style.getPropertyValue(prop)'));
 
@@ -206,6 +231,36 @@ try {
     check('remediación: botón .html', str_contains($rem, 'remDownloadHtml()'));
     check('remediación: botón .md', str_contains($rem, 'remDownloadMd()'));
     check('remediación: el Markdown sigue disponible', str_contains($rem, 'id="rem-report-md"'));
+
+    // ---------------------------------------------------------------
+    // 4. Documentos generados en servidor
+    // ---------------------------------------------------------------
+    $dossierSrc = (string)@file_get_contents($root . '/public_html/includes/exposed_report_dossier.php');
+    check('dossier: KPIs marcadas como métricas', str_contains($dossierSrc, '<table data-rd-stack="metrics"'));
+    check('dossier: tarjeta marcada como bloques', str_contains($dossierSrc, 'data-rd-stack="blocks"'));
+
+    $remHtml = RemediationReport::renderHtml(
+        ['org_name' => 'Mi organización', 'periodo' => '2026-11', 'estado' => 'borrador'],
+        [[
+            'cve_id'   => 'CVE-2024-8522',
+            'severity' => 'Critical',
+            'cvss'     => 9.8,
+            'epss'     => 0.5,
+            'machines' => 3,
+            'estado'   => 'en_curso',
+            'due_at'   => '2026-12-01',
+            'product'  => 'SQL Server',
+        ]],
+        [
+            'created' => 2, 'closed' => 1, 'open' => 1, 'mttr' => 4.5,
+            'sla_pct' => 80, 'sla_on_time' => 4, 'sla_total' => 5,
+            'delays' => ['retraso' => ['days' => 2], 'bloqueo' => ['days' => 1]],
+            'mttr_by_severity' => [],
+        ]
+    );
+    check('remediación: la tira de KPIs se marca como métricas', str_contains($remHtml, 'data-rd-stack="metrics"'));
+    check('remediación: la tabla de CVEs sigue siendo una tabla', str_contains($remHtml, '<thead>') && str_contains($remHtml, 'CVE-2024-8522'));
+    check('remediación: las KPIs siguen a la vista', str_contains($remHtml, 'Críticos') && str_contains($remHtml, 'Equipos'));
 } catch (Throwable $e) {
     check('excepción inesperada: ' . $e->getMessage(), false, $e->getFile() . ':' . $e->getLine());
 }
