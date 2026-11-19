@@ -48,11 +48,13 @@ require __DIR__ . '/_tabs.php';
             <?php if (!$isProcessing): ?>
                 <button type="button"
                         data-rd-action="copy-rich" data-rd-target="cve-report-doc" data-rd-md="cve-report-md"
+                        data-rd-html="cve-report-word"
                         class="px-3 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors">
                     Copiar informe
                 </button>
                 <button type="button"
                         data-rd-action="download-html" data-rd-target="cve-report-doc"
+                        data-rd-html="cve-report-word"
                         data-rd-filename="<?= e($reportFileBase) ?>.html" data-rd-title="Informe de vulnerabilidad"
                         class="px-3 py-2 border border-line-strong text-sm font-medium rounded-lg hover:bg-muted transition-colors">
                     .html (Word)

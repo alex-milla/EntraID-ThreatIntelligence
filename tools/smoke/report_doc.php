@@ -89,10 +89,10 @@ function fixtureItems(): array
         'description'    => 'The LINQPad for WordPress plugin is susceptible to SQL injection.',
         'description_es' => '',
         'nvd_url'        => 'https://nvd.nist.gov/vuln/detail/CVE-2024-8522',
-        'kev'            => false,
-        'kev_added'      => '',
-        'kev_due'        => '',
-        'kev_action'     => '',
+        'kev'            => true,
+        'kev_added'      => '2025-06-09',
+        'kev_due'        => '2025-06-30',
+        'kev_action'     => 'Apply mitigations per vendor instructions.',
         'kev_ransomware' => '',
         'github'         => [],
         'exploits'       => ['items' => []],
@@ -165,6 +165,7 @@ try {
     $isAdmin = false;
     $perItemMode = true;
     $reportMd = $md;
+    $reportWordHtml = CveReportAi::renderWordHtml($report, $items, $defender);
 
     ob_start();
     require MODULES_PATH . '/cve/views/_ai_report_body.php';
@@ -192,6 +193,21 @@ try {
     check('cuerpo: el EPSS lleva color y nivel', str_contains($html, 'data-rd-level="muy alta"'));
 
     // ---------------------------------------------------------------
+    // 2 bis. Documento generado en servidor para Word
+    // ---------------------------------------------------------------
+    check('word: el documento viaja en un template', str_contains($html, 'id="cve-report-word"'));
+    check('word: sin colores oklch', !str_contains($reportWordHtml, 'oklch'));
+    check('word: sin text-transform (Word lo ignora)', !str_contains($reportWordHtml, 'text-transform'));
+    check('word: la cifra del CVSS usa <font color>', str_contains($reportWordHtml, '<font color="#dc2626"><b>10.0</b></font>'));
+    check('word: el EPSS lleva su color', str_contains($reportWordHtml, '<font color="#dc2626"><b>62,88 %</b></font>'));
+    check('word: badges en celdas con fondo hex', str_contains($reportWordHtml, 'background-color:#fee2e2')
+        && str_contains($reportWordHtml, 'CRÍTICO'));
+    check('word: el panel de CISA es una caja con fondo', str_contains($reportWordHtml, 'background-color:#fef2f2'));
+    check('word: sin sangría horizontal heredada', preg_match('/<div style="[^"]*(padding|margin)-(left|right)/', $reportWordHtml) === 0);
+    check('word: sin width en los contenedores de texto', !preg_match('/<p style="[^"]*width:/', $reportWordHtml));
+    check('word: cifras sin barras ni glifos de bloque', !str_contains($reportWordHtml, '█') && !str_contains($reportWordHtml, '░'));
+
+    // ---------------------------------------------------------------
     // 3. Vistas y helper
     // ---------------------------------------------------------------
     $root = dirname(__DIR__, 2);
@@ -209,6 +225,8 @@ try {
     check('helper: el color de la cifra va al final del estilo', str_contains($helper, 'El color siempre el último'));
     check('helper: no emite display en el estilo de la cifra', !str_contains($helper, "parts.push('display:inline')"));
     check('helper: cae al copiado heredado si la escritura falla', str_contains($helper, 'return legacyCopyRich(html);'));
+    check('helper: usa el documento de Word del servidor', str_contains($helper, "rootId + '-word'") && str_contains($helper, 'data-rd-html'));
+    check('helper: exporta sin sangría heredada', str_contains($helper, 'function stripHorizontalPadding'));
     check('helper: tarjetas como tabla de una celda', str_contains($helper, 'function cardToTable'));
     check('helper: detecta el badge numérico', str_contains($helper, 'function isNumberBadge'));
     check('helper: bordes por lado para Word', str_contains($helper, 'function borderShorthand'));
@@ -225,12 +243,14 @@ try {
     check('vista CVE: botón .html', str_contains($aiReport, 'data-rd-action="download-html"'));
     check('vista CVE: botón .md', str_contains($aiReport, 'data-rd-action="download-md"'));
     check('vista CVE: botón texto', str_contains($aiReport, 'data-rd-action="copy-plain"'));
+    check('vista CVE: usa el documento de Word', str_contains($aiReport, 'data-rd-html="cve-report-word"'));
     check('vista CVE: conserva Imprimir / PDF', str_contains($aiReport, 'Imprimir / PDF'));
 
     $workspace = (string)@file_get_contents($root . '/public_html/modules/cve/views/index.php');
     check('workspace CVE: botón copiar', str_contains($workspace, 'id="ai-copy-btn"'));
     check('workspace CVE: botón .html', str_contains($workspace, 'id="ai-copy-html-btn"'));
     check('workspace CVE: botón .md', str_contains($workspace, 'id="ai-copy-md-btn"'));
+    check('workspace CVE: usa el documento de Word', str_contains($workspace, 'data-rd-html="cve-report-word"'));
 
     $group = (string)@file_get_contents($root . '/public_html/modules/exposed_report/views/group.php');
     check('exposed: usa el helper para copiar', str_contains($group, "ReportDoc.copyRich('exposed-plan-sheet'"));

@@ -1262,11 +1262,13 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
                 <?php endif; ?>
                 <button type="button" id="ai-copy-btn"
                         data-rd-action="copy-rich" data-rd-target="cve-report-doc" data-rd-md="cve-report-md"
+                        data-rd-html="cve-report-word"
                         class="hidden px-3 py-1.5 bg-brand-500 hover:bg-brand-600 text-white text-xs font-medium rounded-lg transition-colors">
                     Copiar informe
                 </button>
                 <button type="button" id="ai-copy-html-btn"
                         data-rd-action="download-html" data-rd-target="cve-report-doc"
+                        data-rd-html="cve-report-word"
                         data-rd-filename="informe-vulnerabilidad.html" data-rd-title="Informe de vulnerabilidad"
                         class="hidden px-3 py-1.5 border border-line-strong text-ink text-xs font-medium rounded-lg hover:bg-muted transition-colors">
                     .html (Word)

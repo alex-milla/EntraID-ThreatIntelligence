@@ -17,6 +17,7 @@ $interactive = !empty($interactive);
 $reportTags = is_array($report['tags_array'] ?? null) ? $report['tags_array'] : [];
 $itemGroups = is_array($report['item_groups'] ?? null) ? $report['item_groups'] : [];
 $reportMd = (string)($reportMd ?? '');
+$reportWordHtml = (string)($reportWordHtml ?? '');
 
 $bodyStatus = (string)($report['status'] ?? 'pending');
 $bodyError = trim((string)($report['ai_error'] ?? ''));
@@ -712,6 +713,7 @@ $exposureLabel = static function (string $value): string {
     </article>
 
     <pre id="cve-report-md" hidden><?= e($reportMd) ?></pre>
+    <template id="cve-report-word"><?= $reportWordHtml ?></template>
 
     <style>
         @media print {

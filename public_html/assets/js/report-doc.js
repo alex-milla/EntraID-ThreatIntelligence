@@ -652,10 +652,36 @@
         });
     }
 
-    function buildExport(rootId) {
+    /* El documento exportado no hereda sangrías: en Word, una tabla al 100 %
+     * dentro de un contenedor con padding rebasa el margen derecho. */
+    function stripHorizontalPadding(root) {
+        ['left', 'right'].forEach(function (side) {
+            root.style.setProperty('padding-' + side, '0');
+            root.style.setProperty('margin-' + side, '0');
+        });
+        Array.prototype.slice.call(root.querySelectorAll('section, .report-cve, .doc-sheet')).forEach(function (el) {
+            el.style.setProperty('padding-left', '0');
+            el.style.setProperty('padding-right', '0');
+        });
+    }
+
+    function buildExport(rootId, htmlId) {
         var source = sheet(rootId);
         if (!source) {
             return null;
+        }
+
+        /* Documento generado en servidor para Word: se copia tal cual. */
+        var template = htmlId ? document.getElementById(htmlId) : null;
+        if (!template && typeof rootId === 'string') {
+            template = document.getElementById(rootId + '-word');
+        }
+        if (template) {
+            var inner = typeof template.innerHTML === 'string' ? template.innerHTML : '';
+            var templateText = template.content ? (template.content.textContent || '') : (template.textContent || '');
+            if (inner.trim() !== '') {
+                return { html: inner, text: templateText };
+            }
         }
 
         var clone = source.cloneNode(true);
@@ -666,6 +692,7 @@
 
         purge(clone);
         normalizeLayout(clone);
+        stripHorizontalPadding(clone);
 
         return {
             html: clone.innerHTML,
@@ -674,8 +701,8 @@
     }
 
     /* HTML autocontenido listo para abrir en Word. */
-    function buildDocument(rootId, title) {
-        var built = buildExport(rootId);
+    function buildDocument(rootId, title, htmlId) {
+        var built = buildExport(rootId, htmlId);
         if (!built) {
             return '';
         }
@@ -790,7 +817,7 @@
 
     ReportDoc.copyRich = function (rootId, options) {
         var opts = options || {};
-        var built = buildExport(rootId);
+        var built = buildExport(rootId, opts.htmlId);
         if (!built) {
             notify('No hay documento que copiar.', 'error');
             return Promise.resolve(false);
@@ -808,7 +835,7 @@
 
     ReportDoc.copyPlain = function (rootId, options) {
         var opts = options || {};
-        var built = buildExport(rootId);
+        var built = buildExport(rootId, opts.htmlId);
         if (!built) {
             notify('No hay documento que copiar.', 'error');
             return Promise.resolve(false);
@@ -908,13 +935,14 @@
         var markdown = markdownFor(button);
         var filename = button.getAttribute('data-rd-filename') || 'informe';
         var title = button.getAttribute('data-rd-title') || 'Informe';
+        var htmlId = button.getAttribute('data-rd-html') || '';
 
         if (action === 'copy-rich') {
-            ReportDoc.copyRich(target, { markdown: markdown });
+            ReportDoc.copyRich(target, { markdown: markdown, htmlId: htmlId });
         } else if (action === 'copy-plain') {
-            ReportDoc.copyPlain(target, { markdown: markdown, message: 'Texto copiado.' });
+            ReportDoc.copyPlain(target, { markdown: markdown, htmlId: htmlId, message: 'Texto copiado.' });
         } else if (action === 'download-html') {
-            ReportDoc.downloadHtml(target, filename, title);
+            ReportDoc.downloadHtml(target, filename, title, htmlId);
         } else if (action === 'download-md') {
             ReportDoc.downloadMarkdown(filename, markdown);
         }

@@ -408,6 +408,332 @@ final class CveReportAi
         return ['color' => '#16a34a', 'level' => 'baja'];
     }
 
+    // ============================================================
+    // Documento para Word / correo (HTML generado en servidor)
+    // ============================================================
+
+    /**
+     * HTML pensado para el motor de Word y Outlook.
+     *
+     * No pasa por el navegador ni por Tailwind: solo colores hex, cifras en
+     * `<font color>` (Word lo respeta siempre), badges en celdas de tabla y
+     * cajas sin sangrías heredadas, para que nada rebase el margen derecho.
+     *
+     * @param array<string,mixed> $report
+     * @param array<int,array<string,mixed>> $items
+     * @param array<string,mixed>|null $defender
+     */
+    public static function renderWordHtml(array $report, array $items, ?array $defender = null): string
+    {
+        $e = static fn(mixed $value): string => htmlspecialchars(
+            (string)$value,
+            ENT_QUOTES | ENT_SUBSTITUTE,
+            'UTF-8'
+        );
+        $oneLine = static function (string $text): string {
+            return trim(preg_replace('/\s+/u', ' ', $text) ?? $text);
+        };
+
+        $items = array_values(array_filter($items, 'is_array'));
+        $report = is_array($report) ? $report : [];
+
+        $ink = '#111827';
+        $muted = '#6b7280';
+        $line = '#e5e7eb';
+        $font = "'Segoe UI',Arial,Helvetica,sans-serif";
+
+        $linkLabel = static function (string $url): string {
+            $url = trim($url);
+            $host = (string)parse_url($url, PHP_URL_HOST);
+            $path = trim((string)parse_url($url, PHP_URL_PATH), '/');
+            $label = $host !== '' ? $host : $url;
+            if ($path !== '') {
+                $label .= '/' . $path;
+            }
+            return $label !== '' ? $label : $url;
+        };
+
+        /* Métrica en una línea: «ETIQUETA: valor (nivel)». */
+        $metric = static function (string $label, string $valueHtml, string $level = '') use ($muted, $ink): string {
+            $html = '<p style="margin:0 0 3pt;font-size:10pt;color:' . $ink . ';">'
+                . '<span style="font-size:7.5pt;letter-spacing:.6pt;color:' . $muted . ';font-weight:700;">'
+                . $label . ':</span>&nbsp;' . $valueHtml;
+            if ($level !== '') {
+                $html .= ' <span style="font-size:9pt;color:' . $muted . ';">(' . $level . ')</span>';
+            }
+            return $html . '</p>';
+        };
+
+        /* Caja: tabla de una celda con borde y, si toca, fondo. */
+        $box = static function (string $innerHtml, string $border = '#e5e7eb', string $background = '', string $padding = '6pt 8pt'): string {
+            $cell = 'border:1px solid ' . $border . ';padding:' . $padding . ';vertical-align:top;';
+            if ($background !== '') {
+                $cell .= 'background-color:' . $background . ';';
+            }
+            return '<table cellspacing="0" cellpadding="0" style="width:100%;border-collapse:collapse;margin:6pt 0;">'
+                . '<tr><td style="' . $cell . '">' . $innerHtml . '</td></tr></table>';
+        };
+
+        $out = [];
+        $out[] = '<div style="font-family:' . $font . ';font-size:10.5pt;line-height:1.45;color:' . $ink . ';">';
+
+        /* Cabecera */
+        $out[] = '<p style="margin:0 0 2pt;font-size:7.5pt;letter-spacing:1pt;color:' . $muted . ';font-weight:700;">INFORME DE VULNERABILIDAD</p>';
+        if (count($items) === 1) {
+            $title = (string)($items[0]['cve_id'] ?? '');
+        } elseif (count($items) > 1) {
+            $title = count($items) . ' vulnerabilidades analizadas';
+        } else {
+            $title = (string)($report['title'] ?? 'Informe CVE');
+        }
+        $out[] = '<p style="margin:0 0 8pt;font-size:18pt;font-weight:700;color:' . $ink . ';">' . $e($title) . '</p>';
+
+        /* Tira de KPIs como líneas */
+        if ($items !== []) {
+            $kevCount = 0;
+            $maxCvss = null;
+            $maxPriority = null;
+            $priorityOrder = ['A+' => 5, 'A' => 4, 'B' => 3, 'C' => 2, 'D' => 1];
+            foreach ($items as $item) {
+                if (!empty($item['kev'])) {
+                    $kevCount++;
+                }
+                if (isset($item['cvss']) && $item['cvss'] !== null) {
+                    $maxCvss = $maxCvss === null ? (float)$item['cvss'] : max($maxCvss, (float)$item['cvss']);
+                }
+                $priority = (string)($item['priority'] ?? '');
+                if ($priority !== '' && ($maxPriority === null || ($priorityOrder[$priority] ?? 0) > ($priorityOrder[$maxPriority] ?? 0))) {
+                    $maxPriority = $priority;
+                }
+            }
+            $out[] = $metric('CVES', '<b>' . count($items) . '</b>');
+            $out[] = $metric('EN CISA KEV', '<b>' . $kevCount . '</b>');
+            $out[] = $metric('CVSS MÁXIMO', '<b>' . ($maxCvss !== null ? number_format($maxCvss, 1, '.', '') : '—') . '</b>');
+            $out[] = $metric('PRIORIDAD MÁXIMA', '<b>' . ($maxPriority !== null ? $e($maxPriority) : '—') . '</b>');
+            $out[] = '<p style="margin:10pt 0 0;border-top:1px solid ' . $line . ';font-size:1pt;line-height:1pt;">&nbsp;</p>';
+        }
+
+        /* Un bloque por CVE */
+        foreach ($items as $item) {
+            $cveId = (string)($item['cve_id'] ?? '');
+            $severity = (string)($item['severity'] ?? '');
+            $cvss = isset($item['cvss']) && $item['cvss'] !== null ? (float)$item['cvss'] : null;
+            $epss = isset($item['epss']) && $item['epss'] !== null ? (float)$item['epss'] : null;
+            $priority = (string)($item['priority'] ?? '');
+            $published = (string)($item['published_at'] ?? '');
+            $vector = (string)($item['vector'] ?? '');
+            $isKev = !empty($item['kev']);
+
+            $severityLabel = [
+                'Critical' => 'CRÍTICO',
+                'High'     => 'ALTO',
+                'Medium'   => 'MEDIO',
+                'Low'      => 'BAJO',
+                'None'     => 'SIN DATOS',
+            ][$severity] ?? ($severity !== '' ? strtoupper($severity) : 'SIN DATOS');
+
+            $severityStyle = [
+                'Critical' => ['#fee2e2', '#b91c1c', '#fecaca'],
+                'High'     => ['#ffedd5', '#c2410c', '#fed7aa'],
+                'Medium'   => ['#fef3c7', '#92400e', '#fde68a'],
+                'Low'      => ['#dcfce7', '#15803d', '#bbf7d0'],
+                'None'     => ['#f3f4f6', '#374151', '#e5e7eb'],
+            ][$severity] ?? ['#f3f4f6', '#374151', '#e5e7eb'];
+
+            $out[] = '<p style="margin:16pt 0 0;font-size:7.5pt;letter-spacing:.6pt;color:' . $muted . ';font-weight:700;">VULNERABILIDAD</p>';
+            $out[] = '<p style="margin:0 0 6pt;font-size:15pt;font-weight:700;font-family:Consolas,Menlo,monospace;color:' . $ink . ';">' . $e($cveId) . '</p>';
+
+            /* Badges como celdas separadas: Word pinta fondo y borde siempre. */
+            $badges = [];
+            $badges[] = '<td style="background-color:' . $severityStyle[0] . ';border:1px solid ' . $severityStyle[2]
+                . ';color:' . $severityStyle[1] . ';font-size:9pt;font-weight:700;padding:3pt 8pt;">'
+                . $e($severityLabel) . '</td>';
+            if ($priority !== '') {
+                $badges[] = '<td style="background-color:#dc2626;color:#ffffff;font-size:9pt;font-weight:700;padding:3pt 8pt;">'
+                    . 'Prioridad ' . $e($priority) . '</td>';
+            }
+            $nvdUrl = (string)($item['nvd_url'] ?? '');
+            if (!preg_match('#^https?://#i', $nvdUrl)) {
+                $nvdUrl = 'https://nvd.nist.gov/vuln/detail/' . rawurlencode($cveId);
+            }
+            $badges[] = '<td style="border:1px solid #d1d5db;color:#374151;font-size:9pt;padding:3pt 8pt;">'
+                . '<a href="' . $e($nvdUrl) . '" style="color:#374151;text-decoration:none;">NVD</a></td>';
+
+            $out[] = '<table cellspacing="6" cellpadding="0" style="border-collapse:separate;margin:0 0 8pt;"><tr>'
+                . implode('', $badges) . '</tr></table>';
+
+            /* Métricas con la cifra en color */
+            $cvssTone = self::severityTone($severity, $cvss);
+            $epssTone = self::epssTone($epss);
+
+            $cvssValue = $cvss !== null
+                ? '<font color="' . $cvssTone['color'] . '"><b>' . number_format($cvss, 1, '.', '') . '</b></font>'
+                : '<b style="color:' . $muted . ';">—</b>';
+            $out[] = $metric('CVSS', $cvssValue, $cvssTone['level']);
+
+            $epssValue = $epss !== null
+                ? '<font color="' . $epssTone['color'] . '"><b>' . number_format($epss * 100, 2, ',', '') . ' %</b></font>'
+                : '<b style="color:' . $muted . ';">—</b>';
+            $out[] = $metric('EPSS', $epssValue, $epssTone['level']);
+
+            $kevValue = $isKev
+                ? '<font color="#b91c1c"><b>Sí</b></font>'
+                : '<b style="color:' . $muted . ';">No</b>';
+            if ($isKev && !empty($item['kev_added'])) {
+                $kevValue .= ' <span style="font-size:9pt;color:' . $muted . ';">Añadido ' . $e((string)$item['kev_added']) . '</span>';
+            }
+            $out[] = $metric('CISA KEV', $kevValue);
+            $out[] = $metric('PUBLICADO', '<b>' . $e($published !== '' ? $published : '—') . '</b>');
+
+            if ($vector !== '') {
+                $out[] = '<p style="margin:6pt 0 0;font-family:Consolas,Menlo,monospace;font-size:8.5pt;color:#4b5563;">'
+                    . $e($vector) . '</p>';
+            }
+
+            /* Descripción */
+            $descriptionEs = self::cleanTranslatedText((string)($item['description_es'] ?? ''));
+            $description = $oneLine($descriptionEs !== '' ? $descriptionEs : (string)($item['description'] ?? ''));
+            $out[] = '<p style="margin:10pt 0 2pt;font-size:8pt;letter-spacing:.6pt;color:' . $muted . ';font-weight:700;">DESCRIPCIÓN</p>';
+            $out[] = '<p style="margin:0;font-size:10pt;color:#374151;">' . $e($description !== '' ? $description : 'Sin descripción disponible.') . '</p>';
+
+            /* Acción CISA */
+            $kevActionEs = self::cleanTranslatedText((string)($item['kev_action_es'] ?? ''));
+            $kevAction = $kevActionEs !== '' ? $kevActionEs : trim((string)($item['kev_action'] ?? ''));
+            if ($isKev && ($kevAction !== '' || !empty($item['kev_due'])
+                || strcasecmp((string)($item['kev_ransomware'] ?? ''), 'Known') === 0)) {
+                $inner = '<p style="margin:0;font-size:8pt;letter-spacing:.6pt;color:#b91c1c;font-weight:700;">ACCIÓN REQUERIDA (CISA)</p>';
+                if ($kevAction !== '') {
+                    $inner .= '<p style="margin:3pt 0 0;font-size:10pt;color:#7f1d1d;">' . $e($oneLine($kevAction)) . '</p>';
+                }
+                $notes = [];
+                if (!empty($item['kev_due'])) {
+                    $notes[] = 'Vence el ' . (string)$item['kev_due'];
+                }
+                if (strcasecmp((string)($item['kev_ransomware'] ?? ''), 'Known') === 0) {
+                    $notes[] = 'Ransomware conocido';
+                }
+                if ($notes !== []) {
+                    $inner .= '<p style="margin:3pt 0 0;font-size:9pt;color:#991b1b;">' . $e(implode(' · ', $notes)) . '.</p>';
+                }
+                $out[] = $box($inner, '#fecaca', '#fef2f2');
+            }
+
+            /* Exposición en el tenant */
+            $exposure = ($defender !== null && isset($defender['cves'][$cveId]) && is_array($defender['cves'][$cveId]))
+                ? $defender['cves'][$cveId]
+                : null;
+            if ($exposure !== null) {
+                $inner = '<p style="margin:0;font-size:8pt;letter-spacing:.6pt;color:#1d4ed8;font-weight:700;">EXPOSICIÓN EN TU ENTORNO · DEFENDER</p>';
+                $inner .= '<p style="margin:3pt 0 0;font-size:10pt;color:#374151;">'
+                    . 'Equipos afectados: <b>' . (int)($exposure['machine_total'] ?? 0) . '</b>'
+                    . ' · Expuestos: <b>' . (int)($exposure['exposed_machines'] ?? 0) . '</b>'
+                    . ' · Exploit público: <b>' . (!empty($exposure['public_exploit']) ? 'Sí' : 'No') . '</b>'
+                    . ' · Verificado: <b>' . (!empty($exposure['exploit_verified']) ? 'Sí' : 'No') . '</b>'
+                    . '</p>';
+                if (!empty($exposure['products'])) {
+                    $inner .= '<p style="margin:3pt 0 0;font-size:9pt;color:#6b7280;">Productos: '
+                        . $e(implode(' · ', array_slice((array)$exposure['products'], 0, 6))) . '</p>';
+                }
+                $out[] = $box($inner, '#bfdbfe', '#eff6ff');
+            }
+
+            /* Exploits */
+            $exploits = is_array($item['exploits'] ?? null) ? $item['exploits'] : [];
+            $exploitItems = is_array($exploits['items'] ?? null) ? $exploits['items'] : [];
+            $github = is_array($item['github'] ?? null) ? $item['github'] : [];
+
+            $list = '';
+            foreach (array_slice($exploitItems, 0, 20) as $exploit) {
+                $source = (string)($exploit['source_label'] ?? $exploit['source'] ?? 'Exploit');
+                $url = (string)($exploit['url'] ?? '');
+                $title = $oneLine((string)($exploit['title'] ?? ''));
+                $date = trim((string)($exploit['published_at'] ?? ''));
+                $lineText = '<b>' . $e($source) . '</b>';
+                if ($date !== '') {
+                    $lineText .= ' · ' . $e($date);
+                }
+                if ($title !== '') {
+                    $lineText .= ' — ' . $e(truncate($title, 140));
+                }
+                $lineText .= ' — <a href="' . $e($url) . '" style="color:#1d4ed8;">' . $e($linkLabel($url)) . '</a>';
+                $list .= '<li style="margin:2pt 0;">' . $lineText . '</li>';
+            }
+            $out[] = '<p style="margin:10pt 0 2pt;font-size:8pt;letter-spacing:.6pt;color:' . $muted . ';font-weight:700;">'
+                . 'EXPLOITS PÚBLICOS (' . count($exploitItems) . ')</p>';
+            if ($list === '') {
+                $out[] = '<p style="margin:0;font-size:10pt;color:' . $muted . ';">Sin exploits en las fuentes consultadas (GitHub PoC, Nuclei).</p>';
+            } else {
+                $out[] = '<ul style="margin:0 0 0 14pt;padding:0;font-size:9.5pt;">' . $list . '</ul>';
+            }
+            if ($github !== []) {
+                $extra = '';
+                foreach (array_slice($github, 0, 6) as $url) {
+                    $extra .= '<li style="margin:2pt 0;"><a href="' . $e((string)$url) . '" style="color:#1d4ed8;">'
+                        . $e($linkLabel((string)$url)) . '</a></li>';
+                }
+                $out[] = '<p style="margin:6pt 0 2pt;font-size:9pt;color:' . $muted . ';">Referencias GitHub (sin verificar):</p>';
+                $out[] = '<ul style="margin:0 0 0 14pt;padding:0;font-size:9pt;">' . $extra . '</ul>';
+            }
+
+            /* Referencias */
+            $references = is_array($item['references'] ?? null) ? $item['references'] : [];
+            $refList = '';
+            foreach (array_slice($references, 0, 20) as $url) {
+                $refList .= '<li style="margin:2pt 0;"><a href="' . $e((string)$url) . '" style="color:#1d4ed8;">'
+                    . $e($linkLabel((string)$url)) . '</a></li>';
+            }
+            $out[] = '<p style="margin:10pt 0 2pt;font-size:8pt;letter-spacing:.6pt;color:' . $muted . ';font-weight:700;">'
+                . 'REFERENCIAS (' . count($references) . ')</p>';
+            if ($refList === '') {
+                $out[] = '<p style="margin:0;font-size:10pt;color:' . $muted . ';">Sin referencias adicionales.</p>';
+            } else {
+                $out[] = '<ul style="margin:0 0 0 14pt;padding:0;font-size:9.5pt;">' . $refList . '</ul>';
+            }
+
+            /* Análisis de IA */
+            $itemSections = is_array($item['ai_sections'] ?? null) ? $item['ai_sections'] : [];
+            if ((string)($item['ai_status'] ?? '') === 'error') {
+                $error = trim((string)($item['ai_error'] ?? ''));
+                $out[] = '<p style="margin:10pt 0 2pt;font-size:8pt;letter-spacing:.6pt;color:' . $muted . ';font-weight:700;">ANÁLISIS CON IA</p>';
+                $out[] = '<p style="margin:0;font-size:10pt;color:#b91c1c;">No disponible: '
+                    . $e($error !== '' ? $oneLine($error) : 'error desconocido') . '</p>';
+            } elseif ($itemSections !== []) {
+                $out[] = '<p style="margin:14pt 0 4pt;font-size:8pt;letter-spacing:.6pt;color:' . $muted . ';font-weight:700;">ANÁLISIS CON IA</p>';
+                $index = 0;
+                foreach ($itemSections as $section) {
+                    $index++;
+                    $titleSection = $oneLine((string)($section['title'] ?? 'Análisis'));
+                    $inner = '<p style="margin:0;font-size:10.5pt;font-weight:700;color:' . $ink . ';">'
+                        . $index . '. ' . $e($titleSection) . '</p>';
+                    $bullets = is_array($section['bullets'] ?? null) ? $section['bullets'] : [];
+                    if ($bullets !== []) {
+                        $itemsHtml = '';
+                        foreach ($bullets as $bullet) {
+                            $itemsHtml .= '<li style="margin:2pt 0;">' . $e($oneLine((string)$bullet)) . '</li>';
+                        }
+                        $inner .= '<ul style="margin:3pt 0 0 12pt;padding:0;font-size:9.5pt;color:#374151;">' . $itemsHtml . '</ul>';
+                    }
+                    foreach ((array)($section['paragraphs'] ?? []) as $paragraph) {
+                        $inner .= '<p style="margin:3pt 0 0;font-size:9.5pt;color:#374151;">'
+                            . $e($oneLine((string)$paragraph)) . '</p>';
+                    }
+                    $out[] = $box($inner);
+                }
+            }
+        }
+
+        /* Pie */
+        $out[] = '<p style="margin:14pt 0 0;border-top:1px solid ' . $line . ';font-size:1pt;line-height:1pt;">&nbsp;</p>';
+        $out[] = '<p style="margin:6pt 0 0;font-size:8pt;color:' . $muted . ';">'
+            . 'Fuentes: NVD · CISA KEV · EPSS · GitHub PoC · Nuclei · Exploit-DB · Metasploit. '
+            . 'Prioridad calculada con la fórmula de SploitScan (KEV, CVSS, EPSS y exploits públicos).</p>';
+        $out[] = '<p style="margin:3pt 0 0;font-size:8pt;color:' . $muted . ';">'
+            . 'La evaluación de riesgo es una estimación generada por IA; verifica siempre la información antes de tomar decisiones.</p>';
+        $out[] = '</div>';
+
+        return implode("\n", $out);
+    }
+
     /**
      * Extrae URLs válidas de references_json (admite strings u objetos NVD).
      *
