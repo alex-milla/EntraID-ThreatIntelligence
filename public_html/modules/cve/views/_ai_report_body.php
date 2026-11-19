@@ -320,6 +320,8 @@ $exposureLabel = static function (string $value): string {
                     $nvdUrl = 'https://nvd.nist.gov/vuln/detail/' . rawurlencode($cveId);
                 }
                 $packetStormUrl = 'https://packetstormsecurity.com/search/?q=' . rawurlencode($cveId);
+                $cvssTone = CveReportAi::severityTone($severity, $cvss);
+                $epssTone = CveReportAi::epssTone($epss);
                 $exposure = ($defender !== null && isset($defender['cves'][$cveId]) && is_array($defender['cves'][$cveId]))
                     ? $defender['cves'][$cveId]
                     : null;
@@ -381,13 +383,13 @@ $exposureLabel = static function (string $value): string {
                     <dl class="grid grid-cols-2 sm:grid-cols-4 gap-4 mt-5 pb-5 border-b border-line-subtle" data-rd-stack="metrics">
                         <div>
                             <dt class="text-[10px] font-semibold uppercase tracking-wide text-ink-soft">CVSS</dt>
-                            <dd class="text-3xl font-bold mt-0.5 leading-none"><?= $cvss !== null ? e(number_format($cvss, 1, '.', '')) : '—' ?></dd>
+                            <dd class="text-3xl font-bold mt-0.5 leading-none" data-rd-color="<?= e($cvssTone['color']) ?>" data-rd-level="<?= e($cvssTone['level']) ?>"><?= $cvss !== null ? e(number_format($cvss, 1, '.', '')) : '—' ?></dd>
                             <span class="report-meter block mt-1 h-1 rounded-full <?= $severityBar ?>" style="width: <?= $cvss !== null ? e(number_format(min(100, $cvss * 10), 0, '.', '')) : 0 ?>%"></span>
                         </div>
                         <div>
                             <dt class="text-[10px] font-semibold uppercase tracking-wide text-ink-soft">EPSS</dt>
                             <dd class="mt-1">
-                                <span class="text-sm font-semibold"><?= $epss !== null ? e(number_format($epssPct, 2, ',', '')) . ' %' : '—' ?></span>
+                                <span class="text-sm font-semibold" data-rd-color="<?= e($epssTone['color']) ?>" data-rd-level="<?= e($epssTone['level']) ?>"><?= $epss !== null ? e(number_format($epssPct, 2, ',', '')) . ' %' : '—' ?></span>
                                 <span class="report-meter block mt-1 h-1.5 rounded-full bg-muted overflow-hidden">
                                     <span class="block h-full rounded-full bg-amber-500" style="width: <?= e(number_format($epssPct, 1, '.', '')) ?>%"></span>
                                 </span>

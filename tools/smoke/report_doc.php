@@ -188,6 +188,8 @@ try {
     check('cuerpo: badges y chips marcados en línea', substr_count($html, 'data-rd-stack="inline"') >= 3);
     check('cuerpo: tarjetas con caja marcadas', substr_count($html, 'data-rd-card') >= 4);
     check('cuerpo: el chip duplicado del CVE no viaja', substr_count($html, 'data-rd-drop') === 1);
+    check('cuerpo: el CVSS lleva color y nivel', str_contains($html, 'data-rd-color="#dc2626" data-rd-level="crítico"'));
+    check('cuerpo: el EPSS lleva color y nivel', str_contains($html, 'data-rd-level="muy alta"'));
 
     // ---------------------------------------------------------------
     // 3. Vistas y helper
@@ -203,8 +205,8 @@ try {
         && str_contains($helper, 'data-rd-stack="blocks"')
         && str_contains($helper, 'data-rd-stack="inline"'));
     check('helper: construye líneas de métrica', str_contains($helper, 'function metricLine'));
-    check('helper: reconstruye las barras como tabla', str_contains($helper, 'function buildBar'));
-    check('helper: barras con caracteres de bloque', str_contains($helper, '\u2588') && str_contains($helper, '\u2591'));
+    check('helper: ya no dibuja barras en el documento', !str_contains($helper, 'buildBar') && !str_contains($helper, '\u2588'));
+    check('helper: aplica el color de la cifra', str_contains($helper, 'data-rd-color') && str_contains($helper, 'data-rd-level'));
     check('helper: tarjetas como tabla de una celda', str_contains($helper, 'function cardToTable'));
     check('helper: detecta el badge numérico', str_contains($helper, 'function isNumberBadge'));
     check('helper: bordes por lado para Word', str_contains($helper, 'function borderShorthand'));
@@ -245,6 +247,28 @@ try {
     $dossierSrc = (string)@file_get_contents($root . '/public_html/includes/exposed_report_dossier.php');
     check('dossier: KPIs marcadas como métricas', str_contains($dossierSrc, '<table data-rd-stack="metrics"'));
     check('dossier: tarjeta marcada como bloques', str_contains($dossierSrc, 'data-rd-stack="blocks"'));
+    check('dossier: la celda de métrica lleva el tono', str_contains($dossierSrc, 'data-rd-color='));
+
+    $dossier = ExposedReportDossier::build(
+        ['id' => 1, 'name' => 'Grupo de prueba'],
+        [[
+            'cve_id'           => 'CVE-2024-8522',
+            'severity'         => 'critical',
+            'cvss'             => 9.8,
+            'epss'             => 0.62,
+            'is_kev'           => 1,
+            'exposed_machines' => 12,
+            'age_days'         => 30,
+            'first_detected_at' => '2026-10-01',
+            'description'      => 'Prueba de tono.',
+            'software_labels'  => 'SQL Server',
+            'tvm_status'       => 'New',
+        ]],
+        []
+    );
+    $dossierHtml = (string)($dossier['html'] ?? '');
+    check('dossier: el CVSS lleva color y nivel', str_contains($dossierHtml, 'data-rd-color="#dc2626" data-rd-level="crítico"'));
+    check('dossier: el EPSS lleva color y nivel', str_contains($dossierHtml, 'data-rd-level="muy alta"'));
 
     $remHtml = RemediationReport::renderHtml(
         ['org_name' => 'Mi organización', 'periodo' => '2026-11', 'estado' => 'borrador'],

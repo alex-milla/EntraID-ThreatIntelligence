@@ -283,9 +283,11 @@ if (!class_exists('ExposedReportDossier')) {
             // Rejilla de métricas.
             $out[] = '<table data-rd-stack="metrics" style="width:100%;border-collapse:collapse;margin:12px 0 0;font-size:12px;"><tr>';
             $out[] = self::metricCell('CVSS', $cvss !== null ? number_format($cvss, 1, '.', '') : '—',
-                $cvss !== null ? self::meter(min(100, $cvss * 10), $colors[0]) : '');
+                $cvss !== null ? self::meter(min(100, $cvss * 10), $colors[0]) : '', null,
+                CveReportAi::severityTone($severity, $cvss));
             $out[] = self::metricCell('EPSS', $epss !== null ? number_format($epssPct, 2, ',', '') . ' %' : '—',
-                $epss !== null ? self::meter($epssPct, '#d97706') : '');
+                $epss !== null ? self::meter($epssPct, '#d97706') : '', null,
+                CveReportAi::epssTone($epss));
             $out[] = self::metricCell('CISA KEV', (int)($item['is_kev'] ?? 0) === 1 ? 'Sí' : 'No', '', (int)($item['is_kev'] ?? 0) === 1 ? '#b91c1c' : null);
             $out[] = self::metricCell('Equipos expuestos', (string)(int)($item['exposed_machines'] ?? 0), '');
             $out[] = '</tr></table>';
@@ -383,11 +385,18 @@ if (!class_exists('ExposedReportDossier')) {
                 . '</td>';
         }
 
-        private static function metricCell(string $label, string $value, string $meter = '', ?string $color = null): string
+        private static function metricCell(string $label, string $value, string $meter = '', ?string $color = null, array $tone = []): string
         {
+            $attrs = '';
+            if (!empty($tone['color'])) {
+                $attrs .= ' data-rd-color="' . self::esc((string)$tone['color']) . '"';
+            }
+            if (!empty($tone['level'])) {
+                $attrs .= ' data-rd-level="' . self::esc((string)$tone['level']) . '"';
+            }
             return '<td style="border-top:1px solid #e5e7eb;padding:8px 10px 8px 0;vertical-align:top;">'
                 . '<span style="display:block;font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:#6b7280;font-weight:700;">' . self::esc($label) . '</span>'
-                . '<span style="display:block;font-size:15px;font-weight:700;' . ($color !== null ? 'color:' . $color . ';' : '') . '">' . self::esc($value) . '</span>'
+                . '<span style="display:block;font-size:15px;font-weight:700;' . ($color !== null ? 'color:' . $color . ';' : '') . '"' . $attrs . '>' . self::esc($value) . '</span>'
                 . $meter
                 . '</td>';
         }

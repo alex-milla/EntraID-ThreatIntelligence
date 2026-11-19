@@ -332,6 +332,82 @@ final class CveReportAi
         return $grade;
     }
 
+    // ============================================================
+    // Tonos para el documento exportado (Word/correo)
+    // ============================================================
+
+    /** Colores de severidad: la misma paleta que el dossier. */
+    public const TONE_COLORS = [
+        'Critical' => '#dc2626',
+        'High'     => '#ea580c',
+        'Medium'   => '#d97706',
+        'Low'      => '#16a34a',
+        'None'     => '#6b7280',
+    ];
+
+    /** Nivel en minúsculas que acompaña a la cifra en el documento. */
+    public const TONE_LABELS = [
+        'Critical' => 'crítico',
+        'High'     => 'alto',
+        'Medium'   => 'medio',
+        'Low'      => 'bajo',
+        'None'     => '',
+    ];
+
+    /**
+     * Color y nivel de la cifra CVSS: usa la severidad ya calculada y, si no
+     * viene, la deduce del propio CVSS.
+     *
+     * @return array{color:string,level:string}
+     */
+    public static function severityTone(?string $severity, ?float $cvss = null): array
+    {
+        $key = ucfirst(strtolower(trim((string)$severity)));
+        if (!isset(self::TONE_COLORS[$key])) {
+            $key = 'None';
+            if ($cvss !== null) {
+                if ($cvss >= 9.0) {
+                    $key = 'Critical';
+                } elseif ($cvss >= 7.0) {
+                    $key = 'High';
+                } elseif ($cvss >= 4.0) {
+                    $key = 'Medium';
+                } elseif ($cvss > 0.0) {
+                    $key = 'Low';
+                }
+            }
+        }
+
+        /* Sin puntuación no hay cifra que colorear: gris y sin nivel. */
+        if ($cvss === null) {
+            return ['color' => self::TONE_COLORS['None'], 'level' => ''];
+        }
+
+        return ['color' => self::TONE_COLORS[$key], 'level' => self::TONE_LABELS[$key]];
+    }
+
+    /**
+     * Color y nivel de la cifra EPSS (probabilidad de explotación a 30 días).
+     *
+     * @return array{color:string,level:string}
+     */
+    public static function epssTone(?float $epss): array
+    {
+        if ($epss === null || $epss <= 0.0) {
+            return ['color' => self::TONE_COLORS['None'], 'level' => ''];
+        }
+        if ($epss >= 0.5) {
+            return ['color' => '#dc2626', 'level' => 'muy alta'];
+        }
+        if ($epss >= 0.1) {
+            return ['color' => '#ea580c', 'level' => 'alta'];
+        }
+        if ($epss >= 0.01) {
+            return ['color' => '#d97706', 'level' => 'media'];
+        }
+        return ['color' => '#16a34a', 'level' => 'baja'];
+    }
+
     /**
      * Extrae URLs válidas de references_json (admite strings u objetos NVD).
      *

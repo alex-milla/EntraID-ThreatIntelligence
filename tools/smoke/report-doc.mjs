@@ -64,7 +64,12 @@ function el(tagName, textContent, options = {}) {
         classList: {
             contains(name) { return (options.classes || []).includes(name); }
         },
-        getAttribute(name) { return name === 'style' ? (options.styleAttr || '') : null; },
+        getAttribute(name) {
+            if (options.attrs && Object.prototype.hasOwnProperty.call(options.attrs, name)) {
+                return options.attrs[name];
+            }
+            return name === 'style' ? (options.styleAttr || '') : null;
+        },
         querySelector(selector) {
             if (typeof options.querySelector === 'function') {
                 return options.querySelector(selector);
@@ -132,10 +137,19 @@ check('métrica: etiqueta demasiado larga se descarta',
         ]
     })) === false);
 
-/* --- percentFrom -------------------------------------------------------- */
-check('barra: porcentaje en línea', I.percentFrom(el('span', '', { style: { width: '62.9%' } })) === 62.9);
-check('barra: sin porcentaje asume el 100 %', I.percentFrom(el('span', '', { style: {} })) === 100);
-check('barra: recorta por encima del 100 %', I.percentFrom(el('span', '', { style: { width: '140%' } })) === 100);
+/* --- attrFrom ----------------------------------------------------------- */
+check('atributo: lo lee del propio elemento',
+    I.attrFrom(el('dd', '10.0', { attrs: { 'data-rd-color': '#dc2626' } }), 'data-rd-color') === '#dc2626');
+check('atributo: lo busca en el contenido (EPSS va en un span)',
+    I.attrFrom(
+        el('dd', '62,88 %', {
+            children: [el('span', '62,88 %', { attrs: { 'data-rd-color': '#ea580c' } })],
+            querySelector() { return el('span', '62,88 %', { attrs: { 'data-rd-color': '#ea580c' } }); }
+        }),
+        'data-rd-color'
+    ) === '#ea580c');
+check('atributo: vacío cuando no existe',
+    I.attrFrom(el('dd', 'x', {}), 'data-rd-color') === '');
 
 /* --- cleanInlineStyle --------------------------------------------------- */
 const cleaned = I.cleanInlineStyle(

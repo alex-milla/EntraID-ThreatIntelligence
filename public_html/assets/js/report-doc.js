@@ -3,7 +3,7 @@
  *
  * Convierte el DOM de un informe (.report-doc, .doc-sheet) en HTML con estilos
  * en línea para pegarlo en Word o en un correo sin perder colores, badges,
- * bordes ni barras.
+ * bordes ni recuadros.
  *
  * El documento exportado va SIEMPRE en una columna (la pantalla conserva sus
  * columnas): Word y Outlook no implementan CSS Grid/Flex. El servidor marca
@@ -180,8 +180,7 @@
 
             var parentCs = i > 0 && src.parentElement ? window.getComputedStyle(src.parentElement) : null;
 
-            var copyBox = src.tagName === 'IMG'
-                || (src.classList && src.classList.contains('report-meter'));
+            var copyBox = src.tagName === 'IMG';
 
             var props = copyBox ? PROPS.concat(BOX_PROPS) : PROPS;
 
@@ -270,40 +269,6 @@
         return !el.querySelector('ul,ol,table,dl,pre,section,article,div');
     }
 
-    /* ¿El elemento es una barra de progreso? */
-    function isMeter(el) {
-        if (!el || textOf(el) !== '') {
-            return false;
-        }
-        if (el.classList && el.classList.contains('report-meter')) {
-            return true;
-        }
-        var height = parseFloat(el.style.getPropertyValue('height') || '0');
-        return height > 0 && height <= 8;
-    }
-
-    function findMeter(cell, valueEl) {
-        var kids = elChildren(cell);
-        var i;
-        for (i = 0; i < kids.length; i++) {
-            if (kids[i] !== valueEl && isMeter(kids[i])) {
-                return kids[i];
-            }
-        }
-        if (valueEl) {
-            var nested = valueEl.querySelector ? valueEl.querySelector('.report-meter') : null;
-            if (nested) {
-                return nested;
-            }
-            for (i = 0; i < valueEl.children.length; i++) {
-                if (isMeter(valueEl.children[i])) {
-                    return valueEl.children[i];
-                }
-            }
-        }
-        return null;
-    }
-
     /* Una celda de métrica: etiqueta + valor, ambos texto plano. */
     function isMetricCell(cell) {
         var texts = elChildren(cell).filter(function (child) {
@@ -328,70 +293,6 @@
             return true;
         }
         return labelSize > 0 && valueSize > 0 && labelSize < valueSize;
-    }
-
-    function percentFrom(el) {
-        var width = (el.style.getPropertyValue('width') || '').trim();
-        var match = width.match(/^([\d.]+)%$/);
-        if (match) {
-            return Math.max(0, Math.min(100, parseFloat(match[1])));
-        }
-        return 100;
-    }
-
-    /* Barra de progreso → mini-tabla de dos celdas con la barra de caracteres
-     * dentro. Si Word respeta la tabla se ve una barra sólida de dos tonos; si
-     * la colapsa, los caracteres siguen dibujando la barra con la proporción
-     * correcta. El color del carácter es el de su celda: invisible cuando el
-     * fondo se pinta, visible cuando no. */
-    function buildBar(meterEl) {
-        var fill = null;
-        elChildren(meterEl).forEach(function (child) {
-            if (!fill && textOf(child) === '' && /%\s*$/.test(child.style.getPropertyValue('width') || '')) {
-                fill = child;
-            }
-        });
-
-        var percent;
-        var fillColor;
-        var trackColor = '#e5e7eb';
-
-        if (fill) {
-            percent = percentFrom(fill);
-            fillColor = fill.style.getPropertyValue('background-color') || '#ef4444';
-            trackColor = meterEl.style.getPropertyValue('background-color') || trackColor;
-        } else {
-            percent = percentFrom(meterEl);
-            fillColor = meterEl.style.getPropertyValue('background-color') || '#ef4444';
-        }
-
-        var total = 20;
-        var filledCount = Math.round(total * percent / 100);
-        var emptyCount = Math.max(0, total - filledCount);
-
-        var cellStyle = function (width, color) {
-            return 'width:' + width + '%;border:0;padding:0;vertical-align:middle;'
-                + 'font-family:Consolas,Menlo,monospace;font-size:8pt;line-height:1;'
-                + 'letter-spacing:0;background-color:' + color + ';color:' + color + ';';
-        };
-
-        var table = document.createElement('table');
-        table.setAttribute('cellspacing', '0');
-        table.setAttribute('cellpadding', '0');
-        table.setAttribute('style', 'width:100%;border-collapse:collapse;margin:4px 0 0;');
-
-        var row = document.createElement('tr');
-        var filled = document.createElement('td');
-        filled.setAttribute('style', cellStyle(percent, fillColor));
-        filled.textContent = new Array(filledCount + 1).join('\u2588');
-        var rest = document.createElement('td');
-        rest.setAttribute('style', cellStyle(100 - percent, trackColor));
-        rest.textContent = new Array(emptyCount + 1).join('\u2591');
-
-        row.appendChild(filled);
-        row.appendChild(rest);
-        table.appendChild(row);
-        return table;
     }
 
     /* Estilo en línea reutilizable dentro de una línea de texto. */
@@ -427,7 +328,26 @@
         return parts.join(';') + ';';
     }
 
-    /* Celda de métrica → «Etiqueta: valor» (+ su barra, si la tiene). */
+    /* Valor de un atributo en el propio elemento o en su contenido (la cifra
+     * del EPSS vive en un span dentro del dd). */
+    function attrFrom(el, name) {
+        if (!el || !el.getAttribute) {
+            return '';
+        }
+        var own = el.getAttribute(name);
+        if (own) {
+            return own;
+        }
+        if (el.querySelector) {
+            var found = el.querySelector('[' + name + ']');
+            if (found) {
+                return found.getAttribute(name) || '';
+            }
+        }
+        return '';
+    }
+
+    /* Celda de métrica → «Etiqueta: valor» con la cifra en su color. */
     function metricLine(cell) {
         var texts = elChildren(cell).filter(function (child) {
             return textOf(child) !== '';
@@ -462,16 +382,27 @@
         if (valueEl.children.length === 1 && textOf(valueEl) === textOf(valueEl.children[0])) {
             styleSource = valueEl.children[0];
         }
-        value.setAttribute('style', cleanInlineStyle(styleSource, 18));
+
+        var valueStyle = cleanInlineStyle(styleSource, 18);
+        var tone = attrFrom(valueEl, 'data-rd-color');
+        if (tone) {
+            valueStyle += 'color:' + tone + ';font-weight:700;';
+        }
+        value.setAttribute('style', valueStyle);
         value.textContent = textOf(valueEl);
         line.appendChild(value);
 
-        block.appendChild(line);
-
-        var meter = findMeter(cell, valueEl);
-        if (meter) {
-            block.appendChild(buildBar(meter));
+        /* Nivel en texto: el color se pierde en una impresión en blanco y negro. */
+        var level = attrFrom(valueEl, 'data-rd-level');
+        if (level) {
+            var hint = document.createElement('span');
+            var labelColor = labelEl.style.getPropertyValue('color') || '#6b7280';
+            hint.setAttribute('style', 'color:' + labelColor + ';font-weight:400;');
+            hint.textContent = ' (' + level + ')';
+            line.appendChild(hint);
         }
+
+        block.appendChild(line);
         return block;
     }
 
@@ -896,7 +827,7 @@
     ReportDoc._internals = {
         isMetricCell: isMetricCell,
         isNumberBadge: isNumberBadge,
-        percentFrom: percentFrom,
+        attrFrom: attrFrom,
         cleanInlineStyle: cleanInlineStyle,
         borderShorthand: borderShorthand
     };
