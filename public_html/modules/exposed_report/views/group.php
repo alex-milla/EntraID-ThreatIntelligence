@@ -614,35 +614,6 @@ $flashData = is_array($flashData) ? $flashData : [];
     var PLAN_MD = <?= json_encode($documentMd, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
     var SHEET = document.getElementById('exposed-plan-sheet');
 
-    var STYLES = {
-        h1: 'font-size:22px;font-weight:700;color:#0f172a;margin:20px 0 8px;',
-        h2: 'font-size:18px;font-weight:700;color:#0f172a;margin:20px 0 8px;border-bottom:1px solid #e5e7eb;padding-bottom:4px;',
-        h3: 'font-size:16px;font-weight:700;color:#0f172a;margin:18px 0 6px;',
-        h4: 'font-size:15px;font-weight:600;color:#0f172a;margin:16px 0 6px;',
-        p: 'margin:10px 0;',
-        table: 'width:100%;border-collapse:collapse;margin:14px 0;font-size:14px;',
-        th: 'border:1px solid #d1d5db;background:#f3f4f6;padding:6px 9px;text-align:left;font-weight:600;',
-        td: 'border:1px solid #d1d5db;padding:6px 9px;text-align:left;vertical-align:top;',
-        strong: 'font-weight:600;color:#0f172a;',
-        code: 'font-family:Consolas,Menlo,monospace;font-size:13px;background:#f3f4f6;padding:1px 4px;border-radius:3px;',
-        pre: 'background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:10px;overflow:auto;',
-        blockquote: 'margin:12px 0;padding:8px 14px;border-left:3px solid #f59e0b;background:#fffbeb;color:#78350f;',
-        hr: 'border:0;border-top:1px solid #e5e7eb;margin:18px 0;',
-        ul: 'margin:10px 0;padding-left:22px;list-style:disc;',
-        ol: 'margin:10px 0;padding-left:22px;list-style:decimal;',
-        li: 'margin:4px 0;'
-    };
-
-    function applyStyles(root) {
-        Object.keys(STYLES).forEach(function (tag) {
-            root.querySelectorAll(tag).forEach(function (node) {
-                // El dossier ya trae estilos en línea por tarjeta: no se pisan.
-                if (node.getAttribute('style')) { return; }
-                node.setAttribute('style', STYLES[tag]);
-            });
-        });
-    }
-
     function notify(message, type) {
         if (typeof toast === 'function') {
             toast(message, type || 'success');
@@ -686,40 +657,23 @@ $flashData = is_array($flashData) ? $flashData : [];
             notify('No hay informe que copiar.', 'error');
             return;
         }
-        var clone = SHEET.cloneNode(true);
-        // La descripción completa de Defender no viaja en el informe.
-        clone.querySelectorAll('details').forEach(function (node) { node.remove(); });
-        applyStyles(clone);
-        var html = clone.innerHTML;
-        if (navigator.clipboard && window.ClipboardItem && window.isSecureContext) {
-            var item = new ClipboardItem({
-                'text/html': new Blob([html], { type: 'text/html' }),
-                'text/plain': new Blob([PLAN_MD], { type: 'text/plain' })
-            });
-            navigator.clipboard.write([item]).then(function () { notify('Informe copiado con formato'); });
+        if (window.ReportDoc) {
+            ReportDoc.copyRich('exposed-plan-sheet', { markdown: PLAN_MD, message: 'Informe copiado con formato' });
             return;
         }
-        window.exposedCopyMarkdown();
+        notify('No se pudo preparar el portapapeles.', 'error');
     };
-
-    function saveFile(name, content, type) {
-        var blob = new Blob([content], { type: type });
-        var url = URL.createObjectURL(blob);
-        var a = document.createElement('a');
-        a.href = url;
-        a.download = name;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
-    }
 
     window.exposedDownloadMd = function () {
         if (!PLAN_MD) {
             notify('No hay informe que exportar.', 'error');
             return;
         }
-        saveFile(PLAN_NAME, PLAN_MD, 'text/markdown;charset=utf-8');
+        if (window.ReportDoc) {
+            ReportDoc.downloadMarkdown(PLAN_NAME, PLAN_MD);
+            return;
+        }
+        notify('No se pudo exportar el informe.', 'error');
     };
 
     window.exposedDownloadHtml = function () {
@@ -727,15 +681,11 @@ $flashData = is_array($flashData) ? $flashData : [];
             notify('No hay informe que exportar.', 'error');
             return;
         }
-        var clone = SHEET.cloneNode(true);
-        // La descripción completa de Defender no viaja en el `.html`.
-        clone.querySelectorAll('details').forEach(function (node) { node.remove(); });
-        applyStyles(clone);
-        var html = '<!doctype html><html lang="es"><head><meta charset="utf-8">'
-            + '<title>Informe de vulnerabilidad</title></head>'
-            + '<body style="font-family:Segoe UI,Arial,sans-serif;color:#0f172a;max-width:900px;margin:24px auto;">'
-            + clone.innerHTML + '</body></html>';
-        saveFile(PLAN_NAME.replace(/\.md$/i, '.html'), html, 'text/html;charset=utf-8');
+        if (window.ReportDoc) {
+            ReportDoc.downloadHtml('exposed-plan-sheet', PLAN_NAME.replace(/\.md$/i, '.html'), 'Informe de vulnerabilidad');
+            return;
+        }
+        notify('No se pudo exportar el informe.', 'error');
     };
 
     window.exposedPrint = function () {

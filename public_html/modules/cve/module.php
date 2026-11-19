@@ -4464,6 +4464,7 @@ class Module_Cve extends BaseModule
         $sections = $payload['sections'];
         $defender = $payload['defender'] ?? null;
         $perItemMode = !empty($payload['perItemMode']);
+        $reportMd = (string)($payload['reportMd'] ?? '');
         $interactive = false;
         $isAdmin = Auth::isAdmin();
 
@@ -7303,6 +7304,7 @@ class Module_Cve extends BaseModule
             'sections'    => CveReportAi::parseAiSections($aiText),
             'defender'    => $defender,
             'perItemMode' => $itemRows !== [],
+            'reportMd'    => CveReportAi::renderMarkdown($report, $items),
         ];
     }
 

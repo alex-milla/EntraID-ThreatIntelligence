@@ -99,9 +99,11 @@ $statusClasses = [
                         </p>
                     </div>
                     <div class="flex items-center gap-2 flex-wrap no-print">
+                        <button type="button" class="btn" onclick="remCopyRich()">Copiar informe</button>
+                        <button type="button" class="btn btn-outline" onclick="remDownloadHtml()"><?= icon('html', 16) ?> .html (Word)</button>
+                        <button type="button" class="btn btn-outline" onclick="remDownloadMd()"><?= icon('download', 16) ?> .md</button>
                         <button type="button" class="btn btn-outline" onclick="remCopyMarkdown()">Copiar Markdown</button>
-                        <button type="button" class="btn btn-outline" onclick="remCopyRich()">Copiar informe</button>
-                        <button type="button" class="btn" onclick="window.print()"><?= icon('print', 16) ?> Imprimir / PDF</button>
+                        <button type="button" class="btn btn-outline" onclick="window.print()"><?= icon('print', 16) ?> Imprimir / PDF</button>
                     </div>
                 </div>
 
@@ -218,17 +220,31 @@ function remCopyMarkdown() {
 function remCopyRich() {
     var sheet = document.getElementById('rem-report-sheet');
     if (!sheet) { return; }
-    var html = sheet.innerHTML;
-    if (navigator.clipboard && window.ClipboardItem && window.isSecureContext) {
-        var item = new ClipboardItem({
-            'text/html': new Blob([html], { type: 'text/html' }),
-            'text/plain': new Blob([sheet.textContent || ''], { type: 'text/plain' })
-        });
-        navigator.clipboard.write([item]).then(function () {
-            if (typeof toast === 'function') { toast('Informe copiado', 'success'); }
-        });
+    var mdNode = document.getElementById('rem-report-md');
+    var markdown = mdNode ? (mdNode.textContent || '') : '';
+    if (window.ReportDoc) {
+        ReportDoc.copyRich('rem-report-sheet', { markdown: markdown });
         return;
     }
-    remCopyMarkdown();
+    if (typeof toast === 'function') { toast('No se pudo preparar el portapapeles.', 'error'); }
+}
+function remDownloadHtml() {
+    var sheet = document.getElementById('rem-report-sheet');
+    if (!sheet) { return; }
+    if (window.ReportDoc) {
+        ReportDoc.downloadHtml('rem-report-sheet', 'informe-remediacion.html', 'Informe de remediación');
+        return;
+    }
+    if (typeof toast === 'function') { toast('No se pudo exportar el informe.', 'error'); }
+}
+function remDownloadMd() {
+    var node = document.getElementById('rem-report-md');
+    var text = node ? (node.textContent || '') : '';
+    if (text === '') { return; }
+    if (window.ReportDoc) {
+        ReportDoc.downloadMarkdown('informe-remediacion.md', text);
+        return;
+    }
+    if (typeof toast === 'function') { toast('No se pudo exportar el informe.', 'error'); }
 }
 </script>

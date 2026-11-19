@@ -16,6 +16,7 @@ $perItemMode = !empty($perItemMode);
 $interactive = !empty($interactive);
 $reportTags = is_array($report['tags_array'] ?? null) ? $report['tags_array'] : [];
 $itemGroups = is_array($report['item_groups'] ?? null) ? $report['item_groups'] : [];
+$reportMd = (string)($reportMd ?? '');
 
 $bodyStatus = (string)($report['status'] ?? 'pending');
 $bodyError = trim((string)($report['ai_error'] ?? ''));
@@ -180,7 +181,48 @@ $exposureLabel = static function (string $value): string {
         </div>
     <?php endif; ?>
 
-    <article class="report-doc bg-surface text-ink rounded-xl border border-line shadow-sm">
+    <?php
+    // Metadatos técnicos del informe: viven FUERA del documento para que no
+    // viajen al portapapeles, al .html ni al PDF (solo se ven en pantalla).
+    $metaRevision = max(1, (int)($report['revision'] ?? 1));
+    $metaGenerated = $metaRevision > 1
+        ? 'v' . $metaRevision . ' · actualizado ' . format_db_date((string)($report['updated_at'] ?? $report['created_at'] ?? ''), 'd/m/Y H:i')
+        : 'generado ' . format_db_date((string)($report['created_at'] ?? ''), 'd/m/Y H:i');
+    $metaItems = [];
+    if ($bodyStatus !== 'done' && ($bodyStatusLabels[$bodyStatus] ?? '') !== '') {
+        $metaItems[] = [
+            'type'  => 'badge',
+            'label' => $bodyStatusLabels[$bodyStatus] ?? $bodyStatus,
+            'class' => $bodyStatusClasses[$bodyStatus] ?? 'bg-gray-100 text-gray-600',
+        ];
+    }
+    if (!empty($report['ai_model'])) {
+        $metaItems[] = ['type' => 'text', 'label' => 'Modelo: ' . (string)$report['ai_model']];
+    }
+    if (!empty($report['ai_duration_ms'])) {
+        $metaItems[] = ['type' => 'text', 'label' => number_format((int)$report['ai_duration_ms'] / 1000, 1, ',', '.') . ' s'];
+    }
+    $metaItems[] = ['type' => 'text', 'label' => $metaGenerated];
+    if (!empty($report['group_name'])) {
+        $metaItems[] = [
+            'type'  => 'text',
+            'label' => ((string)($report['group_kind'] ?? '') === 'company' ? 'empresa' : 'grupo') . ': ' . (string)$report['group_name'],
+        ];
+    }
+    ?>
+    <div class="ai-report-meta no-print mb-3 flex items-center gap-2 flex-wrap px-1 text-[11px] text-ink-soft" data-report-meta>
+        <span class="font-semibold uppercase tracking-wide text-ink-soft">Ficha del informe</span>
+        <?php foreach ($metaItems as $metaItem): ?>
+            <?php if ($metaItem['type'] === 'badge'): ?>
+                <span class="px-2 py-0.5 rounded-full text-[10px] font-medium <?= e($metaItem['class']) ?>"><?= e($metaItem['label']) ?></span>
+            <?php else: ?>
+                <span>·</span>
+                <span><?= e($metaItem['label']) ?></span>
+            <?php endif; ?>
+        <?php endforeach; ?>
+    </div>
+
+    <article class="report-doc bg-surface text-ink rounded-xl border border-line shadow-sm" id="cve-report-doc">
         <header class="px-7 pt-7 pb-5 border-b border-line">
             <p class="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-soft">Informe de vulnerabilidad</p>
             <h1 class="text-2xl font-bold mt-1 break-words">
@@ -219,29 +261,6 @@ $exposureLabel = static function (string $value): string {
             <?php if ($itemGroups !== []): ?>
                 <p class="text-[11px] text-ink-muted mt-2">Grupos: <?= e(implode(' · ', $itemGroups)) ?></p>
             <?php endif; ?>
-
-            <div class="flex items-center gap-2 flex-wrap mt-4 text-xs text-ink-muted">
-                <?php if ($bodyStatus !== 'done' && ($bodyStatusLabels[$bodyStatus] ?? '') !== ''): ?>
-                    <span class="px-2 py-0.5 rounded-full text-[10px] font-medium <?= $bodyStatusClasses[$bodyStatus] ?? 'bg-gray-100 text-gray-600' ?>">
-                        <?= e($bodyStatusLabels[$bodyStatus] ?? $bodyStatus) ?>
-                    </span>
-                <?php endif; ?>
-                <?php if (!empty($report['ai_model'])): ?>
-                    <span>Modelo: <?= e((string)$report['ai_model']) ?></span>
-                <?php endif; ?>
-                <?php if (!empty($report['ai_duration_ms'])): ?>
-                    <span>· <?= e(number_format((int)$report['ai_duration_ms'] / 1000, 1, ',', '.')) ?> s</span>
-                <?php endif; ?>
-                <?php $revision = max(1, (int)($report['revision'] ?? 1)); ?>
-                <?php if ($revision > 1): ?>
-                    <span>· v<?= $revision ?> · actualizado <?= e(format_db_date((string)($report['updated_at'] ?? $report['created_at'] ?? ''), 'd/m/Y H:i')) ?></span>
-                <?php else: ?>
-                    <span>· generado <?= e(format_db_date((string)($report['created_at'] ?? ''), 'd/m/Y H:i')) ?></span>
-                <?php endif; ?>
-                <?php if (!empty($report['group_name'])): ?>
-                    <span>· <?= (string)($report['group_kind'] ?? '') === 'company' ? 'empresa' : 'grupo' ?>: <?= e((string)$report['group_name']) ?></span>
-                <?php endif; ?>
-            </div>
         </header>
 
         <?php if ($items !== []): ?>
@@ -609,9 +628,6 @@ $exposureLabel = static function (string $value): string {
                         <div class="report-ai report-ai-cve mt-5 pt-4 border-t border-line-subtle">
                             <div class="flex items-center gap-2 flex-wrap">
                                 <h3 class="text-sm font-semibold">Análisis con IA</h3>
-                                <?php if ($itemAiModel !== ''): ?>
-                                    <span class="text-[10px] text-ink-soft"><?= e($itemAiModel) ?></span>
-                                <?php endif; ?>
                             </div>
                             <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3">
                                 <?php foreach ($itemSections as $sectionIndex => $itemSection): ?>
@@ -692,6 +708,8 @@ $exposureLabel = static function (string $value): string {
             <p class="mt-1">La evaluación de riesgo es una estimación generada por IA; verifica siempre la información antes de tomar decisiones.</p>
         </footer>
     </article>
+
+    <pre id="cve-report-md" hidden><?= e($reportMd) ?></pre>
 
     <style>
         @media print {

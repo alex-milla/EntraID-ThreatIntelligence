@@ -394,6 +394,279 @@ final class CveReportAi
     }
 
     /**
+     * Versión Markdown del informe que se ve en pantalla.
+     *
+     * El documento no lleva metadatos técnicos de la IA (modelo, duración ni
+     * fecha de generación): esos datos se muestran fuera del informe.
+     *
+     * @param array<string,mixed> $report
+     * @param array<int,array<string,mixed>> $items
+     */
+    public static function renderMarkdown(array $report, array $items): string
+    {
+        $items = array_values(array_filter($items, 'is_array'));
+        $report = is_array($report) ? $report : [];
+
+        $severityLabels = [
+            'Critical' => 'CRÍTICO',
+            'High'     => 'ALTO',
+            'Medium'   => 'MEDIO',
+            'Low'      => 'BAJO',
+            'None'     => 'NINGUNO',
+        ];
+        $priorityOrder = ['A+' => 5, 'A' => 4, 'B' => 3, 'C' => 2, 'D' => 1];
+
+        $kevCount = 0;
+        $maxCvss = null;
+        $maxPriority = null;
+        $cveIds = [];
+        foreach ($items as $item) {
+            if (!empty($item['kev'])) {
+                $kevCount++;
+            }
+            if (isset($item['cvss']) && $item['cvss'] !== null) {
+                $maxCvss = $maxCvss === null ? (float)$item['cvss'] : max($maxCvss, (float)$item['cvss']);
+            }
+            $priority = (string)($item['priority'] ?? '');
+            if ($priority !== '' && ($maxPriority === null || ($priorityOrder[$priority] ?? 0) > ($priorityOrder[$maxPriority] ?? 0))) {
+                $maxPriority = $priority;
+            }
+            if ((string)($item['cve_id'] ?? '') !== '') {
+                $cveIds[] = (string)$item['cve_id'];
+            }
+        }
+
+        $oneLine = static function (string $text): string {
+            $text = trim(preg_replace('/\s+/u', ' ', $text) ?? $text);
+            return $text;
+        };
+        $linkLabel = static function (string $url): string {
+            $host = (string)parse_url($url, PHP_URL_HOST);
+            $path = trim((string)parse_url($url, PHP_URL_PATH), '/');
+            $label = $host !== '' ? $host : $url;
+            if (($host === 'github.com' || $host === 'www.github.com') && $path !== '') {
+                return $path;
+            }
+            if ($path !== '') {
+                $label .= '/' . $path;
+            }
+            return $label;
+        };
+        $link = static function (string $url) use ($oneLine, $linkLabel): string {
+            $url = trim($url);
+            if ($url === '') {
+                return '';
+            }
+            return '[' . str_replace(['[', ']'], ['\\[', '\\]'], $oneLine($linkLabel($url))) . '](' . $url . ')';
+        };
+
+        $lines = [];
+        $lines[] = '# Informe de vulnerabilidad';
+        $lines[] = '';
+
+        if (count($items) === 1) {
+            $lines[] = '**' . (string)($items[0]['cve_id'] ?? '') . '**';
+            $lines[] = '';
+        } elseif (count($items) > 1) {
+            $lines[] = '**' . count($items) . ' vulnerabilidades analizadas**';
+            $lines[] = '';
+            foreach ($cveIds as $cveId) {
+                $lines[] = '- ' . $cveId;
+            }
+            $lines[] = '';
+        }
+
+        $tags = is_array($report['tags_array'] ?? null) ? $report['tags_array'] : [];
+        $groupNames = is_array($report['item_groups'] ?? null) ? $report['item_groups'] : [];
+        if ($tags !== [] || $groupNames !== []) {
+            if ($tags !== []) {
+                $lines[] = 'Tags: ' . implode(' · ', array_map(static fn($tag): string => '#' . (string)$tag, $tags));
+            }
+            if ($groupNames !== []) {
+                $lines[] = 'Grupos: ' . implode(' · ', array_map('strval', $groupNames));
+            }
+            $lines[] = '';
+        }
+
+        if ($items !== []) {
+            $lines[] = '| CVEs | En CISA KEV | CVSS máximo | Prioridad máxima |';
+            $lines[] = '|---|---|---|---|';
+            $lines[] = '| ' . count($items)
+                . ' | ' . $kevCount
+                . ' | ' . ($maxCvss !== null ? number_format($maxCvss, 1, '.', '') : '—')
+                . ' | ' . ($maxPriority !== null ? $maxPriority : '—') . ' |';
+            $lines[] = '';
+        }
+
+        foreach ($items as $item) {
+            $cveId = (string)($item['cve_id'] ?? '');
+            $severity = (string)($item['severity'] ?? '');
+            $cvss = isset($item['cvss']) && $item['cvss'] !== null ? (float)$item['cvss'] : null;
+            $epss = isset($item['epss']) && $item['epss'] !== null ? (float)$item['epss'] : null;
+            $priority = (string)($item['priority'] ?? '');
+            $descriptionEs = self::cleanTranslatedText((string)($item['description_es'] ?? ''));
+            $description = $oneLine($descriptionEs !== '' ? $descriptionEs : (string)($item['description'] ?? ''));
+
+            $lines[] = '---';
+            $lines[] = '';
+            $lines[] = '## Vulnerabilidad · ' . $cveId;
+            $lines[] = '';
+
+            $badges = [];
+            if ($severity !== '') {
+                $badges[] = '**' . ($severityLabels[$severity] ?? strtoupper($severity)) . '**';
+            }
+            if ($priority !== '') {
+                $badges[] = '**Prioridad ' . $priority . '**';
+            }
+            if ((string)($item['nvd_url'] ?? '') !== '') {
+                $badges[] = 'NVD: ' . (string)$item['nvd_url'];
+            }
+            if ($badges !== []) {
+                $lines[] = implode(' · ', $badges);
+                $lines[] = '';
+            }
+
+            $kevActionEs = self::cleanTranslatedText((string)($item['kev_action_es'] ?? ''));
+            $kevAction = $kevActionEs !== '' ? $kevActionEs : trim((string)($item['kev_action'] ?? ''));
+
+            $lines[] = '- **CVSS:** ' . ($cvss !== null ? number_format($cvss, 1, '.', '') : '—');
+            $lines[] = '- **EPSS:** ' . ($epss !== null ? number_format($epss * 100, 2, ',', '') . ' %' : '—');
+            $lines[] = '- **CISA KEV:** ' . (!empty($item['kev']) ? 'Sí' : 'No');
+            if (!empty($item['kev_due'])) {
+                $lines[] = '- **Vence (KEV):** ' . (string)$item['kev_due'];
+            }
+            $lines[] = '- **Publicado:** ' . ((string)($item['published_at'] ?? '') !== '' ? (string)$item['published_at'] : '—');
+            $lines[] = '';
+
+            $vector = (string)($item['vector'] ?? '');
+            if ($vector !== '') {
+                $lines[] = '`' . $vector . '`';
+                $lines[] = '';
+            }
+
+            $lines[] = '### Descripción';
+            $lines[] = '';
+            $lines[] = $description !== '' ? $description : 'Sin descripción disponible.';
+            $lines[] = '';
+
+            if (!empty($item['kev']) && ($kevAction !== '' || !empty($item['kev_due'])
+                || strcasecmp((string)($item['kev_ransomware'] ?? ''), 'Known') === 0)) {
+                $lines[] = '### Acción requerida (CISA)';
+                $lines[] = '';
+                if ($kevAction !== '') {
+                    $lines[] = $oneLine($kevAction);
+                    $lines[] = '';
+                }
+                $notes = [];
+                if (!empty($item['kev_due'])) {
+                    $notes[] = 'Vence el ' . (string)$item['kev_due'];
+                }
+                if (strcasecmp((string)($item['kev_ransomware'] ?? ''), 'Known') === 0) {
+                    $notes[] = 'Ransomware conocido';
+                }
+                if ($notes !== []) {
+                    $lines[] = implode(' · ', $notes) . '.';
+                    $lines[] = '';
+                }
+            }
+
+            $exploits = is_array($item['exploits'] ?? null) ? $item['exploits'] : [];
+            $exploitItems = is_array($exploits['items'] ?? null) ? $exploits['items'] : [];
+            $github = is_array($item['github'] ?? null) ? $item['github'] : [];
+
+            $lines[] = '### Exploits públicos (' . count($exploitItems) . ')';
+            $lines[] = '';
+            if ($exploitItems === [] && $github === []) {
+                $lines[] = 'Sin exploits en las fuentes consultadas (GitHub PoC, Nuclei).';
+                $lines[] = '';
+            } else {
+                foreach (array_slice($exploitItems, 0, 20) as $exploit) {
+                    $source = (string)($exploit['source_label'] ?? $exploit['source'] ?? 'Exploit');
+                    $url = (string)($exploit['url'] ?? '');
+                    $title = $oneLine((string)($exploit['title'] ?? ''));
+                    $date = trim((string)($exploit['published_at'] ?? ''));
+                    $text = '- **' . $oneLine($source) . '**';
+                    if ($date !== '') {
+                        $text .= ' · ' . $date;
+                    }
+                    $text .= ' — ' . ($title !== '' ? $title . ' — ' : '') . $link($url);
+                    $lines[] = $text;
+                }
+                if (count($exploitItems) > 20) {
+                    $lines[] = '- … y ' . (count($exploitItems) - 20) . ' más.';
+                }
+                if ($github !== []) {
+                    $lines[] = '';
+                    $lines[] = 'Referencias GitHub (sin verificar):';
+                    $lines[] = '';
+                    foreach (array_slice($github, 0, 10) as $url) {
+                        $lines[] = '- ' . $link((string)$url);
+                    }
+                }
+                $lines[] = '';
+            }
+
+            $references = is_array($item['references'] ?? null) ? $item['references'] : [];
+            $lines[] = '### Referencias (' . count($references) . ')';
+            $lines[] = '';
+            if ($references === []) {
+                $lines[] = 'Sin referencias adicionales.';
+                $lines[] = '';
+            } else {
+                foreach (array_slice($references, 0, 20) as $url) {
+                    $lines[] = '- ' . $link((string)$url);
+                }
+                if (count($references) > 20) {
+                    $lines[] = '- … y ' . (count($references) - 20) . ' más.';
+                }
+                $lines[] = '';
+            }
+
+            $itemSections = is_array($item['ai_sections'] ?? null) ? $item['ai_sections'] : [];
+            if ((string)($item['ai_status'] ?? '') === 'error') {
+                $error = trim((string)($item['ai_error'] ?? ''));
+                $lines[] = '### Análisis con IA';
+                $lines[] = '';
+                $lines[] = 'Análisis no disponible: ' . ($error !== '' ? $oneLine($error) : 'error desconocido') . '.';
+                $lines[] = '';
+            } elseif ($itemSections !== []) {
+                $lines[] = '### Análisis con IA';
+                $lines[] = '';
+                foreach ($itemSections as $index => $section) {
+                    $lines[] = '#### ' . ((int)$index + 1) . '. ' . $oneLine((string)($section['title'] ?? 'Análisis'));
+                    $lines[] = '';
+                    foreach (($section['bullets'] ?? []) as $bullet) {
+                        $lines[] = '- ' . $oneLine((string)$bullet);
+                    }
+                    if (!empty($section['bullets'])) {
+                        $lines[] = '';
+                    }
+                    foreach (($section['paragraphs'] ?? []) as $paragraph) {
+                        $lines[] = $oneLine((string)$paragraph);
+                        $lines[] = '';
+                    }
+                }
+            }
+        }
+
+        $lines[] = '---';
+        $lines[] = '';
+        $lines[] = 'Fuentes: NVD · CISA KEV · EPSS · GitHub PoC · Nuclei · Exploit-DB · Metasploit. '
+            . 'Prioridad calculada con la fórmula de SploitScan (KEV, CVSS, EPSS y exploits públicos).';
+        $lines[] = '';
+        $lines[] = 'La evaluación de riesgo es una estimación generada por IA; '
+            . 'verifica siempre la información antes de tomar decisiones.';
+
+        $markdown = '';
+        foreach ($lines as $line) {
+            $markdown .= $line . "\n";
+        }
+
+        return rtrim($markdown) . "\n";
+    }
+
+    /**
      * @param array<string,mixed> $item
      * @param array<string,string> $L
      * @return string[]

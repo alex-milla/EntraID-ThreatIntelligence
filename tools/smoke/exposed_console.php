@@ -667,8 +667,8 @@ try {
         && str_contains($groupHtml, 'window.exposedDownloadHtml')
         && str_contains($groupHtml, 'window.exposedPrint')
         && str_contains($groupHtml, '@media print'));
-    check('vista grupo: applyStyles respeta el estilo en línea',
-        str_contains($groupHtml, "node.getAttribute('style')"));
+    check('vista grupo: copia con el helper compartido',
+        str_contains($groupHtml, "ReportDoc.copyRich('exposed-plan-sheet'"));
     check('vista grupo: exportar sin informe avisa',
         str_contains($groupHtml, 'No hay informe que exportar.'));
 

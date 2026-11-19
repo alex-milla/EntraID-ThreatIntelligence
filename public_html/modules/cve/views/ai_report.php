@@ -16,6 +16,14 @@ $isAdmin = $isAdmin ?? Auth::isAdmin();
 $status = (string)($report['status'] ?? 'pending');
 $isProcessing = in_array($status, ['pending', 'running'], true);
 
+$reportFileBase = 'informe-vulnerabilidad';
+if (count($items) === 1) {
+    $reportFileBase .= '-' . preg_replace('/[^A-Za-z0-9._-]+/', '', (string)($items[0]['cve_id'] ?? ''));
+} elseif (count($items) > 1) {
+    $reportFileBase .= '-' . count($items) . '-cves';
+}
+$reportFileBase = trim($reportFileBase, '-') !== '' ? trim($reportFileBase, '-') : 'informe-vulnerabilidad';
+
 $tab = 'reports';
 require __DIR__ . '/_tabs.php';
 ?>
@@ -38,6 +46,28 @@ require __DIR__ . '/_tabs.php';
                 Abrir en el workspace
             </a>
             <?php if (!$isProcessing): ?>
+                <button type="button"
+                        data-rd-action="copy-rich" data-rd-target="cve-report-doc" data-rd-md="cve-report-md"
+                        class="px-3 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors">
+                    Copiar informe
+                </button>
+                <button type="button"
+                        data-rd-action="download-html" data-rd-target="cve-report-doc"
+                        data-rd-filename="<?= e($reportFileBase) ?>.html" data-rd-title="Informe de vulnerabilidad"
+                        class="px-3 py-2 border border-line-strong text-sm font-medium rounded-lg hover:bg-muted transition-colors">
+                    .html (Word)
+                </button>
+                <button type="button"
+                        data-rd-action="download-md" data-rd-target="cve-report-doc" data-rd-md="cve-report-md"
+                        data-rd-filename="<?= e($reportFileBase) ?>.md"
+                        class="px-3 py-2 border border-line-strong text-sm font-medium rounded-lg hover:bg-muted transition-colors">
+                    .md
+                </button>
+                <button type="button"
+                        data-rd-action="copy-plain" data-rd-target="cve-report-doc" data-rd-md="cve-report-md"
+                        class="px-3 py-2 border border-line-strong text-sm font-medium rounded-lg hover:bg-muted transition-colors">
+                    Copiar texto
+                </button>
                 <button type="button" onclick="window.print()"
                         class="px-3 py-2 bg-gray-900 hover:bg-black text-white text-sm font-medium rounded-lg transition-colors">
                     Imprimir / PDF

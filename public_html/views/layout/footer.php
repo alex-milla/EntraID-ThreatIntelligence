@@ -18,6 +18,7 @@
 <script src="<?= asset_url('js/shell.js') ?>?v=<?= e(APP_VERSION) ?>"></script>
 <script src="<?= asset_url('js/filters.js') ?>?v=<?= e(APP_VERSION) ?>"></script>
 <script src="<?= asset_url('js/ui.js') ?>?v=<?= e(APP_VERSION) ?>"></script>
+<script src="<?= asset_url('js/report-doc.js') ?>?v=<?= e(APP_VERSION) ?>"></script>
 <script>
 /* Indicador global de sincronización (badge en el sidebar, todas las pantallas) */
 (function () {
