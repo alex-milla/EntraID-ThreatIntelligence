@@ -136,7 +136,7 @@ try {
     foreach (['state', 'pending', 'processed', 'started_at', 'finished_at'] as $col) {
         check('BD: u42_sync.' . $col, isset($syncCols[$col]));
     }
-    foreach (['u42_articles', 'u42_iocs', 'u42_sync'] as $table) {
+    foreach (['u42_articles', 'u42_iocs', 'u42_sync', 'u42_article_state'] as $table) {
         $row = Database::fetchOne("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?", [$table]);
         check('BD: tabla ' . $table, $row !== null);
     }
@@ -171,6 +171,53 @@ try {
     check('menú: navegación incluye Unit 42', $found);
     $sidebar = (string)@file_get_contents($root . '/public_html/views/layout/sidebar.php');
     check('menú: resaltado por ruta específica', str_contains($sidebar, '$bestNavPath'));
+
+    // --- Estado de lectura y filtros (con filas temporales) ---
+    $realUser = Database::fetchOne("SELECT id FROM users ORDER BY id LIMIT 1");
+    $smokeUserId = (int)($realUser['id'] ?? 0);
+    $ids = [];
+    Database::query("DELETE FROM u42_articles WHERE path LIKE 'u42-smoke-%'");
+    foreach (['2026-01-02' => 'U42 smoke B', '2026-02-03' => 'U42 smoke A'] as $date => $title) {
+        $ids[] = Database::insert(
+            "INSERT INTO u42_articles (path, sha, size, title, published_at, content, first_seen_at)
+             VALUES (?, ?, 100, ?, ?, 'x', datetime('now'))",
+            ['u42-smoke-' . $date . '.txt', 'sha-' . $date, $title, $date]
+        );
+    }
+    Database::query(
+        "INSERT INTO u42_iocs (article_id, ioc_type, ioc_value) VALUES (?, 'domain-name', 'smoke.example.com')",
+        [$ids[0]]
+    );
+    Unit42Feed::setArticleState($smokeUserId, [$ids[0]], ['is_read' => 1]);
+    Unit42Feed::setArticleState($smokeUserId, [$ids[1]], ['is_favorite' => 1]);
+
+    $stateCounts = Unit42Feed::stateCounts($smokeUserId);
+    check('estado: 1 leído y 1 favorito', $stateCounts['unread'] >= 1 && $stateCounts['favorites'] === 1, json_encode($stateCounts));
+
+    $filtered = Unit42Feed::articles(['user_id' => $smokeUserId, 'from' => '2026-02-01', 'to' => '2026-02-28'], 50, 0);
+    check('filtro: rango de fechas', count($filtered) === 1 && ($filtered[0]['title'] ?? '') === 'U42 smoke A', json_encode(array_column($filtered, 'title')));
+
+    $unread = Unit42Feed::articles(['user_id' => $smokeUserId, 'only_unread' => true], 1000, 0);
+    $unreadIds = array_map(static fn(array $r): int => (int)$r['id'], $unread);
+    check('filtro: solo no leídas', in_array($ids[1], $unreadIds, true) && !in_array($ids[0], $unreadIds, true));
+
+    $withIocs = Unit42Feed::articles(['user_id' => $smokeUserId, 'only_iocs' => true], 1000, 0);
+    $iocIds = array_map(static fn(array $r): int => (int)$r['id'], $withIocs);
+    check('filtro: solo con IOCs', in_array($ids[0], $iocIds, true));
+
+    $favorites = Unit42Feed::articles(['user_id' => $smokeUserId, 'only_favorites' => true], 1000, 0);
+    $favIds = array_map(static fn(array $r): int => (int)$r['id'], $favorites);
+    check('filtro: favoritos', in_array($ids[1], $favIds, true));
+
+    Unit42Feed::setArticleState($smokeUserId, [$ids[0]], ['is_read' => 0]);
+    check('estado: se puede desmarcar como leído', (int)(Unit42Feed::statesFor($smokeUserId, [$ids[0]])[$ids[0]]['is_read'] ?? -1) === 0);
+
+    foreach ($ids as $tempId) {
+        Database::query("DELETE FROM u42_articles WHERE id = ?", [$tempId]);
+    }
+    check('rutas: estado y contadores', str_contains($moduleSrc, "'pattern' => 'unit42/state'")
+        && str_contains($moduleSrc, "'pattern' => 'unit42/counts'"));
+    check('rutas: acepta cambios anidados', str_contains($moduleSrc, "is_array(\$input['changes'] ?? null)"));
 } catch (Throwable $e) {
     check('excepción inesperada: ' . $e->getMessage(), false, $e->getFile() . ':' . $e->getLine());
 }

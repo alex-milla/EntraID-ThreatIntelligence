@@ -627,20 +627,153 @@ final class Unit42Feed
     }
 
     /** @return array<int,array<string,mixed>> */
-    public static function articles(string $search = '', int $limit = 100, int $offset = 0): array
+    public static function articles(array $filters = [], int $limit = 50, int $offset = 0): array
     {
-        $where = '1=1';
+        $userId = (int)($filters['user_id'] ?? 0);
+        $where = ['1=1'];
         $params = [];
+        $stateJoin = '';
+        $stateSelect = '0 AS is_read, 0 AS is_favorite';
+
+        if ($userId > 0) {
+            $stateJoin = ' LEFT JOIN u42_article_state s ON s.article_id = a.id AND s.user_id = ?';
+            $params[] = $userId; // el parámetro del JOIN va antes que los del WHERE
+            $stateSelect = 'COALESCE(s.is_read, 0) AS is_read, COALESCE(s.is_favorite, 0) AS is_favorite';
+        }
+
+        $search = trim((string)($filters['q'] ?? ''));
         if ($search !== '') {
-            $where .= ' AND (title LIKE ? OR path LIKE ?)';
             $like = '%' . $search . '%';
+            $where[] = '(a.title LIKE ? OR a.path LIKE ?)';
             $params[] = $like;
             $params[] = $like;
         }
-        $sql = "SELECT * FROM u42_articles WHERE $where ORDER BY published_at DESC, id DESC LIMIT ? OFFSET ?";
+        $from = trim((string)($filters['from'] ?? ''));
+        if ($from !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $from)) {
+            $where[] = 'date(a.published_at) >= ?';
+            $params[] = $from;
+        }
+        $to = trim((string)($filters['to'] ?? ''));
+        if ($to !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $to)) {
+            $where[] = 'date(a.published_at) <= ?';
+            $params[] = $to;
+        }
+        if ($userId > 0 && !empty($filters['only_unread'])) {
+            $where[] = 'COALESCE(s.is_read, 0) = 0';
+        }
+        if ($userId > 0 && !empty($filters['only_favorites'])) {
+            $where[] = 'COALESCE(s.is_favorite, 0) = 1';
+        }
+        if (!empty($filters['only_iocs'])) {
+            $where[] = 'EXISTS (SELECT 1 FROM u42_iocs i WHERE i.article_id = a.id)';
+        }
+
+        $sql = "SELECT a.*, $stateSelect FROM u42_articles a $stateJoin
+                WHERE " . implode(' AND ', $where) . "
+                ORDER BY a.published_at DESC, a.id DESC LIMIT ? OFFSET ?";
         $params[] = $limit;
         $params[] = $offset;
         return Database::fetchAll($sql, $params);
+    }
+
+    /** Estados de lectura de una lista de artículos para un usuario. */
+    public static function statesFor(int $userId, array $ids): array
+    {
+        if ($userId <= 0 || $ids === []) {
+            return [];
+        }
+        $ids = array_values(array_filter(array_map('intval', $ids)));
+        if ($ids === []) {
+            return [];
+        }
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $rows = Database::fetchAll(
+            "SELECT article_id, is_read, is_favorite FROM u42_article_state
+             WHERE user_id = ? AND article_id IN ($placeholders)",
+            array_merge([$userId], $ids)
+        );
+        $out = [];
+        foreach ($rows as $row) {
+            $out[(int)$row['article_id']] = $row;
+        }
+        return $out;
+    }
+
+    /**
+     * Aplica un cambio de estado a uno o varios artículos (upsert por usuario).
+     * Devuelve el número de filas afectadas.
+     */
+    public static function setArticleState(int $userId, array $ids, array $changes): int
+    {
+        $ids = array_values(array_filter(array_map('intval', $ids)));
+        if ($userId <= 0 || $ids === []) {
+            return 0;
+        }
+
+        $read = null;
+        if (array_key_exists('is_read', $changes)) {
+            $read = !empty($changes['is_read']) ? 1 : 0;
+        }
+        $fav = null;
+        if (array_key_exists('is_favorite', $changes)) {
+            $fav = !empty($changes['is_favorite']) ? 1 : 0;
+        }
+        if ($read === null && $fav === null) {
+            return 0;
+        }
+
+        $changed = 0;
+        foreach ($ids as $articleId) {
+            $current = Database::fetchOne(
+                "SELECT is_read, read_at, is_favorite, favorite_at FROM u42_article_state
+                 WHERE user_id = ? AND article_id = ?",
+                [$userId, $articleId]
+            ) ?: ['is_read' => 0, 'read_at' => null, 'is_favorite' => 0, 'favorite_at' => null];
+
+            $newRead = $read ?? (int)$current['is_read'];
+            $newFav = $fav ?? (int)$current['is_favorite'];
+            $readAt = $newRead ? ($current['read_at'] ?: gmdate('Y-m-d H:i:s')) : null;
+            $favAt = $newFav ? ($current['favorite_at'] ?: gmdate('Y-m-d H:i:s')) : null;
+
+            $stmt = Database::query(
+                "INSERT INTO u42_article_state
+                 (user_id, article_id, is_read, read_at, is_favorite, favorite_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+                 ON CONFLICT(user_id, article_id) DO UPDATE SET
+                     is_read = excluded.is_read, read_at = excluded.read_at,
+                     is_favorite = excluded.is_favorite, favorite_at = excluded.favorite_at,
+                     updated_at = datetime('now')",
+                [$userId, $articleId, $newRead, $readAt, $newFav, $favAt]
+            );
+            $changed += $stmt->rowCount();
+        }
+        return $changed;
+    }
+
+    /** Contadores para la cabecera (no leídos, favoritos, totales). */
+    public static function stateCounts(int $userId): array
+    {
+        $total = (int)(Database::fetchOne("SELECT COUNT(*) AS c FROM u42_articles")['c'] ?? 0);
+        $withIocs = (int)(Database::fetchOne(
+            "SELECT COUNT(DISTINCT article_id) AS c FROM u42_iocs"
+        )['c'] ?? 0);
+        if ($userId <= 0) {
+            return ['total' => $total, 'unread' => 0, 'favorites' => 0, 'with_iocs' => $withIocs];
+        }
+        $row = Database::fetchOne(
+            "SELECT
+                SUM(CASE WHEN COALESCE(s.is_read, 0) = 0 THEN 1 ELSE 0 END) AS unread,
+                SUM(CASE WHEN COALESCE(s.is_favorite, 0) = 1 THEN 1 ELSE 0 END) AS favorites
+             FROM u42_articles a
+             LEFT JOIN u42_article_state s ON s.article_id = a.id AND s.user_id = ?",
+            [$userId]
+        ) ?: [];
+        return [
+            'total'     => $total,
+            'unread'    => (int)($row['unread'] ?? 0),
+            'favorites' => (int)($row['favorites'] ?? 0),
+            'with_iocs' => $withIocs,
+        ];
     }
 
     /** @return array<string,mixed>|null */

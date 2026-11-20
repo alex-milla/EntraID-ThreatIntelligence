@@ -386,6 +386,19 @@ class Database
         )");
         $db->exec("CREATE INDEX IF NOT EXISTS idx_u42_iocs_type ON u42_iocs(ioc_type, ioc_value)");
 
+        // v0.4.28.3: estado de lectura/favorito por usuario (como ti_article_state).
+        $db->exec("CREATE TABLE IF NOT EXISTS u42_article_state (
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            article_id INTEGER NOT NULL REFERENCES u42_articles(id) ON DELETE CASCADE,
+            is_read INTEGER NOT NULL DEFAULT 0,
+            read_at TEXT,
+            is_favorite INTEGER NOT NULL DEFAULT 0,
+            favorite_at TEXT,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (user_id, article_id)
+        )");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_u42_state_article ON u42_article_state(article_id)");
+
         $db->exec("CREATE TABLE IF NOT EXISTS u42_sync (
             id INTEGER PRIMARY KEY CHECK (id = 1),
             last_run_at TEXT,

@@ -2154,12 +2154,25 @@ class Module_ThreatIntelligence extends BaseModule
         $page = max(1, (int)($_GET['p'] ?? 1));
         $limit = 50;
         $offset = ($page - 1) * $limit;
+        $userId = (int)(Auth::id() ?? 0);
+
+        $filters = [
+            'user_id'        => $userId,
+            'q'              => $search,
+            'from'           => (string)($_GET['from'] ?? ''),
+            'to'             => (string)($_GET['to'] ?? ''),
+            'only_unread'    => !empty($_GET['only_unread']),
+            'only_favorites' => !empty($_GET['only_favorites']),
+            'only_iocs'      => !empty($_GET['only_iocs']),
+        ];
 
         $articles = [];
         $status = [];
+        $counts = ['total' => 0, 'unread' => 0, 'favorites' => 0, 'with_iocs' => 0];
         try {
-            $articles = Unit42Feed::articles($search, $limit, $offset);
+            $articles = Unit42Feed::articles($filters, $limit, $offset);
             $status = Unit42Feed::status();
+            $counts = Unit42Feed::stateCounts($userId);
         } catch (Throwable $e) {
             app_log('error', 'unit42', 'No se pudo listar los artículos', ['error' => $e->getMessage()]);
         }
@@ -2170,6 +2183,8 @@ class Module_ThreatIntelligence extends BaseModule
             'selectedTenant' => $selectedTenant,
             'articles'       => $articles,
             'status'         => $status,
+            'counts'         => $counts,
+            'filters'        => $filters,
             'q'              => $search,
             'page'           => $page,
             'hasMore'        => count($articles) === $limit,
@@ -2272,6 +2287,61 @@ class Module_ThreatIntelligence extends BaseModule
         }
     }
 
+    /** POST unit42/state — marca leídos/favoritos de uno o varios artículos. */
+    public function unit42SetState(array $params = []): void
+    {
+        Auth::require();
+        Csrf::validateOrFail();
+
+        $raw = file_get_contents('php://input');
+        $input = json_decode((string)$raw, true);
+        if (!is_array($input)) {
+            $input = $_POST;
+        }
+
+        /* Acepta {ids, changes:{...}} (vista) o {ids, is_read:1} (compatibilidad). */
+        $changes = is_array($input['changes'] ?? null) ? $input['changes'] : $input;
+
+        $stateChanges = [];
+        if (array_key_exists('is_read', $changes)) {
+            $stateChanges['is_read'] = !empty($changes['is_read']) ? 1 : 0;
+        }
+        if (array_key_exists('is_favorite', $changes)) {
+            $stateChanges['is_favorite'] = !empty($changes['is_favorite']) ? 1 : 0;
+        }
+        if ($stateChanges === []) {
+            json_response(['success' => false, 'error' => 'No se indicó ningún estado.'], 400);
+        }
+
+        $userId = (int)(Auth::id() ?? 0);
+        if (!empty($input['all'])) {
+            $filters = is_array($input['filters'] ?? null) ? $input['filters'] : [];
+            $filters['user_id'] = $userId;
+            $rows = Unit42Feed::articles($filters, 10000, 0);
+            $ids = array_map(static fn(array $r): int => (int)$r['id'], $rows);
+        } else {
+            $rawIds = $input['ids'] ?? [$input['id'] ?? 0];
+            if (!is_array($rawIds)) {
+                $rawIds = [$rawIds];
+            }
+            $ids = array_values(array_filter(array_map('intval', $rawIds)));
+        }
+
+        $changed = Unit42Feed::setArticleState($userId, $ids, $stateChanges);
+        json_response([
+            'success' => true,
+            'changed' => $changed,
+            'counts'  => Unit42Feed::stateCounts($userId),
+        ]);
+    }
+
+    /** GET unit42/counts — contadores de no leídos / favoritos. */
+    public function unit42Counts(array $params = []): void
+    {
+        Auth::require();
+        json_response(Unit42Feed::stateCounts((int)(Auth::id() ?? 0)));
+    }
+
     /** GET unit42/status — progreso de la descarga en curso. */
     public function unit42Status(array $params = []): void
     {
@@ -2290,6 +2360,8 @@ class Module_ThreatIntelligence extends BaseModule
             ['method' => 'GET', 'pattern' => 'translations',        'handler' => [$this, 'translationsPage']],
             ['method' => 'GET', 'pattern' => 'unit42',              'handler' => [$this, 'unit42Page']],
             ['method' => 'GET', 'pattern' => 'unit42/status',       'handler' => [$this, 'unit42Status']],
+            ['method' => 'GET', 'pattern' => 'unit42/counts',       'handler' => [$this, 'unit42Counts']],
+            ['method' => 'POST','pattern' => 'unit42/state',        'handler' => [$this, 'unit42SetState']],
             ['method' => 'GET', 'pattern' => 'unit42/{id}',         'handler' => [$this, 'unit42ArticlePage']],
             ['method' => 'POST','pattern' => 'unit42/sync',         'handler' => [$this, 'unit42Sync']],
             ['method' => 'GET', 'pattern' => 'iocs/data',           'handler' => [$this, 'listIocs']],

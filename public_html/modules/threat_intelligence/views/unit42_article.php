@@ -25,6 +25,10 @@ $rawUrl = 'https://github.com/PaloAltoNetworks/Unit42-timely-threat-intel/blob/m
 $articleId = (int)($article['id'] ?? 0);
 $tenantId = (int)($selectedTenant ?? 0);
 $exportBase = base_url('modules/export/download') . '?source=u42&article_id=' . $articleId . '&tenant=' . $tenantId;
+$userId = (int)(Auth::id() ?? 0);
+$articleState = $userId > 0 ? (Unit42Feed::statesFor($userId, [$articleId])[$articleId] ?? []) : [];
+$isRead = !empty($articleState['is_read']);
+$isFavorite = !empty($articleState['is_favorite']);
 ?>
 <div class="space-y-4">
     <div class="card p-5">
@@ -40,8 +44,18 @@ $exportBase = base_url('modules/export/download') . '?source=u42&article_id=' . 
                     Fichero: <a href="<?= e($rawUrl) ?>" target="_blank" rel="noopener" class="text-brand-600 hover:underline"><?= e((string)($article['path'] ?? '')) ?></a>
                 </p>
             </div>
-            <a href="<?= e($rawUrl) ?>" target="_blank" rel="noopener"
-               class="px-3 py-1.5 border border-line-strong text-xs rounded-lg hover:bg-muted">Ver en GitHub ↗</a>
+            <div class="flex items-center gap-2 flex-wrap">
+                <button type="button" id="u42-article-read" onclick="u42ArticleState('is_read')"
+                        class="px-3 py-1.5 border border-line-strong text-xs rounded-lg hover:bg-muted">
+                    <?= $isRead ? 'Marcar como no leído' : 'Marcar como leído' ?>
+                </button>
+                <button type="button" id="u42-article-fav" onclick="u42ArticleState('is_favorite')"
+                        class="px-3 py-1.5 border border-line-strong text-xs rounded-lg hover:bg-muted">
+                    <?= $isFavorite ? '★ Quitar favorito' : '☆ Favorito' ?>
+                </button>
+                <a href="<?= e($rawUrl) ?>" target="_blank" rel="noopener"
+                   class="px-3 py-1.5 border border-line-strong text-xs rounded-lg hover:bg-muted">Ver en GitHub ↗</a>
+            </div>
         </div>
     </div>
 
@@ -124,6 +138,42 @@ $exportBase = base_url('modules/export/download') . '?source=u42&article_id=' . 
         raw.hidden = !showing;
         raw.classList.toggle('hidden', !showing);
         report.classList.toggle('hidden', showing);
+    };
+})();
+</script>
+<script>
+(function () {
+    'use strict';
+    window.u42ArticleState = function (field) {
+        var btn = document.getElementById(field === 'is_read' ? 'u42-article-read' : 'u42-article-fav');
+        if (!btn || btn.disabled) { return; }
+        var tokenEl = document.querySelector('input[name="csrf_token"]');
+        var token = tokenEl ? tokenEl.value : '';
+        var current = btn.textContent.indexOf('Marcar como leído') === 0
+            || btn.textContent.indexOf('☆') === 0;
+        var payload = { ids: [<?= (int)$articleId ?>], changes: {} };
+        payload.changes[field] = current ? 1 : 0;
+
+        btn.disabled = true;
+        fetch('<?= e(base_url('modules/threat_intelligence/unit42/state')) ?>', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest',
+                'X-CSRF-Token': token
+            },
+            credentials: 'same-origin',
+            body: JSON.stringify(payload)
+        }).then(function (res) { return res.json(); }).then(function (data) {
+            if (!data || !data.success) { return; }
+            if (field === 'is_read') {
+                btn.textContent = current ? 'Marcar como no leído' : 'Marcar como leído';
+            } else {
+                btn.textContent = current ? '★ Quitar favorito' : '☆ Favorito';
+            }
+        }).catch(function () { /* se deja el botón igual */ }).then(function () {
+            btn.disabled = false;
+        });
     };
 })();
 </script>
