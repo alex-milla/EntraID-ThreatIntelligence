@@ -149,6 +149,71 @@ final class Unit42Feed
     // ============================================================
 
     /**
+     * Cuenta cuántos ficheros hay nuevos o modificados, SIN descargar nada y
+     * SIN escribir en la BD. Se usa antes de pedir la descarga.
+     *
+     * @param array<int,array{path:string,sha:string,size:int}>|null $files
+     */
+    public static function check(?array $files = null): array
+    {
+        $result = [
+            'ok' => true, 'total' => 0, 'new' => 0, 'changed' => 0,
+            'unchanged' => 0, 'pending' => 0, 'error' => '',
+        ];
+
+        try {
+            $files = $files ?? self::remoteFiles();
+            $known = [];
+            foreach (Database::fetchAll("SELECT path, sha FROM u42_articles") as $row) {
+                $known[(string)$row['path']] = (string)$row['sha'];
+            }
+
+            foreach ($files as $file) {
+                $path = (string)($file['path'] ?? '');
+                $sha = (string)($file['sha'] ?? '');
+                if (!self::needsDownload($path, $sha, $known)) {
+                    $result['unchanged']++;
+                } elseif (isset($known[$path])) {
+                    $result['changed']++;
+                } else {
+                    $result['new']++;
+                }
+            }
+
+            $result['total'] = count($files);
+            $result['pending'] = $result['new'] + $result['changed'];
+        } catch (Throwable $e) {
+            $result['ok'] = false;
+            $result['error'] = self::friendlyError($e);
+        }
+
+        return $result;
+    }
+
+    /** Error legible cuando el hosting no permite salir a GitHub. */
+    public static function friendlyError(Throwable $e): string
+    {
+        $message = $e->getMessage();
+        if (stripos($message, 'github') !== false || stripos($message, 'descarg') !== false) {
+            return $message;
+        }
+        return 'El servidor no pudo acceder a GitHub. Comprueba la salida HTTPS del hosting. (' . $message . ')';
+    }
+
+    /** Progreso de la descarga en curso. */
+    private static function setProgress(string $state, int $pending, int $processed): void
+    {
+        try {
+            Database::query(
+                "UPDATE u42_sync SET state = ?, pending = ?, processed = ? WHERE id = 1",
+                [$state, $pending, $processed]
+            );
+        } catch (Throwable $ignore) {
+            // El progreso es informativo: no debe romper la sincronización.
+        }
+    }
+
+    /**
      * Descarga solo lo nuevo o modificado y lo guarda. Devuelve el resumen.
      */
     public static function sync(): array
@@ -166,6 +231,14 @@ final class Unit42Feed
             foreach (Database::fetchAll("SELECT path, sha FROM u42_articles") as $row) {
                 $known[(string)$row['path']] = (string)$row['sha'];
             }
+
+            $pending = 0;
+            foreach ($files as $file) {
+                if (self::needsDownload((string)$file['path'], (string)$file['sha'], $known)) {
+                    $pending++;
+                }
+            }
+            self::setProgress('running', $pending, 0);
 
             foreach ($files as $file) {
                 $path = $file['path'];
@@ -224,18 +297,27 @@ final class Unit42Feed
 
                 $articleId = (int)Database::fetchOne("SELECT id FROM u42_articles WHERE path = ?", [$path])['id'];
                 self::saveIocs((int)$articleId, $parsed['sections'], $parsed['title']);
+
+                $done = $summary['added'] + $summary['updated'] + count($summary['errors']);
+                self::setProgress('running', $pending, $done);
             }
 
             Database::query(
                 "UPDATE u42_sync
-                 SET last_run_at = datetime('now'), files_total = ?, added = ?, updated = ?, error = NULL
+                 SET last_run_at = datetime('now'), files_total = ?, added = ?, updated = ?,
+                     unchanged = ?, state = 'done', pending = 0, processed = ?,
+                     finished_at = datetime('now'), error = NULL
                  WHERE id = 1",
-                [$summary['total'], $summary['added'], $summary['updated']]
+                [
+                    $summary['total'], $summary['added'], $summary['updated'],
+                    $summary['unchanged'], $pending,
+                ]
             );
 
             $summary['ok'] = true;
         } catch (Throwable $e) {
             $summary['errors'][] = $e->getMessage();
+            self::setProgress('error', (int)($summary['total'] ?? 0), (int)($summary['added'] ?? 0) + (int)($summary['updated'] ?? 0));
             try {
                 Database::query("UPDATE u42_sync SET last_run_at = datetime('now'), error = ? WHERE id = 1", [$e->getMessage()]);
             } catch (Throwable $ignore) {
@@ -288,6 +370,11 @@ final class Unit42Feed
         $iocs = Database::fetchOne("SELECT COUNT(*) AS c FROM u42_iocs") ?? [];
 
         return [
+            'state'       => (string)($row['state'] ?? 'idle'),
+            'pending'     => (int)($row['pending'] ?? 0),
+            'processed'   => (int)($row['processed'] ?? 0),
+            'started_at'  => (string)($row['started_at'] ?? ''),
+            'finished_at' => (string)($row['finished_at'] ?? ''),
             'last_run_at' => (string)($row['last_run_at'] ?? ''),
             'files_total' => (int)($row['files_total'] ?? 0),
             'added'       => (int)($row['added'] ?? 0),

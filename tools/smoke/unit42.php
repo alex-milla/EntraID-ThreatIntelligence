@@ -108,7 +108,34 @@ try {
     check('sync: descarga si cambió el SHA', Unit42Feed::needsDownload('2026-11-16-PureLogs.txt', 'sha-xyz', $known) === true);
     check('sync: descarga si es nuevo', Unit42Feed::needsDownload('otro.txt', 'sha-abc', $known) === true);
 
+    /* check() cuenta sin escribir: se inserta una fila temporal como referencia */
+    Database::query(
+        "INSERT OR REPLACE INTO u42_articles (path, sha, size, title, content, first_seen_at)
+         VALUES ('u42-smoke-check.txt', 'sha-abc', 100, 'smoke', 'x', datetime('now'))"
+    );
+    $before = (int)(Database::fetchOne("SELECT COUNT(*) AS c FROM u42_articles")['c'] ?? 0);
+    $fakeFiles = [
+        ['path' => 'u42-smoke-check.txt', 'sha' => 'sha-abc', 'size' => 100], // igual
+        ['path' => 'otro.txt', 'sha' => 'sha-nuevo', 'size' => 100],           // nuevo
+    ];
+    $check = Unit42Feed::check($fakeFiles);
+    Database::query("DELETE FROM u42_articles WHERE path = 'u42-smoke-check.txt'");
+    check('check: detecta 1 nuevo y 1 sin cambios', $check['new'] === 1 && $check['unchanged'] === 1, json_encode($check));
+    check('check: cuenta los pendientes', $check['pending'] === 1);
+    check('check: no escribe en la BD', (int)(Database::fetchOne("SELECT COUNT(*) AS c FROM u42_articles")['c'] ?? 0) === $before - 1);
+    check('check: error legible de hosting', str_contains(
+        Unit42Feed::friendlyError(new RuntimeException('fallo de red')),
+        'El servidor no pudo acceder a GitHub'
+    ));
+
     // --- Esquema y vistas ---
+    $syncCols = [];
+    foreach (Database::fetchAll("PRAGMA table_info(u42_sync)") as $col) {
+        $syncCols[(string)$col['name']] = true;
+    }
+    foreach (['state', 'pending', 'processed', 'started_at', 'finished_at'] as $col) {
+        check('BD: u42_sync.' . $col, isset($syncCols[$col]));
+    }
     foreach (['u42_articles', 'u42_iocs', 'u42_sync'] as $table) {
         $row = Database::fetchOne("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?", [$table]);
         check('BD: tabla ' . $table, $row !== null);
@@ -117,6 +144,7 @@ try {
     $moduleSrc = (string)@file_get_contents($root . '/public_html/modules/threat_intelligence/module.php');
     check('módulo: pestaña y rutas Unit42', str_contains($moduleSrc, "'pattern' => 'unit42'")
         && str_contains($moduleSrc, 'unit42Sync'));
+    check('módulo: status antes que {id}', strpos($moduleSrc, "'pattern' => 'unit42/status'") < strpos($moduleSrc, "'pattern' => 'unit42/{id}'"));
     $header = (string)@file_get_contents($root . '/public_html/views/partials/ti_header.php');
     check('módulo: pestaña visible', str_contains($header, "tiActive === 'unit42'"));
     $exportSrc = (string)@file_get_contents($root . '/public_html/modules/export/module.php');

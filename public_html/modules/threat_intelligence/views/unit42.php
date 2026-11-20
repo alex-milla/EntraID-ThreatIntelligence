@@ -50,6 +50,23 @@ $sizeLabel = static function (int $bytes): string {
                 </button>
             <?php endif; ?>
         </div>
+        <div id="u42-sync-panel" class="hidden mt-4 pt-4 border-t border-line">
+            <p id="u42-sync-message" class="text-xs text-ink"></p>
+            <div id="u42-sync-progress-wrap" class="hidden mt-2">
+                <div class="h-1.5 w-full rounded-full bg-muted overflow-hidden">
+                    <div id="u42-sync-bar" class="h-full bg-brand-500 transition-all" style="width:0%"></div>
+                </div>
+                <p id="u42-sync-detail" class="text-[11px] text-ink-muted mt-1"></p>
+            </div>
+            <div class="mt-3 flex items-center gap-2 flex-wrap">
+                <button type="button" id="u42-download-btn" onclick="u42Download()"
+                        class="hidden px-3 py-1.5 bg-brand-500 hover:bg-brand-600 text-white text-xs font-medium rounded-lg">
+                    Descargar
+                </button>
+                <button type="button" onclick="u42HidePanel()"
+                        class="px-3 py-1.5 border border-line-strong text-xs rounded-lg hover:bg-muted">Cerrar</button>
+            </div>
+        </div>
     </div>
 
     <div class="card overflow-hidden">
@@ -112,42 +129,143 @@ $sizeLabel = static function (int $bytes): string {
 <script>
 (function () {
     'use strict';
-    window.u42Sync = function (button) {
-        if (!button || button.disabled) { return; }
-        var tokenEl = document.querySelector('input[name="csrf_token"]');
-        var token = tokenEl ? tokenEl.value : '';
-        var oldText = button.textContent;
-        button.disabled = true;
-        button.textContent = 'Descargando…';
+    var SYNC_URL = '<?= e(base_url('modules/threat_intelligence/unit42/sync')) ?>';
+    var STATUS_URL = '<?= e(base_url('modules/threat_intelligence/unit42/status')) ?>';
+    var pollTimer = null;
 
-        fetch('<?= e(base_url('modules/threat_intelligence/unit42/sync')) ?>', {
+    function csrfToken() {
+        var el = document.querySelector('input[name="csrf_token"]');
+        return el ? el.value : '';
+    }
+
+    function post(payload) {
+        return fetch(SYNC_URL, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'X-Requested-With': 'XMLHttpRequest',
-                'X-CSRF-Token': token
+                'X-CSRF-Token': csrfToken()
             },
             credentials: 'same-origin',
-            body: '{}'
+            body: JSON.stringify(payload)
         }).then(function (res) {
             return res.json().catch(function () { return {}; }).then(function (data) {
-                if (!res.ok || !data.success) {
-                    throw new Error(data.error || ('HTTP ' + res.status));
-                }
-                return data;
+                return { res: res, data: data };
             });
-        }).then(function (data) {
-            if (typeof toast === 'function') {
-                toast(data.added + ' nuevos · ' + data.updated + ' actualizados · ' + data.unchanged + ' sin cambios', 'success');
-            }
-            window.location.reload();
-        }).catch(function (err) {
-            if (typeof appAlert === 'function') {
-                appAlert('No se pudo sincronizar: ' + (err && err.message ? err.message : 'error de red'), { title: 'Sincronización' });
-            }
+        });
+    }
+
+    function panel() { return document.getElementById('u42-sync-panel'); }
+    function message() { return document.getElementById('u42-sync-message'); }
+    function progressWrap() { return document.getElementById('u42-sync-progress-wrap'); }
+    function bar() { return document.getElementById('u42-sync-bar'); }
+    function detail() { return document.getElementById('u42-sync-detail'); }
+    function downloadBtn() { return document.getElementById('u42-download-btn'); }
+
+    window.u42HidePanel = function () {
+        if (panel()) { panel().classList.add('hidden'); }
+        if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    };
+
+    /* Paso 1: solo cuenta cuántos hay nuevos/modificados (no descarga). */
+    window.u42Sync = function (button) {
+        if (!button || button.disabled) { return; }
+        var oldText = button.textContent;
+        button.disabled = true;
+        button.textContent = 'Comprobando…';
+        if (panel()) { panel().classList.remove('hidden'); }
+        if (message()) { message().textContent = 'Consultando GitHub…'; }
+        if (downloadBtn()) { downloadBtn().classList.add('hidden'); }
+        if (progressWrap()) { progressWrap().classList.add('hidden'); }
+
+        post({ check: true }).then(function (out) {
             button.disabled = false;
             button.textContent = oldText;
+            var d = out.data || {};
+            if (!out.res.ok || !d.ok) {
+                if (message()) { message().textContent = d.error || 'No se pudo comprobar GitHub.'; }
+                return;
+            }
+            if (!d.pending) {
+                if (message()) { message().textContent = 'Todo está al día: ' + d.total + ' ficheros, ninguno nuevo.'; }
+                return;
+            }
+            var parts = [];
+            if (d.new) { parts.push(d.new + ' nuevos'); }
+            if (d.changed) { parts.push(d.changed + ' modificados'); }
+            if (message()) {
+                message().textContent = 'Hay ' + parts.join(' y ') + ' de ' + d.total + ' ficheros. ¿Descargarlos todos?';
+            }
+            if (downloadBtn()) {
+                downloadBtn().classList.remove('hidden');
+                downloadBtn().dataset.pending = String(d.pending);
+            }
+        }).catch(function (err) {
+            button.disabled = false;
+            button.textContent = oldText;
+            if (message()) { message().textContent = 'Error: ' + (err && err.message ? err.message : 'red'); }
         });
     };
+
+    /* Paso 2: descarga todo de golpe (con FPM responde ya y sigue en segundo plano). */
+    window.u42Download = function () {
+        var btn = downloadBtn();
+        if (!btn || btn.disabled) { return; }
+        btn.disabled = true;
+        btn.textContent = 'Descargando…';
+        if (progressWrap()) { progressWrap().classList.remove('hidden'); }
+        if (message()) { message().textContent = 'Descargando desde GitHub…'; }
+
+        post({}).then(function (out) {
+            var d = out.data || {};
+            if (!out.res.ok || !d.success) {
+                if (message()) { message().textContent = d.error || 'No se pudo descargar.'; }
+                btn.disabled = false;
+                btn.textContent = 'Reintentar';
+                return;
+            }
+            if (d.queued || d.worker === 'fpm') {
+                startPolling();
+            } else {
+                if (message()) {
+                    message().textContent = d.added + ' nuevos · ' + d.updated + ' actualizados · ' + d.unchanged + ' sin cambios';
+                }
+                window.setTimeout(function () { window.location.reload(); }, 1200);
+            }
+        }).catch(function (err) {
+            if (message()) { message().textContent = 'Error: ' + (err && err.message ? err.message : 'red'); }
+            btn.disabled = false;
+            btn.textContent = 'Reintentar';
+        });
+    };
+
+    function startPolling() {
+        if (pollTimer) { return; }
+        pollTimer = window.setInterval(function () {
+            fetch(STATUS_URL, {
+                headers: {'X-Requested-With': 'XMLHttpRequest', 'Accept': 'application/json'},
+                credentials: 'same-origin'
+            }).then(function (res) { return res.json(); }).then(function (st) {
+                if (!st) { return; }
+                var total = (st.files_total || 0) + (st.pending || 0);
+                var done = parseInt(st.processed || 0, 10);
+                if (bar() && total > 0) { bar().style.width = Math.min(100, Math.round(done * 100 / total)) + '%'; }
+                if (detail()) {
+                    detail().textContent = done + ' descargados' + (st.pending ? ' · quedan ' + st.pending : '');
+                }
+                if (st.state === 'done' || st.state === 'error') {
+                    clearInterval(pollTimer);
+                    pollTimer = null;
+                    if (st.state === 'error') {
+                        if (message()) { message().textContent = 'Error: ' + (st.error || 'descarga interrumpida'); }
+                        var btn = downloadBtn();
+                        if (btn) { btn.disabled = false; btn.textContent = 'Continuar'; }
+                    } else {
+                        window.location.reload();
+                    }
+                }
+            }).catch(function () { /* reintenta */ });
+        }, 3000);
+    }
 })();
 </script>

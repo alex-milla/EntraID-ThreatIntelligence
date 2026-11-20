@@ -8,6 +8,7 @@
  *
  * Opciones:
  *   --status    solo muestra el estado local (sin descargar).
+ *   --check     solo cuenta cuántos ficheros son nuevos/modificados (sin descargar).
  *   --reparse   vuelve a parsear lo ya guardado, sin descargar nada.
  *
  * Solo compara blob SHAs: los ficheros ya descargados y sin cambios NO se bajan.
@@ -35,12 +36,19 @@ if (function_exists('release_session_lock')) {
 @set_time_limit(0);
 
 $statusOnly = in_array('--status', $args, true);
+$checkOnly = in_array('--check', $args, true);
 $reparse = in_array('--reparse', $args, true);
 
 try {
     if ($statusOnly) {
         echo json_encode(['success' => true, 'status' => Unit42Feed::status()], JSON_UNESCAPED_UNICODE) . PHP_EOL;
         exit(0);
+    }
+
+    if ($checkOnly) {
+        $check = Unit42Feed::check();
+        echo json_encode(['success' => (bool)$check['ok']] + $check, JSON_UNESCAPED_UNICODE) . PHP_EOL;
+        exit($check['ok'] ? 0 : 1);
     }
 
     if ($reparse) {

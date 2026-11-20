@@ -392,9 +392,33 @@ class Database
             files_total INTEGER NOT NULL DEFAULT 0,
             added INTEGER NOT NULL DEFAULT 0,
             updated INTEGER NOT NULL DEFAULT 0,
+            unchanged INTEGER NOT NULL DEFAULT 0,
+            state TEXT NOT NULL DEFAULT 'idle',
+            pending INTEGER NOT NULL DEFAULT 0,
+            processed INTEGER NOT NULL DEFAULT 0,
+            started_at TEXT,
+            finished_at TEXT,
             error TEXT
         )");
         $db->exec("INSERT OR IGNORE INTO u42_sync (id) VALUES (1)");
+
+        // Migración idempotente de instalaciones que ya tenían u42_sync (v0.4.28).
+        $syncCols = [];
+        foreach ($db->query("PRAGMA table_info(u42_sync)") as $c) {
+            $syncCols[(string)$c['name']] = true;
+        }
+        foreach ([
+            'unchanged'  => 'INTEGER NOT NULL DEFAULT 0',
+            'state'      => "TEXT NOT NULL DEFAULT 'idle'",
+            'pending'    => 'INTEGER NOT NULL DEFAULT 0',
+            'processed'  => 'INTEGER NOT NULL DEFAULT 0',
+            'started_at' => 'TEXT',
+            'finished_at'=> 'TEXT',
+        ] as $col => $definition) {
+            if (!isset($syncCols[$col])) {
+                $db->exec("ALTER TABLE u42_sync ADD COLUMN " . $col . " " . $definition);
+            }
+        }
 
         // v0.4.15: cerrojo único para trabajos de IA de larga duración (cola de
         // informes CVE, equipos expuestos, traducción, asistente). Una sola

@@ -2195,11 +2195,52 @@ class Module_ThreatIntelligence extends BaseModule
         ]);
     }
 
-    /** POST unit42/sync — descarga solo los ficheros nuevos o modificados. */
+    /** POST unit42/sync — comprueba o descarga los ficheros nuevos/modificados. */
     public function unit42Sync(array $params = []): void
     {
         Auth::requireAdmin();
         Csrf::validateOrFail();
+
+        $raw = file_get_contents('php://input');
+        $input = json_decode((string)$raw, true);
+        if (!is_array($input)) {
+            $input = $_POST;
+        }
+
+        if (!empty($input['check'])) {
+            json_response(Unit42Feed::check());
+            return;
+        }
+
+        $useFpm = function_exists('fastcgi_finish_request');
+
+        if ($useFpm) {
+            @ignore_user_abort(true);
+            @set_time_limit(0);
+            if (function_exists('release_session_lock')) {
+                release_session_lock();
+            }
+
+            // El proxy no espera a la descarga: responde ya y sigue en el proceso.
+            json_response_continue([
+                'success' => true,
+                'queued'  => true,
+                'worker'  => 'fpm',
+            ], 202);
+
+            try {
+                Unit42Feed::sync();
+            } catch (Throwable $e) {
+                app_log('error', 'unit42', 'Error descargando en segundo plano', ['error' => $e->getMessage()]);
+            }
+            exit;
+        }
+
+        if (function_exists('release_session_lock')) {
+            release_session_lock();
+        }
+        @set_time_limit(0);
+        @ignore_user_abort(true);
 
         try {
             $summary = Unit42Feed::sync();
@@ -2211,11 +2252,19 @@ class Module_ThreatIntelligence extends BaseModule
                 'unchanged'  => (int)($summary['unchanged'] ?? 0),
                 'errors'     => $summary['errors'] ?? [],
                 'error'      => ($summary['errors'] ?? []) !== [] ? implode(' · ', $summary['errors']) : '',
+                'worker'     => 'inline',
             ], ($summary['ok'] ?? false) ? 200 : 500);
         } catch (Throwable $e) {
             app_log('error', 'unit42', 'Error en la sincronización', ['error' => $e->getMessage()]);
-            json_response(['success' => false, 'error' => $e->getMessage()], 500);
+            json_response(['success' => false, 'error' => Unit42Feed::friendlyError($e)], 500);
         }
+    }
+
+    /** GET unit42/status — progreso de la descarga en curso. */
+    public function unit42Status(array $params = []): void
+    {
+        Auth::require();
+        json_response(Unit42Feed::status());
     }
 
     public function routes(): array
@@ -2228,6 +2277,7 @@ class Module_ThreatIntelligence extends BaseModule
             ['method' => 'GET', 'pattern' => 'iocs',                'handler' => [$this, 'iocsPage']],
             ['method' => 'GET', 'pattern' => 'translations',        'handler' => [$this, 'translationsPage']],
             ['method' => 'GET', 'pattern' => 'unit42',              'handler' => [$this, 'unit42Page']],
+            ['method' => 'GET', 'pattern' => 'unit42/status',       'handler' => [$this, 'unit42Status']],
             ['method' => 'GET', 'pattern' => 'unit42/{id}',         'handler' => [$this, 'unit42ArticlePage']],
             ['method' => 'POST','pattern' => 'unit42/sync',         'handler' => [$this, 'unit42Sync']],
             ['method' => 'GET', 'pattern' => 'iocs/data',           'handler' => [$this, 'listIocs']],
