@@ -341,7 +341,10 @@ $exposureLabel = static function (string $value): string {
                             <input type="checkbox" class="ai-cve-check rounded border-line-strong text-brand-500 focus:ring-brand-500"
                                    data-item-id="<?= $itemId ?>"
                                    data-cve-id="<?= e($cveId) ?>"
-                                   data-tags="<?= e(json_encode($itemTags, JSON_UNESCAPED_UNICODE)) ?>">
+                                   data-tags="<?= e(json_encode($itemTags, JSON_UNESCAPED_UNICODE)) ?>"
+                                   data-group-id="<?= (int)($item['group_id'] ?? 0) ?>"
+                                   data-group-name="<?= e($itemGroup) ?>"
+                                   data-group-kind="<?= e($itemGroupKind) ?>">
                             Seleccionar para etiquetar o enviar a grupo
                         </label>
                     <?php endif; ?>

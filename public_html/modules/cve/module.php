@@ -58,6 +58,7 @@ class Module_Cve extends BaseModule
             ['method' => 'POST', 'pattern' => 'reports/ai-assign/{id}', 'handler' => [$this, 'assignAiReport']],
             ['method' => 'POST', 'pattern' => 'reports/ai-item-tags', 'handler' => [$this, 'updateAiItemTags']],
             ['method' => 'POST', 'pattern' => 'reports/ai-assign-items', 'handler' => [$this, 'assignAiReportItems']],
+            ['method' => 'POST', 'pattern' => 'reports/ai-remediation/{id}', 'handler' => [$this, 'sendAiReportToRemediation']],
             ['method' => 'POST', 'pattern' => 'reports/ai-retry-item/{id}/{itemId}', 'handler' => [$this, 'retryAiReportItem']],
             ['method' => 'GET',  'pattern' => 'reports/ai-tag-suggestions', 'handler' => [$this, 'aiTagSuggestions']],
             ['method' => 'GET',  'pattern' => 'reports/defender-list', 'handler' => [$this, 'defenderList']],
@@ -330,6 +331,15 @@ class Module_Cve extends BaseModule
             $incompleteCves = 0;
         }
 
+        $aiRemediationOrgs = [];
+        try {
+            $aiRemediationOrgs = Database::fetchAll(
+                "SELECT id, name, software_group_id FROM remediation_orgs ORDER BY name"
+            );
+        } catch (Throwable $e) {
+            $aiRemediationOrgs = [];
+        }
+
         echo $this->page('index', [
             'isAdmin'       => $isAdmin,
             'incompleteCves'=> $incompleteCves,
@@ -346,6 +356,7 @@ class Module_Cve extends BaseModule
             'selectedAiId'  => $selectedAiId,
             'selectedAiData'=> $selectedAiData,
             'llmProfiles'   => $llmProfiles,
+            'aiRemediationOrgs' => $aiRemediationOrgs,
             'llmConfigured' => $llmConfigured,
             'stats'         => $stats,
             'selectedGroup' => $selectedGroup,
@@ -6215,6 +6226,163 @@ class Module_Cve extends BaseModule
             json_response(['success' => false, 'error' => $e->getMessage()], 400);
         } catch (Throwable $e) {
             app_log('error', 'cve_ai', 'Error enviando CVEs a grupo', ['error' => $e->getMessage()]);
+            json_response(['success' => false, 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Crea tareas de Remediación para los CVEs seleccionados de un informe IA.
+     *
+     * La organización se resuelve, en orden: creada/vinculada desde la empresa,
+     * vinculada a la empresa de los ítems, org elegida, o la única existente.
+     * Las tareas son idempotentes (una por organización + CVE).
+     */
+    public function sendAiReportToRemediation(array $params = []): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        try {
+            $raw = file_get_contents('php://input');
+            $input = json_decode((string)$raw, true);
+            if (!is_array($input)) {
+                $input = $_POST;
+            }
+
+            $id = (int)($params['id'] ?? 0);
+            $report = $id > 0
+                ? CveDatabase::fetchOne("SELECT id FROM cve_ai_reports WHERE id = ?", [$id])
+                : null;
+            if ($report === null) {
+                json_response(['success' => false, 'error' => 'Informe no encontrado.'], 404);
+            }
+
+            $itemIds = $this->normalizeItemIds($input['item_ids'] ?? []);
+            if ($itemIds === []) {
+                json_response(['success' => false, 'error' => 'Selecciona al menos un CVE.'], 400);
+            }
+
+            /* Informes antiguos: asegurar las filas por CVE. */
+            CveReportAi::ensureReportItems($id);
+
+            $placeholders = implode(',', array_fill(0, count($itemIds), '?'));
+            $rows = CveDatabase::fetchAll(
+                "SELECT i.id, i.cve_id, i.group_id, g.kind AS group_kind, g.name AS group_name
+                 FROM cve_ai_report_items i
+                 LEFT JOIN software_groups g ON g.id = i.group_id
+                 WHERE i.report_id = ? AND i.id IN ($placeholders)",
+                array_merge([$id], $itemIds)
+            );
+            if ($rows === []) {
+                json_response(['success' => false, 'error' => 'Ningún CVE seleccionado pertenece al informe.'], 400);
+            }
+
+            $companyGroups = [];
+            foreach ($rows as $row) {
+                if ((string)($row['group_kind'] ?? '') === 'company' && (int)($row['group_id'] ?? 0) > 0) {
+                    $companyGroups[(int)$row['group_id']] = (string)($row['group_name'] ?? '');
+                }
+            }
+            $companyId = count($companyGroups) === 1 ? (int)array_key_first($companyGroups) : 0;
+            $companyName = $companyId > 0 ? (string)$companyGroups[$companyId] : '';
+
+            $orgId = (int)($input['org_id'] ?? 0);
+            $orgCreated = false;
+            $linked = false;
+
+            /* Crear y vincular la organización de la empresa. */
+            if (!empty($input['create_org']) && $companyId > 0 && $companyName !== '') {
+                $byName = Database::fetchOne("SELECT id FROM remediation_orgs WHERE name = ? LIMIT 1", [$companyName]);
+                if ($byName !== null) {
+                    $orgId = (int)$byName['id'];
+                    Database::query(
+                        "UPDATE remediation_orgs SET software_group_id = ?, updated_at = datetime('now') WHERE id = ?",
+                        [$companyId, $orgId]
+                    );
+                } else {
+                    $orgId = Database::insert(
+                        "INSERT INTO remediation_orgs (name, kind, software_group_id, created_by)
+                         VALUES (?, 'manual', ?, ?)",
+                        [$companyName, $companyId, (int)Auth::id()]
+                    );
+                    $orgCreated = true;
+                }
+                $linked = true;
+            }
+
+            /* Empresa ya vinculada. */
+            if ($orgId <= 0 && $companyId > 0) {
+                $linkedOrg = Database::fetchOne(
+                    "SELECT id FROM remediation_orgs WHERE software_group_id = ? LIMIT 1",
+                    [$companyId]
+                );
+                if ($linkedOrg !== null) {
+                    $orgId = (int)$linkedOrg['id'];
+                }
+            }
+
+            /* Una sola organización disponible: respaldo. */
+            if ($orgId <= 0) {
+                $count = (int)(Database::fetchOne("SELECT COUNT(*) AS c FROM remediation_orgs")['c'] ?? 0);
+                if ($count === 1) {
+                    $only = Database::fetchOne("SELECT id FROM remediation_orgs ORDER BY id LIMIT 1");
+                    if ($only !== null) {
+                        $orgId = (int)$only['id'];
+                    }
+                }
+            }
+
+            if ($orgId <= 0) {
+                json_response([
+                    'success' => false,
+                    'error'   => 'Selecciona una organización de Remediación.',
+                    'need_org' => true,
+                ], 400);
+            }
+
+            $org = Database::fetchOne("SELECT id, name FROM remediation_orgs WHERE id = ?", [$orgId]);
+            if ($org === null) {
+                json_response(['success' => false, 'error' => 'La organización seleccionada no existe.'], 400);
+            }
+
+            $created = 0;
+            $skipped = 0;
+            foreach ($rows as $row) {
+                $cveId = (string)($row['cve_id'] ?? '');
+                if ($cveId === '') {
+                    continue;
+                }
+                $before = RemediationPlan::findTask($orgId, $cveId);
+                RemediationPlan::ensureTask($orgId, $cveId, (int)Auth::id());
+                if ($before === null) {
+                    $created++;
+                } else {
+                    $skipped++;
+                }
+            }
+
+            log_activity('cve.ai_report_remediation', [
+                'report_id' => $id,
+                'org_id'    => $orgId,
+                'items'     => $itemIds,
+                'created'   => $created,
+                'skipped'   => $skipped,
+                'linked'    => $linked,
+            ]);
+
+            json_response([
+                'success'     => true,
+                'created'     => $created,
+                'skipped'     => $skipped,
+                'org_id'      => $orgId,
+                'org_name'    => (string)$org['name'],
+                'org_created' => $orgCreated,
+            ]);
+        } catch (Throwable $e) {
+            app_log('error', 'cve_ai', 'Error enviando informe a Remediación', [
+                'id'    => $params['id'] ?? null,
+                'error' => $e->getMessage(),
+            ]);
             json_response(['success' => false, 'error' => $e->getMessage()], 500);
         }
     }

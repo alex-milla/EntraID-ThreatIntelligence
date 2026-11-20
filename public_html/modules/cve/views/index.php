@@ -1249,6 +1249,10 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
                             class="hidden px-3 py-1.5 border border-line-strong text-ink text-xs font-medium rounded-lg hover:bg-muted transition-colors">
                         Enviar seleccionados
                     </button>
+                    <button type="button" id="ai-remediation-btn" onclick="cveAiRemediationOpen()"
+                            class="hidden px-3 py-1.5 bg-brand-600 hover:bg-brand-700 text-white text-xs font-medium rounded-lg transition-colors">
+                        Enviar a Remediación
+                    </button>
                 <?php endif; ?>
                 <?php if ($isAdmin): ?>
                     <button type="button" id="ai-refresh-btn" onclick="cveAiRefresh()"
@@ -1676,6 +1680,52 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
     </div>
 </div>
 
+<!-- Modal: enviar los CVEs seleccionados a Remediación -->
+<div id="ai-remediation-modal" class="hidden fixed inset-0 z-50 no-print">
+    <div class="absolute inset-0 bg-black/40" onclick="cveAiRemediationClose()"></div>
+    <div class="relative mx-auto mt-24 w-[calc(100%-2rem)] max-w-md card shadow-xl p-5">
+        <div class="flex items-start justify-between gap-3">
+            <div>
+                <h3 class="text-sm font-semibold">Enviar a Remediación</h3>
+                <p class="text-xs text-ink-muted mt-1" id="ai-remediation-count"></p>
+            </div>
+            <button type="button" onclick="cveAiRemediationClose()" class="text-xs text-ink-soft hover:text-gray-600">Cerrar</button>
+        </div>
+
+        <p id="ai-remediation-linked" class="hidden mt-4 px-3 py-2 rounded-lg bg-brand-50 text-brand-700 dark:bg-brand-950/40 dark:text-brand-300 text-xs"></p>
+
+        <label id="ai-remediation-create-wrap" class="hidden flex items-center gap-2 mt-4 text-xs text-ink">
+            <input id="ai-remediation-create" type="checkbox" class="rounded border-line-strong text-brand-500 focus:ring-brand-500">
+            <span>Crear y vincular la organización «<strong id="ai-remediation-company"></strong>»</span>
+        </label>
+
+        <label class="block mt-4">
+            <span class="block text-xs font-medium text-ink-muted mb-1">Organización de destino</span>
+            <select id="ai-remediation-org"
+                    class="w-full px-2 py-1.5 rounded-lg border border-line-strong bg-input text-ink text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                <option value="0">— Elegir organización —</option>
+                <?php foreach (($aiRemediationOrgs ?? []) as $remOrg): ?>
+                    <option value="<?= (int)$remOrg['id'] ?>"><?= e((string)$remOrg['name']) ?></option>
+                <?php endforeach; ?>
+            </select>
+        </label>
+        <p id="ai-remediation-empty" class="hidden mt-2 text-[11px] text-warning">
+            No hay organizaciones de Remediación. Créala en el módulo Remediación o usa «Crear y vincular».
+        </p>
+
+        <div class="mt-4 flex items-center justify-end gap-2">
+            <button type="button" onclick="cveAiRemediationClose()"
+                    class="px-3 py-1.5 border border-line-strong text-xs font-medium rounded-lg hover:bg-muted">
+                Cancelar
+            </button>
+            <button type="button" onclick="cveAiRemediationSubmit(this)"
+                    class="btn btn-small">
+                Enviar a Remediación
+            </button>
+        </div>
+    </div>
+</div>
+
 <!-- Modal: enviar informes seleccionados a empresa/grupo -->
 <div id="ai-reports-group-modal" class="hidden fixed inset-0 z-50 no-print">
     <div class="absolute inset-0 bg-black/40" onclick="cveAiBulkGroupClose()"></div>
@@ -2056,6 +2106,8 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
     var ASSIGN_URL  = <?= json_encode(base_url('modules/cve/reports/ai-assign')) ?>;
     var ITEM_TAGS_URL = <?= json_encode(base_url('modules/cve/reports/ai-item-tags')) ?>;
     var ITEM_GROUP_URL = <?= json_encode(base_url('modules/cve/reports/ai-assign-items')) ?>;
+    var REMEDIATION_URL = <?= json_encode(base_url('modules/cve/reports/ai-remediation')) ?>;
+    var REMEDIATION_ORGS = <?= json_encode($aiRemediationOrgs ?? [], JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
     var TAG_SUGGEST_URL = <?= json_encode(base_url('modules/cve/reports/ai-tag-suggestions')) ?>;
     var RETRY_ITEM_URL = <?= json_encode(base_url('modules/cve/reports/ai-retry-item')) ?>;
     var DEFENDER_LIST_URL  = <?= json_encode(base_url('modules/cve/reports/defender-list')) ?>;
@@ -2085,6 +2137,7 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
     var groupBtn = document.getElementById('ai-group-btn');
     var tagsBtn = document.getElementById('ai-tags-btn');
     var itemsGroupBtn = document.getElementById('ai-items-group-btn');
+    var remediationBtn = document.getElementById('ai-remediation-btn');
     var selectionCount = document.getElementById('ai-selection-count');
     var selectAllBtn = document.getElementById('ai-select-all-btn');
     var titleEl = document.getElementById('ai-detail-title');
@@ -2294,6 +2347,9 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
         }
         if (itemsGroupBtn) {
             itemsGroupBtn.classList.toggle('hidden', !IS_ADMIN || count === 0);
+        }
+        if (remediationBtn) {
+            remediationBtn.classList.toggle('hidden', !IS_ADMIN || count === 0);
         }
         if (selectAllBtn) {
             selectAllBtn.classList.toggle('hidden', !IS_ADMIN || checks.length === 0);
@@ -4184,6 +4240,141 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
                     button.disabled = false;
                 }
             });
+        });
+    };
+
+    /* Empresa compartida por los CVEs seleccionados (o vacía si hay varias). */
+    function selectedCompany() {
+        if (!detail) {
+            return { id: 0, name: '' };
+        }
+        var companies = {};
+        var ids = [];
+        Array.prototype.slice.call(detail.querySelectorAll('.ai-cve-check:checked')).forEach(function (el) {
+            if ((el.dataset.groupKind || '') === 'company' && (el.dataset.groupName || '')) {
+                var key = (el.dataset.groupName || '') + '#' + (el.dataset.groupId || '0');
+                if (!companies[key]) {
+                    companies[key] = { id: parseInt(el.dataset.groupId, 10) || 0, name: el.dataset.groupName };
+                }
+                ids.push(key);
+            }
+        });
+        var keys = Object.keys(companies);
+        return keys.length === 1 ? companies[keys[0]] : { id: 0, name: '' };
+    }
+
+    function linkedOrgFor(companyId) {
+        for (var i = 0; i < REMEDIATION_ORGS.length; i++) {
+            if ((parseInt(REMEDIATION_ORGS[i].software_group_id, 10) || 0) === companyId) {
+                return REMEDIATION_ORGS[i];
+            }
+        }
+        return null;
+    }
+
+    window.cveAiRemediationOpen = function () {
+        var body = detail ? detail.querySelector('.ai-report-body') : null;
+        if (state.status === 'running' || (body && body.dataset.status === 'running')) {
+            appAlert('El informe está generando el análisis. Espera a que termine.', { title: 'Informe en curso' });
+            return;
+        }
+        var ids = selectedItemIds();
+        if (!ids.length) {
+            appAlert('Selecciona al menos un CVE.', { title: 'Sin selección' });
+            return;
+        }
+
+        var modal = document.getElementById('ai-remediation-modal');
+        if (!modal) {
+            return;
+        }
+        var count = document.getElementById('ai-remediation-count');
+        if (count) {
+            count.textContent = ids.length + (ids.length === 1 ? ' CVE seleccionado' : ' CVEs seleccionados');
+        }
+
+        var company = selectedCompany();
+        var linked = company.id > 0 ? linkedOrgFor(company.id) : null;
+        var linkedBox = document.getElementById('ai-remediation-linked');
+        var createWrap = document.getElementById('ai-remediation-create-wrap');
+        var createCheck = document.getElementById('ai-remediation-create');
+        var companyLabel = document.getElementById('ai-remediation-company');
+        var select = document.getElementById('ai-remediation-org');
+        var empty = document.getElementById('ai-remediation-empty');
+
+        if (linkedBox) {
+            linkedBox.classList.toggle('hidden', linked === null);
+            if (linked !== null) {
+                linkedBox.textContent = 'Se enviarán a la organización vinculada «' + linked.name + '».';
+            }
+        }
+        if (createWrap) {
+            createWrap.classList.toggle('hidden', !(company.id > 0 && linked === null));
+        }
+        if (companyLabel) {
+            companyLabel.textContent = company.name;
+        }
+        if (createCheck) {
+            createCheck.checked = company.id > 0 && linked === null;
+        }
+        if (select) {
+            select.value = linked !== null ? String(linked.id) : '0';
+            select.disabled = linked !== null;
+        }
+        if (empty) {
+            empty.classList.toggle('hidden', REMEDIATION_ORGS.length > 0 || (company.id > 0 && linked === null));
+        }
+
+        modal.classList.remove('hidden');
+    };
+
+    window.cveAiRemediationClose = function () {
+        var modal = document.getElementById('ai-remediation-modal');
+        if (modal) {
+            modal.classList.add('hidden');
+        }
+    };
+
+    window.cveAiRemediationSubmit = function (button) {
+        var ids = selectedItemIds();
+        if (!ids.length) {
+            appAlert('Selecciona al menos un CVE.', { title: 'Sin selección' });
+            return;
+        }
+        var select = document.getElementById('ai-remediation-org');
+        var createCheck = document.getElementById('ai-remediation-create');
+        var orgId = select ? parseInt(select.value, 10) || 0 : 0;
+
+        if (button) {
+            button.disabled = true;
+        }
+        postJson(REMEDIATION_URL + '/' + state.id, {
+            item_ids: ids,
+            org_id: orgId,
+            create_org: !!(createCheck && createCheck.checked)
+        }).then(function (res) {
+            if (!res || !res.success) {
+                appAlert((res && res.error) ? res.error : 'No se pudieron crear las tareas.', { title: 'No se pudo enviar' });
+                if (button) {
+                    button.disabled = false;
+                }
+                return;
+            }
+            window.cveAiRemediationClose();
+            var message = res.created + ' tareas creadas';
+            if (res.skipped) {
+                message += ' · ' + res.skipped + ' ya existían';
+            }
+            message += ' en «' + (res.org_name || ('organización #' + res.org_id)) + '».';
+            if (typeof toast === 'function') {
+                toast(message, 'success');
+            }
+            refreshReportList().catch(function () {});
+        }).catch(function (err) {
+            appAlert('No se pudo enviar: ' + errorText(err), { title: 'No se pudo enviar' });
+            if (button) {
+                button.disabled = false;
+            }
         });
     };
 
