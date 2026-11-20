@@ -29,6 +29,18 @@ class Module_ThreatIntelligence extends BaseModule
         ];
     }
 
+    /** Entrada directa de Unit 42 dentro del submenú de Inteligencia. */
+    public function getExtraNavItems(): array
+    {
+        return [[
+            'label' => 'Unit 42',
+            'url'   => base_url('modules/threat_intelligence/unit42'),
+            'icon'  => 'public',
+            'group' => 'Inteligencia',
+            'after' => 'threat_intelligence',
+        ]];
+    }
+
     // ============================================================
     // Sincronización
     // ============================================================

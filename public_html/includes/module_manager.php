@@ -159,6 +159,18 @@ class ModuleManager
             } else {
                 $nav[] = $navItem;
             }
+
+            // Entradas adicionales del menú (p. ej. Unit 42 dentro de Inteligencia).
+            foreach ($instance->getExtraNavItems() as $extraItem) {
+                if (!is_array($extraItem) || (string)($extraItem['url'] ?? '') === '') {
+                    continue;
+                }
+                if (!empty($extraItem['after'])) {
+                    $deferred[] = $extraItem;
+                } else {
+                    $nav[] = $extraItem;
+                }
+            }
         }
 
         /* Varias pasadas: un elemento puede depender de otro que también está

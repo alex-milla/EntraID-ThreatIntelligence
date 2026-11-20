@@ -242,6 +242,17 @@ abstract class BaseModule implements ModuleInterface
         ];
     }
 
+    /**
+     * Entradas adicionales del menú lateral que pertenecen a este módulo.
+     * Por defecto ninguna: los módulos que quieran un sub enlace la declaran.
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    public function getExtraNavItems(): array
+    {
+        return [];
+    }
+
     public function routes(): array
     {
         return [

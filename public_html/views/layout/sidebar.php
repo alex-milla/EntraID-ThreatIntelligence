@@ -15,6 +15,16 @@ foreach ($navModules as $item) {
     $groups[$group][] = $item;
 }
 
+// El elemento activo es el de ruta más específica: en /modules/threat_intelligence/unit42
+// se resalta «Unit 42», no su módulo padre «Threat Intel».
+$bestNavPath = '';
+foreach ($navModules as $navItem) {
+    $navPath = (string)(parse_url((string)($navItem['url'] ?? ''), PHP_URL_PATH) ?? '');
+    if ($navPath !== '' && str_contains($currentPath, $navPath) && strlen($navPath) > strlen($bestNavPath)) {
+        $bestNavPath = $navPath;
+    }
+}
+
 $isDashboard = str_contains($currentPath, '/admin')
     && !str_contains($currentPath, '/admin/tenant')
     && !str_contains($currentPath, '/admin/user')
@@ -77,7 +87,14 @@ $adminOpen = $adminOpen || str_contains($currentPath, '/admin/tenant') || str_co
 
             <?php foreach ($items as $item):
                 $itemPath = basename(parse_url($item['url'], PHP_URL_PATH) ?? '');
+                $itemUrlPath = (string)(parse_url((string)$item['url'], PHP_URL_PATH) ?? '');
                 $isActive = $itemPath !== '' && str_contains($currentPath, '/modules/' . $itemPath);
+                if ($isActive && $bestNavPath !== '' && $itemUrlPath !== $bestNavPath) {
+                    $isActive = false;
+                }
+                if (!$isActive && $itemUrlPath !== '' && $itemUrlPath === $bestNavPath) {
+                    $isActive = true;
+                }
                 $isTi = str_contains((string)$item['url'], 'threat_intelligence');
                 $isCve = str_contains((string)$item['url'], '/modules/cve');
             ?>

@@ -151,6 +151,26 @@ try {
     check('export: fuente Unit42', str_contains($exportSrc, "['source'] ?? '') === 'u42'"));
     $worker = (string)@file_get_contents($root . '/public_html/unit42-worker.php');
     check('worker: cron', str_contains($worker, 'Unit42Feed::sync()'));
+
+    // --- Entrada en el submenú de Inteligencia ---
+    $tiModule = ModuleManager::get('threat_intelligence');
+    $extra = $tiModule !== null ? $tiModule->getExtraNavItems() : [];
+    check('menú: el módulo declara Unit 42', count($extra) === 1
+        && ($extra[0]['label'] ?? '') === 'Unit 42'
+        && ($extra[0]['group'] ?? '') === 'Inteligencia');
+    $nav = ModuleManager::getNavigation();
+    $found = false;
+    foreach ($nav as $item) {
+        if (($item['label'] ?? '') === 'Unit 42'
+            && (string)($item['url'] ?? '') === base_url('modules/threat_intelligence/unit42')
+            && ($item['group'] ?? '') === 'Inteligencia') {
+            $found = true;
+            break;
+        }
+    }
+    check('menú: navegación incluye Unit 42', $found);
+    $sidebar = (string)@file_get_contents($root . '/public_html/views/layout/sidebar.php');
+    check('menú: resaltado por ruta específica', str_contains($sidebar, '$bestNavPath'));
 } catch (Throwable $e) {
     check('excepción inesperada: ' . $e->getMessage(), false, $e->getFile() . ':' . $e->getLine());
 }
