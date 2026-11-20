@@ -49,7 +49,7 @@ class Module_Export extends BaseModule
     public function exportTxt(int $tenantId, array $filters = []): array
     {
         $iocs = $this->getIocsForExport($tenantId, $filters);
-        $content = implode("\n", array_column($iocs, 'ioc_value'));
+        $content = $this->buildTxtContent($iocs);
 
         return [
             'success' => true,
@@ -70,25 +70,7 @@ class Module_Export extends BaseModule
     public function exportCsv(int $tenantId, array $filters = []): array
     {
         $iocs = $this->getIocsForExport($tenantId, $filters);
-
-        $headers = ['#', 'Type', 'Value', 'Description', 'Source', 'Severity', 'Fetched At'];
-        $rows = [$headers];
-
-        foreach ($iocs as $i => $ioc) {
-            $rows[] = [
-                $i + 1,
-                $ioc['ioc_type'],
-                $ioc['ioc_value'],
-                $ioc['description'] ?? '',
-                $ioc['source'] ?? '',
-                $ioc['severity'] ?? '',
-                $ioc['fetched_at'] ?? '',
-            ];
-        }
-
-        $csv = implode("\n", array_map(function ($row) {
-            return implode(',', array_map(fn($f) => $this->csvField($f), $row));
-        }, $rows));
+        $csv = $this->buildCsvContent($iocs);
 
         return [
             'success' => true,
@@ -154,87 +136,7 @@ class Module_Export extends BaseModule
      */
     public function exportStix(int $tenantId, array $filters = [], array $config = []): array
     {
-        $iocs = $this->getIocsForExport($tenantId, $filters);
-
-        $tlp = $config['tlp'] ?? 'green';
-        $markingRef = TLP_MARKINGS[$tlp] ?? TLP_MARKINGS['green'];
-        $validDays = (int)($config['valid_days'] ?? 365);
-        $confidence = (int)($config['confidence'] ?? 75);
-        $labels = $config['labels'] ?? [];
-        $format = $config['format'] ?? 'merged'; // 'merged' o 'split'
-
-        $now = gmdate('Y-m-d\TH:i:s\Z');
-        $validUntil = gmdate('Y-m-d\TH:i:s\Z', time() + ($validDays * 86400));
-
-        $indicators = [];
-        foreach ($iocs as $ioc) {
-            $pattern = $this->generateStixPattern($ioc['ioc_type'], $ioc['ioc_value']);
-            if (!$pattern) continue;
-
-            $indicators[] = [
-                'type'                 => 'indicator',
-                'id'                   => 'indicator--' . generate_uuid(),
-                'spec_version'         => '2.1',
-                'pattern'              => $pattern,
-                'pattern_type'         => 'stix',
-                'pattern_version'      => '2.1',
-                'created'              => $now,
-                'modified'             => $now,
-                'valid_from'           => $now,
-                'valid_until'          => $validUntil,
-                'name'                 => ($config['source'] ?? 'EntraID TI') . ' - ' . $ioc['ioc_value'],
-                'description'          => $ioc['description'] ?? '',
-                'indicator_types'      => ['malicious-activity'],
-                'revoked'              => false,
-                'labels'               => $labels,
-                'confidence'           => $confidence,
-                'lang'                 => 'es',
-                'object_marking_refs'  => [$markingRef],
-                'external_references'  => [],
-            ];
-        }
-
-        if ($format === 'split') {
-            // Agrupar por tipo
-            $byType = [];
-            foreach ($indicators as $ind) {
-                preg_match('/\[([a-z0-9-]+):/', $ind['pattern'], $m);
-                $type = $m[1] ?? 'unknown';
-                $byType[$type][] = $ind;
-            }
-
-            $files = [];
-            foreach ($byType as $type => $inds) {
-                $bundle = [
-                    'type'    => 'bundle',
-                    'id'      => 'bundle--' . generate_uuid(),
-                    'objects' => $inds,
-                ];
-                $files[$type] = [
-                    'content'  => json_encode($bundle, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES),
-                    'filename' => 'iocs_stix_' . $type . '_' . date('Y-m-d') . '.json',
-                    'mime'     => 'application/json',
-                ];
-            }
-
-            return ['success' => true, 'format' => 'split', 'files' => $files, 'count' => count($indicators)];
-        }
-
-        // Merged: un único bundle
-        $bundle = [
-            'type'    => 'bundle',
-            'id'      => 'bundle--' . generate_uuid(),
-            'objects' => $indicators,
-        ];
-
-        return [
-            'success' => true,
-            'format' => 'merged',
-            'content' => json_encode($bundle, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES),
-            'filename' => 'iocs_stix_' . date('Y-m-d') . '.json',
-            'mime' => 'application/json',
-            'count' => count($indicators),
-        ];
+        return $this->buildStixResult($this->getIocsForExport($tenantId, $filters), $config);
     }
 
     // ============================================================
@@ -292,86 +194,219 @@ class Module_Export extends BaseModule
      */
     public function exportMisp(int $tenantId, array $filters = [], array $config = []): array
     {
-        $iocs = $this->getIocsForExport($tenantId, $filters);
+        return $this->buildMispResult($this->getIocsForExport($tenantId, $filters), $config);
+    }
 
-        $tlp = $config['tlp'] ?? 'amber';
+    // ============================================================
+    // Builders puros (sobre una lista explícita de IOCs)
+    // ============================================================
+
+    /** Acepta filas de BD (ioc_type/ioc_value) y del asistente (type/value). */
+    private function buildRows(array $iocs): array
+    {
+        $rows = [];
+        foreach ($iocs as $ioc) {
+            if (!is_array($ioc)) { continue; }
+            $rows[] = [
+                'type'        => (string)($ioc['type'] ?? $ioc['ioc_type'] ?? ''),
+                'value'       => (string)($ioc['value'] ?? $ioc['ioc_value'] ?? ''),
+                'description' => (string)($ioc['description'] ?? ''),
+                'source'      => (string)($ioc['source'] ?? ''),
+                'severity'    => (string)($ioc['severity'] ?? ''),
+                'fetched_at'  => (string)($ioc['fetched_at'] ?? ''),
+            ];
+        }
+        return $rows;
+    }
+
+    public function buildTxtContent(array $iocs): string
+    {
+        $values = [];
+        foreach ($this->buildRows($iocs) as $row) {
+            if ($row['value'] !== '') { $values[] = $row['value']; }
+        }
+        return implode("\n", $values);
+    }
+
+    public function buildCsvContent(array $iocs): string
+    {
+        $rows = [['#', 'Type', 'Value', 'Description', 'Source', 'Severity', 'Fetched At']];
+        foreach ($this->buildRows($iocs) as $i => $ioc) {
+            $rows[] = [
+                $i + 1, $ioc['type'], $ioc['value'], $ioc['description'],
+                $ioc['source'], $ioc['severity'], $ioc['fetched_at'],
+            ];
+        }
+        return implode("\n", array_map(function (array $row): string {
+            return implode(',', array_map(fn($f) => $this->csvField($f), $row));
+        }, $rows));
+    }
+
+    /** @return array<int,array<string,mixed>> objetos indicator STIX 2.1 */
+    public function buildStixIndicators(array $iocs, array $config = []): array
+    {
+        $tlp = (string)($config['tlp'] ?? 'green');
+        $markingRef = TLP_MARKINGS[$tlp] ?? TLP_MARKINGS['green'];
+        $validDays = (int)($config['valid_days'] ?? 365);
+        $confidence = (int)($config['confidence'] ?? 75);
+        $labels = $config['labels'] ?? [];
+        if (is_string($labels)) {
+            $labels = array_values(array_filter(array_map('trim', explode(',', $labels)), 'strlen'));
+        }
+        $source = (string)($config['source'] ?? 'EntraID TI');
+        $indicatorType = (string)($config['indicator_type'] ?? 'malicious-activity');
+        $actor = trim((string)($config['threat_actor'] ?? ''));
+        $lang = (string)($config['lang'] ?? 'es');
+
+        $now = gmdate('Y-m-d\TH:i:s\Z');
+        $validUntil = gmdate('Y-m-d\TH:i:s\Z', time() + ($validDays * 86400));
+
+        $indicators = [];
+        foreach ($this->buildRows($iocs) as $ioc) {
+            if ($ioc['type'] === '' || $ioc['value'] === '') { continue; }
+            $pattern = $this->generateStixPattern($ioc['type'], $ioc['value']);
+            if (!$pattern) { continue; }
+
+            $indicator = [
+                'type'                => 'indicator',
+                'id'                  => 'indicator--' . generate_uuid(),
+                'spec_version'        => '2.1',
+                'pattern'             => $pattern,
+                'pattern_type'        => 'stix',
+                'pattern_version'     => '2.1',
+                'created'             => $now,
+                'modified'            => $now,
+                'valid_from'          => $now,
+                'valid_until'         => $validUntil,
+                'name'                => $source . ' - ' . $ioc['value'],
+                'description'         => $ioc['description'],
+                'indicator_types'     => [$indicatorType],
+                'revoked'             => false,
+                'labels'              => $labels,
+                'confidence'          => $confidence,
+                'lang'                => $lang,
+                'object_marking_refs' => [$markingRef],
+                'external_references' => [],
+            ];
+            if ($actor !== '') {
+                $indicator['threat_actor_names'] = [$actor];
+            }
+            $indicators[] = $indicator;
+        }
+        return $indicators;
+    }
+
+    public function buildStixBundle(array $indicators): array
+    {
+        return ['type' => 'bundle', 'id' => 'bundle--' . generate_uuid(), 'objects' => $indicators];
+    }
+
+    public function buildStixResult(array $iocs, array $config = []): array
+    {
+        $indicators = $this->buildStixIndicators($iocs, $config);
+        if (($config['format'] ?? 'merged') === 'split') {
+            $byType = [];
+            foreach ($indicators as $ind) {
+                preg_match('/\[([a-z0-9-]+):/', (string)$ind['pattern'], $m);
+                $byType[$m[1] ?? 'unknown'][] = $ind;
+            }
+            $files = [];
+            foreach ($byType as $type => $inds) {
+                $files[$type] = [
+                    'content'  => json_encode($this->buildStixBundle($inds), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES),
+                    'filename' => 'iocs_stix_' . $type . '_' . date('Y-m-d') . '.json',
+                    'mime'     => 'application/json',
+                ];
+            }
+            return ['success' => true, 'format' => 'split', 'files' => $files, 'count' => count($indicators)];
+        }
+        return [
+            'success'  => true,
+            'format'   => 'merged',
+            'content'  => json_encode($this->buildStixBundle($indicators), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES),
+            'filename' => 'iocs_stix_' . date('Y-m-d') . '.json',
+            'mime'     => 'application/json',
+            'count'    => count($indicators),
+        ];
+    }
+
+    /** @return array<string,mixed> evento MISP (contenedor Event) */
+    public function buildMispEvent(array $iocs, array $config = []): array
+    {
+        $tlp = (string)($config['tlp'] ?? 'amber');
         $distribution = MISP_TLP_DISTRIBUTION[$tlp] ?? '1';
-        $tags = array_merge(['tlp:' . $tlp], $config['labels'] ?? []);
-        $format = $config['format'] ?? 'merged';
-        $ipDirection = $config['ip_direction'] ?? 'ip-dst';
-        $info = $config['info'] ?? 'EntraID TI - IOC Export';
+        $tags = array_merge(['tlp:' . $tlp], is_array($config['labels'] ?? null) ? $config['labels'] : []);
+        $actor = trim((string)($config['threat_actor'] ?? ''));
+        if ($actor !== '') { $tags[] = 'threat-actor:' . $actor; }
+        $ipDirection = (string)($config['ip_direction'] ?? 'ip-dst');
+        $info = (string)($config['info'] ?? 'EntraID TI - IOC Export');
 
         $attributes = [];
-        foreach ($iocs as $ioc) {
-            $type = $this->mispType($ioc['ioc_type'], $ioc['ioc_value']);
-            $category = $this->mispCategory($ioc['ioc_type']);
-
-            // IPs pueden tener dirección configurable
-            if (in_array($ioc['ioc_type'], ['ipv4-addr', 'ipv6-addr'], true)) {
+        foreach ($this->buildRows($iocs) as $ioc) {
+            if ($ioc['type'] === '' || $ioc['value'] === '') { continue; }
+            if (in_array($ioc['type'], ['ipv4-addr', 'ipv6-addr'], true)) {
                 $dirs = $ipDirection === 'both' ? ['ip-src', 'ip-dst'] : [$ipDirection];
                 foreach ($dirs as $dir) {
                     $attributes[] = [
-                        'type'     => $dir,
-                        'category' => 'Network activity',
-                        'value'    => $ioc['ioc_value'],
-                        'to_ids'   => true,
-                        'comment'  => $ioc['description'] ?? '',
+                        'type' => $dir, 'category' => 'Network activity',
+                        'value' => $ioc['value'], 'to_ids' => true, 'comment' => $ioc['description'],
                     ];
                 }
             } else {
                 $attributes[] = [
-                    'type'     => $type,
-                    'category' => $category,
-                    'value'    => $ioc['ioc_type'] === 'autonomous-system' ? str_replace('AS', '', $ioc['ioc_value']) : $ioc['ioc_value'],
+                    'type'     => $this->mispType($ioc['type'], $ioc['value']),
+                    'category' => $this->mispCategory($ioc['type']),
+                    'value'    => $ioc['type'] === 'autonomous-system' ? str_replace('AS', '', $ioc['value']) : $ioc['value'],
                     'to_ids'   => true,
-                    'comment'  => $ioc['description'] ?? '',
+                    'comment'  => $ioc['description'],
                 ];
             }
         }
 
-        $buildEvent = function (array $attrs) use ($info, $distribution, $tags): array {
-            return [
-                'Event' => [
-                    'info'           => $info,
-                    'date'           => date('Y-m-d'),
-                    'distribution'   => $distribution,
-                    'threat_level_id'=> '2',
-                    'analysis'       => '2',
-                    'published'      => false,
-                    'Attribute'      => $attrs,
-                    'Tag'            => array_map(fn($t) => ['name' => $t], $tags),
-                ],
-            ];
-        };
+        return [
+            'Event' => [
+                'info'            => $info,
+                'date'            => date('Y-m-d'),
+                'distribution'    => $distribution,
+                'threat_level_id' => '2',
+                'analysis'        => '2',
+                'published'       => false,
+                'Attribute'       => $attributes,
+                'Tag'             => array_map(fn($t) => ['name' => $t], $tags),
+            ],
+        ];
+    }
 
-        if ($format === 'split') {
+    public function buildMispResult(array $iocs, array $config = []): array
+    {
+        $event = $this->buildMispEvent($iocs, $config);
+        $count = count($event['Event']['Attribute'] ?? []);
+        $json = static fn(array $e): string => json_encode($e, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+
+        if (($config['format'] ?? 'merged') === 'split') {
             $byType = [];
-            foreach ($attributes as $attr) {
+            foreach ($event['Event']['Attribute'] as $attr) {
                 $byType[$attr['type']][] = $attr;
             }
-
             $files = [];
             foreach ($byType as $type => $attrs) {
-                $event = $buildEvent($attrs);
+                $part = $event;
+                $part['Event']['Attribute'] = $attrs;
                 $files[$type] = [
-                    'content'  => json_encode($event, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES),
+                    'content'  => $json($part),
                     'filename' => 'misp_' . $type . '_' . date('Y-m-d') . '.json',
                     'mime'     => 'application/json',
                 ];
             }
-
-            return ['success' => true, 'format' => 'split', 'files' => $files, 'count' => count($attributes)];
+            return ['success' => true, 'format' => 'split', 'files' => $files, 'count' => $count];
         }
-
-        $event = $buildEvent($attributes);
-
         return [
-            'success' => true,
-            'format' => 'merged',
-            'content' => json_encode($event, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES),
+            'success'  => true,
+            'format'   => 'merged',
+            'content'  => $json($event),
             'filename' => 'misp_event_' . date('Y-m-d') . '.json',
-            'mime' => 'application/json',
-            'count' => count($attributes),
+            'mime'     => 'application/json',
+            'count'    => $count,
         ];
     }
 
@@ -504,6 +539,10 @@ class Module_Export extends BaseModule
             ['method' => 'GET',  'pattern' => 'types',                   'handler' => [$this, 'getTypes']],
             ['method' => 'GET',  'pattern' => 'count',                   'handler' => [$this, 'getCount']],
             ['method' => 'GET',  'pattern' => 'download',                'handler' => [$this, 'downloadEndpoint']],
+            ['method' => 'GET',  'pattern' => 'u42-articles',            'handler' => [$this, 'u42ArticlesEndpoint']],
+            ['method' => 'POST', 'pattern' => 'extract',                 'handler' => [$this, 'extractEndpoint']],
+            ['method' => 'POST', 'pattern' => 'generate',                'handler' => [$this, 'generateEndpoint']],
+            ['method' => 'POST', 'pattern' => 'iocs/save',               'handler' => [$this, 'iocsSaveEndpoint']],
         ];
     }
 
@@ -613,5 +652,219 @@ class Module_Export extends BaseModule
     public function getCount(array $params = []): void
     {
         json_response(['count' => $this->countIocs((int)($_GET['tenant'] ?? 0))]);
+    }
+
+    // ============================================================
+    // Asistente de extracción y exportación de IOCs
+    // ============================================================
+
+    private function requestInput(): array
+    {
+        $raw = file_get_contents('php://input');
+        $input = json_decode((string)$raw, true);
+        return is_array($input) ? $input : (is_array($_POST) ? $_POST : []);
+    }
+
+    /** Artículos de Unit 42 para el buscador del paso 1. */
+    public function u42ArticlesEndpoint(array $params = []): void
+    {
+        $q = trim((string)($_GET['q'] ?? ''));
+        $where = '1=1';
+        $args = [];
+        if ($q !== '') {
+            $where = '(title LIKE ? OR path LIKE ?)';
+            $like = '%' . $q . '%';
+            $args = [$like, $like];
+        }
+        $rows = Database::fetchAll(
+            "SELECT id, title, published_at, path FROM u42_articles WHERE $where
+             ORDER BY published_at DESC, id DESC LIMIT 100",
+            $args
+        );
+        json_response(['success' => true, 'articles' => $rows]);
+    }
+
+    /** Extrae IOCs de Unit 42, del catálogo del tenant o de texto pegado. */
+    public function extractEndpoint(array $params = []): void
+    {
+        Csrf::validateOrFail();
+        $input = $this->requestInput();
+        $source = (string)($input['source'] ?? 'u42');
+        $iocs = [];
+
+        if ($source === 'u42') {
+            $ids = is_array($input['article_ids'] ?? null) ? array_values(array_filter(array_map('intval', $input['article_ids']))) : [];
+            if ($ids === []) {
+                json_response(['success' => false, 'error' => 'Selecciona al menos una publicación.'], 400);
+                return;
+            }
+            foreach ($ids as $id) {
+                $article = Unit42Feed::article($id);
+                if ($article === null) { continue; }
+                foreach (Unit42Feed::iocs($id) as $ioc) {
+                    $iocs[] = [
+                        'id' => (int)$ioc['id'],
+                        'type' => (string)$ioc['ioc_type'],
+                        'value' => (string)$ioc['ioc_value'],
+                        'description' => (string)($ioc['description'] ?? ''),
+                        'source' => (string)($ioc['source'] ?? 'auto'),
+                    ];
+                }
+                // También se extracta del texto parseado: puede contener indicios
+                // que la extracción de la sincronización no hubiera guardado.
+                foreach (Unit42Feed::extractIocs(is_array($article['sections'] ?? null) ? $article['sections'] : []) as $ioc) {
+                    $iocs[] = [
+                        'id' => 0,
+                        'type' => (string)$ioc['ioc_type'],
+                        'value' => (string)$ioc['ioc_value'],
+                        'description' => (string)($ioc['description'] ?? ''),
+                        'source' => 'auto',
+                    ];
+                }
+            }
+        } elseif ($source === 'tenant') {
+            $tenantId = (int)($input['tenant_id'] ?? 0);
+            $filters = is_array($input['filters'] ?? null) ? $input['filters'] : [];
+            foreach ($this->getIocsForExport($tenantId, $filters) as $ioc) {
+                $iocs[] = [
+                    'id' => (int)($ioc['id'] ?? 0),
+                    'type' => (string)$ioc['ioc_type'],
+                    'value' => (string)$ioc['ioc_value'],
+                    'description' => (string)($ioc['description'] ?? ''),
+                    'source' => 'tenant',
+                ];
+            }
+        } elseif ($source === 'text') {
+            require_once __DIR__ . '/../../includes/ioc_text_extract.php';
+            $text = (string)($input['text'] ?? '');
+            if (trim($text) === '') {
+                json_response(['success' => false, 'error' => 'Pega el texto del que quieres extraer IOCs.'], 400);
+                return;
+            }
+            $extracted = ioc_extract_text($text);
+            json_response(['success' => true, 'iocs' => $extracted['iocs'], 'stats' => $extracted['stats'], 'source' => 'text']);
+            return;
+        } else {
+            json_response(['success' => false, 'error' => 'Origen no válido.'], 400);
+            return;
+        }
+
+        $unique = [];
+        foreach ($iocs as $ioc) {
+            $key = $ioc['type'] . '|' . strtolower($ioc['value']);
+            if ($key === '|') { continue; }
+            if (!isset($unique[$key])) { $unique[$key] = $ioc; }
+            elseif ((int)$unique[$key]['id'] === 0 && (int)$ioc['id'] > 0) { $unique[$key] = $ioc; }
+        }
+        $list = array_values($unique);
+        $byType = [];
+        foreach ($list as $ioc) { $byType[$ioc['type']] = ($byType[$ioc['type']] ?? 0) + 1; }
+        $categories = [
+            'ip'     => ($byType['ipv4-addr'] ?? 0) + ($byType['ipv6-addr'] ?? 0),
+            'domain' => $byType['domain-name'] ?? 0,
+            'url'    => $byType['url'] ?? 0,
+            'hash'   => $byType['file'] ?? 0,
+            'email'  => ($byType['email-addr'] ?? 0) + ($byType['user-account'] ?? 0),
+        ];
+        $categories['other'] = max(0, count($list) - array_sum($categories));
+
+        json_response([
+            'success' => true,
+            'iocs' => $list,
+            'stats' => [
+                'total' => count($iocs), 'unique' => count($list),
+                'duplicates' => max(0, count($iocs) - count($list)),
+                'by_type' => $byType, 'categories' => $categories,
+            ],
+            'source' => $source,
+        ]);
+    }
+
+    /** Genera los ficheros sin descargarlos: el navegador decide cuáler bajar. */
+    public function generateEndpoint(array $params = []): void
+    {
+        Csrf::validateOrFail();
+        $input = $this->requestInput();
+        $format = strtolower((string)($input['format'] ?? 'stix'));
+        $iocs = is_array($input['iocs'] ?? null) ? $input['iocs'] : [];
+        $config = is_array($input['config'] ?? null) ? $input['config'] : [];
+
+        if ($iocs === []) {
+            json_response(['success' => false, 'error' => 'No hay IOCs para exportar.'], 400);
+            return;
+        }
+
+        switch ($format) {
+            case 'stix':
+                json_response($this->buildStixResult($iocs, $config));
+                return;
+            case 'misp':
+                json_response($this->buildMispResult($iocs, $config));
+                return;
+            case 'csv':
+                json_response([
+                    'success' => true, 'format' => 'csv', 'count' => count($iocs),
+                    'files' => ['all' => [
+                        'content' => $this->buildCsvContent($iocs),
+                        'filename' => 'iocs_' . date('Y-m-d') . '.csv',
+                        'mime' => 'text/csv',
+                    ]],
+                ]);
+                return;
+            case 'txt':
+                json_response([
+                    'success' => true, 'format' => 'txt', 'count' => count($iocs),
+                    'files' => ['all' => [
+                        'content' => $this->buildTxtContent($iocs),
+                        'filename' => 'iocs_' . date('Y-m-d') . '.txt',
+                        'mime' => 'text/plain',
+                    ]],
+                ]);
+                return;
+            default:
+                json_response(['success' => false, 'error' => 'Formato no válido.'], 400);
+        }
+    }
+
+    /** Guarda correcciones de tipo/descripción sobre los IOCs de Unit 42. */
+    public function iocsSaveEndpoint(array $params = []): void
+    {
+        Csrf::validateOrFail();
+        $input = $this->requestInput();
+        $articleId = (int)($input['article_id'] ?? 0);
+        $changes = is_array($input['changes'] ?? null) ? $input['changes'] : [];
+        if ($articleId <= 0) {
+            json_response(['success' => false, 'error' => 'Falta el artículo.'], 400);
+            return;
+        }
+
+        $saved = 0;
+        foreach ($changes as $ch) {
+            if (!is_array($ch)) { continue; }
+            $type = trim((string)($ch['type'] ?? ''));
+            $value = trim((string)($ch['value'] ?? ''));
+            $description = trim((string)($ch['description'] ?? ''));
+            if ($type === '' || $value === '') { continue; }
+            $id = (int)($ch['id'] ?? 0);
+
+            if ($id > 0) {
+                Database::query(
+                    "DELETE FROM u42_iocs WHERE article_id = ? AND ioc_type = ? AND ioc_value = ? AND id <> ?",
+                    [$articleId, $type, $value, $id]
+                );
+                Database::query(
+                    "UPDATE u42_iocs SET ioc_type = ?, ioc_value = ?, description = ?, edited = 1 WHERE id = ? AND article_id = ?",
+                    [$type, $value, $description, $id, $articleId]
+                );
+            } else {
+                Database::query(
+                    "INSERT OR IGNORE INTO u42_iocs (article_id, ioc_type, ioc_value, description, source, edited, first_seen)
+                     VALUES (?, ?, ?, ?, 'manual', 1, datetime('now'))",
+                    [$articleId, $type, $value, $description]
+                );
+            }
+            $saved++;
+        }
+        json_response(['success' => true, 'saved' => $saved]);
     }
 }

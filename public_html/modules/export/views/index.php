@@ -71,19 +71,19 @@
     <div class="card p-5">
         <h2 class="text-sm font-semibold mb-4">Exportar IOCs</h2>
         <div class="grid grid-cols-2 gap-3">
-            <button onclick="doExport('txt')" class="flex flex-col items-center gap-2 p-4 rounded-lg border border-line hover:border-brand-300 dark:hover:border-brand-700 hover:bg-brand-50 dark:hover:bg-brand-950/30 transition-colors">
+            <button onclick="openIocExtractor('txt')" class="flex flex-col items-center gap-2 p-4 rounded-lg border border-line hover:border-brand-300 dark:hover:border-brand-700 hover:bg-brand-50 dark:hover:bg-brand-950/30 transition-colors">
                 <i class="material-icons icon-32 text-ink-soft" aria-hidden="true">description</i>
                 <span class="text-sm font-medium">TXT</span>
             </button>
-            <button onclick="doExport('csv')" class="flex flex-col items-center gap-2 p-4 rounded-lg border border-line hover:border-brand-300 dark:hover:border-brand-700 hover:bg-brand-50 dark:hover:bg-brand-950/30 transition-colors">
+            <button onclick="openIocExtractor('csv')" class="flex flex-col items-center gap-2 p-4 rounded-lg border border-line hover:border-brand-300 dark:hover:border-brand-700 hover:bg-brand-50 dark:hover:bg-brand-950/30 transition-colors">
                 <i class="material-icons icon-32 text-ink-soft" aria-hidden="true">dns</i>
                 <span class="text-sm font-medium">CSV</span>
             </button>
-            <button onclick="doExport('stix')" class="flex flex-col items-center gap-2 p-4 rounded-lg border border-line hover:border-brand-300 dark:hover:border-brand-700 hover:bg-brand-50 dark:hover:bg-brand-950/30 transition-colors">
+            <button onclick="openIocExtractor('stix')" class="flex flex-col items-center gap-2 p-4 rounded-lg border border-line hover:border-brand-300 dark:hover:border-brand-700 hover:bg-brand-50 dark:hover:bg-brand-950/30 transition-colors">
                 <i class="material-icons icon-32 text-ink-soft" aria-hidden="true">inventory_2</i>
                 <span class="text-sm font-medium">STIX 2.1</span>
             </button>
-            <button onclick="doExport('misp')" class="flex flex-col items-center gap-2 p-4 rounded-lg border border-line hover:border-brand-300 dark:hover:border-brand-700 hover:bg-brand-50 dark:hover:bg-brand-950/30 transition-colors">
+            <button onclick="openIocExtractor('misp')" class="flex flex-col items-center gap-2 p-4 rounded-lg border border-line hover:border-brand-300 dark:hover:border-brand-700 hover:bg-brand-50 dark:hover:bg-brand-950/30 transition-colors">
                 <i class="material-icons icon-32 text-ink-soft" aria-hidden="true">terminal</i>
                 <span class="text-sm font-medium">MISP</span>
             </button>
@@ -92,6 +92,23 @@
 </div>
 
 <script>
+function openIocExtractor(format) {
+    if (typeof IOCExtractor === 'undefined' || !IOCExtractor.open) {
+        toast('El asistente de IOCs no está disponible.', 'error');
+        return;
+    }
+    var cfg = getExportConfig();
+    IOCExtractor.open({
+        source: 'tenant',
+        format: format || 'stix',
+        filters: {
+            tenant_id: cfg.tenant_id,
+            type: cfg.filters.type,
+            search: cfg.filters.search
+        }
+    });
+}
+
 function getExportConfig() {
     return {
         tenant_id: parseInt(document.getElementById('export-tenant').value),

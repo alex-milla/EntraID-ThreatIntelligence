@@ -32,7 +32,6 @@ $renderText = static function (string $text): string {
 $rawUrl = 'https://github.com/PaloAltoNetworks/Unit42-timely-threat-intel/blob/main/'
     . rawurlencode((string)($article['path'] ?? ''));
 $fullUrl = base_url('modules/threat_intelligence/unit42/' . $articleId) . '?tenant=' . $tenantId;
-$exportBase = base_url('modules/export/download') . '?source=u42&article_id=' . $articleId . '&tenant=' . $tenantId;
 $rawId = 'u42-raw-' . $articleId;
 $reportId = 'u42-report-' . $articleId;
 ?>
@@ -62,10 +61,12 @@ $reportId = 'u42-report-' . $articleId;
                 <?php endforeach; ?>
             </div>
             <div class="flex flex-wrap gap-2 mt-3">
-                <a href="<?= e($exportBase . '&format=stix') ?>" class="px-2.5 py-1 bg-brand-500 hover:bg-brand-600 text-white text-[11px] font-medium rounded-lg">STIX 2.1</a>
-                <a href="<?= e($exportBase . '&format=misp') ?>" class="px-2.5 py-1 border border-line-strong text-[11px] rounded-lg hover:bg-muted">MISP</a>
-                <a href="<?= e($exportBase . '&format=txt') ?>" class="px-2.5 py-1 border border-line-strong text-[11px] rounded-lg hover:bg-muted">TXT</a>
-                <a href="<?= e($exportBase . '&format=csv') ?>" class="px-2.5 py-1 border border-line-strong text-[11px] rounded-lg hover:bg-muted">CSV</a>
+                <button type="button"
+                        onclick="IOCExtractor.open({source:'u42', articleIds:[<?= $articleId ?>], format:'stix'})"
+                        class="px-2.5 py-1 bg-brand-500 hover:bg-brand-600 text-white text-[11px] font-medium rounded-lg">
+                    Extraer IOCs
+                </button>
+                <span class="text-[10px] text-ink-soft self-center">Revisa y configura el formato antes de exportar.</span>
             </div>
         </div>
     <?php endif; ?>

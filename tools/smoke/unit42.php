@@ -291,6 +291,13 @@ try {
         && str_contains($panelSrc, 'u42-read-toggle')
         && str_contains($panelSrc, 'u42-fav-toggle')
         && str_contains($panelSrc, 'u42-raw-toggle'));
+
+    // --- Asistente de IOCs (v0.4.28.6) ---
+    check('IOCs: botón Extraer IOCs en el panel', str_contains($panelSrc, "IOCExtractor.open({source:'u42'")
+        && !str_contains($panelSrc, 'modules/export/download'));
+    $footerSrc = (string)@file_get_contents($root . '/public_html/views/layout/footer.php');
+    check('IOCs: asistente global en el layout', str_contains($footerSrc, 'partials/ioc_extractor.php')
+        && str_contains($footerSrc, 'js/ioc-extractor.js'));
 } catch (Throwable $e) {
     check('excepción inesperada: ' . $e->getMessage(), false, $e->getFile() . ':' . $e->getLine());
 }

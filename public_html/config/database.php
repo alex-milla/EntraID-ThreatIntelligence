@@ -414,6 +414,9 @@ class Database
         if (!isset($syncCols['source'])) {
             $db->exec("ALTER TABLE u42_iocs ADD COLUMN source TEXT NOT NULL DEFAULT 'auto'");
         }
+        if (!isset($syncCols['edited'])) {
+            $db->exec("ALTER TABLE u42_iocs ADD COLUMN edited INTEGER NOT NULL DEFAULT 0");
+        }
         $reportCols = [];
         foreach ($db->query("PRAGMA table_info(u42_reports)") as $c) {
             $reportCols[(string)$c['name']] = true;

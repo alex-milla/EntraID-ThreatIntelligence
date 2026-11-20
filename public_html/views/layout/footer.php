@@ -13,12 +13,19 @@
 </div><!-- /app-body -->
 </div><!-- /app-shell -->
 
+<?php if (Auth::check()): ?>
+    <?php require VIEWS_PATH . '/partials/ioc_extractor.php'; ?>
+<?php endif; ?>
+
 <!-- Scripts globales -->
 <script src="<?= asset_url('js/app.js') ?>?v=<?= e(APP_VERSION) ?>"></script>
 <script src="<?= asset_url('js/shell.js') ?>?v=<?= e(APP_VERSION) ?>"></script>
 <script src="<?= asset_url('js/filters.js') ?>?v=<?= e(APP_VERSION) ?>"></script>
 <script src="<?= asset_url('js/ui.js') ?>?v=<?= e(APP_VERSION) ?>"></script>
 <script src="<?= asset_url('js/report-doc.js') ?>?v=<?= e(APP_VERSION) ?>"></script>
+<?php if (Auth::check()): ?>
+<script src="<?= asset_url('js/ioc-extractor.js') ?>?v=<?= e(APP_VERSION) ?>"></script>
+<?php endif; ?>
 <script>
 /* Indicador global de sincronización (badge en el sidebar, todas las pantallas) */
 (function () {
