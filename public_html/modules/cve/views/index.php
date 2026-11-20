@@ -1250,7 +1250,7 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
                         Enviar seleccionados
                     </button>
                     <button type="button" id="ai-remediation-btn" onclick="cveAiRemediationOpen()"
-                            class="hidden px-3 py-1.5 bg-brand-600 hover:bg-brand-700 text-white text-xs font-medium rounded-lg transition-colors">
+                            class="px-3 py-1.5 bg-brand-600 hover:bg-brand-700 text-white text-xs font-medium rounded-lg transition-colors">
                         Enviar a Remediación
                     </button>
                 <?php endif; ?>
@@ -2137,7 +2137,6 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
     var groupBtn = document.getElementById('ai-group-btn');
     var tagsBtn = document.getElementById('ai-tags-btn');
     var itemsGroupBtn = document.getElementById('ai-items-group-btn');
-    var remediationBtn = document.getElementById('ai-remediation-btn');
     var selectionCount = document.getElementById('ai-selection-count');
     var selectAllBtn = document.getElementById('ai-select-all-btn');
     var titleEl = document.getElementById('ai-detail-title');
@@ -2347,9 +2346,6 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
         }
         if (itemsGroupBtn) {
             itemsGroupBtn.classList.toggle('hidden', !IS_ADMIN || count === 0);
-        }
-        if (remediationBtn) {
-            remediationBtn.classList.toggle('hidden', !IS_ADMIN || count === 0);
         }
         if (selectAllBtn) {
             selectAllBtn.classList.toggle('hidden', !IS_ADMIN || checks.length === 0);
@@ -4278,17 +4274,56 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
             appAlert('El informe está generando el análisis. Espera a que termine.', { title: 'Informe en curso' });
             return;
         }
-        var ids = selectedItemIds();
-        if (!ids.length) {
-            appAlert('Selecciona al menos un CVE.', { title: 'Sin selección' });
-            return;
-        }
-
         var modal = document.getElementById('ai-remediation-modal');
         if (!modal) {
             return;
         }
+
+        var ids = selectedItemIds();
         var count = document.getElementById('ai-remediation-count');
+        var linkedBox = document.getElementById('ai-remediation-linked');
+        var createWrap = document.getElementById('ai-remediation-create-wrap');
+        var createCheck = document.getElementById('ai-remediation-create');
+        var companyLabel = document.getElementById('ai-remediation-company');
+        var select = document.getElementById('ai-remediation-org');
+        var empty = document.getElementById('ai-remediation-empty');
+        var submit = modal.querySelector('[onclick="cveAiRemediationSubmit(this)"]');
+
+        /* Sin selección el botón sigue accesible, pero el modal explica qué
+         * falta y desactiva el envío en lugar de cerrarse con un aviso. */
+        function showNotice(message) {
+            if (count) {
+                count.textContent = message;
+            }
+            [linkedBox, createWrap, select, empty].forEach(function (node) {
+                if (node) {
+                    node.classList.add('hidden');
+                }
+            });
+            if (submit) {
+                submit.disabled = true;
+            }
+        }
+
+        if (!state.id) {
+            showNotice('Abre un informe de la lista para enviar CVEs a Remediación.');
+            modal.classList.remove('hidden');
+            return;
+        }
+        if (!ids.length) {
+            showNotice('Selecciona al menos un CVE con el checkbox de cada tarjeta.');
+            modal.classList.remove('hidden');
+            return;
+        }
+
+        if (submit) {
+            submit.disabled = false;
+        }
+        [linkedBox, createWrap, select].forEach(function (node) {
+            if (node) {
+                node.classList.remove('hidden');
+            }
+        });
         if (count) {
             count.textContent = ids.length + (ids.length === 1 ? ' CVE seleccionado' : ' CVEs seleccionados');
         }

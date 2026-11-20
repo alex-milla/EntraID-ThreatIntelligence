@@ -251,6 +251,12 @@ try {
     check('workspace CVE: botón .html', str_contains($workspace, 'id="ai-copy-html-btn"'));
     check('workspace CVE: botón .md', str_contains($workspace, 'id="ai-copy-md-btn"'));
     check('workspace CVE: usa el documento de Word', str_contains($workspace, 'data-rd-html="cve-report-word"'));
+    check('workspace CVE: botón de Remediación siempre visible', str_contains($workspace, 'id="ai-remediation-btn"')
+        && !preg_match('/id="ai-remediation-btn"[^>]*class="[^"]*\bhidden\b/', $workspace));
+    check('workspace CVE: modal avisa sin selección', str_contains($workspace, 'function showNotice')
+        && str_contains($workspace, 'Selecciona al menos un CVE con el checkbox'));
+    $bodySrc = (string)@file_get_contents($root . '/public_html/modules/cve/views/_ai_report_body.php');
+    check('cuerpo: el checkbox nombra Remediación', str_contains($bodySrc, 'enviar a grupo o a Remediación'));
 
     $group = (string)@file_get_contents($root . '/public_html/modules/exposed_report/views/group.php');
     check('exposed: usa el helper para copiar', str_contains($group, "ReportDoc.copyRich('exposed-plan-sheet'"));

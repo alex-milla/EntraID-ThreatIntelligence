@@ -345,7 +345,7 @@ $exposureLabel = static function (string $value): string {
                                    data-group-id="<?= (int)($item['group_id'] ?? 0) ?>"
                                    data-group-name="<?= e($itemGroup) ?>"
                                    data-group-kind="<?= e($itemGroupKind) ?>">
-                            Seleccionar para etiquetar o enviar a grupo
+                            Seleccionar para etiquetar, enviar a grupo o a Remediación
                         </label>
                     <?php endif; ?>
 
