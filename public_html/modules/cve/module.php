@@ -6257,24 +6257,31 @@ class Module_Cve extends BaseModule
                 json_response(['success' => false, 'error' => 'Informe no encontrado.'], 404);
             }
 
+            $sendAll = !empty($input['all']);
             $itemIds = $this->normalizeItemIds($input['item_ids'] ?? []);
-            if ($itemIds === []) {
-                json_response(['success' => false, 'error' => 'Selecciona al menos un CVE.'], 400);
+            if (!$sendAll && $itemIds === []) {
+                json_response(['success' => false, 'error' => 'Selecciona al menos un CVE o marca «Enviar todos los CVEs del informe».'], 400);
             }
 
             /* Informes antiguos: asegurar las filas por CVE. */
             CveReportAi::ensureReportItems($id);
 
-            $placeholders = implode(',', array_fill(0, count($itemIds), '?'));
-            $rows = CveDatabase::fetchAll(
-                "SELECT i.id, i.cve_id, i.group_id, g.kind AS group_kind, g.name AS group_name
-                 FROM cve_ai_report_items i
-                 LEFT JOIN software_groups g ON g.id = i.group_id
-                 WHERE i.report_id = ? AND i.id IN ($placeholders)",
-                array_merge([$id], $itemIds)
-            );
+            $selectSql = "SELECT i.id, i.cve_id, i.group_id, g.kind AS group_kind, g.name AS group_name
+                          FROM cve_ai_report_items i
+                          LEFT JOIN software_groups g ON g.id = i.group_id
+                          WHERE i.report_id = ?";
+
+            if ($sendAll) {
+                $rows = CveDatabase::fetchAll($selectSql . " ORDER BY i.position, i.id", [$id]);
+            } else {
+                $placeholders = implode(',', array_fill(0, count($itemIds), '?'));
+                $rows = CveDatabase::fetchAll(
+                    $selectSql . " AND i.id IN ($placeholders)",
+                    array_merge([$id], $itemIds)
+                );
+            }
             if ($rows === []) {
-                json_response(['success' => false, 'error' => 'Ningún CVE seleccionado pertenece al informe.'], 400);
+                json_response(['success' => false, 'error' => 'El informe no tiene CVEs para enviar.'], 400);
             }
 
             $companyGroups = [];
@@ -6365,6 +6372,7 @@ class Module_Cve extends BaseModule
                 'report_id' => $id,
                 'org_id'    => $orgId,
                 'items'     => $itemIds,
+                'all'       => $sendAll,
                 'created'   => $created,
                 'skipped'   => $skipped,
                 'linked'    => $linked,

@@ -247,14 +247,20 @@ try {
     check('vista CVE: conserva Imprimir / PDF', str_contains($aiReport, 'Imprimir / PDF'));
 
     $workspace = (string)@file_get_contents($root . '/public_html/modules/cve/views/index.php');
+    $moduleSrc = (string)@file_get_contents($root . '/public_html/modules/cve/module.php');
     check('workspace CVE: botón copiar', str_contains($workspace, 'id="ai-copy-btn"'));
     check('workspace CVE: botón .html', str_contains($workspace, 'id="ai-copy-html-btn"'));
     check('workspace CVE: botón .md', str_contains($workspace, 'id="ai-copy-md-btn"'));
     check('workspace CVE: usa el documento de Word', str_contains($workspace, 'data-rd-html="cve-report-word"'));
     check('workspace CVE: botón de Remediación siempre visible', str_contains($workspace, 'id="ai-remediation-btn"')
         && !preg_match('/id="ai-remediation-btn"[^>]*class="[^"]*\bhidden\b/', $workspace));
-    check('workspace CVE: modal avisa sin selección', str_contains($workspace, 'function showNotice')
-        && str_contains($workspace, 'Selecciona al menos un CVE con el checkbox'));
+    check('workspace CVE: modal avisa sin selección', str_contains($workspace, 'function resetNotice')
+        && str_contains($workspace, 'Marca el checkbox del CVE dentro del documento'));
+    check('workspace CVE: opción enviar todos los CVEs', str_contains($workspace, 'ai-remediation-all-wrap')
+        && str_contains($workspace, 'sendAll'));
+    check('workspace CVE: botón con estilo de acción', preg_match('/id="ai-remediation-btn"[^>]*class="[^"]*border-line-strong/', $workspace) === 1
+        && !preg_match('/id="ai-remediation-btn"[^>]*class="[^"]*bg-brand-600/', $workspace));
+    check('handler: acepta el envío del informe entero', str_contains($moduleSrc, "!empty(\$input['all'])"));
     $bodySrc = (string)@file_get_contents($root . '/public_html/modules/cve/views/_ai_report_body.php');
     check('cuerpo: el checkbox nombra Remediación', str_contains($bodySrc, 'enviar a grupo o a Remediación'));
 

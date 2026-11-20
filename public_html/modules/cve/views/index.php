@@ -1250,7 +1250,7 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
                         Enviar seleccionados
                     </button>
                     <button type="button" id="ai-remediation-btn" onclick="cveAiRemediationOpen()"
-                            class="px-3 py-1.5 bg-brand-600 hover:bg-brand-700 text-white text-xs font-medium rounded-lg transition-colors">
+                            class="px-3 py-1.5 border border-line-strong text-ink text-xs font-medium rounded-lg hover:bg-muted transition-colors">
                         Enviar a Remediación
                     </button>
                 <?php endif; ?>
@@ -1693,6 +1693,11 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
         </div>
 
         <p id="ai-remediation-linked" class="hidden mt-4 px-3 py-2 rounded-lg bg-brand-50 text-brand-700 dark:bg-brand-950/40 dark:text-brand-300 text-xs"></p>
+
+        <label id="ai-remediation-all-wrap" class="hidden flex items-center gap-2 mt-4 text-xs text-ink">
+            <input id="ai-remediation-all" type="checkbox" class="rounded border-line-strong text-brand-500 focus:ring-brand-500">
+            <span>Enviar todos los CVEs del informe (<span id="ai-remediation-all-count">0</span>)</span>
+        </label>
 
         <label id="ai-remediation-create-wrap" class="hidden flex items-center gap-2 mt-4 text-xs text-ink">
             <input id="ai-remediation-create" type="checkbox" class="rounded border-line-strong text-brand-500 focus:ring-brand-500">
@@ -4274,14 +4279,19 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
             appAlert('El informe está generando el análisis. Espera a que termine.', { title: 'Informe en curso' });
             return;
         }
+
         var modal = document.getElementById('ai-remediation-modal');
         if (!modal) {
             return;
         }
 
         var ids = selectedItemIds();
+        var allCves = detail ? detail.querySelectorAll('.ai-cve-check').length : 0;
         var count = document.getElementById('ai-remediation-count');
         var linkedBox = document.getElementById('ai-remediation-linked');
+        var allWrap = document.getElementById('ai-remediation-all-wrap');
+        var allCheck = document.getElementById('ai-remediation-all');
+        var allCount = document.getElementById('ai-remediation-all-count');
         var createWrap = document.getElementById('ai-remediation-create-wrap');
         var createCheck = document.getElementById('ai-remediation-create');
         var companyLabel = document.getElementById('ai-remediation-company');
@@ -4289,53 +4299,39 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
         var empty = document.getElementById('ai-remediation-empty');
         var submit = modal.querySelector('[onclick="cveAiRemediationSubmit(this)"]');
 
-        /* Sin selección el botón sigue accesible, pero el modal explica qué
-         * falta y desactiva el envío en lugar de cerrarse con un aviso. */
-        function showNotice(message) {
-            if (count) {
-                count.textContent = message;
-            }
-            [linkedBox, createWrap, select, empty].forEach(function (node) {
-                if (node) {
-                    node.classList.add('hidden');
-                }
+        function resetNotice(text) {
+            if (count) { count.textContent = text; }
+            [linkedBox, allWrap, createWrap, select, empty].forEach(function (node) {
+                if (node) { node.classList.add('hidden'); }
             });
-            if (submit) {
-                submit.disabled = true;
-            }
+            if (submit) { submit.disabled = true; }
         }
 
         if (!state.id) {
-            showNotice('Abre un informe de la lista para enviar CVEs a Remediación.');
-            modal.classList.remove('hidden');
-            return;
-        }
-        if (!ids.length) {
-            showNotice('Selecciona al menos un CVE con el checkbox de cada tarjeta.');
+            resetNotice('Abre un informe de la lista para enviar CVEs a Remediación.');
             modal.classList.remove('hidden');
             return;
         }
 
-        if (submit) {
-            submit.disabled = false;
+        /* Con informe abierto, «todos» y el desplegable están siempre disponibles:
+         * enviar a Remediación no exige que el CVE pertenezca a un grupo. */
+        if (allWrap) { allWrap.classList.remove('hidden'); }
+        if (allCount) { allCount.textContent = String(allCves); }
+        if (allCheck) { allCheck.checked = !ids.length; }
+        if (select) {
+            select.classList.remove('hidden');
+            select.disabled = false;
         }
-        [linkedBox, createWrap, select].forEach(function (node) {
-            if (node) {
-                node.classList.remove('hidden');
-            }
-        });
+        if (submit) { submit.disabled = !ids.length && allCves === 0; }
+
         if (count) {
-            count.textContent = ids.length + (ids.length === 1 ? ' CVE seleccionado' : ' CVEs seleccionados');
+            count.textContent = ids.length
+                ? ids.length + (ids.length === 1 ? ' CVE seleccionado' : ' CVEs seleccionados')
+                : 'Marca el checkbox del CVE dentro del documento (o pulsa «Todos»).';
         }
 
         var company = selectedCompany();
         var linked = company.id > 0 ? linkedOrgFor(company.id) : null;
-        var linkedBox = document.getElementById('ai-remediation-linked');
-        var createWrap = document.getElementById('ai-remediation-create-wrap');
-        var createCheck = document.getElementById('ai-remediation-create');
-        var companyLabel = document.getElementById('ai-remediation-company');
-        var select = document.getElementById('ai-remediation-org');
-        var empty = document.getElementById('ai-remediation-empty');
 
         if (linkedBox) {
             linkedBox.classList.toggle('hidden', linked === null);
@@ -4346,12 +4342,8 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
         if (createWrap) {
             createWrap.classList.toggle('hidden', !(company.id > 0 && linked === null));
         }
-        if (companyLabel) {
-            companyLabel.textContent = company.name;
-        }
-        if (createCheck) {
-            createCheck.checked = company.id > 0 && linked === null;
-        }
+        if (companyLabel) { companyLabel.textContent = company.name; }
+        if (createCheck) { createCheck.checked = company.id > 0 && linked === null; }
         if (select) {
             select.value = linked !== null ? String(linked.id) : '0';
             select.disabled = linked !== null;
@@ -4362,7 +4354,6 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
 
         modal.classList.remove('hidden');
     };
-
     window.cveAiRemediationClose = function () {
         var modal = document.getElementById('ai-remediation-modal');
         if (modal) {
@@ -4372,8 +4363,10 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
 
     window.cveAiRemediationSubmit = function (button) {
         var ids = selectedItemIds();
-        if (!ids.length) {
-            appAlert('Selecciona al menos un CVE.', { title: 'Sin selección' });
+        var allCheck = document.getElementById('ai-remediation-all');
+        var sendAll = !!(allCheck && allCheck.checked);
+        if (!ids.length && !sendAll) {
+            appAlert('Selecciona al menos un CVE o marca «Enviar todos los CVEs del informe».', { title: 'Sin selección' });
             return;
         }
         var select = document.getElementById('ai-remediation-org');
@@ -4384,7 +4377,8 @@ if (!in_array($assignmentFilter, ['unassigned', 'assigned', 'all'], true)) {
             button.disabled = true;
         }
         postJson(REMEDIATION_URL + '/' + state.id, {
-            item_ids: ids,
+            item_ids: sendAll ? [] : ids,
+            all: sendAll,
             org_id: orgId,
             create_org: !!(createCheck && createCheck.checked)
         }).then(function (res) {
