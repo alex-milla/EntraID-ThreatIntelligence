@@ -384,6 +384,44 @@ class Module_Export extends BaseModule
      */
     private function getIocsForExport(int $tenantId, array $filters): array
     {
+        /* Unit42: IOCs públicos, sin tenant; el exportador ya entiende sus tipos. */
+        if (($filters['source'] ?? '') === 'u42') {
+            $where = ['1=1'];
+            $params = [];
+
+            if (!empty($filters['type'])) {
+                $where[] = 'i.ioc_type = ?';
+                $params[] = $filters['type'];
+            }
+            if (!empty($filters['search'])) {
+                $like = '%' . $filters['search'] . '%';
+                $where[] = '(i.ioc_value LIKE ? OR i.description LIKE ?)';
+                array_push($params, $like, $like);
+            }
+            if (!empty($filters['from'])) {
+                $where[] = 'date(i.first_seen) >= ?';
+                $params[] = $filters['from'];
+            }
+            if (!empty($filters['to'])) {
+                $where[] = 'date(i.first_seen) <= ?';
+                $params[] = $filters['to'];
+            }
+            if (!empty($filters['article_id'])) {
+                $where[] = 'i.article_id = ?';
+                $params[] = (int)$filters['article_id'];
+            }
+            $sql = "SELECT i.id, i.ioc_type, i.ioc_value, i.description, i.first_seen,
+                           a.title AS source, a.path AS article_path
+                    FROM u42_iocs i
+                    JOIN u42_articles a ON a.id = i.article_id
+                    WHERE " . implode(' AND ', $where) . "
+                    ORDER BY i.ioc_type, i.ioc_value";
+            if (!empty($filters['limit'])) {
+                $sql .= ' LIMIT ' . (int)$filters['limit'];
+            }
+            return Database::fetchAll($sql, $params);
+        }
+
         $where = ['tenant_id = ?'];
         $params = [$tenantId];
 
@@ -465,7 +503,50 @@ class Module_Export extends BaseModule
             ['method' => 'POST', 'pattern' => 'misp',                    'handler' => [$this, 'exportMispEndpoint']],
             ['method' => 'GET',  'pattern' => 'types',                   'handler' => [$this, 'getTypes']],
             ['method' => 'GET',  'pattern' => 'count',                   'handler' => [$this, 'getCount']],
+            ['method' => 'GET',  'pattern' => 'download',                'handler' => [$this, 'downloadEndpoint']],
         ];
+    }
+
+    /**
+     * Descarga directa (GET) para los enlaces de los artículos de Unit42.
+     * format=stix|misp|txt|csv&source=u42&article_id=N
+     */
+    public function downloadEndpoint(array $params = []): void
+    {
+        $format = strtolower((string)($_GET['format'] ?? 'stix'));
+        $filters = [
+            'source'     => (string)($_GET['source'] ?? ''),
+            'article_id' => (int)($_GET['article_id'] ?? 0),
+        ];
+        $tenantId = (int)($_GET['tenant'] ?? 0);
+        $config = ['format' => 'merged', 'source' => 'Unit42'];
+
+        try {
+            $result = match ($format) {
+                'stix' => $this->exportStix($tenantId, $filters, $config),
+                'misp' => $this->exportMisp($tenantId, $filters, $config),
+                'txt'  => $this->exportTxt($tenantId, $filters, $config),
+                'csv'  => $this->exportCsv($tenantId, $filters, $config),
+                default => null,
+            };
+        } catch (Throwable $e) {
+            http_response_code(500);
+            echo 'No se pudo exportar: ' . e($e->getMessage());
+            return;
+        }
+
+        if (!is_array($result) || empty($result['content']) || (int)($result['count'] ?? 0) === 0) {
+            http_response_code(404);
+            echo 'No hay IOCs para exportar con esos filtros.';
+            return;
+        }
+
+        $filename = (string)($result['filename'] ?? ('iocs_' . date('Y-m-d') . '.txt'));
+        header('Content-Type: ' . (string)($result['mime'] ?? 'application/octet-stream'));
+        header('Content-Disposition: attachment; filename="' . basename($filename) . '"');
+        header('Cache-Control: no-store');
+        echo $result['content'];
+        exit;
     }
 
     public function index(array $params = []): void

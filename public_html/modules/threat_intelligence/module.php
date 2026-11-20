@@ -2130,6 +2130,94 @@ class Module_ThreatIntelligence extends BaseModule
     // Rutas del módulo
     // ============================================================
 
+    // ============================================================
+    // Unit 42 (ficheros públicos de timely-threat-intel)
+    // ============================================================
+
+    public function unit42Page(array $params = []): void
+    {
+        $tenants = TenantManager::getActive();
+        $selectedTenant = (int)($_GET['tenant'] ?? ($tenants[0]['id'] ?? 0));
+        $search = trim((string)($_GET['q'] ?? ''));
+        $page = max(1, (int)($_GET['p'] ?? 1));
+        $limit = 50;
+        $offset = ($page - 1) * $limit;
+
+        $articles = [];
+        $status = [];
+        try {
+            $articles = Unit42Feed::articles($search, $limit, $offset);
+            $status = Unit42Feed::status();
+        } catch (Throwable $e) {
+            app_log('error', 'unit42', 'No se pudo listar los artículos', ['error' => $e->getMessage()]);
+        }
+
+        echo $this->page('unit42', [
+            'module'         => $this,
+            'tenants'        => $tenants,
+            'selectedTenant' => $selectedTenant,
+            'articles'       => $articles,
+            'status'         => $status,
+            'q'              => $search,
+            'page'           => $page,
+            'hasMore'        => count($articles) === $limit,
+            'tiActiveTab'    => 'unit42',
+            'profileCounts'  => $selectedTenant
+                ? $this->getProfileCounts($selectedTenant)
+                : ['actor' => 0, 'tool' => 0, 'other' => 0, 'total' => 0],
+        ]);
+    }
+
+    public function unit42ArticlePage(array $params = []): void
+    {
+        $id = (int)($params['id'] ?? 0);
+        $article = Unit42Feed::article($id);
+        if ($article === null) {
+            http_response_code(404);
+            require VIEWS_PATH . '/errors/404.php';
+            return;
+        }
+
+        $tenants = TenantManager::getActive();
+        $selectedTenant = (int)($_GET['tenant'] ?? ($tenants[0]['id'] ?? 0));
+
+        echo $this->page('unit42_article', [
+            'module'         => $this,
+            'tenants'        => $tenants,
+            'selectedTenant' => $selectedTenant,
+            'article'        => $article,
+            'iocs'           => Unit42Feed::iocs($id),
+            'iocCounts'      => Unit42Feed::iocCounts($id),
+            'tiActiveTab'    => 'unit42',
+            'profileCounts'  => $selectedTenant
+                ? $this->getProfileCounts($selectedTenant)
+                : ['actor' => 0, 'tool' => 0, 'other' => 0, 'total' => 0],
+        ]);
+    }
+
+    /** POST unit42/sync — descarga solo los ficheros nuevos o modificados. */
+    public function unit42Sync(array $params = []): void
+    {
+        Auth::requireAdmin();
+        Csrf::validateOrFail();
+
+        try {
+            $summary = Unit42Feed::sync();
+            json_response([
+                'success'    => (bool)($summary['ok'] ?? false),
+                'total'      => (int)($summary['total'] ?? 0),
+                'added'      => (int)($summary['added'] ?? 0),
+                'updated'    => (int)($summary['updated'] ?? 0),
+                'unchanged'  => (int)($summary['unchanged'] ?? 0),
+                'errors'     => $summary['errors'] ?? [],
+                'error'      => ($summary['errors'] ?? []) !== [] ? implode(' · ', $summary['errors']) : '',
+            ], ($summary['ok'] ?? false) ? 200 : 500);
+        } catch (Throwable $e) {
+            app_log('error', 'unit42', 'Error en la sincronización', ['error' => $e->getMessage()]);
+            json_response(['success' => false, 'error' => $e->getMessage()], 500);
+        }
+    }
+
     public function routes(): array
     {
         return [
@@ -2138,7 +2226,11 @@ class Module_ThreatIntelligence extends BaseModule
             ['method' => 'GET', 'pattern' => 'article/{id}',        'handler' => [$this, 'showArticlePage']],
             ['method' => 'GET', 'pattern' => 'article/{id}/data',   'handler' => [$this, 'showArticle']],
             ['method' => 'GET', 'pattern' => 'iocs',                'handler' => [$this, 'iocsPage']],
-            ['method' => 'GET', 'pattern' => 'translations',        'handler' => [$this, 'translationsPage']],            ['method' => 'GET', 'pattern' => 'iocs/data',           'handler' => [$this, 'listIocs']],
+            ['method' => 'GET', 'pattern' => 'translations',        'handler' => [$this, 'translationsPage']],
+            ['method' => 'GET', 'pattern' => 'unit42',              'handler' => [$this, 'unit42Page']],
+            ['method' => 'GET', 'pattern' => 'unit42/{id}',         'handler' => [$this, 'unit42ArticlePage']],
+            ['method' => 'POST','pattern' => 'unit42/sync',         'handler' => [$this, 'unit42Sync']],
+            ['method' => 'GET', 'pattern' => 'iocs/data',           'handler' => [$this, 'listIocs']],
             ['method' => 'GET', 'pattern' => 'stats',               'handler' => [$this, 'getStats']],
             ['method' => 'GET', 'pattern' => 'profiles',            'handler' => [$this, 'profilesPage']],
             ['method' => 'GET', 'pattern' => 'profile/{id}',        'handler' => [$this, 'showProfilePage']],

@@ -356,6 +356,46 @@ class Database
             UNIQUE(article_id, lang)
         )");
 
+        // v0.4.28: artículos públicos de Unit 42 (repo timely-threat-intel).
+        // El contenido original se guarda tal cual; título, secciones e IOCs
+        // son derivados. No dependen de ningún tenant.
+        $db->exec("CREATE TABLE IF NOT EXISTS u42_articles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            path TEXT NOT NULL UNIQUE,
+            sha TEXT NOT NULL DEFAULT '',
+            size INTEGER NOT NULL DEFAULT 0,
+            title TEXT,
+            published_at TEXT,
+            kind TEXT NOT NULL DEFAULT 'txt',
+            content TEXT NOT NULL,
+            sections_json TEXT,
+            first_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT
+        )");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_u42_articles_date ON u42_articles(published_at DESC, id DESC)");
+
+        $db->exec("CREATE TABLE IF NOT EXISTS u42_iocs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            article_id INTEGER NOT NULL REFERENCES u42_articles(id) ON DELETE CASCADE,
+            ioc_type TEXT NOT NULL,
+            ioc_value TEXT NOT NULL,
+            description TEXT,
+            section TEXT,
+            first_seen TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(article_id, ioc_type, ioc_value)
+        )");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_u42_iocs_type ON u42_iocs(ioc_type, ioc_value)");
+
+        $db->exec("CREATE TABLE IF NOT EXISTS u42_sync (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            last_run_at TEXT,
+            files_total INTEGER NOT NULL DEFAULT 0,
+            added INTEGER NOT NULL DEFAULT 0,
+            updated INTEGER NOT NULL DEFAULT 0,
+            error TEXT
+        )");
+        $db->exec("INSERT OR IGNORE INTO u42_sync (id) VALUES (1)");
+
         // v0.4.15: cerrojo único para trabajos de IA de larga duración (cola de
         // informes CVE, equipos expuestos, traducción, asistente). Una sola
         // fila: el trabajo que lo tiene puede seguir; el resto espera. Si el
