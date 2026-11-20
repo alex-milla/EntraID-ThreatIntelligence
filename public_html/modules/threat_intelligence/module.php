@@ -2222,6 +2222,30 @@ class Module_ThreatIntelligence extends BaseModule
         ]);
     }
 
+    /** GET unit42/{id}/panel — cuerpo del artículo para desplegar en línea. */
+    public function unit42ArticlePanel(array $params = []): void
+    {
+        $id = (int)($params['id'] ?? 0);
+        $article = Unit42Feed::article($id);
+        if ($article === null) {
+            http_response_code(404);
+            return;
+        }
+        $tenants = TenantManager::getActive();
+        $tenantId = (int)($_GET['tenant'] ?? ($tenants[0]['id'] ?? 0));
+        $userId = (int)(Auth::id() ?? 0);
+        $state = $userId > 0 ? (Unit42Feed::statesFor($userId, [$id])[$id] ?? []) : [];
+
+        header('Content-Type: text/html; charset=utf-8');
+        echo $this->render('_unit42_panel', [
+            'article'    => $article,
+            'tenantId'   => $tenantId,
+            'isRead'     => !empty($state['is_read']),
+            'isFavorite' => !empty($state['is_favorite']),
+            'panelMode'  => true,
+        ]);
+    }
+
     /** POST unit42/sync — comprueba o descarga los ficheros nuevos/modificados. */
     public function unit42Sync(array $params = []): void
     {
@@ -2469,6 +2493,7 @@ class Module_ThreatIntelligence extends BaseModule
             ['method' => 'POST','pattern' => 'unit42/report-create','handler' => [$this, 'unit42ReportCreate']],
             ['method' => 'GET', 'pattern' => 'unit42/report/{id}/data','handler' => [$this, 'unit42ReportData']],
             ['method' => 'GET', 'pattern' => 'unit42/report/{id}',  'handler' => [$this, 'unit42ReportPage']],
+            ['method' => 'GET', 'pattern' => 'unit42/{id}/panel',    'handler' => [$this, 'unit42ArticlePanel']],
             ['method' => 'GET', 'pattern' => 'unit42/{id}',         'handler' => [$this, 'unit42ArticlePage']],
             ['method' => 'POST','pattern' => 'unit42/sync',         'handler' => [$this, 'unit42Sync']],
             ['method' => 'GET', 'pattern' => 'iocs/data',           'handler' => [$this, 'listIocs']],

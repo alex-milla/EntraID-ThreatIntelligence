@@ -145,7 +145,27 @@ $listUrl = static function (array $extra = []) use ($listParams): string {
         </form>
     </div>
 
-    <!-- Acciones en lote -->
+    <!-- Acciones masivas: siempre visibles -->
+    <div id="u42-mass-bar" class="card px-4 py-2 flex items-center gap-2 flex-wrap no-print">
+        <label class="flex items-center gap-2 text-xs font-semibold text-ink cursor-pointer">
+            <input type="checkbox" id="u42-select-all"
+                   class="rounded border-line-strong text-brand-500"
+                   aria-label="Seleccionar todos los artículos de esta página">
+            Todos (esta página)
+        </label>
+        <span class="w-px h-4 bg-line" aria-hidden="true"></span>
+        <button type="button" onclick="u42MarkAllRead()"
+                class="px-2.5 py-1 border border-green-300 text-green-700 text-xs font-medium rounded-lg hover:bg-green-50 dark:hover:bg-green-900/20">
+            ✓ Marcar todo como leído
+        </button>
+        <button type="button" onclick="u42MarkAllUnread()"
+                class="px-2.5 py-1 border border-line-strong text-xs rounded-lg hover:bg-muted">
+            Marcar todo como no leído
+        </button>
+        <span class="text-[11px] text-ink-soft hidden sm:inline">Aplica a los artículos que cumplen los filtros, no solo a esta página.</span>
+    </div>
+
+    <!-- Acciones sobre la selección (aparece al marcar artículos) -->
     <div id="u42-bulk-bar" class="hidden card px-4 py-2 flex items-center gap-2 flex-wrap no-print">
         <span id="u42-selected-count" class="text-xs font-semibold text-ink-muted"></span>
         <button type="button" onclick="u42Bulk({is_read:1})"
@@ -154,8 +174,6 @@ $listUrl = static function (array $extra = []) use ($listParams): string {
                 class="px-2.5 py-1 border border-line-strong text-xs rounded-lg hover:bg-muted">Marcar como no leídas</button>
         <button type="button" onclick="u42Bulk({is_favorite:1})"
                 class="px-2.5 py-1 border border-line-strong text-xs rounded-lg hover:bg-muted">Favoritos</button>
-        <button type="button" onclick="u42MarkAllRead()"
-                class="px-2.5 py-1 text-brand-600 text-xs font-medium hover:underline">Marcar todo como leído</button>
         <button type="button" onclick="u42ReportOpen()"
                 class="px-2.5 py-1 bg-brand-500 hover:bg-brand-600 text-white text-xs font-medium rounded-lg">
             Informe con IA
@@ -172,33 +190,38 @@ $listUrl = static function (array $extra = []) use ($listParams): string {
         <?php else: ?>
             <div class="divide-y divide-line-subtle">
                 <?php foreach ($articles as $article): ?>
-                    <div class="px-4 py-3 flex items-start gap-3 hover:bg-muted/50" data-u42-row="<?= (int)$article['id'] ?>">
-                        <input type="checkbox" class="u42-check mt-1 shrink-0 rounded border-line-strong text-brand-500"
-                               value="<?= (int)$article['id'] ?>" aria-label="Seleccionar artículo">
-                        <a href="<?= e(base_url('modules/threat_intelligence/unit42/' . (int)$article['id'])) ?>?tenant=<?= $tenantId ?>"
-                           class="min-w-0 flex-1 block">
-                            <p class="text-sm font-medium break-words <?= empty($article['is_read']) ? '' : 'text-ink-muted' ?>">
-                                <?= e((string)($article['title'] ?? '')) ?>
-                            </p>
-                            <p class="text-[11px] text-ink-muted mt-1 truncate"><?= e((string)($article['path'] ?? '')) ?></p>
-                        </a>
-                        <div class="shrink-0 text-right text-[11px] text-ink-soft">
-                            <p><?= e((string)($article['published_at'] ?? '—')) ?></p>
-                            <p><?= e($sizeLabel((int)($article['size'] ?? 0))) ?></p>
-                            <?php if (empty($article['is_read'])): ?>
-                                <span class="inline-block mt-1 px-1.5 py-0.5 rounded-full bg-brand-100 text-brand-700 dark:bg-brand-900/30 dark:text-brand-300 text-[9px] font-semibold">NUEVO</span>
-                            <?php endif; ?>
-                            <?php if (!empty($article['is_favorite'])): ?>
-                                <span class="text-amber-500 ml-1" title="Favorito">★</span>
-                            <?php endif; ?>
+                    <?php $rowId = (int)$article['id']; ?>
+                    <div data-u42-row="<?= $rowId ?>">
+                        <div class="px-4 py-3 flex items-start gap-3 hover:bg-muted/50">
+                            <input type="checkbox" class="u42-check mt-1 shrink-0 rounded border-line-strong text-brand-500"
+                                   value="<?= $rowId ?>" aria-label="Seleccionar artículo">
+                            <a href="<?= e(base_url('modules/threat_intelligence/unit42/' . $rowId)) ?>?tenant=<?= $tenantId ?>"
+                               data-u42-toggle="<?= $rowId ?>"
+                               class="u42-title-link min-w-0 flex-1 block group"
+                               title="Desplegar el artículo debajo">
+                                <p class="u42-title text-sm font-medium break-words <?= empty($article['is_read']) ? '' : 'text-ink-muted' ?>">
+                                    <span class="u42-chevron inline-block mr-1 text-brand-500 text-[10px]">▸</span><?= e((string)($article['title'] ?? '')) ?>
+                                </p>
+                                <p class="text-[11px] text-ink-muted mt-1 truncate"><?= e((string)($article['path'] ?? '')) ?></p>
+                            </a>
+                            <div class="shrink-0 text-right text-[11px] text-ink-soft">
+                                <p><?= e((string)($article['published_at'] ?? '—')) ?></p>
+                                <p><?= e($sizeLabel((int)($article['size'] ?? 0))) ?></p>
+                                <?php if (empty($article['is_read'])): ?>
+                                    <span class="u42-nuevo inline-block mt-1 px-1.5 py-0.5 rounded-full bg-brand-100 text-brand-700 dark:bg-brand-900/30 dark:text-brand-300 text-[9px] font-semibold">NUEVO</span>
+                                <?php endif; ?>
+                                <span class="u42-star <?= empty($article['is_favorite']) ? 'hidden' : '' ?> text-amber-500 ml-1" title="Favorito">★</span>
+                            </div>
+                            <button type="button"
+                                    class="u42-read-toggle shrink-0 inline-flex items-center gap-1 text-xs px-2 py-1 rounded-lg border <?= empty($article['is_read']) ? 'border-line-strong text-ink-muted hover:bg-muted' : 'border-green-300 text-green-600 bg-green-50 dark:bg-green-900/20' ?>"
+                                    data-id="<?= $rowId ?>"
+                                    data-read="<?= empty($article['is_read']) ? '0' : '1' ?>"
+                                    title="<?= empty($article['is_read']) ? 'Marcar como leído' : 'Marcar como no leído' ?>">
+                                <span aria-hidden="true"><?= empty($article['is_read']) ? '○' : '●' ?></span>
+                                <span class="hidden sm:inline"><?= empty($article['is_read']) ? 'Marcar como leído' : 'Leído' ?></span>
+                            </button>
                         </div>
-                        <button type="button"
-                                class="u42-read-toggle shrink-0 text-sm px-1 <?= empty($article['is_read']) ? 'text-gray-400' : 'text-green-500' ?>"
-                                data-id="<?= (int)$article['id'] ?>"
-                                data-read="<?= empty($article['is_read']) ? '0' : '1' ?>"
-                                title="<?= empty($article['is_read']) ? 'Marcar como leído' : 'Marcar como no leído' ?>">
-                            <?= empty($article['is_read']) ? '○' : '●' ?>
-                        </button>
+                        <div id="u42-panel-<?= $rowId ?>" class="u42-panel hidden px-4 pb-4" data-u42-panel="<?= $rowId ?>"></div>
                     </div>
                 <?php endforeach; ?>
             </div>
@@ -267,6 +290,7 @@ $listUrl = static function (array $extra = []) use ($listParams): string {
     var STATE_URL = '<?= e(base_url('modules/threat_intelligence/unit42/state')) ?>';
     var REPORT_CREATE_URL = '<?= e(base_url('modules/threat_intelligence/unit42/report-create')) ?>';
     var STATUS_URL = '<?= e(base_url('modules/threat_intelligence/unit42/status')) ?>';
+    var PANEL_URL_TPL = '<?= e(base_url('modules/threat_intelligence/unit42')) ?>/{id}/panel';
     var CURRENT_FILTERS = <?= json_encode(array_filter([
         'q' => $filters['q'], 'from' => $filters['from'], 'to' => $filters['to'],
         'only_unread' => $filters['only_unread'], 'only_favorites' => $filters['only_favorites'],
@@ -310,10 +334,21 @@ $listUrl = static function (array $extra = []) use ($listParams): string {
         if (label) {
             label.textContent = ids.length + (ids.length === 1 ? ' seleccionado' : ' seleccionados');
         }
+        var all = document.querySelectorAll('.u42-check');
+        var master = document.getElementById('u42-select-all');
+        if (master) {
+            master.checked = all.length > 0 && ids.length === all.length;
+            master.indeterminate = ids.length > 0 && ids.length < all.length;
+        }
     }
 
     document.addEventListener('change', function (ev) {
-        if (ev.target && ev.target.classList && ev.target.classList.contains('u42-check')) {
+        if (!ev.target || !ev.target.classList) { return; }
+        if (ev.target.classList.contains('u42-check')) {
+            updateBulkBar();
+        } else if (ev.target.id === 'u42-select-all') {
+            var checked = ev.target.checked;
+            document.querySelectorAll('.u42-check').forEach(function (c) { c.checked = checked; });
             updateBulkBar();
         }
     });
@@ -341,8 +376,8 @@ $listUrl = static function (array $extra = []) use ($listParams): string {
         });
     };
 
-    window.u42MarkAllRead = function () {
-        post(STATE_URL, { all: true, filters: CURRENT_FILTERS, changes: { is_read: 1 } })
+    function markAll(changes) {
+        post(STATE_URL, { all: true, filters: CURRENT_FILTERS, changes: changes })
             .then(function (out) {
                 if (!out.res.ok || !out.data.success) {
                     if (typeof appAlert === 'function') { appAlert(out.data.error || 'No se pudo actualizar.'); }
@@ -352,7 +387,10 @@ $listUrl = static function (array $extra = []) use ($listParams): string {
             }).catch(function (err) {
                 if (typeof appAlert === 'function') { appAlert('Error: ' + (err && err.message ? err.message : 'red')); }
             });
-    };
+    }
+
+    window.u42MarkAllRead = function () { markAll({ is_read: 1 }); };
+    window.u42MarkAllUnread = function () { markAll({ is_read: 0 }); };
 
     /* --- Informe con IA sobre la selección --- */
     window.u42ReportOpen = function () {
@@ -404,27 +442,168 @@ $listUrl = static function (array $extra = []) use ($listParams): string {
         });
     };
 
-    document.addEventListener('click', function (ev) {
-        var btn = ev.target && ev.target.closest ? ev.target.closest('.u42-read-toggle') : null;
-        if (!btn) { return; }
-        ev.preventDefault();
-        ev.stopPropagation();
-        var id = parseInt(btn.dataset.id, 10) || 0;
-        var read = btn.dataset.read === '1' ? 0 : 1;
-        post(STATE_URL, { ids: [id], changes: { is_read: read } }).then(function (out) {
-            if (!out.res.ok || !out.data.success) { return; }
-            btn.dataset.read = String(read);
-            btn.textContent = read ? '●' : '○';
-            btn.className = 'u42-read-toggle shrink-0 text-sm px-1 ' + (read ? 'text-green-500' : 'text-gray-400');
-            btn.title = read ? 'Marcar como no leído' : 'Marcar como leído';
-            applyCounts(out.data.counts);
-            var row = document.querySelector('[data-u42-row="' + id + '"]');
-            if (row) {
-                var title = row.querySelector('p');
-                if (title) { title.className = read ? 'text-sm font-medium break-words text-ink-muted' : 'text-sm font-medium break-words'; }
-            }
+    function renderReadToggle(btn, read) {
+        btn.dataset.read = read ? '1' : '0';
+        btn.title = read ? 'Marcar como no leído' : 'Marcar como leído';
+        btn.className = 'u42-read-toggle shrink-0 inline-flex items-center gap-1 text-xs px-2 py-1 rounded-lg border '
+            + (read
+                ? 'border-green-300 text-green-600 bg-green-50 dark:bg-green-900/20'
+                : 'border-line-strong text-ink-muted hover:bg-muted');
+        btn.innerHTML = '<span aria-hidden="true">' + (read ? '●' : '○') + '</span>'
+            + '<span class="hidden sm:inline">' + (read ? 'Leído' : 'Marcar como leído') + '</span>';
+    }
+
+    function renderFavToggle(btn, fav) {
+        btn.dataset.fav = fav ? '1' : '0';
+        btn.title = fav ? 'Quitar favorito' : 'Añadir a favoritos';
+        btn.className = 'u42-fav-toggle inline-flex items-center gap-1 text-xs px-2 py-1 rounded-lg border '
+            + (fav
+                ? 'border-amber-300 text-amber-600 bg-amber-50 dark:bg-amber-900/20'
+                : 'border-line-strong text-ink-muted hover:bg-muted');
+        btn.textContent = fav ? '★ Quitar favorito' : '☆ Favorito';
+    }
+
+    function syncRow(id, field, value) {
+        var row = document.querySelector('[data-u42-row="' + id + '"]');
+        if (!row) { return; }
+        if (field === 'is_read') {
+            var title = row.querySelector('.u42-title');
+            if (title) { title.classList.toggle('text-ink-muted', !!value); }
+            var badge = row.querySelector('.u42-nuevo');
+            if (badge) { badge.classList.toggle('hidden', !!value); }
+        } else if (field === 'is_favorite') {
+            var star = row.querySelector('.u42-star');
+            if (star) { star.classList.toggle('hidden', !value); }
+        }
+    }
+
+    /* --- Despliegue en línea del artículo --- */
+    function setArticleParam(id) {
+        if (!window.history || !window.history.replaceState) { return; }
+        var url = new URL(window.location.href);
+        if (id) { url.searchParams.set('articulo', id); }
+        else { url.searchParams.delete('articulo'); }
+        window.history.replaceState(null, '', url.pathname + url.search);
+    }
+
+    function openArticle(id, link) {
+        var panel = document.getElementById('u42-panel-' + id);
+        if (!panel) { return; }
+
+        var isOpen = !panel.classList.contains('hidden');
+        document.querySelectorAll('.u42-panel:not(.hidden)').forEach(function (p) {
+            if (p !== panel) { p.classList.add('hidden'); }
         });
+        document.querySelectorAll('.u42-title-link').forEach(function (a) {
+            a.classList.remove('u42-open');
+            var chevron = a.querySelector('.u42-chevron');
+            if (chevron) { chevron.textContent = '▸'; }
+        });
+
+        if (isOpen) {
+            panel.classList.add('hidden');
+            setArticleParam(null);
+            return;
+        }
+
+        panel.classList.remove('hidden');
+        if (link) {
+            link.classList.add('u42-open');
+            var ch = link.querySelector('.u42-chevron');
+            if (ch) { ch.textContent = '▾'; }
+        }
+        setArticleParam(id);
+
+        if (!panel.dataset.loaded) {
+            panel.innerHTML = '<p class="text-xs text-ink-muted py-3">Cargando artículo…</p>';
+            fetch(PANEL_URL_TPL.replace('{id}', id), {
+                headers: {'X-Requested-With': 'XMLHttpRequest', 'Accept': 'text/html'},
+                credentials: 'same-origin'
+            }).then(function (res) {
+                if (!res.ok) { throw new Error('HTTP ' + res.status); }
+                return res.text();
+            }).then(function (html) {
+                panel.innerHTML = html;
+                panel.dataset.loaded = '1';
+            }).catch(function () {
+                panel.dataset.loaded = '';
+                panel.innerHTML = '<p class="text-xs text-danger py-3">No se pudo cargar el artículo. '
+                    + '<a class="underline" href="' + PANEL_URL_TPL.replace('{id}', id).replace('/panel', '') + '">Abrir ficha completa ↗</a></p>';
+            });
+        }
+    }
+
+    window.u42OpenArticle = openArticle;
+
+    document.addEventListener('click', function (ev) {
+        var target = ev.target && ev.target.closest ? ev.target : null;
+        if (!target) { return; }
+
+        var link = target.closest('[data-u42-toggle]');
+        if (link) {
+            ev.preventDefault();
+            openArticle(link.getAttribute('data-u42-toggle'), link);
+            return;
+        }
+
+        var readBtn = target.closest('.u42-read-toggle');
+        if (readBtn) {
+            ev.preventDefault();
+            ev.stopPropagation();
+            var id = parseInt(readBtn.dataset.id, 10) || 0;
+            var read = readBtn.dataset.read === '1' ? 0 : 1;
+            post(STATE_URL, { ids: [id], changes: { is_read: read } }).then(function (out) {
+                if (!out.res.ok || !out.data.success) { return; }
+                document.querySelectorAll('.u42-read-toggle[data-id="' + id + '"]').forEach(function (b) {
+                    renderReadToggle(b, read);
+                });
+                syncRow(id, 'is_read', read);
+                applyCounts(out.data.counts);
+            });
+            return;
+        }
+
+        var favBtn = target.closest('.u42-fav-toggle');
+        if (favBtn) {
+            ev.preventDefault();
+            ev.stopPropagation();
+            var fid = parseInt(favBtn.dataset.id, 10) || 0;
+            var fav = favBtn.dataset.fav === '1' ? 0 : 1;
+            post(STATE_URL, { ids: [fid], changes: { is_favorite: fav } }).then(function (out) {
+                if (!out.res.ok || !out.data.success) { return; }
+                document.querySelectorAll('.u42-fav-toggle[data-id="' + fid + '"]').forEach(function (b) {
+                    renderFavToggle(b, fav);
+                });
+                syncRow(fid, 'is_favorite', fav);
+                applyCounts(out.data.counts);
+            });
+            return;
+        }
+
+        var rawBtn = target.closest('.u42-raw-toggle');
+        if (rawBtn) {
+            ev.preventDefault();
+            var raw = document.getElementById(rawBtn.dataset.raw);
+            var report = document.getElementById(rawBtn.dataset.report);
+            if (!raw || !report) { return; }
+            var show = raw.hidden;
+            raw.hidden = !show;
+            raw.classList.toggle('hidden', !show);
+            report.classList.toggle('hidden', show);
+            rawBtn.textContent = show ? 'Ver análisis' : 'Ver texto original';
+        }
     });
+
+    // Al recargar con ?articulo=<id>, se reabre desplegado.
+    (function autoOpen() {
+        var id = 0;
+        try {
+            id = parseInt(new URLSearchParams(window.location.search).get('articulo') || '0', 10) || 0;
+        } catch (e) { return; }
+        if (!id) { return; }
+        var link = document.querySelector('[data-u42-toggle="' + id + '"]');
+        if (link) { openArticle(id, link); }
+    })();
 
     /* --- Sincronización (check → descargar → progreso) --- */
     function panel() { return document.getElementById('u42-sync-panel'); }

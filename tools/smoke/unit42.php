@@ -259,6 +259,38 @@ try {
     Database::query("DELETE FROM u42_articles WHERE id = ?", [$tempId]);
     check('rutas: informes con IA', str_contains($moduleSrc, "'pattern' => 'unit42/report-create'")
         && str_contains($moduleSrc, "'pattern' => 'unit42/report/{id}'"));
+
+    // --- Selector masivo y despliegue en línea (v0.4.28.5) ---
+    $listSrc = (string)@file_get_contents($root . '/public_html/modules/threat_intelligence/views/unit42.php');
+    $panelSrc = (string)@file_get_contents($root . '/public_html/modules/threat_intelligence/views/_unit42_panel.php');
+    $articleSrc = (string)@file_get_contents($root . '/public_html/modules/threat_intelligence/views/unit42_article.php');
+
+    check('masivo: barra siempre visible', str_contains($listSrc, 'id="u42-mass-bar"')
+        && !str_contains(substr($listSrc, strpos($listSrc, 'id="u42-mass-bar"'), 200), 'class="hidden'));
+    check('masivo: checkbox maestro', str_contains($listSrc, 'id="u42-select-all"')
+        && str_contains($listSrc, "ev.target.id === 'u42-select-all'"));
+    check('masivo: marcar todo como leido y no leido', str_contains($listSrc, 'window.u42MarkAllRead')
+        && str_contains($listSrc, 'window.u42MarkAllUnread')
+        && str_contains($listSrc, 'Marcar todo como no leído'));
+    check('masivo: aplica a los filtros, no solo a la pagina', str_contains($listSrc, 'all: true, filters: CURRENT_FILTERS'));
+    check('masivo: barra de seleccion sigue condicional', str_contains($listSrc, 'id="u42-bulk-bar" class="hidden'));
+
+    check('lectura: boton con texto en cada fila', str_contains($listSrc, 'Marcar como leído')
+        && str_contains($listSrc, "read ? 'Leído' : 'Marcar como leído'"));
+    check('lectura: cambia todas las instancias del articulo', str_contains($listSrc, "querySelectorAll('.u42-read-toggle[data-id=\"' + id") );
+
+    check('panel: ruta registrada antes que la ficha', str_contains($moduleSrc, "'pattern' => 'unit42/{id}/panel'")
+        && strpos($moduleSrc, "'pattern' => 'unit42/{id}/panel'") < strpos($moduleSrc, "'pattern' => 'unit42/{id}'"));
+    check('panel: handler del modulo', str_contains($moduleSrc, 'function unit42ArticlePanel'));
+    check('panel: enlace con data-u42-toggle', str_contains($listSrc, 'data-u42-toggle=')
+        && str_contains($listSrc, 'function openArticle'));
+    check('panel: URL compartible ?articulo=', str_contains($listSrc, "url.searchParams.set('articulo', id)"));
+    check('panel: un solo abierto a la vez', str_contains($listSrc, "document.querySelectorAll('.u42-panel:not(.hidden)')"));
+    check('panel: carga bajo demanda', str_contains($listSrc, 'PANEL_URL_TPL.replace'));
+    check('panel: parcial compartido con la ficha', str_contains($articleSrc, "_unit42_panel.php")
+        && str_contains($panelSrc, 'u42-read-toggle')
+        && str_contains($panelSrc, 'u42-fav-toggle')
+        && str_contains($panelSrc, 'u42-raw-toggle'));
 } catch (Throwable $e) {
     check('excepción inesperada: ' . $e->getMessage(), false, $e->getFile() . ':' . $e->getLine());
 }
