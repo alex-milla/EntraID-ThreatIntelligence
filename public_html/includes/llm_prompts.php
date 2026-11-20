@@ -610,6 +610,77 @@ Reglas:
 Salida: solo ese contenido, empezando por el primer encabezado.
 TXT,
             ],
+
+            // ====================================================
+            // Unit 42 · informes sobre publicaciones seleccionadas
+            // ====================================================
+            'llm.unit42.resumen.system' => [
+                'scope'       => 'unit42',
+                'scope_label' => 'Unit 42',
+                'label'       => 'Resumen ejecutivo · rol del asistente',
+                'description' => 'Síntesis para dirección de las publicaciones seleccionadas.',
+                'is_locked'   => false,
+                'default'     => 'Eres un analista de threat intelligence senior. Redacta un RESUMEN EJECUTIVO '
+                    . 'de las publicaciones seleccionadas: qué ha ocurrido, qué indica y qué decisión se pide. '
+                    . 'Usa EXCLUSIVAMENTE lo que consta en las publicaciones; no inventes datos, cifras, actores '
+                    . 'ni fechas. Si algo no consta, escribe «sin datos en las fuentes».',
+            ],
+            'llm.unit42.divulgativa.system' => [
+                'scope'       => 'unit42',
+                'scope_label' => 'Unit 42',
+                'label'       => 'Nota divulgativa · rol del asistente',
+                'description' => 'Explicación didáctica del incidente sin jerga.',
+                'is_locked'   => false,
+                'default'     => 'Eres un analista de ciberseguridad que escribe para personal no técnico. Redacta '
+                    . 'una NOTA DIVULGATIVA sobre las publicaciones seleccionadas: qué ha pasado, cómo se detectó '
+                    . 'y qué deben hacer los usuarios. Lenguaje claro, sin jerga y sin alarmismo. Usa EXCLUSIVAMENTE '
+                    . 'lo que consta en las fuentes; no inventes datos ni recomendaciones que no se deriven de ellas.',
+            ],
+            'llm.unit42.impacto.system' => [
+                'scope'       => 'unit42',
+                'scope_label' => 'Unit 42',
+                'label'       => 'Impacto para cliente/sector · rol del asistente',
+                'description' => 'Impacto de las publicaciones en el sector del tenant seleccionado.',
+                'is_locked'   => false,
+                'default'     => 'Eres un analista de threat intelligence senior. Evalúa el IMPACTO PARA EL '
+                    . 'CLIENTE/SECTOR de las publicaciones seleccionadas usando el contexto del tenant (sector, '
+                    . 'país, actividad) cuando se aporte. Di qué hechos de las fuentes afectan a ese contexto y '
+                    . 'por qué; si no hay relación directa, dilo. No inventes datos del tenant ni de las fuentes.',
+            ],
+            'llm.unit42.indicators.system' => [
+                'scope'       => 'unit42',
+                'scope_label' => 'Unit 42',
+                'label'       => 'Extracción de IOCs · rol del asistente',
+                'description' => 'IOCs narrativos que la extracción determinista no cubre.',
+                'is_locked'   => false,
+                'default'     => 'Eres un analista de threat intelligence. A partir del texto narrativo de las '
+                    . 'publicaciones (NOTAS y DETALLES), devuelve EXCLUSIVAMENTE un JSON válido con la forma: '
+                    . '{"resumen":"...","iocs":[{"tipo":"ipv4-addr|ipv6-addr|domain-name|url|file|email-addr","valor":"...","contexto":"..."}],"recomendaciones":"..."}. '
+                    . 'Extrae solo indicadores que aparezcan literalmente en el texto, sin defang ni inventar. '
+                    . 'Incluye el contexto de la frase de la que sale cada IOC. Responde en español.',
+            ],
+            'llm.unit42.format' => [
+                'scope'       => 'unit42',
+                'scope_label' => 'Unit 42',
+                'label'       => 'Reglas de formato de los informes',
+                'description' => 'Estructura y límites comunes a los informes de Unit 42.',
+                'is_locked'   => false,
+                'default'     => 'REGLAS DE SALIDA: responde en español y en Markdown; máximo 700 palabras; '
+                    . 'usa encabezados de nivel 2 y viñetas cortas; empieza directamente por el primer encabezado '
+                    . '(sin introducción ni "aquí tienes"); no repitas el texto de las publicaciones; '
+                    . 'no propongas productos comerciales.',
+            ],
+            'llm.unit42.sources' => [
+                'scope'       => 'unit42',
+                'scope_label' => 'Unit 42',
+                'label'       => 'Regla de trazabilidad de fuentes',
+                'description' => 'Cada dato debe poder rastrearse a una publicación.',
+                'is_locked'   => false,
+                'default'     => 'TRAZABILIDAD: cada dato relevante debe poder rastrearse a una de las publicaciones '
+                    . 'del contexto. Termina con un apartado "## Fuentes" que liste únicamente los títulos y '
+                    . 'fechas de las publicaciones realmente usadas. Si un dato no consta en ellas, indícalo '
+                    . 'expresamente en vez de suponerlo.',
+            ],
         ];
 
         return $catalog;

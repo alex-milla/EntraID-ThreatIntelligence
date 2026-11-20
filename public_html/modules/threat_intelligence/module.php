@@ -2342,6 +2342,109 @@ class Module_ThreatIntelligence extends BaseModule
         json_response(Unit42Feed::stateCounts((int)(Auth::id() ?? 0)));
     }
 
+    /** GET unit42/reports — historial de informes con IA. */
+    public function unit42ReportsPage(array $params = []): void
+    {
+        $tenants = TenantManager::getActive();
+        $selectedTenant = (int)($_GET['tenant'] ?? ($tenants[0]['id'] ?? 0));
+        $userId = (int)(Auth::id() ?? 0);
+
+        echo $this->page('unit42_reports', [
+            'module'         => $this,
+            'tenants'        => $tenants,
+            'selectedTenant' => $selectedTenant,
+            'reports'        => Unit42Feed::reports($userId),
+            'kinds'          => Unit42Feed::reportKinds(),
+            'tiActiveTab'    => 'unit42',
+            'profileCounts'  => $selectedTenant
+                ? $this->getProfileCounts($selectedTenant)
+                : ['actor' => 0, 'tool' => 0, 'other' => 0, 'total' => 0],
+        ]);
+    }
+
+    /** GET unit42/report/{id} — informe con IA terminado (o en curso). */
+    public function unit42ReportPage(array $params = []): void
+    {
+        $id = (int)($params['id'] ?? 0);
+        $report = Unit42Feed::report($id);
+        if ($report === null) {
+            http_response_code(404);
+            require VIEWS_PATH . '/errors/404.php';
+            return;
+        }
+        $tenants = TenantManager::getActive();
+        $selectedTenant = (int)($_GET['tenant'] ?? ($tenants[0]['id'] ?? 0));
+
+        echo $this->page('unit42_report', [
+            'module'         => $this,
+            'tenants'        => $tenants,
+            'selectedTenant' => $selectedTenant,
+            'report'         => $report,
+            'tiActiveTab'    => 'unit42',
+            'profileCounts'  => $selectedTenant
+                ? $this->getProfileCounts($selectedTenant)
+                : ['actor' => 0, 'tool' => 0, 'other' => 0, 'total' => 0],
+        ]);
+    }
+
+    /** GET unit42/report/{id}/data — estado para sondeo. */
+    public function unit42ReportData(array $params = []): void
+    {
+        Auth::require();
+        json_response(Unit42Feed::reportStatus((int)($params['id'] ?? 0)));
+    }
+
+    /** POST unit42/report-create — crea el informe y lo ejecuta. */
+    public function unit42ReportCreate(array $params = []): void
+    {
+        Auth::require();
+        Csrf::validateOrFail();
+
+        $raw = file_get_contents('php://input');
+        $input = json_decode((string)$raw, true);
+        if (!is_array($input)) {
+            $input = $_POST;
+        }
+
+        $ids = is_array($input['item_ids'] ?? null) ? $input['item_ids'] : [];
+        $kind = (string)($input['kind'] ?? 'resumen');
+        $tenantId = (int)($input['tenant_id'] ?? 0);
+        $profileId = (int)($input['profile_id'] ?? 0);
+
+        $created = Unit42Feed::createReport((int)(Auth::id() ?? 0), $ids, $kind, $tenantId, $profileId);
+        if (empty($created['success'])) {
+            json_response(['success' => false, 'error' => $created['error'] ?? 'No se pudo crear.'], 400);
+            return;
+        }
+        $id = (int)$created['id'];
+        $url = base_url('modules/threat_intelligence/unit42/report/' . $id);
+
+        if (function_exists('fastcgi_finish_request')) {
+            @ignore_user_abort(true);
+            @set_time_limit(0);
+            if (function_exists('release_session_lock')) {
+                release_session_lock();
+            }
+            json_response_continue(['success' => true, 'queued' => true, 'worker' => 'fpm', 'id' => $id, 'url' => $url], 202);
+            Unit42Feed::runReport($id);
+            exit;
+        }
+
+        if (function_exists('release_session_lock')) {
+            release_session_lock();
+        }
+        @set_time_limit(0);
+        @ignore_user_abort(true);
+        $res = Unit42Feed::runReport($id);
+        json_response([
+            'success' => (bool)$res['success'],
+            'id'      => $id,
+            'url'     => $url,
+            'error'   => $res['error'] ?? '',
+            'worker'  => 'inline',
+        ], $res['success'] ? 200 : 500);
+    }
+
     /** GET unit42/status — progreso de la descarga en curso. */
     public function unit42Status(array $params = []): void
     {
@@ -2362,6 +2465,10 @@ class Module_ThreatIntelligence extends BaseModule
             ['method' => 'GET', 'pattern' => 'unit42/status',       'handler' => [$this, 'unit42Status']],
             ['method' => 'GET', 'pattern' => 'unit42/counts',       'handler' => [$this, 'unit42Counts']],
             ['method' => 'POST','pattern' => 'unit42/state',        'handler' => [$this, 'unit42SetState']],
+            ['method' => 'GET', 'pattern' => 'unit42/reports',      'handler' => [$this, 'unit42ReportsPage']],
+            ['method' => 'POST','pattern' => 'unit42/report-create','handler' => [$this, 'unit42ReportCreate']],
+            ['method' => 'GET', 'pattern' => 'unit42/report/{id}/data','handler' => [$this, 'unit42ReportData']],
+            ['method' => 'GET', 'pattern' => 'unit42/report/{id}',  'handler' => [$this, 'unit42ReportPage']],
             ['method' => 'GET', 'pattern' => 'unit42/{id}',         'handler' => [$this, 'unit42ArticlePage']],
             ['method' => 'POST','pattern' => 'unit42/sync',         'handler' => [$this, 'unit42Sync']],
             ['method' => 'GET', 'pattern' => 'iocs/data',           'handler' => [$this, 'listIocs']],

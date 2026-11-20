@@ -386,6 +386,42 @@ class Database
         )");
         $db->exec("CREATE INDEX IF NOT EXISTS idx_u42_iocs_type ON u42_iocs(ioc_type, ioc_value)");
 
+        // v0.4.28.4: informes con IA sobre publicaciones seleccionadas.
+        $db->exec("CREATE TABLE IF NOT EXISTS u42_reports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            tenant_id INTEGER NOT NULL DEFAULT 0,
+            kind TEXT NOT NULL DEFAULT 'resumen',
+            title TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            article_ids_json TEXT,
+            content_md TEXT,
+            model TEXT,
+            error TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            finished_at TEXT
+        )");
+        $db->exec("CREATE TABLE IF NOT EXISTS u42_report_items (
+            report_id INTEGER NOT NULL REFERENCES u42_reports(id) ON DELETE CASCADE,
+            article_id INTEGER NOT NULL REFERENCES u42_articles(id) ON DELETE CASCADE,
+            position INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (report_id, article_id)
+        )");
+        $syncCols = [];
+        foreach ($db->query("PRAGMA table_info(u42_iocs)") as $c) {
+            $syncCols[(string)$c['name']] = true;
+        }
+        if (!isset($syncCols['source'])) {
+            $db->exec("ALTER TABLE u42_iocs ADD COLUMN source TEXT NOT NULL DEFAULT 'auto'");
+        }
+        $reportCols = [];
+        foreach ($db->query("PRAGMA table_info(u42_reports)") as $c) {
+            $reportCols[(string)$c['name']] = true;
+        }
+        if (!isset($reportCols['tenant_id'])) {
+            $db->exec("ALTER TABLE u42_reports ADD COLUMN tenant_id INTEGER NOT NULL DEFAULT 0");
+        }
+
         // v0.4.28.3: estado de lectura/favorito por usuario (como ti_article_state).
         $db->exec("CREATE TABLE IF NOT EXISTS u42_article_state (
             user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,

@@ -218,6 +218,47 @@ try {
     check('rutas: estado y contadores', str_contains($moduleSrc, "'pattern' => 'unit42/state'")
         && str_contains($moduleSrc, "'pattern' => 'unit42/counts'"));
     check('rutas: acepta cambios anidados', str_contains($moduleSrc, "is_array(\$input['changes'] ?? null)"));
+
+    // --- Informes con IA ---
+    $kinds = Unit42Feed::reportKinds();
+    check('IA: cuatro tipos de informe', array_keys($kinds) === ['resumen', 'divulgativa', 'impacto', 'indicadores']);
+    foreach (['resumen', 'divulgativa', 'impacto', 'indicators'] as $key) {
+        $prompt = llm_prompts_catalog()['llm.unit42.' . $key . '.system'] ?? [];
+        check('IA: plantilla llm.unit42.' . $key . '.system', !empty($prompt['default']));
+    }
+    foreach (['format', 'sources'] as $key) {
+        $prompt = llm_prompts_catalog()['llm.unit42.' . $key] ?? [];
+        check('IA: plantilla llm.unit42.' . $key, !empty($prompt['default']));
+    }
+    check('IA: tarea en el catálogo', isset(llm_task_catalog()['unit42_report']));
+    foreach (['u42_reports', 'u42_report_items'] as $table) {
+        $row = Database::fetchOne("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?", [$table]);
+        check('BD: tabla ' . $table, $row !== null);
+    }
+    $iocCols = [];
+    foreach (Database::fetchAll("PRAGMA table_info(u42_iocs)") as $col) {
+        $iocCols[(string)$col['name']] = true;
+    }
+    check('BD: u42_iocs.source', isset($iocCols['source']));
+
+    $tempId = Database::insert(
+        "INSERT INTO u42_articles (path, sha, size, title, published_at, content, sections_json, first_seen_at)
+         VALUES ('u42-ia-smoke.txt','x',100,'IA smoke','2026-04-01','x',?,datetime('now'))",
+        [(string)json_encode([['title' => 'NOTES', 'items' => [['depth' => 1, 'text' => 'Dominio malicioso.example.com', 'label' => false]]]])]
+    );
+    $ctx = Unit42Feed::reportContext([$tempId], 0, 'resumen');
+    check('IA: contexto incluye la publicación', str_contains($ctx, 'IA smoke') && str_contains($ctx, 'Dominio malicioso'));
+    $word = Unit42Feed::reportWordHtml(['title' => 'Prueba', 'content_md' => "# Resumen\n\nTexto.\n\n| Tipo | Valor |\n|---|---|\n| domain-name | example.com |", 'articles' => [['title' => 'IA smoke', 'published_at' => '2026-04-01']]]);
+    check('IA: HTML para Word', str_contains($word, '<table') && str_contains($word, 'INFORME UNIT 42') && str_contains($word, 'FUENTES CONSULTADAS'));
+
+    $report = Unit42Feed::createReport((int)$realUser['id'], [$tempId], 'resumen', 0, 0);
+    check('IA: crear informe en cola', !empty($report['success']) && (int)($report['id'] ?? 0) > 0, json_encode($report));
+    $status = Unit42Feed::reportStatus((int)($report['id'] ?? 0));
+    check('IA: estado inicial', ($status['status'] ?? '') === 'pending', json_encode($status));
+    Database::query("DELETE FROM u42_reports WHERE id = ?", [(int)($report['id'] ?? 0)]);
+    Database::query("DELETE FROM u42_articles WHERE id = ?", [$tempId]);
+    check('rutas: informes con IA', str_contains($moduleSrc, "'pattern' => 'unit42/report-create'")
+        && str_contains($moduleSrc, "'pattern' => 'unit42/report/{id}'"));
 } catch (Throwable $e) {
     check('excepción inesperada: ' . $e->getMessage(), false, $e->getFile() . ':' . $e->getLine());
 }

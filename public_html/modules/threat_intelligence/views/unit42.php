@@ -81,6 +81,10 @@ $listUrl = static function (array $extra = []) use ($listParams): string {
                     Actualizar desde GitHub
                 </button>
             <?php endif; ?>
+            <a href="<?= e(base_url('modules/threat_intelligence/unit42/reports')) ?>?tenant=<?= $tenantId ?>"
+               class="px-3 py-1.5 border border-line-strong text-xs rounded-lg hover:bg-muted">
+                Informes con IA
+            </a>
         </div>
         <div id="u42-sync-panel" class="hidden mt-4 pt-4 border-t border-line">
             <p id="u42-sync-message" class="text-xs text-ink"></p>
@@ -152,6 +156,10 @@ $listUrl = static function (array $extra = []) use ($listParams): string {
                 class="px-2.5 py-1 border border-line-strong text-xs rounded-lg hover:bg-muted">Favoritos</button>
         <button type="button" onclick="u42MarkAllRead()"
                 class="px-2.5 py-1 text-brand-600 text-xs font-medium hover:underline">Marcar todo como leído</button>
+        <button type="button" onclick="u42ReportOpen()"
+                class="px-2.5 py-1 bg-brand-500 hover:bg-brand-600 text-white text-xs font-medium rounded-lg">
+            Informe con IA
+        </button>
     </div>
 
     <div class="card overflow-hidden">
@@ -210,11 +218,54 @@ $listUrl = static function (array $extra = []) use ($listParams): string {
     </div>
 </div>
 
+<!-- Modal: informe con IA sobre la selección -->
+<div id="u42-report-modal" class="hidden fixed inset-0 z-50 no-print">
+    <div class="absolute inset-0 bg-black/40" onclick="u42ReportClose()"></div>
+    <div class="relative mx-auto mt-24 w-[calc(100%-2rem)] max-w-lg card shadow-xl p-5">
+        <div class="flex items-start justify-between gap-3">
+            <div>
+                <h3 class="text-sm font-semibold">Informe con IA</h3>
+                <p class="text-xs text-ink-muted mt-1" id="u42-report-selected"></p>
+            </div>
+            <button type="button" onclick="u42ReportClose()" class="text-xs text-ink-soft hover:text-gray-600">Cerrar</button>
+        </div>
+
+        <div class="mt-4 space-y-2">
+            <?php foreach (Unit42Feed::reportKinds() as $kindKey => $kindMeta): ?>
+                <label class="flex items-start gap-2 p-2 rounded-lg border border-line hover:bg-muted cursor-pointer">
+                    <input type="radio" name="u42-report-kind" value="<?= e($kindKey) ?>"
+                           <?= $kindKey === 'resumen' ? 'checked' : '' ?>
+                           class="mt-0.5 rounded border-line-strong text-brand-500">
+                    <span>
+                        <span class="block text-xs font-semibold text-ink"><?= e($kindMeta['label']) ?></span>
+                        <span class="block text-[11px] text-ink-muted mt-0.5"><?= e($kindMeta['hint']) ?></span>
+                    </span>
+                </label>
+            <?php endforeach; ?>
+        </div>
+
+        <p class="text-[11px] text-ink-soft mt-3">
+            La IA no inventa datos: solo usa las publicaciones seleccionadas y cita sus fuentes.
+            Las plantillas se pueden editar en Administración → Plantillas (grupo Unit 42).
+        </p>
+
+        <div class="mt-4 flex items-center justify-end gap-2">
+            <button type="button" onclick="u42ReportClose()"
+                    class="px-3 py-1.5 border border-line-strong text-xs rounded-lg hover:bg-muted">Cancelar</button>
+            <button type="button" id="u42-report-generate" onclick="u42ReportSubmit(this)"
+                    class="px-3 py-1.5 bg-brand-500 hover:bg-brand-600 text-white text-xs font-medium rounded-lg">
+                Generar informe
+            </button>
+        </div>
+    </div>
+</div>
+
 <script>
 (function () {
     'use strict';
     var SYNC_URL = '<?= e(base_url('modules/threat_intelligence/unit42/sync')) ?>';
     var STATE_URL = '<?= e(base_url('modules/threat_intelligence/unit42/state')) ?>';
+    var REPORT_CREATE_URL = '<?= e(base_url('modules/threat_intelligence/unit42/report-create')) ?>';
     var STATUS_URL = '<?= e(base_url('modules/threat_intelligence/unit42/status')) ?>';
     var CURRENT_FILTERS = <?= json_encode(array_filter([
         'q' => $filters['q'], 'from' => $filters['from'], 'to' => $filters['to'],
@@ -301,6 +352,56 @@ $listUrl = static function (array $extra = []) use ($listParams): string {
             }).catch(function (err) {
                 if (typeof appAlert === 'function') { appAlert('Error: ' + (err && err.message ? err.message : 'red')); }
             });
+    };
+
+    /* --- Informe con IA sobre la selección --- */
+    window.u42ReportOpen = function () {
+        var ids = selectedIds();
+        if (!ids.length) {
+            if (typeof appAlert === 'function') { appAlert('Selecciona al menos una publicación.'); }
+            return;
+        }
+        var label = document.getElementById('u42-report-selected');
+        if (label) {
+            label.textContent = ids.length + (ids.length === 1 ? ' publicación seleccionada' : ' publicaciones seleccionadas');
+        }
+        var modal = document.getElementById('u42-report-modal');
+        if (modal) { modal.classList.remove('hidden'); }
+    };
+
+    window.u42ReportClose = function () {
+        var modal = document.getElementById('u42-report-modal');
+        if (modal) { modal.classList.add('hidden'); }
+    };
+
+    window.u42ReportSubmit = function (button) {
+        var ids = selectedIds();
+        if (!ids.length) { return; }
+        var checked = document.querySelector('input[name="u42-report-kind"]:checked');
+        var kind = checked ? checked.value : 'resumen';
+        if (button) { button.disabled = true; button.textContent = 'Creando…'; }
+
+        post(REPORT_CREATE_URL, {
+            item_ids: ids,
+            kind: kind,
+            tenant_id: <?= $tenantId ?>,
+            profile_id: 0
+        }).then(function (out) {
+            var d = out.data || {};
+            if (!out.res.ok || !d.success) {
+                if (typeof appAlert === 'function') { appAlert(d.error || 'No se pudo crear el informe.'); }
+                if (button) { button.disabled = false; button.textContent = 'Generar informe'; }
+                return;
+            }
+            if (d.queued || d.worker === 'fpm') {
+                window.location.href = d.url; // la página del informe sondea el estado
+            } else {
+                window.location.href = d.url;
+            }
+        }).catch(function (err) {
+            if (typeof appAlert === 'function') { appAlert('Error: ' + (err && err.message ? err.message : 'red')); }
+            if (button) { button.disabled = false; button.textContent = 'Generar informe'; }
+        });
     };
 
     document.addEventListener('click', function (ev) {
