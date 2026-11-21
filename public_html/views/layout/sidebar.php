@@ -51,14 +51,32 @@ $adminItems = [
     ['key' => 'security',    'url' => base_url('admin/security'),         'icon' => 'security',      'label' => 'Seguridad'],
 ];
 
+/* El submenú de Administración solo se abre en sus propias rutas. Comparar
+ * la KEY (p. ej. 'modules' -> '/modules') abría Administración en TODAS las
+ * páginas de módulos, porque /modules/unit42, /modules/cve… contienen '/modules'. */
+/* Las URLs pueden llevar index.php en distinto sitio según el área
+ * (/index.php/modules/... en módulos, /admin/index.php/... en administración)
+ * y también existir sin él con mod_rewrite. Se normalizan antes de comparar. */
+$normalizeNavPath = static function (string $path): string {
+    $path = str_replace('/index.php/', '/', $path);
+    if (str_starts_with($path, '/index.php')) {
+        $path = substr($path, 10) ?: '/';
+    }
+    return $path === '' ? '/' : $path;
+};
+$adminPath = $normalizeNavPath($currentPath);
 $adminOpen = false;
 foreach ($adminItems as $ai) {
-    if (str_contains($currentPath, '/' . $ai['key'])) {
+    $adminUrlPath = $normalizeNavPath((string)(parse_url((string)$ai['url'], PHP_URL_PATH) ?? ''));
+    if ($adminUrlPath !== '' && str_starts_with($adminPath, $adminUrlPath)) {
         $adminOpen = true;
         break;
     }
 }
-$adminOpen = $adminOpen || str_contains($currentPath, '/admin/tenant') || str_contains($currentPath, '/admin/user');
+// Detalles que no comparten prefijo con su listado (Tenants / Usuarios)
+$adminOpen = $adminOpen
+    || str_contains($currentPath, '/admin/tenant')
+    || str_contains($currentPath, '/admin/user');
 ?>
 
 <!-- Overlay del drawer lateral (solo < lg) -->
@@ -140,7 +158,8 @@ $adminOpen = $adminOpen || str_contains($currentPath, '/admin/tenant') || str_co
 
                 <div id="sidebar-admin" class="sidebar-submenu">
                     <?php foreach ($adminItems as $ai):
-                        $active = str_contains($currentPath, '/' . $ai['key']);
+                        $adminLinkPath = $normalizeNavPath((string)(parse_url((string)$ai['url'], PHP_URL_PATH) ?? ''));
+                        $active = $adminLinkPath !== '' && str_starts_with($adminPath, $adminLinkPath);
                     ?>
                         <a href="<?= e($ai['url']) ?>"
                            class="sidebar-sublink<?= $active ? ' is-active' : '' ?>"

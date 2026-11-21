@@ -181,6 +181,11 @@ try {
     check('menú: navegación incluye publicaciones e informes', $found === 2);
     $sidebar = (string)@file_get_contents($root . '/public_html/views/layout/sidebar.php');
     check('menú: resaltado por ruta específica', str_contains($sidebar, '$bestNavPath'));
+    check('menú: Administración solo en rutas admin', str_contains($sidebar, '$normalizeNavPath')
+        && str_contains($sidebar, 'str_starts_with($adminPath, $adminUrlPath)')
+        && !str_contains($sidebar, "str_contains(\$currentPath, '/' . \$ai['key'])"));
+    check('menú: detalle de tenant/usuario conservado', str_contains($sidebar, "str_contains(\$currentPath, '/admin/tenant')")
+        && str_contains($sidebar, "str_contains(\$currentPath, '/admin/user')"));
 
     // --- Estado de lectura y filtros (con filas temporales) ---
     $realUser = Database::fetchOne("SELECT id FROM users ORDER BY id LIMIT 1");
