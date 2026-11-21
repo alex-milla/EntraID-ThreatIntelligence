@@ -691,6 +691,7 @@ class Module_Export extends BaseModule
         $input = $this->requestInput();
         $source = (string)($input['source'] ?? 'u42');
         $iocs = [];
+        $articles = [];
 
         if ($source === 'u42') {
             $ids = is_array($input['article_ids'] ?? null) ? array_values(array_filter(array_map('intval', $input['article_ids']))) : [];
@@ -701,6 +702,11 @@ class Module_Export extends BaseModule
             foreach ($ids as $id) {
                 $article = Unit42Feed::article($id);
                 if ($article === null) { continue; }
+                $articles[] = [
+                    'id'    => (int)$article['id'],
+                    'title' => (string)($article['title'] ?? $article['path'] ?? $id),
+                    'path'  => (string)($article['path'] ?? ''),
+                ];
                 foreach (Unit42Feed::iocs($id) as $ioc) {
                     $iocs[] = [
                         'id' => (int)$ioc['id'],
@@ -776,7 +782,8 @@ class Module_Export extends BaseModule
                 'duplicates' => max(0, count($iocs) - count($list)),
                 'by_type' => $byType, 'categories' => $categories,
             ],
-            'source' => $source,
+            'source'   => $source,
+            'articles' => $articles,
         ]);
     }
 

@@ -149,5 +149,19 @@ check('JS: precarga marca la selección y lista artículos', str_contains($js, '
 check('JS: el usuario puede editar la selección', str_contains($js, "classList.contains('iocz-article')")
     && str_contains($js, 'S.selectionEdited = true'));
 
+// --- Salto directo al paso 2 cuando el origen ya está determinado (v0.4.28.10) ---
+check('JS: extrae automaticamente al abrir con articulo', str_contains($js, "if (S.source === 'u42' && S.articleIds.length)")
+    && str_contains($js, "} else if (S.source === 'tenant') {\n            extract();"));
+check('JS: goto con guarda y sin IOCs', str_contains($js, 'function goto(step)')
+    && str_contains($js, "Primero extrae los IOCs")
+    && str_contains($js, 'goto: goto'));
+check('JS: muestra el origen en el paso 2', str_contains($js, 'function setOrigin(res)')
+    && str_contains($js, "'Origen: ' + parts.join"));
+check('JS: extraccion vacia vuelve al paso 1', str_contains($js, 'No se encontraron IOCs en esa fuente'));
+check('Endpoint: responde con titulos de origen', str_contains((string)@file_get_contents(dirname(__DIR__, 2) . '/public_html/modules/export/module.php'), "'articles' => \$articles"));
+$partial = (string)@file_get_contents(dirname(__DIR__, 2) . '/public_html/views/partials/ioc_extractor.php');
+check('Vista: pasos clicables y origen', str_contains($partial, 'IOCExtractor.goto(')
+    && str_contains($partial, 'id="iocz-origin"'));
+
 echo PHP_EOL . ($total - $fail) . '/' . $total . ' OK' . PHP_EOL;
 exit($fail === 0 ? 0 : 1);

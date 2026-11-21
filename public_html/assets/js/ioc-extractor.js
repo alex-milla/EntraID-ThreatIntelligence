@@ -37,11 +37,23 @@
             if (sec) { sec.classList.toggle('hidden', i !== step); }
             if (nav) {
                 var active = i === step;
-                nav.className = 'px-2 py-0.5 rounded-full text-[10px] font-medium '
+                nav.className = 'iocz-nav px-2 py-0.5 rounded-full text-[10px] font-medium cursor-pointer '
                     + (active ? 'bg-brand-500 text-white' : 'bg-muted text-ink-muted');
             }
         }
         modal.scrollTop = 0;
+    }
+
+    /** Navegación manual por los pasos: no permite avanzar sin IOCs extraídos. */
+    function goto(step) {
+        step = parseInt(step, 10) || 1;
+        if (step <= 1) { go(1); return; }
+        if (!S.iocs.length) {
+            notify('Primero extrae los IOCs en el paso 1.', 'warning');
+            go(1);
+            return;
+        }
+        go(step);
     }
 
     function setSource(source) {
@@ -71,19 +83,25 @@
         document.body.style.overflow = 'hidden';
         setSource(S.source);
 
-        if (S.source === 'u42' && S.articleIds.length) {
-            setSelectedLabel(true);
-            // Poblar la lista con el artículo precargado y dejar su casilla
-            // marcada: así se ve qué se va a extraer y se pueden añadir más.
-            var q = $('iocz-article-q');
-            if (q) { q.value = ''; }
-            searchArticles();
-        }
         var fmt = $('iocz-cfg-format');
         if (fmt) { fmt.value = 'split'; }
         var results = $('iocz-results');
         if (results) { results.innerHTML = ''; }
+        var origin = $('iocz-origin');
+        if (origin) { origin.textContent = ''; }
         go(1);
+
+        /* Si el origen ya viene determinado (artículo de Unit 42 o filtros
+         * del tenant), no se pregunta de nuevo: se extrae directamente. */
+        if (S.source === 'u42' && S.articleIds.length) {
+            setSelectedLabel(true);
+            var q = $('iocz-article-q');
+            if (q) { q.value = ''; }
+            searchArticles(); // por si el usuario vuelve al paso 1 a añadir más
+            extract();
+        } else if (S.source === 'tenant') {
+            extract();
+        }
     }
 
     function close() {
@@ -157,7 +175,11 @@
         if (btn) { btn.disabled = true; btn.textContent = 'Extrayendo…'; }
         api('POST', BASE + '/extract', payload).then(function (res) {
             if (btn) { btn.disabled = false; btn.textContent = 'Extraer IOCs'; }
-            if (!res || !res.success) { setError((res && res.error) || 'No se pudo extraer.'); return; }
+            if (!res || !res.success) {
+                setError((res && res.error) || 'No se pudo extraer.');
+                go(1);
+                return;
+            }
             S.iocs = (res.iocs || []).map(function (ioc, i) {
                 return {
                     index: i, id: parseInt(ioc.id || 0, 10), type: ioc.type || 'domain-name',
@@ -165,13 +187,40 @@
                 };
             });
             S.stats = res.stats || null;
+            if (!S.iocs.length) {
+                setError('No se encontraron IOCs en esa fuente. Prueba con otra publicación o pega el texto.');
+                go(1);
+                return;
+            }
+            setOrigin(res);
             renderStats();
             renderTable();
             go(2);
         }).catch(function (e) {
             if (btn) { btn.disabled = false; btn.textContent = 'Extraer IOCs'; }
             setError(e.message || 'Error de red');
+            go(1);
         });
+    }
+
+    function setOrigin(res) {
+        var el = $('iocz-origin');
+        if (!el) { return; }
+        var parts = [];
+        if (res && Array.isArray(res.articles) && res.articles.length) {
+            var titles = res.articles.map(function (a) { return a.title || a.path || a.id; });
+            var shown = titles.slice(0, 3).join(' · ');
+            if (titles.length > 3) { shown += ' · y ' + (titles.length - 3) + ' más'; }
+            parts.push(titles.length === 1 ? '1 publicación' : titles.length + ' publicaciones');
+            parts.push(shown);
+        } else if (S.source === 'tenant') {
+            parts.push('IOCs del catálogo del tenant');
+        } else if (S.source === 'text') {
+            parts.push('Texto pegado');
+        } else {
+            parts.push(S.articleIds.length + ' publicación(es)');
+        }
+        el.textContent = 'Origen: ' + parts.join(' · ');
     }
 
     function renderStats() {
@@ -452,7 +501,7 @@
     }
 
     window.IOCExtractor = {
-        open: open, close: close, go: go, setSource: setSource,
+        open: open, close: close, go: go, goto: goto, setSource: setSource,
         searchArticles: searchArticles, extract: extract,
         copyValues: copyValues, quickExport: quickExport,
         applyBulkDesc: applyBulkDesc, saveCorrections: saveCorrections,

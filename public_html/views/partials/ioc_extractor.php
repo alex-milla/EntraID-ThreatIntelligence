@@ -23,10 +23,12 @@
 
         <div class="px-5 py-2 border-b border-line flex items-center gap-1 flex-wrap">
             <?php foreach (['1 · Origen', '2 · Extraídos', '3 · Clasificación', '4 · Exportación'] as $i => $label): ?>
-                <span id="iocz-nav-<?= $i + 1 ?>"
-                      class="px-2 py-0.5 rounded-full text-[10px] font-medium <?= $i === 0 ? 'bg-brand-500 text-white' : 'bg-muted text-ink-muted' ?>">
+                <button type="button" id="iocz-nav-<?= $i + 1 ?>"
+                        onclick="IOCExtractor.goto(<?= $i + 1 ?>)"
+                        title="Ir al paso <?= $i + 1 ?>"
+                        class="iocz-nav px-2 py-0.5 rounded-full text-[10px] font-medium cursor-pointer <?= $i === 0 ? 'bg-brand-500 text-white' : 'bg-muted text-ink-muted' ?>">
                     <?= e($label) ?>
-                </span>
+                </button>
                 <?php if ($i < 3): ?><span class="text-[10px] text-ink-soft">›</span><?php endif; ?>
             <?php endforeach; ?>
         </div>
@@ -73,6 +75,7 @@
 
             <!-- PASO 2: Extraídos -->
             <section id="iocz-step-2" class="hidden">
+                <p id="iocz-origin" class="text-xs text-ink-muted mb-3"></p>
                 <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2" id="iocz-stats"></div>
                 <p class="text-[11px] text-ink-soft mt-3">
                     Duplicados se cuentan antes de unificar por tipo y valor. Después puedes corregir tipo y descripción.
