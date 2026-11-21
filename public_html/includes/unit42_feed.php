@@ -1096,6 +1096,30 @@ final class Unit42Feed
         return $row ?? ['id' => $id, 'status' => 'missing', 'error' => 'Informe no encontrado.'];
     }
 
+    /** Informes con IA generados sobre una publicación concreta. */
+    public static function reportsForArticle(int $articleId, int $userId): array
+    {
+        if ($articleId <= 0) {
+            return [];
+        }
+        $where = 'i.article_id = ?';
+        $params = [$articleId];
+        if ($userId > 0) {
+            $where .= ' AND r.user_id = ?';
+            $params[] = $userId;
+        }
+        return Database::fetchAll(
+            "SELECT r.id, r.user_id, r.kind, r.title, r.status, r.model, r.profile_id,
+                    r.error, r.created_at, r.finished_at
+             FROM u42_report_items i
+             JOIN u42_reports r ON r.id = i.report_id
+             WHERE $where
+             ORDER BY r.created_at DESC, r.id DESC
+             LIMIT 20",
+            $params
+        );
+    }
+
 
     /** HTML limpio para copiar/exportar el informe a Word (estilos en línea). */
     public static function reportWordHtml(array $report): string

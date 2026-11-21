@@ -6,7 +6,8 @@
  * en línea desde el listado (ruta GET unit42/{id}/panel). Así el marcado de
  * secciones, IOCs y botones de estado existe una sola vez.
  *
- * Variables de entrada: $article, $tenantId, $isRead, $isFavorite, $panelMode.
+ * Variables de entrada: $article, $tenantId, $isRead, $isFavorite, $panelMode,
+ * $reports (informes con IA ya generados sobre esta publicación).
  */
 $article = is_array($article ?? null) ? $article : [];
 $articleId = (int)($article['id'] ?? 0);
@@ -14,6 +15,7 @@ $tenantId = (int)($tenantId ?? 0);
 $isRead = !empty($isRead);
 $isFavorite = !empty($isFavorite);
 $panelMode = !empty($panelMode);
+$reports = is_array($reports ?? null) ? $reports : [];
 $fresh = Unit42Feed::freshness($article);
 $updatedAt = (string)($article['updated_at'] ?? '');
 
@@ -82,6 +84,42 @@ $reportId = 'u42-report-' . $articleId;
                     Extraer IOCs
                 </button>
                 <span class="text-[10px] text-ink-soft self-center">Revisa y configura el formato antes de exportar.</span>
+            </div>
+        </div>
+    <?php endif; ?>
+
+    <?php if ($reports !== []): ?>
+        <?php
+        $reportKinds = Unit42Feed::reportKinds();
+        $statusMap = [
+            'done'     => ['Listo', 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300'],
+            'running'  => ['Generando', 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'],
+            'pending'  => ['En cola', 'bg-gray-100 text-gray-600'],
+            'error'    => ['Error', 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'],
+            'canceled' => ['Cancelado', 'bg-amber-100 text-amber-700'],
+        ];
+        ?>
+        <div class="card p-4">
+            <h4 class="text-sm font-semibold m-0">Informes con IA de esta publicación</h4>
+            <div class="mt-2 divide-y divide-line-subtle">
+                <?php foreach ($reports as $report): ?>
+                    <?php
+                    $status = (string)($report['status'] ?? 'pending');
+                    $statusLabel = $statusMap[$status] ?? [$status, 'bg-gray-100 text-gray-600'];
+                    $kindLabel = $reportKinds[(string)($report['kind'] ?? '')]['label'] ?? (string)($report['kind'] ?? '');
+                    ?>
+                    <a href="<?= e(base_url('modules/threat_intelligence/unit42/report/' . (int)$report['id'])) ?>?tenant=<?= $tenantId ?>"
+                       class="flex items-start justify-between gap-3 py-2 hover:bg-muted/50">
+                        <span class="min-w-0">
+                            <span class="block text-xs font-medium break-words"><?= e((string)($report['title'] ?? 'Informe')) ?></span>
+                            <span class="block text-[10px] text-ink-muted mt-0.5">
+                                <?= e($kindLabel) ?> · <?= e((string)($report['created_at'] ?? '')) ?>
+                                <?php if (!empty($report['model'])): ?> · <?= e((string)$report['model']) ?><?php endif; ?>
+                            </span>
+                        </span>
+                        <span class="shrink-0 px-2 py-0.5 rounded-full text-[10px] font-medium <?= $statusLabel[1] ?>"><?= e($statusLabel[0]) ?></span>
+                    </a>
+                <?php endforeach; ?>
             </div>
         </div>
     <?php endif; ?>

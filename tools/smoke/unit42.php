@@ -153,23 +153,25 @@ try {
     $worker = (string)@file_get_contents($root . '/public_html/unit42-worker.php');
     check('worker: cron', str_contains($worker, 'Unit42Feed::sync()'));
 
-    // --- Entrada en el submenú de Inteligencia ---
+    // --- Sección independiente de Unit 42 en el menú ---
     $tiModule = ModuleManager::get('threat_intelligence');
     $extra = $tiModule !== null ? $tiModule->getExtraNavItems() : [];
-    check('menú: el módulo declara Unit 42', count($extra) === 1
-        && ($extra[0]['label'] ?? '') === 'Unit 42'
-        && ($extra[0]['group'] ?? '') === 'Inteligencia');
+    check('menú: sección independiente con dos entradas', count($extra) === 2
+        && ($extra[0]['label'] ?? '') === 'Publicaciones'
+        && ($extra[0]['group'] ?? '') === 'Unit 42'
+        && ($extra[1]['label'] ?? '') === 'Informes con IA'
+        && ($extra[1]['group'] ?? '') === 'Unit 42');
     $nav = ModuleManager::getNavigation();
-    $found = false;
+    $found = 0;
     foreach ($nav as $item) {
-        if (($item['label'] ?? '') === 'Unit 42'
-            && (string)($item['url'] ?? '') === base_url('modules/threat_intelligence/unit42')
-            && ($item['group'] ?? '') === 'Inteligencia') {
-            $found = true;
-            break;
+        if (($item['group'] ?? '') !== 'Unit 42') { continue; }
+        $url = (string)($item['url'] ?? '');
+        if ($url === base_url('modules/threat_intelligence/unit42')
+            || $url === base_url('modules/threat_intelligence/unit42/reports')) {
+            $found++;
         }
     }
-    check('menú: navegación incluye Unit 42', $found);
+    check('menú: navegación incluye publicaciones e informes', $found === 2);
     $sidebar = (string)@file_get_contents($root . '/public_html/views/layout/sidebar.php');
     check('menú: resaltado por ruta específica', str_contains($sidebar, '$bestNavPath'));
 
@@ -367,6 +369,32 @@ try {
     check('IA: perfil 7 guardado en BD', (int)($savedProfile['profile_id'] ?? -1) === 7, json_encode($savedProfile));
     Database::query('DELETE FROM u42_reports WHERE id = ?', [(int)($tmpProfileReport['id'] ?? 0)]);
     Database::query('DELETE FROM u42_articles WHERE id = ?', [$tmpProfileArticle]);
+
+    // --- Informes del artículo visibles al desplegar (v0.4.28.12) ---
+    $artWithReport = Database::insert(
+        "INSERT INTO u42_articles (path, sha, size, title, published_at, content, first_seen_at)
+         VALUES ('u42-article-reports-smoke.txt','x',10,'Informes smoke','2026-08-03','x',datetime('now'))"
+    );
+    $emptyReports = Unit42Feed::reportsForArticle($artWithReport, (int)$realUser['id']);
+    check('informes: artículo sin informes', $emptyReports === []);
+    $rep = Unit42Feed::createReport((int)$realUser['id'], [$artWithReport], 'divulgativa', 0, 0);
+    Database::query(
+        "UPDATE u42_reports SET status = 'done', content_md = 'Informe de prueba', finished_at = datetime('now') WHERE id = ?",
+        [(int)$rep['id']]
+    );
+    $withReports = Unit42Feed::reportsForArticle($artWithReport, (int)$realUser['id']);
+    check('informes: reportsForArticle devuelve el informe', count($withReports) === 1
+        && ($withReports[0]['kind'] ?? '') === 'divulgativa'
+        && ($withReports[0]['status'] ?? '') === 'done', json_encode($withReports));
+    $otherUserReports = Unit42Feed::reportsForArticle($artWithReport, 999999);
+    check('informes: solo del usuario', $otherUserReports === []);
+    check('informes: panel pasa reports al parcial', str_contains($moduleSrc, "'reports'    => Unit42Feed::reportsForArticle(\$id, \$userId)")
+        && str_contains($moduleSrc, "'reports'        => Unit42Feed::reportsForArticle"));
+    check('informes: tarjeta en el parcial', str_contains($panelSrc, 'Informes con IA de esta publicación')
+        && str_contains($panelSrc, 'modules/threat_intelligence/unit42/report/')
+        && str_contains($panelSrc, '$statusMap'));
+    Database::query('DELETE FROM u42_reports WHERE id = ?', [(int)$rep['id']]);
+    Database::query('DELETE FROM u42_articles WHERE id = ?', [$artWithReport]);
     $missingUi = smoke_css_missing_classes(
         [
             'modules/threat_intelligence/views/unit42.php',

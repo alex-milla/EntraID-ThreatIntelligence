@@ -29,16 +29,28 @@ class Module_ThreatIntelligence extends BaseModule
         ];
     }
 
-    /** Entrada directa de Unit 42 dentro del submenú de Inteligencia. */
+    /**
+     * Unit 42 tiene su propia sección en el menú, con sus publicaciones y sus
+     * informes con IA, para no mezclarlos con otros informes/módulos.
+     */
     public function getExtraNavItems(): array
     {
-        return [[
-            'label' => 'Unit 42',
-            'url'   => base_url('modules/threat_intelligence/unit42'),
-            'icon'  => 'public',
-            'group' => 'Inteligencia',
-            'after' => 'threat_intelligence',
-        ]];
+        return [
+            [
+                'label' => 'Publicaciones',
+                'url'   => base_url('modules/threat_intelligence/unit42'),
+                'icon'  => 'public',
+                'group' => 'Unit 42',
+                'after' => 'threat_intelligence',
+            ],
+            [
+                'label' => 'Informes con IA',
+                'url'   => base_url('modules/threat_intelligence/unit42/reports'),
+                'icon'  => 'file-text',
+                'group' => 'Unit 42',
+                'after' => 'threat_intelligence',
+            ],
+        ];
     }
 
     // ============================================================
@@ -2216,6 +2228,7 @@ class Module_ThreatIntelligence extends BaseModule
             'article'        => $article,
             'iocs'           => Unit42Feed::iocs($id),
             'iocCounts'      => Unit42Feed::iocCounts($id),
+            'reports'        => Unit42Feed::reportsForArticle($id, (int)(Auth::id() ?? 0)),
             'tiActiveTab'    => 'unit42',
             'profileCounts'  => $selectedTenant
                 ? $this->getProfileCounts($selectedTenant)
@@ -2243,6 +2256,7 @@ class Module_ThreatIntelligence extends BaseModule
             'tenantId'   => $tenantId,
             'isRead'     => !empty($state['is_read']),
             'isFavorite' => !empty($state['is_favorite']),
+            'reports'    => Unit42Feed::reportsForArticle($id, $userId),
             'panelMode'  => true,
         ]);
     }
