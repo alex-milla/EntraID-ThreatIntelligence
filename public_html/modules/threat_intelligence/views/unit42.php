@@ -292,6 +292,26 @@ $listUrl = static function (array $extra = []) use ($listParams): string {
             <?php endforeach; ?>
         </div>
 
+        <div class="mt-4">
+            <label for="u42-report-profile" class="block text-xs font-medium text-ink-muted mb-1">
+                Perfil de IA
+            </label>
+            <select id="u42-report-profile"
+                    class="w-full px-2.5 py-1.5 rounded-lg border border-line-strong bg-input text-ink text-xs">
+                <option value="0">— Modelo predeterminado —</option>
+                <?php foreach (($llmProfiles ?? []) as $profile): ?>
+                    <?php $pid = (int)($profile['id'] ?? 0); ?>
+                    <option value="<?= $pid ?>">
+                        <?= e((string)($profile['name'] ?? ('Perfil ' . $pid))) ?>
+                        <?php if (!empty($profile['model'])): ?>(<?= e((string)$profile['model']) ?>)<?php endif; ?>
+                    </option>
+                <?php endforeach; ?>
+            </select>
+            <p class="text-[10px] text-ink-soft mt-1">
+                Si eliges «predeterminado» se usa el modelo asignado a la tarea <code>unit42_report</code> en Admin → APIs.
+            </p>
+        </div>
+
         <p class="text-[11px] text-ink-soft mt-3">
             La IA no inventa datos: solo usa las publicaciones seleccionadas y cita sus fuentes.
             Las plantillas se pueden editar en Administración → Plantillas (grupo Unit 42).
@@ -442,13 +462,15 @@ $listUrl = static function (array $extra = []) use ($listParams): string {
         if (!ids.length) { return; }
         var checked = document.querySelector('input[name="u42-report-kind"]:checked');
         var kind = checked ? checked.value : 'resumen';
+        var profileSel = document.getElementById('u42-report-profile');
+        var profileId = profileSel ? (parseInt(profileSel.value, 10) || 0) : 0;
         if (button) { button.disabled = true; button.textContent = 'Creando…'; }
 
         post(REPORT_CREATE_URL, {
             item_ids: ids,
             kind: kind,
             tenant_id: <?= $tenantId ?>,
-            profile_id: 0
+            profile_id: profileId
         }).then(function (out) {
             var d = out.data || {};
             if (!out.res.ok || !d.success) {

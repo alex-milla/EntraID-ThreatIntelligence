@@ -340,6 +340,33 @@ try {
         && !str_contains($listSrc, '>NUEVO<')
         && str_contains($panelSrc, 'format_date($updatedAt)'));
     check('TI: cabecera de publicaciones', str_contains($listSrc, '· por fecha de publicación'));
+
+    // --- Perfil de IA en informes Unit 42 (v0.4.28.11) ---
+    $reportCols = [];
+    foreach (Database::fetchAll('PRAGMA table_info(u42_reports)') as $col) {
+        $reportCols[(string)$col['name']] = true;
+    }
+    check('IA: u42_reports.profile_id', isset($reportCols['profile_id']));
+    $feedSrc = (string)@file_get_contents($root . '/public_html/includes/unit42_feed.php');
+    check('IA: createReport persiste el perfil', str_contains($feedSrc, 'INSERT INTO u42_reports (user_id, tenant_id, profile_id, kind')
+        && str_contains($feedSrc, 'max(0, $profileId)'));
+    check('IA: modal con selector de perfil', str_contains($listSrc, 'id="u42-report-profile"')
+        && str_contains($listSrc, '— Modelo predeterminado —')
+        && str_contains($listSrc, 'profile_id: profileId'));
+    check('IA: handler pasa los perfiles', str_contains($moduleSrc, "'llmProfiles'    => function_exists('llm_profile_list')"));
+    $reportViewSrc = (string)@file_get_contents($root . '/public_html/modules/threat_intelligence/views/unit42_report.php');
+    check('IA: ficha muestra el perfil usado', str_contains($reportViewSrc, 'llm_profile_get($profileId)')
+        && str_contains($reportViewSrc, 'perfil <?= e($profileName) ?>'));
+    $tmpProfileArticle = Database::insert(
+        "INSERT INTO u42_articles (path, sha, size, title, published_at, content, first_seen_at)
+         VALUES ('u42-profile-smoke.txt','x',10,'Perfil smoke','2026-08-02','x',datetime('now'))"
+    );
+    $tmpProfileReport = Unit42Feed::createReport((int)$realUser['id'], [$tmpProfileArticle], 'resumen', 0, 7);
+    check('IA: crear informe con perfil 7', !empty($tmpProfileReport['success']), json_encode($tmpProfileReport));
+    $savedProfile = Database::fetchOne('SELECT profile_id FROM u42_reports WHERE id = ?', [(int)($tmpProfileReport['id'] ?? 0)]);
+    check('IA: perfil 7 guardado en BD', (int)($savedProfile['profile_id'] ?? -1) === 7, json_encode($savedProfile));
+    Database::query('DELETE FROM u42_reports WHERE id = ?', [(int)($tmpProfileReport['id'] ?? 0)]);
+    Database::query('DELETE FROM u42_articles WHERE id = ?', [$tmpProfileArticle]);
     $missingUi = smoke_css_missing_classes(
         [
             'modules/threat_intelligence/views/unit42.php',

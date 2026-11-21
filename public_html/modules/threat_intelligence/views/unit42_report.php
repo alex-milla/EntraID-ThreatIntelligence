@@ -9,6 +9,14 @@ $report = is_array($report ?? null) ? $report : [];
 $tenantId = (int)($selectedTenant ?? 0);
 $status = (string)($report['status'] ?? 'pending');
 $wordHtml = Unit42Feed::reportWordHtml($report);
+$profileId = (int)($report['profile_id'] ?? 0);
+$profileName = '';
+if ($profileId > 0 && function_exists('llm_profile_get')) {
+    $profile = llm_profile_get($profileId);
+    if (is_array($profile)) {
+        $profileName = (string)($profile['name'] ?? ('Perfil ' . $profileId));
+    }
+}
 ?>
 <div class="space-y-4">
     <div class="card p-4">
@@ -19,6 +27,7 @@ $wordHtml = Unit42Feed::reportWordHtml($report);
                 <h2 class="text-sm font-semibold mt-3 break-words"><?= e((string)($report['title'] ?? 'Informe')) ?></h2>
                 <p class="text-[11px] text-ink-muted mt-1">
                     Estado: <strong><?= e($status) ?></strong>
+                    <?php if ($profileName !== ''): ?> · perfil <?= e($profileName) ?><?php endif; ?>
                     <?php if (!empty($report['model'])): ?> · modelo <?= e((string)$report['model']) ?><?php endif; ?>
                     <?php if (!empty($report['finished_at'])): ?> · terminado <?= e((string)$report['finished_at']) ?><?php endif; ?>
                 </p>

@@ -945,9 +945,9 @@ final class Unit42Feed
 
         $title = self::reportKinds()[$kind]['label'] . ' · ' . gmdate('Y-m-d H:i');
         $id = Database::insert(
-            "INSERT INTO u42_reports (user_id, tenant_id, kind, title, status, article_ids_json, created_at)
-             VALUES (?, ?, ?, ?, 'pending', ?, datetime('now'))",
-            [$userId, $tenantId, $kind, $title, json_encode($ids)]
+            "INSERT INTO u42_reports (user_id, tenant_id, profile_id, kind, title, status, article_ids_json, created_at)
+             VALUES (?, ?, ?, ?, ?, 'pending', ?, datetime('now'))",
+            [$userId, $tenantId, max(0, $profileId), $kind, $title, json_encode($ids)]
         );
         foreach ($ids as $position => $articleId) {
             Database::query(

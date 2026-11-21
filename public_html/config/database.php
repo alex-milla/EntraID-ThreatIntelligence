@@ -424,6 +424,9 @@ class Database
         if (!isset($reportCols['tenant_id'])) {
             $db->exec("ALTER TABLE u42_reports ADD COLUMN tenant_id INTEGER NOT NULL DEFAULT 0");
         }
+        if (!isset($reportCols['profile_id'])) {
+            $db->exec("ALTER TABLE u42_reports ADD COLUMN profile_id INTEGER NOT NULL DEFAULT 0");
+        }
 
         // v0.4.28.3: estado de lectura/favorito por usuario (como ti_article_state).
         $db->exec("CREATE TABLE IF NOT EXISTS u42_article_state (

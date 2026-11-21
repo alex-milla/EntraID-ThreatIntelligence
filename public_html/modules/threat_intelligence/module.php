@@ -2189,6 +2189,7 @@ class Module_ThreatIntelligence extends BaseModule
             'page'           => $page,
             'hasMore'        => count($articles) === $limit,
             'tiActiveTab'    => 'unit42',
+            'llmProfiles'    => function_exists('llm_profile_list') ? llm_profile_list() : [],
             'profileCounts'  => $selectedTenant
                 ? $this->getProfileCounts($selectedTenant)
                 : ['actor' => 0, 'tool' => 0, 'other' => 0, 'total' => 0],
