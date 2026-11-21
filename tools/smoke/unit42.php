@@ -13,6 +13,7 @@
 declare(strict_types=1);
 
 require dirname(__DIR__, 2) . '/public_html/config/bootstrap.php';
+require __DIR__ . '/css_guard.php';
 
 $fail = 0;
 $total = 0;
@@ -339,6 +340,16 @@ try {
         && !str_contains($listSrc, '>NUEVO<')
         && str_contains($panelSrc, 'format_date($updatedAt)'));
     check('TI: cabecera de publicaciones', str_contains($listSrc, '· por fecha de publicación'));
+    $missingUi = smoke_css_missing_classes(
+        [
+            'modules/threat_intelligence/views/unit42.php',
+            'modules/threat_intelligence/views/_unit42_panel.php',
+            'modules/threat_intelligence/views/unit42_article.php',
+        ],
+        ['text-green-500', 'text-gray-400', 'text-amber-400', 'text-gray-300',
+         'dark:text-gray-600', 'material-icons', 'icon-16']
+    );
+    check('CSS: clases del aspecto TI compiladas', $missingUi === [], implode(', ', $missingUi));
 } catch (Throwable $e) {
     check('excepción inesperada: ' . $e->getMessage(), false, $e->getFile() . ':' . $e->getLine());
 }

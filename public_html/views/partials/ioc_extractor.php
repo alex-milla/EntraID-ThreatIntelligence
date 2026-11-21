@@ -6,7 +6,7 @@
  * de exportación mediante IOCExtractor.open({...}).
  */
 ?>
-<div id="iocz-modal" class="hidden fixed inset-0 z-[60] no-print" role="dialog" aria-modal="true"
+<div id="iocz-modal" class="hidden fixed inset-0 z-50 no-print" role="dialog" aria-modal="true"
      aria-label="Asistente de extracción y exportación de IOCs"
      data-base="<?= e(base_url('modules/export')) ?>">
     <div class="absolute inset-0 bg-black/50" onclick="IOCExtractor.close()"></div>

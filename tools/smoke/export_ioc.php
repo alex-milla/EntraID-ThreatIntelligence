@@ -11,6 +11,7 @@
 declare(strict_types=1);
 
 require dirname(__DIR__, 2) . '/public_html/config/bootstrap.php';
+require __DIR__ . '/css_guard.php';
 
 $fail = 0;
 $total = 0;
@@ -129,6 +130,14 @@ check('Unit 42: botón Extraer IOCs', str_contains($panel, 'Extraer IOCs')
 $exportIndex = (string)@file_get_contents(dirname(__DIR__, 2) . '/public_html/modules/export/views/index.php');
 check('Exportación: botones abren el asistente', str_contains($exportIndex, 'function openIocExtractor')
     && substr_count($exportIndex, 'openIocExtractor(') >= 5);
+
+// --- Guardia de CSS compilado (v0.4.28.8) ---
+$missing = smoke_css_missing_classes(
+    ['views/partials/ioc_extractor.php'],
+    ['text-green-500', 'text-gray-400', 'text-amber-400', 'text-gray-300',
+     'dark:text-gray-600', 'material-icons', 'icon-16']
+);
+check('CSS: clases del asistente compiladas', $missing === [], implode(', ', $missing));
 
 echo PHP_EOL . ($total - $fail) . '/' . $total . ' OK' . PHP_EOL;
 exit($fail === 0 ? 0 : 1);
