@@ -139,5 +139,15 @@ $missing = smoke_css_missing_classes(
 );
 check('CSS: clases del asistente compiladas', $missing === [], implode(', ', $missing));
 
+// --- Precarga del artículo desde la ficha (v0.4.28.9) ---
+$js = (string)@file_get_contents(dirname(__DIR__, 2) . '/public_html/assets/js/ioc-extractor.js');
+check('JS: extract conserva la precarga', str_contains($js, 'S.selectionEdited || !S.articleIds.length')
+    && !preg_match('/if \(S\.source === \'u42\'\) \{\s*syncArticleIds\(\);/', $js));
+check('JS: precarga marca la selección y lista artículos', str_contains($js, 'setSelectedLabel(true)')
+    && str_contains($js, 'searchArticles();')
+    && str_contains($js, 'S.selectionEdited = false'));
+check('JS: el usuario puede editar la selección', str_contains($js, "classList.contains('iocz-article')")
+    && str_contains($js, 'S.selectionEdited = true'));
+
 echo PHP_EOL . ($total - $fail) . '/' . $total . ' OK' . PHP_EOL;
 exit($fail === 0 ? 0 : 1);

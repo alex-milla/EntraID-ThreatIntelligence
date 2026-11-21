@@ -11,7 +11,8 @@
     var BASE = modal.getAttribute('data-base') || '';
     var S = {
         source: 'u42', articleIds: [], articleId: 0, filters: {},
-        iocs: [], stats: null, format: 'stix', category: 'all', results: null
+        iocs: [], stats: null, format: 'stix', category: 'all', results: null,
+        selectionEdited: false
     };
 
     function $(id) { return document.getElementById(id); }
@@ -64,14 +65,19 @@
         S.filters = opts.filters || {};
         S.iocs = []; S.stats = null; S.results = null; S.category = 'all';
         S.format = opts.format || 'stix';
+        S.selectionEdited = false;
 
         modal.classList.remove('hidden');
         document.body.style.overflow = 'hidden';
         setSource(S.source);
 
         if (S.source === 'u42' && S.articleIds.length) {
-            var label = $('iocz-selected-label');
-            if (label) { label.textContent = S.articleIds.length + ' publicación(es) preparadas desde la ficha.'; }
+            setSelectedLabel(true);
+            // Poblar la lista con el artículo precargado y dejar su casilla
+            // marcada: así se ve qué se va a extraer y se pueden añadir más.
+            var q = $('iocz-article-q');
+            if (q) { q.value = ''; }
+            searchArticles();
         }
         var fmt = $('iocz-cfg-format');
         if (fmt) { fmt.value = 'split'; }
@@ -111,20 +117,34 @@
         }).join('');
     }
 
+    function setSelectedLabel(preloaded) {
+        var label = $('iocz-selected-label');
+        if (!label) { return; }
+        var n = S.articleIds.length;
+        if (!n) {
+            label.textContent = '0 publicación(es) seleccionada(s)';
+            return;
+        }
+        label.textContent = n + (n === 1 ? ' publicación' : ' publicaciones')
+            + (preloaded ? ' preparada(s) desde la ficha' : ' seleccionada(s)');
+    }
+
     function syncArticleIds() {
         S.articleIds = Array.prototype.slice.call(document.querySelectorAll('.iocz-article:checked'))
             .map(function (el) { return parseInt(el.value, 10) || 0; })
             .filter(function (id) { return id > 0; });
         S.articleId = S.articleIds[0] || 0;
-        var label = $('iocz-selected-label');
-        if (label) { label.textContent = S.articleIds.length + ' publicación(es) seleccionada(s)'; }
+        setSelectedLabel(false);
     }
 
     function extract() {
         setError('');
         var payload = {source: S.source};
         if (S.source === 'u42') {
-            syncArticleIds();
+            /* Solo se releyen las casillas si el usuario ha tocado la selección.
+             * Si el artículo viene precargado desde la ficha se conserva, aunque
+             * no aparezca entre los 100 primeros del buscador. */
+            if (S.selectionEdited || !S.articleIds.length) { syncArticleIds(); }
             if (!S.articleIds.length) { setError('Selecciona al menos una publicación.'); return; }
             payload.article_ids = S.articleIds;
         } else if (S.source === 'tenant') {
@@ -378,7 +398,11 @@
         var t = ev.target;
         if (!t) { return; }
         if (t.id === 'iocz-source') { setSource(t.value); return; }
-        if (t.classList && t.classList.contains('iocz-article')) { syncArticleIds(); return; }
+        if (t.classList && t.classList.contains('iocz-article')) {
+            S.selectionEdited = true;
+            syncArticleIds();
+            return;
+        }
         if (t.getAttribute && t.getAttribute('data-iocz-field')) {
             var row = t.closest('[data-iocz-row]');
             if (!row) { return; }
