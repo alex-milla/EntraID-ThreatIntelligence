@@ -668,12 +668,42 @@ final class Unit42Feed
             $where[] = 'EXISTS (SELECT 1 FROM u42_iocs i WHERE i.article_id = a.id)';
         }
 
-        $sql = "SELECT a.*, $stateSelect FROM u42_articles a $stateJoin
+        $sql = "SELECT a.*,
+                       (SELECT COUNT(*) FROM u42_iocs i WHERE i.article_id = a.id) AS ioc_count,
+                       $stateSelect
+                FROM u42_articles a $stateJoin
                 WHERE " . implode(' AND ', $where) . "
                 ORDER BY a.published_at DESC, a.id DESC LIMIT ? OFFSET ?";
         $params[] = $limit;
         $params[] = $offset;
         return Database::fetchAll($sql, $params);
+    }
+
+    /**
+     * Marcas de frescura para el resaltado visual (mismo criterio que Threat
+     * Intelligence): nuevo = descargado en las últimas 24 h; actualizado =
+     * el fichero cambió en GitHub y se volvió a bajar.
+     *
+     * @return array{new24:bool,updated:bool,updated24:bool}
+     */
+    public static function freshness(array $article): array
+    {
+        $firstSeen = (string)($article['first_seen_at'] ?? '');
+        $updatedAt = (string)($article['updated_at'] ?? '');
+        $now = time();
+
+        $new24 = false;
+        if ($firstSeen !== '' && ($ts = strtotime($firstSeen)) !== false) {
+            $new24 = $ts >= $now - 86400;
+        }
+        $updated = $firstSeen !== '' && $updatedAt !== ''
+            && substr($updatedAt, 0, 19) !== substr($firstSeen, 0, 19);
+        $updated24 = false;
+        if ($updated && ($ts = strtotime($updatedAt)) !== false) {
+            $updated24 = $ts >= $now - 86400;
+        }
+
+        return ['new24' => $new24, 'updated' => $updated, 'updated24' => $updated24];
     }
 
     /** Estados de lectura de una lista de artículos para un usuario. */

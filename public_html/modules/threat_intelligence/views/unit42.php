@@ -22,12 +22,6 @@ $page = max(1, (int)($page ?? 1));
 $hasMore = !empty($hasMore);
 $tenantId = (int)($selectedTenant ?? 0);
 
-$sizeLabel = static function (int $bytes): string {
-    if ($bytes < 1024) return $bytes . ' B';
-    if ($bytes < 1048576) return number_format($bytes / 1024, 1) . ' KB';
-    return number_format($bytes / 1048576, 1) . ' MB';
-};
-
 $listParams = array_filter([
     'tenant'         => $tenantId,
     'q'              => $q,
@@ -181,6 +175,12 @@ $listUrl = static function (array $extra = []) use ($listParams): string {
     </div>
 
     <div class="card overflow-hidden">
+        <div class="flex items-center justify-between gap-3 px-5 py-3 border-b border-line">
+            <h2 class="text-sm font-semibold">Publicaciones <span class="text-ink-soft font-normal">· por fecha de publicación</span></h2>
+            <button type="button"
+                    onclick="IOCExtractor.open({source:'u42', format:'stix'})"
+                    class="text-xs text-brand-500 hover:underline">Exportar IOCs</button>
+        </div>
         <?php if ($articles === []): ?>
             <p class="p-8 text-center text-sm text-ink-muted">
                 <?= $q !== '' || $filters['from'] !== '' || $filters['to'] !== ''
@@ -190,38 +190,63 @@ $listUrl = static function (array $extra = []) use ($listParams): string {
         <?php else: ?>
             <div class="divide-y divide-line-subtle">
                 <?php foreach ($articles as $article): ?>
-                    <?php $rowId = (int)$article['id']; ?>
+                    <?php
+                    $rowId = (int)$article['id'];
+                    $unread = empty($article['is_read']);
+                    $fav = !empty($article['is_favorite']);
+                    $fresh = Unit42Feed::freshness($article);
+                    $highlight = $fresh['new24'] || $fresh['updated24'];
+                    $created = (string)($article['published_at'] ?? '');
+                    $updatedAt = (string)($article['updated_at'] ?? '');
+                    $showUpdated = $fresh['updated'];
+                    $iocCount = (int)($article['ioc_count'] ?? 0);
+                    ?>
                     <div data-u42-row="<?= $rowId ?>">
-                        <div class="px-4 py-3 flex items-start gap-3 hover:bg-muted/50">
-                            <input type="checkbox" class="u42-check mt-1 shrink-0 rounded border-line-strong text-brand-500"
-                                   value="<?= $rowId ?>" aria-label="Seleccionar artículo">
-                            <a href="<?= e(base_url('modules/threat_intelligence/unit42/' . $rowId)) ?>?tenant=<?= $tenantId ?>"
-                               data-u42-toggle="<?= $rowId ?>"
-                               class="u42-title-link min-w-0 flex-1 block group"
-                               title="Desplegar el artículo debajo">
-                                <p class="u42-title text-sm font-medium break-words <?= empty($article['is_read']) ? '' : 'text-ink-muted' ?>">
-                                    <span class="u42-chevron inline-block mr-1 text-brand-500 text-[10px]">▸</span><?= e((string)($article['title'] ?? '')) ?>
-                                </p>
-                                <p class="text-[11px] text-ink-muted mt-1 truncate"><?= e((string)($article['path'] ?? '')) ?></p>
-                            </a>
-                            <div class="shrink-0 text-right text-[11px] text-ink-soft">
-                                <p><?= e((string)($article['published_at'] ?? '—')) ?></p>
-                                <p><?= e($sizeLabel((int)($article['size'] ?? 0))) ?></p>
-                                <?php if (empty($article['is_read'])): ?>
-                                    <span class="u42-nuevo inline-block mt-1 px-1.5 py-0.5 rounded-full bg-brand-100 text-brand-700 dark:bg-brand-900/30 dark:text-brand-300 text-[9px] font-semibold">NUEVO</span>
-                                <?php endif; ?>
-                                <span class="u42-star <?= empty($article['is_favorite']) ? 'hidden' : '' ?> text-amber-500 ml-1" title="Favorito">★</span>
+                        <div class="px-5 py-3 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors border-l-2 <?= $highlight ? 'border-brand-500' : 'border-transparent' ?>"
+                             data-read="<?= $unread ? '0' : '1' ?>" data-fav="<?= $fav ? '1' : '0' ?>">
+                            <div class="flex items-start gap-3">
+                                <input type="checkbox" class="u42-check mt-1 shrink-0 rounded border-line-strong text-brand-500"
+                                       value="<?= $rowId ?>" aria-label="Seleccionar artículo">
+                                <a href="<?= e(base_url('modules/threat_intelligence/unit42/' . $rowId)) ?>?tenant=<?= $tenantId ?>"
+                                   data-u42-toggle="<?= $rowId ?>"
+                                   class="u42-title-link min-w-0 flex-1 block group"
+                                   title="Desplegar el artículo debajo">
+                                    <div class="flex items-center gap-2 min-w-0">
+                                        <span data-role="new"
+                                              class="u42-nuevo inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-brand-500 text-white shrink-0 <?= $unread ? '' : 'hidden' ?>"
+                                              title="Sin leer">New</span>
+                                        <?php if ($fresh['new24']): ?>
+                                            <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-warning-bg text-warning shrink-0"
+                                                  title="Descargado en las últimas 24 h">24 h</span>
+                                        <?php endif; ?>
+                                        <?php if ($fresh['updated24']): ?>
+                                            <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300 shrink-0"
+                                                  title="Fichero modificado en GitHub y vuelto a descargar">Actualizado</span>
+                                        <?php endif; ?>
+                                        <span class="u42-chevron inline-block mr-0.5 text-brand-500 text-[10px]">▸</span>
+                                        <p class="u42-title text-sm font-medium truncate"><?= e((string)($article['title'] ?? '')) ?></p>
+                                    </div>
+                                    <p class="text-xs text-ink-soft mt-0.5">
+                                        <?= e(format_date($created)) ?>
+                                        <?php if ($showUpdated): ?> · <span title="El fichero se modificó en el repositorio">actualizado <?= e(format_date($updatedAt)) ?></span><?php endif; ?>
+                                        · <?= $iocCount ?> IOCs
+                                    </p>
+                                </a>
+                                <div class="flex items-center gap-1 shrink-0">
+                                    <button type="button" data-role="fav" data-id="<?= $rowId ?>"
+                                            onclick="u42RowFav(event, <?= $rowId ?>)"
+                                            title="<?= $fav ? 'Quitar de favoritos' : 'Añadir a favoritos' ?>"
+                                            class="u42-fav-toggle w-7 h-7 inline-flex items-center justify-center rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 text-base leading-none <?= $fav ? 'text-amber-400' : 'text-gray-300 dark:text-gray-600' ?>"><?= $fav ? '★' : '☆' ?></button>
+                                    <button type="button" data-role="read" data-id="<?= $rowId ?>"
+                                            class="u42-read-toggle w-7 h-7 inline-flex items-center justify-center rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 <?= $unread ? 'text-gray-400' : 'text-green-500' ?>"
+                                            data-read="<?= $unread ? '0' : '1' ?>"
+                                            title="<?= $unread ? 'Marcar como leído' : 'Dejar sin leer' ?>">
+                                        <i class="material-icons icon-16" aria-hidden="true">check</i>
+                                    </button>
+                                </div>
                             </div>
-                            <button type="button"
-                                    class="u42-read-toggle shrink-0 inline-flex items-center gap-1 text-xs px-2 py-1 rounded-lg border <?= empty($article['is_read']) ? 'border-line-strong text-ink-muted hover:bg-muted' : 'border-green-300 text-green-600 bg-green-50 dark:bg-green-900/20' ?>"
-                                    data-id="<?= $rowId ?>"
-                                    data-read="<?= empty($article['is_read']) ? '0' : '1' ?>"
-                                    title="<?= empty($article['is_read']) ? 'Marcar como leído' : 'Marcar como no leído' ?>">
-                                <span aria-hidden="true"><?= empty($article['is_read']) ? '○' : '●' ?></span>
-                                <span class="hidden sm:inline"><?= empty($article['is_read']) ? 'Marcar como leído' : 'Leído' ?></span>
-                            </button>
                         </div>
-                        <div id="u42-panel-<?= $rowId ?>" class="u42-panel hidden px-4 pb-4" data-u42-panel="<?= $rowId ?>"></div>
+                        <div id="u42-panel-<?= $rowId ?>" class="u42-panel hidden px-5 pb-4" data-u42-panel="<?= $rowId ?>"></div>
                     </div>
                 <?php endforeach; ?>
             </div>
@@ -444,36 +469,32 @@ $listUrl = static function (array $extra = []) use ($listParams): string {
 
     function renderReadToggle(btn, read) {
         btn.dataset.read = read ? '1' : '0';
-        btn.title = read ? 'Marcar como no leído' : 'Marcar como leído';
-        btn.className = 'u42-read-toggle shrink-0 inline-flex items-center gap-1 text-xs px-2 py-1 rounded-lg border '
-            + (read
-                ? 'border-green-300 text-green-600 bg-green-50 dark:bg-green-900/20'
-                : 'border-line-strong text-ink-muted hover:bg-muted');
-        btn.innerHTML = '<span aria-hidden="true">' + (read ? '●' : '○') + '</span>'
-            + '<span class="hidden sm:inline">' + (read ? 'Leído' : 'Marcar como leído') + '</span>';
+        btn.title = read ? 'Dejar sin leer' : 'Marcar como leído';
+        btn.className = 'u42-read-toggle w-7 h-7 inline-flex items-center justify-center rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 '
+            + (read ? 'text-green-500' : 'text-gray-400');
+        btn.innerHTML = '<i class="material-icons icon-16" aria-hidden="true">check</i>';
     }
 
     function renderFavToggle(btn, fav) {
         btn.dataset.fav = fav ? '1' : '0';
-        btn.title = fav ? 'Quitar favorito' : 'Añadir a favoritos';
-        btn.className = 'u42-fav-toggle inline-flex items-center gap-1 text-xs px-2 py-1 rounded-lg border '
+        btn.title = fav ? 'Quitar de favoritos' : 'Añadir a favoritos';
+        btn.className = 'u42-fav-toggle w-7 h-7 inline-flex items-center justify-center rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 text-base leading-none '
             + (fav
-                ? 'border-amber-300 text-amber-600 bg-amber-50 dark:bg-amber-900/20'
-                : 'border-line-strong text-ink-muted hover:bg-muted');
-        btn.textContent = fav ? '★ Quitar favorito' : '☆ Favorito';
+                ? 'text-amber-400'
+                : 'text-gray-300 dark:text-gray-600');
+        btn.textContent = fav ? '★' : '☆';
     }
 
     function syncRow(id, field, value) {
         var row = document.querySelector('[data-u42-row="' + id + '"]');
         if (!row) { return; }
+        var container = row.firstElementChild;
         if (field === 'is_read') {
-            var title = row.querySelector('.u42-title');
-            if (title) { title.classList.toggle('text-ink-muted', !!value); }
             var badge = row.querySelector('.u42-nuevo');
             if (badge) { badge.classList.toggle('hidden', !!value); }
+            if (container) { container.dataset.read = value ? '1' : '0'; }
         } else if (field === 'is_favorite') {
-            var star = row.querySelector('.u42-star');
-            if (star) { star.classList.toggle('hidden', !value); }
+            if (container) { container.dataset.fav = value ? '1' : '0'; }
         }
     }
 
@@ -534,6 +555,20 @@ $listUrl = static function (array $extra = []) use ($listParams): string {
     }
 
     window.u42OpenArticle = openArticle;
+    window.u42RowFav = function (ev, id) {
+        if (ev) { ev.preventDefault(); ev.stopPropagation(); }
+        var btn = document.querySelector('[data-u42-row="' + id + '"] .u42-fav-toggle');
+        if (!btn) { return; }
+        var fav = btn.dataset.fav === '1' ? 0 : 1;
+        post(STATE_URL, { ids: [id], changes: { is_favorite: fav } }).then(function (out) {
+            if (!out.res.ok || !out.data.success) { return; }
+            document.querySelectorAll('.u42-fav-toggle[data-id="' + id + '"]').forEach(function (b) {
+                renderFavToggle(b, fav);
+            });
+            syncRow(id, 'is_favorite', fav);
+            applyCounts(out.data.counts);
+        });
+    };
 
     document.addEventListener('click', function (ev) {
         var target = ev.target && ev.target.closest ? ev.target : null;

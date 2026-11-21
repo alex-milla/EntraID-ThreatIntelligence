@@ -14,6 +14,8 @@ $articleState = $userId > 0 ? (Unit42Feed::statesFor($userId, [$articleId])[$art
 $isRead = !empty($articleState['is_read']);
 $isFavorite = !empty($articleState['is_favorite']);
 $panelMode = false;
+$fresh = Unit42Feed::freshness($article);
+$updatedAt = (string)($article['updated_at'] ?? '');
 
 $rawUrl = 'https://github.com/PaloAltoNetworks/Unit42-timely-threat-intel/blob/main/'
     . rawurlencode((string)($article['path'] ?? ''));
@@ -23,9 +25,23 @@ $rawUrl = 'https://github.com/PaloAltoNetworks/Unit42-timely-threat-intel/blob/m
         <div class="min-w-0">
             <a href="<?= e(base_url('modules/threat_intelligence/unit42')) ?>?tenant=<?= $tenantId ?>"
                class="text-xs text-brand-600 hover:underline">← Unit42</a>
-            <p class="text-[10px] font-semibold uppercase tracking-wide text-ink-soft mt-3">
-                Informe Unit 42 <?= (string)($article['published_at'] ?? '') !== '' ? '· ' . e((string)$article['published_at']) : '' ?>
-            </p>
+            <div class="flex items-center gap-2 flex-wrap mt-3">
+                <p class="text-[10px] font-semibold uppercase tracking-wide text-ink-soft">
+                    Informe Unit 42
+                    <?= (string)($article['published_at'] ?? '') !== '' ? '· ' . e(format_date((string)$article['published_at'])) : '' ?>
+                    <?php if ($fresh['updated']): ?>
+                        · <span title="El fichero se modificó en el repositorio">actualizado <?= e(format_date($updatedAt)) ?></span>
+                    <?php endif; ?>
+                </p>
+                <?php if ($fresh['new24']): ?>
+                    <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-warning-bg text-warning"
+                          title="Descargado en las últimas 24 h">24 h</span>
+                <?php endif; ?>
+                <?php if ($fresh['updated24']): ?>
+                    <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
+                          title="Fichero modificado en GitHub y vuelto a descargar">Actualizado</span>
+                <?php endif; ?>
+            </div>
             <h2 class="text-lg font-bold mt-1 break-words"><?= e((string)($article['title'] ?? '')) ?></h2>
         </div>
     </div>

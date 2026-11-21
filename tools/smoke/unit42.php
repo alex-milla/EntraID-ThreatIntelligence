@@ -275,8 +275,9 @@ try {
     check('masivo: aplica a los filtros, no solo a la pagina', str_contains($listSrc, 'all: true, filters: CURRENT_FILTERS'));
     check('masivo: barra de seleccion sigue condicional', str_contains($listSrc, 'id="u42-bulk-bar" class="hidden'));
 
-    check('lectura: boton con texto en cada fila', str_contains($listSrc, 'Marcar como leído')
-        && str_contains($listSrc, "read ? 'Leído' : 'Marcar como leído'"));
+    check('lectura: boton check en cada fila (aspecto TI)', str_contains($listSrc, 'data-role="read"')
+        && str_contains($listSrc, "u42-read-toggle w-7 h-7")
+        && str_contains($listSrc, "text-green-500' : 'text-gray-400"));
     check('lectura: cambia todas las instancias del articulo', str_contains($listSrc, "querySelectorAll('.u42-read-toggle[data-id=\"' + id") );
 
     check('panel: ruta registrada antes que la ficha', str_contains($moduleSrc, "'pattern' => 'unit42/{id}/panel'")
@@ -298,6 +299,46 @@ try {
     $footerSrc = (string)@file_get_contents($root . '/public_html/views/layout/footer.php');
     check('IOCs: asistente global en el layout', str_contains($footerSrc, 'partials/ioc_extractor.php')
         && str_contains($footerSrc, 'js/ioc-extractor.js'));
+
+    // --- Aspecto de Threat Intelligence (v0.4.28.7) ---
+    $fresh = Unit42Feed::freshness([
+        'first_seen_at' => gmdate('Y-m-d H:i:s', time() - 3600),
+        'updated_at' => gmdate('Y-m-d H:i:s'),
+    ]);
+    check('TI: frescura detecta descarga reciente', !empty($fresh['new24']) && !empty($fresh['updated'])
+        && !empty($fresh['updated24']), json_encode($fresh));
+    $freshOld = Unit42Feed::freshness([
+        'first_seen_at' => '2026-01-01 00:00:00',
+        'updated_at' => '2026-01-01 00:00:00',
+    ]);
+    check('TI: sin marcas en artículo antiguo', empty($freshOld['new24']) && empty($freshOld['updated'])
+        && empty($freshOld['updated24']));
+    $tmpTi = Database::insert(
+        "INSERT INTO u42_articles (path, sha, size, title, published_at, content, first_seen_at)
+         VALUES ('u42-ti-smoke.txt','x',10,'TI smoke','2026-08-01','x',datetime('now'))"
+    );
+    $listFields = Unit42Feed::articles(['user_id' => $smokeUserId], 5, 0);
+    $tiRow = null;
+    foreach ($listFields as $row) {
+        if ((int)$row['id'] === (int)$tmpTi) { $tiRow = $row; break; }
+    }
+    check('TI: listado expone ioc_count', $tiRow !== null && array_key_exists('ioc_count', $tiRow), json_encode($tiRow));
+    Database::query("DELETE FROM u42_articles WHERE id = ?", [$tmpTi]);
+    $listSrc = (string)@file_get_contents($root . '/public_html/modules/threat_intelligence/views/unit42.php');
+    check('TI: badge New naranja', str_contains($listSrc, 'bg-brand-500 text-white')
+        && str_contains($listSrc, '>New<'));
+    check('TI: borde izquierdo en recientes', str_contains($listSrc, 'border-l-2')
+        && str_contains($listSrc, "'border-brand-500' : 'border-transparent'"));
+    check('TI: meta con fecha, IOCs y actualizado', str_contains($listSrc, 'format_date($created)')
+        && str_contains($listSrc, '<?= $iocCount ?> IOCs')
+        && str_contains($listSrc, 'actualizado <?= e(format_date($updatedAt)) ?>'));
+    check('TI: estrella y check a la derecha', str_contains($listSrc, 'data-role="fav"')
+        && str_contains($listSrc, 'data-role="read"')
+        && str_contains($listSrc, '<i class="material-icons icon-16" aria-hidden="true">check</i>'));
+    check('TI: ya no usa el NUEVO antiguo', !str_contains($listSrc, 'bg-brand-100 text-brand-700')
+        && !str_contains($listSrc, '>NUEVO<')
+        && str_contains($panelSrc, 'format_date($updatedAt)'));
+    check('TI: cabecera de publicaciones', str_contains($listSrc, '· por fecha de publicación'));
 } catch (Throwable $e) {
     check('excepción inesperada: ' . $e->getMessage(), false, $e->getFile() . ':' . $e->getLine());
 }

@@ -14,6 +14,8 @@ $tenantId = (int)($tenantId ?? 0);
 $isRead = !empty($isRead);
 $isFavorite = !empty($isFavorite);
 $panelMode = !empty($panelMode);
+$fresh = Unit42Feed::freshness($article);
+$updatedAt = (string)($article['updated_at'] ?? '');
 
 $iocs = Unit42Feed::iocs($articleId);
 $iocCounts = Unit42Feed::iocCounts($articleId);
@@ -37,10 +39,23 @@ $reportId = 'u42-report-' . $articleId;
 ?>
 <div class="space-y-3">
     <?php if ($panelMode): ?>
-        <p class="text-[10px] font-semibold uppercase tracking-wide text-ink-soft">
-            Informe Unit 42
-            <?= (string)($article['published_at'] ?? '') !== '' ? '· ' . e((string)$article['published_at']) : '' ?>
-        </p>
+        <div class="flex items-center gap-2 flex-wrap">
+            <p class="text-[10px] font-semibold uppercase tracking-wide text-ink-soft">
+                Informe Unit 42
+                <?= (string)($article['published_at'] ?? '') !== '' ? '· ' . e(format_date((string)$article['published_at'])) : '' ?>
+                <?php if ($fresh['updated']): ?>
+                    · <span title="El fichero se modificó en el repositorio">actualizado <?= e(format_date($updatedAt)) ?></span>
+                <?php endif; ?>
+            </p>
+            <?php if ($fresh['new24']): ?>
+                <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-warning-bg text-warning"
+                      title="Descargado en las últimas 24 h">24 h</span>
+            <?php endif; ?>
+            <?php if ($fresh['updated24']): ?>
+                <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
+                      title="Fichero modificado en GitHub y vuelto a descargar">Actualizado</span>
+            <?php endif; ?>
+        </div>
     <?php endif; ?>
     <p class="text-[11px] text-ink-muted truncate">
         Fichero: <a href="<?= e($rawUrl) ?>" target="_blank" rel="noopener"
@@ -113,17 +128,16 @@ $reportId = 'u42-report-' . $articleId;
 
     <div class="flex items-center gap-2 flex-wrap no-print">
         <button type="button"
-                class="u42-read-toggle inline-flex items-center gap-1 text-xs px-2 py-1 rounded-lg border <?= $isRead ? 'border-green-300 text-green-600 bg-green-50 dark:bg-green-900/20' : 'border-line-strong text-ink-muted hover:bg-muted' ?>"
+                class="u42-read-toggle w-7 h-7 inline-flex items-center justify-center rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 <?= $isRead ? 'text-green-500' : 'text-gray-400' ?>"
                 data-id="<?= $articleId ?>" data-read="<?= $isRead ? '1' : '0' ?>"
-                title="<?= $isRead ? 'Marcar como no leído' : 'Marcar como leído' ?>">
-            <span aria-hidden="true"><?= $isRead ? '●' : '○' ?></span>
-            <span class="hidden sm:inline"><?= $isRead ? 'Leído' : 'Marcar como leído' ?></span>
+                title="<?= $isRead ? 'Dejar sin leer' : 'Marcar como leído' ?>">
+            <i class="material-icons icon-16" aria-hidden="true">check</i>
         </button>
         <button type="button"
-                class="u42-fav-toggle inline-flex items-center gap-1 text-xs px-2 py-1 rounded-lg border <?= $isFavorite ? 'border-amber-300 text-amber-600 bg-amber-50 dark:bg-amber-900/20' : 'border-line-strong text-ink-muted hover:bg-muted' ?>"
+                class="u42-fav-toggle w-7 h-7 inline-flex items-center justify-center rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 text-base leading-none <?= $isFavorite ? 'text-amber-400' : 'text-gray-300 dark:text-gray-600' ?>"
                 data-id="<?= $articleId ?>" data-fav="<?= $isFavorite ? '1' : '0' ?>"
-                title="<?= $isFavorite ? 'Quitar favorito' : 'Añadir a favoritos' ?>">
-            <?= $isFavorite ? '★ Quitar favorito' : '☆ Favorito' ?>
+                title="<?= $isFavorite ? 'Quitar de favoritos' : 'Añadir a favoritos' ?>">
+            <?= $isFavorite ? '★' : '☆' ?>
         </button>
         <?php if ($panelMode): ?>
             <a href="<?= e($fullUrl) ?>" class="px-2.5 py-1 text-xs text-brand-600 hover:underline">Abrir ficha completa ↗</a>
