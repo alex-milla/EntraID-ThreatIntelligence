@@ -122,7 +122,7 @@ check('Layout: parcial del asistente', str_contains($footer, 'partials/ioc_extra
 check('Layout: JS del asistente', str_contains($footer, 'js/ioc-extractor.js'));
 check('Layout: solo autenticados', str_contains($footer, '<?php if (Auth::check()): ?>'));
 
-$panel = (string)@file_get_contents(dirname(__DIR__, 2) . '/public_html/modules/threat_intelligence/views/_unit42_panel.php');
+$panel = (string)@file_get_contents(dirname(__DIR__, 2) . '/public_html/modules/unit42/views/_unit42_panel.php');
 check('Unit 42: sin enlaces directos', !str_contains($panel, 'modules/export/download'));
 check('Unit 42: botón Extraer IOCs', str_contains($panel, 'Extraer IOCs')
     && str_contains($panel, "IOCExtractor.open({source:'u42'"));

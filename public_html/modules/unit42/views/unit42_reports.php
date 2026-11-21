@@ -2,8 +2,6 @@
 /**
  * Vista: historial de informes con IA sobre publicaciones Unit 42.
  */
-$tiActiveTab = 'unit42';
-require VIEWS_PATH . '/partials/ti_header.php';
 
 $reports = is_array($reports ?? null) ? $reports : [];
 $kinds = is_array($kinds ?? null) ? $kinds : [];
@@ -26,7 +24,7 @@ $labels = [
                     Cada informe cita sus fuentes y no inventa datos.
                 </p>
             </div>
-            <a href="<?= e(base_url('modules/threat_intelligence/unit42')) ?>?tenant=<?= $tenantId ?>"
+            <a href="<?= e(base_url('modules/unit42')) ?>?tenant=<?= $tenantId ?>"
                class="px-3 py-1.5 border border-line-strong text-xs rounded-lg hover:bg-muted">← Publicaciones</a>
         </div>
     </div>
@@ -44,7 +42,7 @@ $labels = [
                     $label = $labels[$status] ?? [$status, 'bg-gray-100 text-gray-600'];
                     $kindLabel = $kinds[(string)($report['kind'] ?? '')]['label'] ?? (string)($report['kind'] ?? '');
                     ?>
-                    <a href="<?= e(base_url('modules/threat_intelligence/unit42/report/' . (int)$report['id'])) ?>?tenant=<?= $tenantId ?>"
+                    <a href="<?= e(base_url('modules/unit42/report/' . (int)$report['id'])) ?>?tenant=<?= $tenantId ?>"
                        class="block px-4 py-3 hover:bg-muted/50">
                         <div class="flex items-start justify-between gap-3 flex-wrap">
                             <div class="min-w-0">

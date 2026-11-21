@@ -3,8 +3,6 @@
  * Vista: un fichero de Unit 42 mostrado como informe, sin tocar el original.
  * El cuerpo se comparte con el panel desplegable del listado (_unit42_panel.php).
  */
-$tiActiveTab = 'unit42';
-require VIEWS_PATH . '/partials/ti_header.php';
 
 $article = is_array($article ?? null) ? $article : [];
 $articleId = (int)($article['id'] ?? 0);
@@ -23,7 +21,7 @@ $rawUrl = 'https://github.com/PaloAltoNetworks/Unit42-timely-threat-intel/blob/m
 <div class="space-y-4">
     <div class="card p-5">
         <div class="min-w-0">
-            <a href="<?= e(base_url('modules/threat_intelligence/unit42')) ?>?tenant=<?= $tenantId ?>"
+            <a href="<?= e(base_url('modules/unit42')) ?>?tenant=<?= $tenantId ?>"
                class="text-xs text-brand-600 hover:underline">← Unit42</a>
             <div class="flex items-center gap-2 flex-wrap mt-3">
                 <p class="text-[10px] font-semibold uppercase tracking-wide text-ink-soft">
@@ -52,7 +50,7 @@ $rawUrl = 'https://github.com/PaloAltoNetworks/Unit42-timely-threat-intel/blob/m
 <script>
 (function () {
     'use strict';
-    var STATE_URL = '<?= e(base_url('modules/threat_intelligence/unit42/state')) ?>';
+    var STATE_URL = '<?= e(base_url('modules/unit42/state')) ?>';
 
     function csrfToken() {
         var el = document.querySelector('input[name="csrf_token"]');

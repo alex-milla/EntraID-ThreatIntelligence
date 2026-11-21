@@ -15,8 +15,8 @@ foreach ($navModules as $item) {
     $groups[$group][] = $item;
 }
 
-// El elemento activo es el de ruta más específica: en /modules/threat_intelligence/unit42
-// se resalta «Unit 42», no su módulo padre «Threat Intel».
+// El elemento activo es el de ruta más específica (p. ej. las entradas
+// propias de Unit 42 dentro de su sección del menú).
 $bestNavPath = '';
 foreach ($navModules as $navItem) {
     $navPath = (string)(parse_url((string)($navItem['url'] ?? ''), PHP_URL_PATH) ?? '');

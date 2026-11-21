@@ -35,7 +35,7 @@ $renderText = static function (string $text): string {
 
 $rawUrl = 'https://github.com/PaloAltoNetworks/Unit42-timely-threat-intel/blob/main/'
     . rawurlencode((string)($article['path'] ?? ''));
-$fullUrl = base_url('modules/threat_intelligence/unit42/' . $articleId) . '?tenant=' . $tenantId;
+$fullUrl = base_url('modules/unit42/' . $articleId) . '?tenant=' . $tenantId;
 $rawId = 'u42-raw-' . $articleId;
 $reportId = 'u42-report-' . $articleId;
 ?>
@@ -108,7 +108,7 @@ $reportId = 'u42-report-' . $articleId;
                     $statusLabel = $statusMap[$status] ?? [$status, 'bg-gray-100 text-gray-600'];
                     $kindLabel = $reportKinds[(string)($report['kind'] ?? '')]['label'] ?? (string)($report['kind'] ?? '');
                     ?>
-                    <a href="<?= e(base_url('modules/threat_intelligence/unit42/report/' . (int)$report['id'])) ?>?tenant=<?= $tenantId ?>"
+                    <a href="<?= e(base_url('modules/unit42/report/' . (int)$report['id'])) ?>?tenant=<?= $tenantId ?>"
                        class="flex items-start justify-between gap-3 py-2 hover:bg-muted/50">
                         <span class="min-w-0">
                             <span class="block text-xs font-medium break-words"><?= e((string)($report['title'] ?? 'Informe')) ?></span>

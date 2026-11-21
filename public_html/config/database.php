@@ -1060,6 +1060,7 @@ class Database
             ['reports',            'Reportes',                      'Generación de reportes periódicos',                '1.0.0'],
             ['llm',                'Integración LLM',               'Análisis de datos con modelos de lenguaje',        '1.0.0'],
             ['export',             'Exportación',                   'Exportación a STIX, MISP, CSV y TXT',             '1.0.0'],
+            ['unit42',             'Unit 42',                       'Publicaciones de Unit 42 e informes con IA',     '1.0.0'],
         ];
 
         $stmt = $db->prepare("INSERT OR IGNORE INTO modules (module_key, name, description, version, is_active)

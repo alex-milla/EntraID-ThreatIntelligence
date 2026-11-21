@@ -2,8 +2,6 @@
 /**
  * Vista: listado de artículos de Unit 42 con selección, estado de lectura y filtros.
  */
-$tiActiveTab = 'unit42';
-require VIEWS_PATH . '/partials/ti_header.php';
 
 $st = array_merge([
     'last_run_at' => '', 'files_total' => 0, 'added' => 0, 'updated' => 0,
@@ -75,7 +73,7 @@ $listUrl = static function (array $extra = []) use ($listParams): string {
                     Actualizar desde GitHub
                 </button>
             <?php endif; ?>
-            <a href="<?= e(base_url('modules/threat_intelligence/unit42/reports')) ?>?tenant=<?= $tenantId ?>"
+            <a href="<?= e(base_url('modules/unit42/reports')) ?>?tenant=<?= $tenantId ?>"
                class="px-3 py-1.5 border border-line-strong text-xs rounded-lg hover:bg-muted">
                 Informes con IA
             </a>
@@ -207,7 +205,7 @@ $listUrl = static function (array $extra = []) use ($listParams): string {
                             <div class="flex items-start gap-3">
                                 <input type="checkbox" class="u42-check mt-1 shrink-0 rounded border-line-strong text-brand-500"
                                        value="<?= $rowId ?>" aria-label="Seleccionar artículo">
-                                <a href="<?= e(base_url('modules/threat_intelligence/unit42/' . $rowId)) ?>?tenant=<?= $tenantId ?>"
+                                <a href="<?= e(base_url('modules/unit42/' . $rowId)) ?>?tenant=<?= $tenantId ?>"
                                    data-u42-toggle="<?= $rowId ?>"
                                    class="u42-title-link min-w-0 flex-1 block group"
                                    title="Desplegar el artículo debajo">
@@ -331,11 +329,11 @@ $listUrl = static function (array $extra = []) use ($listParams): string {
 <script>
 (function () {
     'use strict';
-    var SYNC_URL = '<?= e(base_url('modules/threat_intelligence/unit42/sync')) ?>';
-    var STATE_URL = '<?= e(base_url('modules/threat_intelligence/unit42/state')) ?>';
-    var REPORT_CREATE_URL = '<?= e(base_url('modules/threat_intelligence/unit42/report-create')) ?>';
-    var STATUS_URL = '<?= e(base_url('modules/threat_intelligence/unit42/status')) ?>';
-    var PANEL_URL_TPL = '<?= e(base_url('modules/threat_intelligence/unit42')) ?>/{id}/panel';
+    var SYNC_URL = '<?= e(base_url('modules/unit42/sync')) ?>';
+    var STATE_URL = '<?= e(base_url('modules/unit42/state')) ?>';
+    var REPORT_CREATE_URL = '<?= e(base_url('modules/unit42/report-create')) ?>';
+    var STATUS_URL = '<?= e(base_url('modules/unit42/status')) ?>';
+    var PANEL_URL_TPL = '<?= e(base_url('modules/unit42')) ?>/{id}/panel';
     var CURRENT_FILTERS = <?= json_encode(array_filter([
         'q' => $filters['q'], 'from' => $filters['from'], 'to' => $filters['to'],
         'only_unread' => $filters['only_unread'], 'only_favorites' => $filters['only_favorites'],

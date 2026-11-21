@@ -142,32 +142,39 @@ try {
         check('BD: tabla ' . $table, $row !== null);
     }
     $root = dirname(__DIR__, 2);
-    $moduleSrc = (string)@file_get_contents($root . '/public_html/modules/threat_intelligence/module.php');
-    check('módulo: pestaña y rutas Unit42', str_contains($moduleSrc, "'pattern' => 'unit42'")
+    $moduleSrc = (string)@file_get_contents($root . '/public_html/modules/unit42/module.php');
+    check('módulo: rutas Unit42 independientes', str_contains($moduleSrc, "class Module_Unit42 extends BaseModule")
+        && str_contains($moduleSrc, "return 'unit42';")
+        && str_contains($moduleSrc, "'pattern' => '',")
         && str_contains($moduleSrc, 'unit42Sync'));
-    check('módulo: status antes que {id}', strpos($moduleSrc, "'pattern' => 'unit42/status'") < strpos($moduleSrc, "'pattern' => 'unit42/{id}'"));
+    check('módulo: status antes que {id}', strpos($moduleSrc, "'pattern' => 'status'") < strpos($moduleSrc, "'pattern' => '{id}'"));
     $header = (string)@file_get_contents($root . '/public_html/views/partials/ti_header.php');
-    check('módulo: pestaña visible', str_contains($header, "tiActive === 'unit42'"));
+    check('módulo: SIN pestaña en Threat Intelligence', !str_contains($header, "tiActive === 'unit42'")
+        && !str_contains($header, 'modules/threat_intelligence/unit42'));
+    $tiModuleSrc = (string)@file_get_contents($root . '/public_html/modules/threat_intelligence/module.php');
+    check('módulo: sin handlers en Threat Intelligence', !str_contains($tiModuleSrc, 'function unit42')
+        && !str_contains($tiModuleSrc, "'pattern' => 'unit42"));
     $exportSrc = (string)@file_get_contents($root . '/public_html/modules/export/module.php');
     check('export: fuente Unit42', str_contains($exportSrc, "['source'] ?? '') === 'u42'"));
     $worker = (string)@file_get_contents($root . '/public_html/unit42-worker.php');
     check('worker: cron', str_contains($worker, 'Unit42Feed::sync()'));
 
     // --- Sección independiente de Unit 42 en el menú ---
-    $tiModule = ModuleManager::get('threat_intelligence');
+    $tiModule = ModuleManager::get('unit42');
     $extra = $tiModule !== null ? $tiModule->getExtraNavItems() : [];
-    check('menú: sección independiente con dos entradas', count($extra) === 2
-        && ($extra[0]['label'] ?? '') === 'Publicaciones'
-        && ($extra[0]['group'] ?? '') === 'Unit 42'
-        && ($extra[1]['label'] ?? '') === 'Informes con IA'
-        && ($extra[1]['group'] ?? '') === 'Unit 42');
+    $mainNav = $tiModule !== null ? $tiModule->getNavItem() : [];
+    check('menú: sección independiente con dos entradas', count($extra) === 1
+        && ($mainNav['label'] ?? '') === 'Publicaciones'
+        && ($mainNav['group'] ?? '') === 'Unit 42'
+        && ($extra[0]['label'] ?? '') === 'Informes con IA'
+        && ($extra[0]['group'] ?? '') === 'Unit 42');
     $nav = ModuleManager::getNavigation();
     $found = 0;
     foreach ($nav as $item) {
         if (($item['group'] ?? '') !== 'Unit 42') { continue; }
         $url = (string)($item['url'] ?? '');
-        if ($url === base_url('modules/threat_intelligence/unit42')
-            || $url === base_url('modules/threat_intelligence/unit42/reports')) {
+        if ($url === base_url('modules/unit42')
+            || $url === base_url('modules/unit42/reports')) {
             $found++;
         }
     }
@@ -218,8 +225,8 @@ try {
     foreach ($ids as $tempId) {
         Database::query("DELETE FROM u42_articles WHERE id = ?", [$tempId]);
     }
-    check('rutas: estado y contadores', str_contains($moduleSrc, "'pattern' => 'unit42/state'")
-        && str_contains($moduleSrc, "'pattern' => 'unit42/counts'"));
+    check('rutas: estado y contadores', str_contains($moduleSrc, "'pattern' => 'state'")
+        && str_contains($moduleSrc, "'pattern' => 'counts'"));
     check('rutas: acepta cambios anidados', str_contains($moduleSrc, "is_array(\$input['changes'] ?? null)"));
 
     // --- Informes con IA ---
@@ -260,13 +267,13 @@ try {
     check('IA: estado inicial', ($status['status'] ?? '') === 'pending', json_encode($status));
     Database::query("DELETE FROM u42_reports WHERE id = ?", [(int)($report['id'] ?? 0)]);
     Database::query("DELETE FROM u42_articles WHERE id = ?", [$tempId]);
-    check('rutas: informes con IA', str_contains($moduleSrc, "'pattern' => 'unit42/report-create'")
-        && str_contains($moduleSrc, "'pattern' => 'unit42/report/{id}'"));
+    check('rutas: informes con IA', str_contains($moduleSrc, "'pattern' => 'report-create'")
+        && str_contains($moduleSrc, "'pattern' => 'report/{id}'"));
 
     // --- Selector masivo y despliegue en línea (v0.4.28.5) ---
-    $listSrc = (string)@file_get_contents($root . '/public_html/modules/threat_intelligence/views/unit42.php');
-    $panelSrc = (string)@file_get_contents($root . '/public_html/modules/threat_intelligence/views/_unit42_panel.php');
-    $articleSrc = (string)@file_get_contents($root . '/public_html/modules/threat_intelligence/views/unit42_article.php');
+    $listSrc = (string)@file_get_contents($root . '/public_html/modules/unit42/views/unit42.php');
+    $panelSrc = (string)@file_get_contents($root . '/public_html/modules/unit42/views/_unit42_panel.php');
+    $articleSrc = (string)@file_get_contents($root . '/public_html/modules/unit42/views/unit42_article.php');
 
     check('masivo: barra siempre visible', str_contains($listSrc, 'id="u42-mass-bar"')
         && !str_contains(substr($listSrc, strpos($listSrc, 'id="u42-mass-bar"'), 200), 'class="hidden'));
@@ -283,8 +290,8 @@ try {
         && str_contains($listSrc, "text-green-500' : 'text-gray-400"));
     check('lectura: cambia todas las instancias del articulo', str_contains($listSrc, "querySelectorAll('.u42-read-toggle[data-id=\"' + id") );
 
-    check('panel: ruta registrada antes que la ficha', str_contains($moduleSrc, "'pattern' => 'unit42/{id}/panel'")
-        && strpos($moduleSrc, "'pattern' => 'unit42/{id}/panel'") < strpos($moduleSrc, "'pattern' => 'unit42/{id}'"));
+    check('panel: ruta registrada antes que la ficha', str_contains($moduleSrc, "'pattern' => '{id}/panel'")
+        && strpos($moduleSrc, "'pattern' => '{id}/panel'") < strpos($moduleSrc, "'pattern' => '{id}'"));
     check('panel: handler del modulo', str_contains($moduleSrc, 'function unit42ArticlePanel'));
     check('panel: enlace con data-u42-toggle', str_contains($listSrc, 'data-u42-toggle=')
         && str_contains($listSrc, 'function openArticle'));
@@ -327,7 +334,7 @@ try {
     }
     check('TI: listado expone ioc_count', $tiRow !== null && array_key_exists('ioc_count', $tiRow), json_encode($tiRow));
     Database::query("DELETE FROM u42_articles WHERE id = ?", [$tmpTi]);
-    $listSrc = (string)@file_get_contents($root . '/public_html/modules/threat_intelligence/views/unit42.php');
+    $listSrc = (string)@file_get_contents($root . '/public_html/modules/unit42/views/unit42.php');
     check('TI: badge New naranja', str_contains($listSrc, 'bg-brand-500 text-white')
         && str_contains($listSrc, '>New<'));
     check('TI: borde izquierdo en recientes', str_contains($listSrc, 'border-l-2')
@@ -356,7 +363,7 @@ try {
         && str_contains($listSrc, '— Modelo predeterminado —')
         && str_contains($listSrc, 'profile_id: profileId'));
     check('IA: handler pasa los perfiles', str_contains($moduleSrc, "'llmProfiles'    => function_exists('llm_profile_list')"));
-    $reportViewSrc = (string)@file_get_contents($root . '/public_html/modules/threat_intelligence/views/unit42_report.php');
+    $reportViewSrc = (string)@file_get_contents($root . '/public_html/modules/unit42/views/unit42_report.php');
     check('IA: ficha muestra el perfil usado', str_contains($reportViewSrc, 'llm_profile_get($profileId)')
         && str_contains($reportViewSrc, 'perfil <?= e($profileName) ?>'));
     $tmpProfileArticle = Database::insert(
@@ -391,15 +398,15 @@ try {
     check('informes: panel pasa reports al parcial', str_contains($moduleSrc, "'reports'    => Unit42Feed::reportsForArticle(\$id, \$userId)")
         && str_contains($moduleSrc, "'reports'        => Unit42Feed::reportsForArticle"));
     check('informes: tarjeta en el parcial', str_contains($panelSrc, 'Informes con IA de esta publicación')
-        && str_contains($panelSrc, 'modules/threat_intelligence/unit42/report/')
+        && str_contains($panelSrc, 'modules/unit42/report/')
         && str_contains($panelSrc, '$statusMap'));
     Database::query('DELETE FROM u42_reports WHERE id = ?', [(int)$rep['id']]);
     Database::query('DELETE FROM u42_articles WHERE id = ?', [$artWithReport]);
     $missingUi = smoke_css_missing_classes(
         [
-            'modules/threat_intelligence/views/unit42.php',
-            'modules/threat_intelligence/views/_unit42_panel.php',
-            'modules/threat_intelligence/views/unit42_article.php',
+            'modules/unit42/views/unit42.php',
+            'modules/unit42/views/_unit42_panel.php',
+            'modules/unit42/views/unit42_article.php',
         ],
         ['text-green-500', 'text-gray-400', 'text-amber-400', 'text-gray-300',
          'dark:text-gray-600', 'material-icons', 'icon-16']
@@ -411,3 +418,5 @@ try {
 
 echo PHP_EOL . ($total - $fail) . '/' . $total . ' OK' . PHP_EOL;
 exit($fail === 0 ? 0 : 1);
+
+
