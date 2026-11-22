@@ -42,6 +42,7 @@ require __DIR__ . '/_tabs.php';
         </a>
         <div class="flex items-center gap-2 flex-wrap">
             <a href="<?= base_url('modules/cve?tab=reports&report=' . (int)$report['id']) ?>"
+               data-prefetch
                class="px-3 py-2 border border-line-strong text-sm font-medium rounded-lg hover:bg-muted transition-colors">
                 Abrir en el workspace
             </a>

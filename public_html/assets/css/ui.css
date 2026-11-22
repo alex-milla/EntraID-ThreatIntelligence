@@ -1122,6 +1122,9 @@
 
 .ui-v2 .action-menu-dropdown {
     position: fixed;
+    /* v0.4.28.16: el UA de [popover] centra con inset:0 + margin:auto;
+       aquí el menú se ancla al trigger (o lo coloca el JS de fallback). */
+    inset: auto;
     min-width: 200px;
     padding: 4px 0;
     background: var(--surface);
@@ -1155,6 +1158,24 @@
 .ui-v2 .action-menu-dropdown a:hover,
 .ui-v2 .action-menu-dropdown button:hover {
     background: var(--surface-2);
+}
+
+/* v0.4.28.16 — Popover API: el navegador pinta el menú en la top layer. */
+@supports selector(:popover-open) {
+    .ui-v2 .action-menu-dropdown[popover] {
+        margin: 0;
+        max-width: calc(100vw - 16px);
+    }
+    .ui-v2 .action-menu-dropdown[popover]:popover-open {
+        animation: tdlFade .12s ease-out;
+    }
+}
+
+/* CSS Anchor Positioning: JS escribe position-anchor/top/left en el menú. */
+@supports (anchor-name: --eiti-a) {
+    .ui-v2 .action-menu-dropdown[popover] {
+        position: fixed;
+    }
 }
 
 .ui-v2 .menu-danger    { color: var(--danger); }
@@ -1436,6 +1457,9 @@ dialog.tdl-modal-overlay::backdrop {
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius-card);
+    /* v0.4.28.16: la tarjeta se adapta a SU ANCHO, no al de la ventana. */
+    container-type: inline-size;
+    container-name: eiti-stat;
 }
 
 .ui-v2 .stat-ico {
@@ -1465,6 +1489,19 @@ dialog.tdl-modal-overlay::backdrop {
 .ui-v2 .stat-label {
     font-size: 0.8rem;
     color: var(--text-muted);
+}
+
+/* v0.4.28.16 — Container queries: KPIs compactos cuando la tarjeta es estrecha. */
+@supports (container-type: inline-size) {
+    @container eiti-stat (max-width: 190px) {
+        .ui-v2 .stat-ico { width: 30px; height: 30px; }
+        .ui-v2 .stat-num { font-size: 1.2rem; }
+        .ui-v2 .stat-label { font-size: 0.72rem; }
+    }
+    @container eiti-stat (max-width: 140px) {
+        .ui-v2 .stat-ico { display: none; }
+        .ui-v2 .stat-num { font-size: 1.05rem; }
+    }
 }
 
 .ui-v2 .progress {

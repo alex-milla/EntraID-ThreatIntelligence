@@ -62,22 +62,64 @@
         }
 
         // ============================================================
-        // Menú de acción por fila (posicionamiento fixed)
+        // Menú de acción por fila
+        // v0.4.28.16: Popover API + CSS Anchor Positioning cuando están
+        // disponibles; el posicionamiento fixed anterior sigue siendo el
+        // fallback exacto (nativo o no, el markup no cambia).
         // ============================================================
+        var supportsPopover = (typeof HTMLElement !== 'undefined'
+            && typeof HTMLElement.prototype.showPopover === 'function'
+            && typeof HTMLElement.prototype.hidePopover === 'function');
+        var supportsAnchor = (typeof CSS !== 'undefined'
+            && typeof CSS.supports === 'function'
+            && CSS.supports('anchor-name', '--eiti-a')
+            && CSS.supports('top', 'anchor(bottom)'));
+
         var openMenu = null;
         var openTrigger = null;
+        var openPopover = false;
+        var openAnchor = null;
+        var anchorSeq = 0;
+
+        function clearAnchor() {
+            if (!openAnchor) { return; }
+            openAnchor.trigger.style.removeProperty('anchor-name');
+            openAnchor.menu.style.removeProperty('position-anchor');
+            openAnchor.menu.style.removeProperty('top');
+            openAnchor.menu.style.removeProperty('left');
+            openAnchor.menu.style.removeProperty('right');
+            openAnchor.menu.style.removeProperty('bottom');
+            openAnchor.menu.style.removeProperty('margin-top');
+            openAnchor = null;
+        }
+
+        function resetMenuState() {
+            if (openTrigger) { openTrigger.setAttribute('aria-expanded', 'false'); }
+            clearAnchor();
+            if (openMenu) {
+                openMenu.hidden = true;
+                openMenu.removeEventListener('toggle', menuToggleHandler);
+            }
+            openMenu = null;
+            openTrigger = null;
+            openPopover = false;
+        }
+
+        // Light-dismiss del popover (clic fuera, Escape del navegador…).
+        function menuToggleHandler(e) {
+            if (e.newState === 'closed' && openMenu === e.target) { resetMenuState(); }
+        }
 
         function closeActionMenu() {
             if (!openMenu) { return; }
-            openMenu.hidden = true;
-            if (openTrigger) { openTrigger.setAttribute('aria-expanded', 'false'); }
-            openMenu = null;
-            openTrigger = null;
+            if (openPopover) {
+                try { openMenu.hidePopover(); } catch (err) { /* ya cerrado */ }
+            }
+            resetMenuState();
         }
 
-        function positionMenu(trigger, menu) {
+        function positionFallback(trigger, menu) {
             var r = trigger.getBoundingClientRect();
-            menu.hidden = false;
             menu.style.visibility = 'hidden';
             menu.style.left = '0px';
             menu.style.top = '0px';
@@ -95,6 +137,41 @@
             menu.style.visibility = '';
         }
 
+        function openActionMenu(trigger, menu) {
+            closeActionMenu();
+            openMenu = menu;
+            openTrigger = trigger;
+            trigger.setAttribute('aria-expanded', 'true');
+            menu.hidden = false;
+
+            if (supportsPopover) {
+                menu.setAttribute('popover', 'auto');
+                if (supportsAnchor) {
+                    var name = '--eiti-am-' + (++anchorSeq);
+                    trigger.style.setProperty('anchor-name', name);
+                    menu.style.setProperty('position-anchor', name);
+                    menu.style.setProperty('top', 'anchor(bottom)');
+                    menu.style.setProperty('left', 'anchor(left)');
+                    menu.style.setProperty('right', 'auto');
+                    menu.style.setProperty('bottom', 'auto');
+                    menu.style.setProperty('margin-top', '4px');
+                    openAnchor = { trigger: trigger, menu: menu };
+                }
+                try {
+                    menu.showPopover();
+                    openPopover = true;
+                    menu.addEventListener('toggle', menuToggleHandler);
+                } catch (err) {
+                    openPopover = false;
+                    clearAnchor();
+                }
+            }
+
+            // Sin Anchor Positioning hace falta colocar el popover con el
+            // cálculo clásico, aunque la top layer sí esté disponible.
+            if (!openPopover || !supportsAnchor) { positionFallback(trigger, menu); }
+        }
+
         document.addEventListener('click', function (e) {
             var trigger = e.target.closest ? e.target.closest('[data-action-menu]') : null;
             if (trigger) {
@@ -104,11 +181,7 @@
                 var menu = document.getElementById(targetId);
                 if (!menu) { return; }
                 if (openMenu === menu) { closeActionMenu(); return; }
-                closeActionMenu();
-                openMenu = menu;
-                openTrigger = trigger;
-                trigger.setAttribute('aria-expanded', 'true');
-                positionMenu(trigger, menu);
+                openActionMenu(trigger, menu);
                 return;
             }
 
@@ -123,6 +196,46 @@
                 closeActionMenu();
                 if (t) { t.focus(); }
             }
+        });
+
+        // ============================================================
+        // Prefetch al hover/foco de enlaces marcados data-prefetch
+        // v0.4.28.16: solo mismo origen, máximo 8 URLs y respeta save-data.
+        // ============================================================
+        var prefetched = Object.create(null);
+        var prefetchCount = 0;
+        var PREFETCH_MAX = 8;
+
+        function prefetchLink(a) {
+            if (!a || prefetched[a.href]) { return; }
+            var u;
+            try { u = new URL(a.href, window.location.href); } catch (err) { return; }
+            if (u.origin !== window.location.origin) { return; }
+            if (u.protocol !== 'http:' && u.protocol !== 'https:') { return; }
+            if (a.target && a.target !== '_self') { return; }
+            if (prefetchCount >= PREFETCH_MAX) { return; }
+            if (navigator.connection
+                && (navigator.connection.saveData
+                    || /slow-2g|2g/.test(navigator.connection.effectiveType || ''))) {
+                return;
+            }
+            prefetched[a.href] = true;
+            prefetchCount++;
+            var link = document.createElement('link');
+            link.rel = 'prefetch';
+            link.as = 'document';
+            link.href = u.href;
+            document.head.appendChild(link);
+        }
+
+        document.addEventListener('pointerover', function (e) {
+            if (e.pointerType && e.pointerType !== 'mouse') { return; }
+            var a = e.target.closest ? e.target.closest('a[data-prefetch]') : null;
+            if (a) { prefetchLink(a); }
+        }, { passive: true });
+        document.addEventListener('focusin', function (e) {
+            var a = e.target.closest ? e.target.closest('a[data-prefetch]') : null;
+            if (a) { prefetchLink(a); }
         });
 
         // ============================================================

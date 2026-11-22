@@ -80,6 +80,7 @@ $fmtDate = static function (?string $value): string {
                             <tr class="hover:bg-muted/50">
                                 <td class="px-3 py-2">
                                     <a href="<?= e($base . '/group/' . $gid . '?back=' . rawurlencode('?tab=groups')) ?>"
+                                       data-prefetch
                                        class="font-medium text-brand-600 dark:text-brand-300 hover:underline">
                                         <?= e((string)($group['name'] ?? ('Grupo #' . $gid))) ?>
                                     </a>
@@ -103,6 +104,7 @@ $fmtDate = static function (?string $value): string {
                                 </td>
                                 <td class="px-3 py-2 text-right">
                                     <a href="<?= e($base . '/group/' . $gid . '?back=' . rawurlencode('?tab=groups')) ?>"
+                                       data-prefetch
                                        class="text-[11px] text-brand-600 dark:text-brand-300 hover:underline">
                                         Abrir
                                     </a>

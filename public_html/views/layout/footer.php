@@ -23,6 +23,7 @@
 <script src="<?= asset_url('js/filters.js') ?>?v=<?= e(APP_VERSION) ?>"></script>
 <script src="<?= asset_url('js/ui.js') ?>?v=<?= e(APP_VERSION) ?>"></script>
 <script src="<?= asset_url('js/report-doc.js') ?>?v=<?= e(APP_VERSION) ?>"></script>
+<script src="<?= asset_url('js/perf.js') ?>?v=<?= e(APP_VERSION) ?>"></script>
 <?php if (Auth::check()): ?>
 <script src="<?= asset_url('js/ioc-extractor.js') ?>?v=<?= e(APP_VERSION) ?>"></script>
 <?php endif; ?>
