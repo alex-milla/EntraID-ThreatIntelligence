@@ -33,7 +33,7 @@ foreach ($flashData as $type => $msg):
             <?= Csrf::field() ?>
             <div>
                 <label class="block text-sm font-medium text-ink mb-1">Contraseña actual</label>
-                <input type="password" name="current_password" required class="w-full px-3 py-2 rounded-lg border border-line-strong bg-input text-ink focus:ring-2 focus:ring-brand-500 focus:border-transparent outline-none">
+                <input type="password" name="current_password" required autocomplete="current-password" class="w-full px-3 py-2 rounded-lg border border-line-strong bg-input text-ink focus:ring-2 focus:ring-brand-500 focus:border-transparent outline-none">
             </div>
             <div>
                 <label class="block text-sm font-medium text-ink mb-1">Nueva contraseña</label>

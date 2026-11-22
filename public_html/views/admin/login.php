@@ -11,6 +11,7 @@ $__assetVersion = defined('APP_VERSION') ? APP_VERSION : '1';
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="light dark">
     <meta name="theme-color" content="#f97316">
     <meta name="csrf-token" content="<?= e(Csrf::token()) ?>">
     <title>Iniciar sesión — <?= e(APP_NAME) ?></title>
@@ -29,6 +30,8 @@ $__assetVersion = defined('APP_VERSION') ? APP_VERSION : '1';
                 var root = document.documentElement;
                 root.classList.toggle('dark', dark);
                 root.setAttribute('data-theme', dark ? 'dark' : 'light');
+                var meta = document.querySelector('meta[name="color-scheme"]');
+                if (meta) { meta.content = dark ? 'dark' : 'light'; }
             } catch (e) { /* preferencia no disponible */ }
         })();
     </script>
@@ -83,6 +86,16 @@ $__assetVersion = defined('APP_VERSION') ? APP_VERSION : '1';
             </button>
         </form>
 
+        <?php if (!empty($webauthn)): ?>
+        <div class="mt-3">
+            <button type="button" id="webauthn-login" class="btn btn-outline w-full">
+                <i class="material-icons icon-16" aria-hidden="true">passkey</i>
+                Entrar con passkey
+            </button>
+            <p id="webauthn-msg" class="text-xs text-ink-muted mt-2 mb-0" aria-live="polite"></p>
+        </div>
+        <?php endif; ?>
+
         <p class="text-center text-xs text-ink-soft mt-6 mb-0">
             Usuario por defecto: <code class="font-mono">admin</code> / <code class="font-mono">admin</code>
             <br><span class="text-warning">Cámbiala tras el primer acceso</span>
@@ -90,5 +103,37 @@ $__assetVersion = defined('APP_VERSION') ? APP_VERSION : '1';
         <p class="text-center text-[10px] text-ink-soft mt-2 mb-0">v<?= e(APP_VERSION) ?></p>
     </div>
 </div>
+<?php if (!empty($webauthn)): ?>
+<script src="<?= asset_url('js/webauthn.js') ?>?v=<?= e(APP_VERSION) ?>"></script>
+<script nonce="<?= defined('CSP_NONCE') ? e(CSP_NONCE) : '' ?>">
+(function () {
+    var btn = document.getElementById('webauthn-login');
+    var msg = document.getElementById('webauthn-msg');
+    if (!btn || !window.EitiWebAuthn) { return; }
+    if (!EitiWebAuthn.available()) {
+        btn.disabled = true;
+        if (msg) { msg.textContent = 'Este navegador no admite passkeys.'; }
+        return;
+    }
+    btn.addEventListener('click', function () {
+        var user = (document.getElementById('username') || {}).value || '';
+        if (msg) { msg.textContent = 'Usando la passkey…'; }
+        EitiWebAuthn.authenticate(
+            <?= json_encode(base_url('admin/webauthn/auth-options'), JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>,
+            <?= json_encode(base_url('admin/webauthn/auth-verify'), JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>,
+            user
+        ).then(function (res) {
+            if (res && res.success) {
+                window.location.href = <?= json_encode(base_url('admin'), JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
+            } else if (msg) {
+                msg.textContent = (res && res.error) ? res.error : 'No se pudo entrar con passkey.';
+            }
+        }).catch(function (e) {
+            if (msg) { msg.textContent = e && e.message ? e.message : 'Error al usar la passkey.'; }
+        });
+    });
+})();
+</script>
+<?php endif; ?>
 </body>
 </html>

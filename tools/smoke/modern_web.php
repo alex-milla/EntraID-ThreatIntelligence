@@ -10,6 +10,8 @@
  *   - prefers-reduced-motion en CSS y en el scroll del JS
  *   - Fase 2: Popover API + Anchor Positioning con fallback, container queries,
  *     prefetch al hover y medición de LCP/INP
+ *   - Fase 3: WebAuthn opcional (off por defecto), defer y hallazgos del
+ *     legacy-scan corregidos
  *   - VERSION alineada con el release
  * No necesita base de datos ni servidor.
  */
@@ -45,6 +47,11 @@ $boot    = $read('public_html/config/bootstrap.php');
 $footer  = $read('public_html/views/layout/footer.php');
 $groups  = $read('public_html/modules/exposed_report/views/_groups.php');
 $aiRep   = $read('public_html/modules/cve/views/ai_report.php');
+$webAuthn = $read('public_html/includes/webauthn.php');
+$webJs   = $read('public_html/assets/js/webauthn.js');
+$admin   = $read('public_html/admin/index.php');
+$login   = $read('public_html/views/admin/login.php');
+$envEx   = $read('public_html/.env.example');
 $version = trim($read('public_html/VERSION'));
 
 // --- Modales -------------------------------------------------------------
@@ -122,8 +129,40 @@ check('Métricas: INP por eventos con interactionId',
 check('Métricas: API pública EitiVitals', str_contains($perfJs, 'window.EitiVitals = copy()'));
 check('Métricas: beacon solo si hay endpoint', str_contains($perfJs, 'data-vitals-endpoint'));
 
+// --- Fase 3: WebAuthn -----------------------------------------------------
+check('WebAuthn: flag por defecto desactivado',
+    str_contains($envEx, 'WEBAUTHN_ENABLED=0') && str_contains($webAuthn, "getenv('WEBAUTHN_ENABLED') === '1'"));
+check('WebAuthn: challenge en sesión con TTL', str_contains($webAuthn, "CHALLENGE_TTL = 120"));
+check('WebAuthn: CBOR/COSE y verificación ES256',
+    str_contains($webAuthn, 'cborDecode') && str_contains($webAuthn, 'pemFromCose')
+    && str_contains($webAuthn, 'derSignature') && str_contains($webAuthn, "OPENSSL_ALGO_SHA256"));
+check('WebAuthn: loginById en Auth', str_contains($read('public_html/includes/auth.php'), 'function loginById'));
+check('WebAuthn: tabla de credenciales', str_contains($read('public_html/config/database.php'), 'webauthn_credentials'));
+check('WebAuthn: rutas de admin',
+    str_contains($admin, "webauthn/register-options") && str_contains($admin, "webauthn/auth-verify"));
+check('WebAuthn: botón en login', str_contains($login, 'id="webauthn-login"'));
+check('WebAuthn: cliente JS', str_contains($webJs, 'window.EitiWebAuthn')
+    && str_contains($webJs, 'isSecureContext'));
+check('WebAuthn: carga condicional en el layout',
+    str_contains($footer, 'js/webauthn.js') && str_contains($footer, 'WebAuthn::enabled()'));
+
+// --- Fase 3: scripts y legacy-scan ----------------------------------------
+check('Scripts: perf.js con defer', str_contains($footer, 'defer src="<?= asset_url(\'js/perf.js\')'));
+check('Legacy: meta color-scheme en layout/login/404',
+    str_contains($read('public_html/views/layout/header.php'), '<meta name="color-scheme"')
+    && str_contains($login, '<meta name="color-scheme"')
+    && str_contains($read('public_html/views/errors/404.php'), '<meta name="color-scheme"'));
+check('Legacy: autocomplete en formularios de contraseña',
+    str_contains($read('public_html/views/admin/change_password.php'), 'autocomplete="current-password"')
+    && substr_count($read('public_html/admin-recovery.php'), 'autocomplete="new-password"') === 2);
+check('Legacy: scrollbar estándar', str_contains($appCss, 'scrollbar-color:')
+    && str_contains($appCss, 'scrollbar-width:'));
+check('Legacy: Enter respeta IME',
+    str_contains($read('public_html/assets/js/ioc-extractor.js'), 'ev.keyCode !== 229')
+    && str_contains($read('public_html/modules/remediation/views/assistant.php'), 'e.keyCode !== 229'));
+
 // --- Versión -------------------------------------------------------------
-check('VERSION = 0.4.28.16', $version === '0.4.28.16', $version);
+check('VERSION = 0.4.28.17', $version === '0.4.28.17', $version);
 
 echo PHP_EOL . ($fail === 0
     ? 'RESULTADO: OK (' . $total . ' comprobaciones)'

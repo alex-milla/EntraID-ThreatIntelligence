@@ -23,7 +23,36 @@
 <script src="<?= asset_url('js/filters.js') ?>?v=<?= e(APP_VERSION) ?>"></script>
 <script src="<?= asset_url('js/ui.js') ?>?v=<?= e(APP_VERSION) ?>"></script>
 <script src="<?= asset_url('js/report-doc.js') ?>?v=<?= e(APP_VERSION) ?>"></script>
-<script src="<?= asset_url('js/perf.js') ?>?v=<?= e(APP_VERSION) ?>"></script>
+<script defer src="<?= asset_url('js/perf.js') ?>?v=<?= e(APP_VERSION) ?>"></script>
+<?php if (WebAuthn::enabled()): ?>
+<script src="<?= asset_url('js/webauthn.js') ?>?v=<?= e(APP_VERSION) ?>"></script>
+<script nonce="<?= defined('CSP_NONCE') ? e(CSP_NONCE) : '' ?>">
+(function () {
+    var btn = document.getElementById('webauthn-register');
+    var msg = document.getElementById('webauthn-register-msg');
+    if (!btn || !window.EitiWebAuthn) { return; }
+    btn.addEventListener('click', function () {
+        btn.disabled = true;
+        if (msg) { msg.textContent = 'Registrando passkey…'; }
+        EitiWebAuthn.register(
+            <?= json_encode(base_url('admin/webauthn/register-options'), JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>,
+            <?= json_encode(base_url('admin/webauthn/register-verify'), JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>
+        ).then(function (res) {
+            if (res && res.success) {
+                if (msg) { msg.textContent = 'Passkey registrada.'; }
+                setTimeout(function () { window.location.reload(); }, 800);
+            } else {
+                if (msg) { msg.textContent = (res && res.error) ? res.error : 'No se pudo registrar.'; }
+                btn.disabled = false;
+            }
+        }).catch(function (e) {
+            if (msg) { msg.textContent = e && e.message ? e.message : 'Error al registrar.'; }
+            btn.disabled = false;
+        });
+    });
+})();
+</script>
+<?php endif; ?>
 <?php if (Auth::check()): ?>
 <script src="<?= asset_url('js/ioc-extractor.js') ?>?v=<?= e(APP_VERSION) ?>"></script>
 <?php endif; ?>

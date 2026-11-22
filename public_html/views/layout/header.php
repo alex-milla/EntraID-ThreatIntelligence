@@ -13,6 +13,7 @@ $__assetVersion = defined('APP_VERSION') ? APP_VERSION : '1';
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="light dark">
     <meta name="theme-color" content="#f97316">
     <meta name="description" content="EntraID Threat Intelligence Platform — Multi-tenant Microsoft Graph data extraction">
     <meta name="csrf-token" content="<?= e(Csrf::token()) ?>">
@@ -41,6 +42,8 @@ $__assetVersion = defined('APP_VERSION') ? APP_VERSION : '1';
                 var root = document.documentElement;
                 root.classList.toggle('dark', dark);
                 root.setAttribute('data-theme', dark ? 'dark' : 'light');
+                var meta = document.querySelector('meta[name="color-scheme"]');
+                if (meta) { meta.content = dark ? 'dark' : 'light'; }
             } catch (e) { /* preferencia no disponible */ }
         })();
     </script>

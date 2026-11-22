@@ -90,9 +90,56 @@ class AdminController
         }
 
         // Vista de login (pantalla completa, sin layout)
-        $data = ['error' => $error, 'old' => old_input()];
+        $data = [
+            'error'    => $error,
+            'old'      => old_input(),
+            'webauthn' => WebAuthn::enabled(),
+        ];
         extract($data);
         require VIEWS_PATH . '/admin/login.php';
+    }
+
+    /** Opciones de registro de passkey (requiere sesión). */
+    public static function webauthnRegisterOptions(): void
+    {
+        Auth::require();
+        if (!WebAuthn::enabled()) {
+            json_response(['success' => false, 'error' => 'Passkeys desactivadas'], 404);
+            return;
+        }
+        $options = WebAuthn::registrationOptions((int)Auth::id());
+        json_response($options
+            ? ['success' => true, 'options' => $options]
+            : ['success' => false, 'error' => 'No se pudieron generar las opciones']);
+    }
+
+    /** Verificación del registro de passkey (requiere sesión). */
+    public static function webauthnRegisterVerify(): void
+    {
+        Auth::require();
+        $body = json_decode((string)file_get_contents('php://input'), true);
+        json_response(WebAuthn::finishRegistration((int)Auth::id(), is_array($body) ? $body : []));
+    }
+
+    /** Opciones de autenticación con passkey (pública). */
+    public static function webauthnAuthOptions(): void
+    {
+        if (!WebAuthn::enabled()) {
+            json_response(['success' => false, 'error' => 'Passkeys desactivadas'], 404);
+            return;
+        }
+        $username = isset($_GET['username']) ? (string)$_GET['username'] : null;
+        $options = WebAuthn::authenticationOptions($username);
+        json_response($options
+            ? ['success' => true, 'options' => $options]
+            : ['success' => false, 'error' => 'No se pudieron generar las opciones']);
+    }
+
+    /** Verificación de la aserción; inicia sesión si es válida. */
+    public static function webauthnAuthVerify(): void
+    {
+        $body = json_decode((string)file_get_contents('php://input'), true);
+        json_response(WebAuthn::finishAuthentication(is_array($body) ? $body : []));
     }
 
     /**
@@ -1283,6 +1330,8 @@ class AdminController
         );
 
         $totalPages = max(1, (int)ceil($total / $perPage));
+        $webauthnEnabled = WebAuthn::enabled();
+        $webauthnCredentials = $webauthnEnabled ? WebAuthn::forUser((int)Auth::id()) : [];
 
         require VIEWS_PATH . '/layout/header.php';
         require VIEWS_PATH . '/layout/sidebar.php';
@@ -1789,6 +1838,8 @@ $adminRoutes = [
         'logs/download'    => 'logsDownload',
         'updates'          => 'updates',
         'change-password'  => 'changePassword',
+        'webauthn/register-options' => 'webauthnRegisterOptions',
+        'webauthn/auth-options'     => 'webauthnAuthOptions',
     ],
     'POST' => [
         'login'            => 'login',
@@ -1817,6 +1868,8 @@ $adminRoutes = [
         'logs/clear'       => 'logsClear',
         'updates'          => 'updates',
         'change-password'  => 'changePassword',
+        'webauthn/register-verify' => 'webauthnRegisterVerify',
+        'webauthn/auth-verify'     => 'webauthnAuthVerify',
     ],
 ];
 

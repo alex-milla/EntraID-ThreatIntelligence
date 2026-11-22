@@ -373,7 +373,11 @@ button .material-icons {
    5. UTILIDADES PROPIAS (compatibilidad con el markup anterior)
    ============================================================ */
 
-/* Scrollbar */
+/* Scrollbar (v0.4.28.17: estándar primero, webkit como respaldo) */
+:root {
+    scrollbar-color: var(--border-strong) transparent;
+    scrollbar-width: thin;
+}
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 4px; }

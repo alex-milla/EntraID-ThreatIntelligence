@@ -42,6 +42,35 @@ $nSuspects = count($suspects ?? []);
     </p>
 </div>
 
+<?php if (!empty($webauthnEnabled)): ?>
+<div class="card p-4 mb-6" id="webauthn-card">
+    <div class="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+            <h3 class="text-sm font-semibold">Passkeys (WebAuthn)</h3>
+            <p class="text-xs text-ink-muted mt-1">
+                Segundo factor opcional. Solo los navegadores con HTTPS y
+                <code>isSecureContext</code> pueden registrar una passkey.
+            </p>
+        </div>
+        <button type="button" id="webauthn-register" class="btn btn-small">
+            <i class="material-icons icon-16" aria-hidden="true">passkey</i>
+            Registrar passkey
+        </button>
+    </div>
+    <p id="webauthn-register-msg" class="text-xs text-ink-muted mt-2 mb-0" aria-live="polite"></p>
+    <?php if (!empty($webauthnCredentials)): ?>
+    <ul class="mt-3 text-xs text-ink-soft">
+        <?php foreach ($webauthnCredentials as $cred): ?>
+        <li>Passkey <?= e($cred['label']) ?> · creada <?= e($cred['created_at']) ?>
+            <?php if ($cred['last_used']): ?>· último uso <?= e($cred['last_used']) ?><?php endif; ?></li>
+        <?php endforeach; ?>
+    </ul>
+    <?php else: ?>
+    <p class="text-xs text-ink-soft mt-3 mb-0">No tienes passkeys registradas.</p>
+    <?php endif; ?>
+</div>
+<?php endif; ?>
+
 <?php if ($nSuspects > 0): ?>
 <div class="mb-6 rounded-lg border border-danger-border bg-danger-bg px-4 py-3">
     <p class="text-sm text-danger">

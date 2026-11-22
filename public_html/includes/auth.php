@@ -60,6 +60,38 @@ class Auth
     }
 
     /**
+     * Inicia sesión por un ID de usuario ya verificado (p. ej. passkey).
+     * No sustituye a attempt(): el verificador criptográfico ya ha validado
+     * la identidad antes de llegar aquí.
+     */
+    public static function loginById(int $userId, string $reason = 'webauthn'): bool
+    {
+        $user = Database::fetchOne("SELECT * FROM users WHERE id = ?", [$userId]);
+        if (!$user) {
+            self::recordLogin('', $userId, false, 'no_user');
+            return false;
+        }
+
+        Database::update(
+            "UPDATE users SET last_login_at = datetime('now'), updated_at = datetime('now') WHERE id = ?",
+            [$user['id']]
+        );
+        Session::regenerate();
+        Session::set(self::SESSION_USER_KEY, (int)$user['id']);
+        Session::set(self::SESSION_LOGIN_TIME, time());
+        Session::set('auth_user', [
+            'id'           => (int)$user['id'],
+            'username'     => $user['username'],
+            'email'        => $user['email'],
+            'display_name' => $user['display_name'],
+            'role'         => $user['role'],
+        ]);
+        self::recordLogin((string)$user['username'], (int)$user['id'], true, $reason);
+        log_activity('auth.login', ['username' => $user['username'], 'method' => $reason], (int)$user['id']);
+        return true;
+    }
+
+    /**
      * Registra un intento de acceso (éxito o fallo) para la auditoría de
      * seguridad. No es crítico: si falla, no debe romper el login.
      */

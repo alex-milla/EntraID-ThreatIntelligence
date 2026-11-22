@@ -496,7 +496,7 @@
 
     if ($('iocz-article-q')) {
         $('iocz-article-q').addEventListener('keydown', function (ev) {
-            if (ev.key === 'Enter') { ev.preventDefault(); searchArticles(); }
+            if (ev.key === 'Enter' && !ev.isComposing && ev.keyCode !== 229) { ev.preventDefault(); searchArticles(); }
         });
     }
 

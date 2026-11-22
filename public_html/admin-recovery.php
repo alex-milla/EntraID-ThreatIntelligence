@@ -218,8 +218,8 @@ $report = ob_get_clean();
 <form method="POST">
     <?= Csrf::field() ?>
     <input type="hidden" name="action" value="reset">
-    <p>Nueva contraseña (mín. 8, no puede ser "admin"): <input type="password" name="new_password" required minlength="8"></p>
-    <p>Repetir: <input type="password" name="new_password_confirm" required minlength="8"></p>
+    <p>Nueva contraseña (mín. 8, no puede ser "admin"): <input type="password" name="new_password" required minlength="8" autocomplete="new-password"></p>
+    <p>Repetir: <input type="password" name="new_password_confirm" required minlength="8" autocomplete="new-password"></p>
     <button type="submit">Guardar y verificar</button>
 </form>
 

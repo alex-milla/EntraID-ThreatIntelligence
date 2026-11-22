@@ -594,7 +594,7 @@ foreach (array_reverse($messages ?? []) as $msg) {
 
     sendEl.addEventListener('click', send);
     inputEl.addEventListener('keydown', function (e) {
-        if (e.key === 'Enter' && !e.shiftKey) {
+        if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
             e.preventDefault();
             send();
         }
