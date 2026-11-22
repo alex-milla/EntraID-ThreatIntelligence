@@ -12,7 +12,8 @@
     var S = {
         source: 'u42', articleIds: [], articleId: 0, filters: {},
         iocs: [], stats: null, format: 'stix', category: 'all', results: null,
-        selectionEdited: false
+        selectionEdited: false,
+        searchId: 0, scope: 'all', newIocs: [], search: null
     };
 
     function $(id) { return document.getElementById(id); }
@@ -60,7 +61,7 @@
         S.source = source;
         var sel = $('iocz-source');
         if (sel) { sel.value = source; }
-        ['u42', 'tenant', 'text'].forEach(function (name) {
+        ['u42', 'tenant', 'text', 'ti_tracker'].forEach(function (name) {
             var el = $('iocz-src-' + name);
             if (el) { el.classList.toggle('hidden', name !== source); }
         });
@@ -78,6 +79,10 @@
         S.iocs = []; S.stats = null; S.results = null; S.category = 'all';
         S.format = opts.format || 'stix';
         S.selectionEdited = false;
+        S.searchId = parseInt(opts.searchId || 0, 10) || 0;
+        S.scope = opts.scope === 'new' ? 'new' : 'all';
+        S.newIocs = Array.isArray(opts.newIocs) ? opts.newIocs : [];
+        S.search = null;
 
         modal.classList.remove('hidden');
         document.body.style.overflow = 'hidden';
@@ -100,6 +105,8 @@
             searchArticles(); // por si el usuario vuelve al paso 1 a añadir más
             extract();
         } else if (S.source === 'tenant') {
+            extract();
+        } else if (S.source === 'ti_tracker' && S.searchId > 0) {
             extract();
         }
     }
@@ -168,6 +175,11 @@
         } else if (S.source === 'tenant') {
             payload.tenant_id = S.filters.tenant_id || parseInt(($('export-tenant') || {}).value || '0', 10) || 0;
             payload.filters = S.filters;
+        } else if (S.source === 'ti_tracker') {
+            if (!S.searchId) { setError('Falta la búsqueda de Seguimiento TI.'); return; }
+            payload.search_id = S.searchId;
+            payload.scope = S.scope;
+            if (S.scope === 'new') { payload.new_iocs = S.newIocs; }
         } else {
             payload.text = ($('iocz-text') || {}).value || '';
         }
@@ -192,6 +204,10 @@
                 go(1);
                 return;
             }
+            if (res && res.search) {
+                S.search = res.search;
+                applySearchConfig(res.search);
+            }
             setOrigin(res);
             renderStats();
             renderTable();
@@ -201,6 +217,19 @@
             setError(e.message || 'Error de red');
             go(1);
         });
+    }
+
+    /** Pre-rellena el paso 4 con los metadatos de la búsqueda guardada. */
+    function applySearchConfig(search) {
+        var set = function (id, value) {
+            var el = $(id);
+            if (el && value !== null && value !== undefined && value !== '') { el.value = value; }
+        };
+        set('iocz-cfg-source', search.source_name || 'abuse.ch ThreatFox');
+        set('iocz-cfg-actor', search.threat_actor || '');
+        set('iocz-cfg-tags', search.extra_tags || '');
+        set('iocz-cfg-tlp', search.tlp || 'amber');
+        set('iocz-cfg-days', search.valid_days || 365);
     }
 
     function setOrigin(res) {
@@ -215,6 +244,10 @@
             parts.push(shown);
         } else if (S.source === 'tenant') {
             parts.push('IOCs del catálogo del tenant');
+        } else if (S.source === 'ti_tracker') {
+            var search = (res && res.search) || S.search || {};
+            parts.push('Seguimiento TI TF · «' + (search.name || search.id || S.searchId) + '»');
+            if (search.scope === 'new' || S.scope === 'new') { parts.push('solo novedades'); }
         } else if (S.source === 'text') {
             parts.push('Texto pegado');
         } else {
@@ -380,7 +413,11 @@
         var results = $('iocz-results');
         if (results) { results.innerHTML = ''; }
 
-        api('POST', BASE + '/generate', {format: S.format, iocs: S.iocs, config: config()}).then(function (res) {
+        var payload = {format: S.format, iocs: S.iocs, config: config()};
+        if (S.source === 'ti_tracker' && S.search && S.search.id) {
+            payload.search_id = S.search.id;
+        }
+        api('POST', BASE + '/generate', payload).then(function (res) {
             if (btn) { btn.disabled = false; btn.textContent = 'Generar ficheros'; }
             if (!res || !res.success) {
                 if (msg) { msg.textContent = (res && res.error) || 'No se pudo generar.'; }

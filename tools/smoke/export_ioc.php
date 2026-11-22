@@ -163,5 +163,50 @@ $partial = (string)@file_get_contents(dirname(__DIR__, 2) . '/public_html/views/
 check('Vista: pasos clicables y origen', str_contains($partial, 'IOCExtractor.goto(')
     && str_contains($partial, 'id="iocz-origin"'));
 
+// --- Origen Seguimiento TI TF en el asistente (v0.4.28.21) ------------------
+$exportModule = (string)@file_get_contents(dirname(__DIR__, 2) . '/public_html/modules/export/module.php');
+$runView = (string)@file_get_contents(dirname(__DIR__, 2) . '/public_html/modules/ti_tracker/views/run.php');
+$indexView = (string)@file_get_contents(dirname(__DIR__, 2) . '/public_html/modules/ti_tracker/views/index.php');
+
+check('Backend: origen ti_tracker en extract', str_contains($exportModule, "\$source === 'ti_tracker'")
+    && str_contains($exportModule, 'tiTrackerExtraction'));
+check('Backend: mapeo de filas ThreatFox', str_contains($exportModule, 'function mapThreatFoxIoc'));
+check('Backend: historial al generar', str_contains($exportModule, '$searchId > 0')
+    && str_contains($exportModule, 'logExport('));
+
+$refMap = new ReflectionMethod(Module_Export::class, 'mapThreatFoxIoc');
+$refMap->setAccessible(true);
+$mappedDomain = $refMap->invoke(null, [
+    'ioc' => 'gate-fender.lufribke.workers.dev', 'ioc_type' => 'domain',
+    'malware_printable' => 'Lumma', 'tags' => 'c2', 'reference' => 'https://example.org/ref',
+]);
+check('Mapa: dominio', is_array($mappedDomain)
+    && ($mappedDomain['type'] ?? '') === 'domain-name'
+    && ($mappedDomain['value'] ?? '') === 'gate-fender.lufribke.workers.dev'
+    && str_contains((string)($mappedDomain['description'] ?? ''), 'Lumma'));
+
+$mappedPort = $refMap->invoke(null, [
+    'ioc' => '45.83.1.2:8443', 'ioc_type' => 'ip:port', 'malware' => 'Cobalt Strike',
+]);
+check('Mapa: ip:port → IPv4 + puerto', is_array($mappedPort)
+    && ($mappedPort['type'] ?? '') === 'ipv4-addr'
+    && ($mappedPort['value'] ?? '') === '45.83.1.2'
+    && str_contains((string)($mappedPort['description'] ?? ''), '8443'));
+
+$mappedUnknown = $refMap->invoke(null, ['ioc' => '', 'ioc_type' => 'domain']);
+check('Mapa: IOC vacío se descarta', $mappedUnknown === null);
+
+check('JS: fuente ti_tracker', str_contains($js, "S.source === 'ti_tracker'")
+    && str_contains($js, "payload.search_id = S.searchId"));
+check('JS: precarga metadatos de la búsqueda', str_contains($js, 'function applySearchConfig')
+    && str_contains($js, "set('iocz-cfg-tlp', search.tlp"));
+check('JS: novedades al abrir el asistente', str_contains($js, "payload.new_iocs = S.newIocs")
+    && str_contains($runView, 'opts.newIocs = JSON.parse('));
+check('Vista: selector de Seguimiento TI', str_contains($partial, 'value="ti_tracker"'));
+check('Vista: botones abren el asistente', str_contains($runView, 'data-tt-search=')
+    && str_contains($runView, 'IOCExtractor.open(opts)')
+    && str_contains($indexView, 'IOCExtractor.open({')
+    && str_contains($runView, 'data-tt-scope="new"'));
+
 echo PHP_EOL . ($total - $fail) . '/' . $total . ' OK' . PHP_EOL;
 exit($fail === 0 ? 0 : 1);

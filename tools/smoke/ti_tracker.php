@@ -280,6 +280,18 @@ check(
 );
 
 /* ============================================================
+ * 9. Exportación desde el asistente (v0.4.28.21)
+ * ============================================================ */
+$runView = (string)@file_get_contents(MODULES_PATH . '/ti_tracker/views/run.php');
+$indexView = (string)@file_get_contents(MODULES_PATH . '/ti_tracker/views/index.php');
+check('Vista resultados: botones con id de búsqueda', str_contains($runView, 'data-tt-search="'));
+check('Vista resultados: botón de solo novedades', str_contains($runView, 'data-tt-scope="new"')
+    && str_contains($runView, 'data-tt-new='));
+check('Vista listado: botones con id de búsqueda', str_contains($indexView, 'data-tt-search='));
+check('Compatibilidad: endpoint de exportación directo sigue registrado',
+    in_array('export/{id}', $patterns, true));
+
+/* ============================================================
  * Resumen
  * ============================================================ */
 echo "\n" . ($fail === 0 ? 'TODO OK' : 'FALLOS') . ": " . ($total - $fail) . "/{$total}\n";

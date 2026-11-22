@@ -693,6 +693,21 @@ class Module_Export extends BaseModule
         $iocs = [];
         $articles = [];
 
+        /* Seguimiento TI TF: búsqueda guardada (todas las filas o solo novedades). */
+        if ($source === 'ti_tracker') {
+            $extracted = $this->tiTrackerExtraction(
+                (int)($input['search_id'] ?? 0),
+                strtolower((string)($input['scope'] ?? 'all')),
+                is_array($input['new_iocs'] ?? null) ? $input['new_iocs'] : []
+            );
+            if (!empty($extracted['error'])) {
+                json_response(['success' => false, 'error' => $extracted['error']], 400);
+                return;
+            }
+            json_response($extracted['response']);
+            return;
+        }
+
         if ($source === 'u42') {
             $ids = is_array($input['article_ids'] ?? null) ? array_values(array_filter(array_map('intval', $input['article_ids']))) : [];
             if ($ids === []) {
@@ -787,6 +802,154 @@ class Module_Export extends BaseModule
         ]);
     }
 
+    /**
+     * IOCs de una búsqueda guardada de Seguimiento TI TF, en el formato que
+     * espera el asistente. scope='new' filtra por la lista de novedades que
+     * envía la pantalla de resultados.
+     */
+    private function tiTrackerExtraction(int $searchId, string $scope, array $newIocs): array
+    {
+        if ($searchId <= 0) {
+            return ['error' => 'Falta la búsqueda de Seguimiento TI.'];
+        }
+        try {
+            $search = (new TiTrackerStore())->getSearch($searchId);
+        } catch (Throwable $e) {
+            return ['error' => 'No se pudo leer la búsqueda: ' . $e->getMessage()];
+        }
+        if ($search === null) {
+            return ['error' => 'La búsqueda no existe.'];
+        }
+
+        try {
+            $rows = TiTrackerRunner::resolveRows(TiTrackerRunner::filtersFor($search));
+        } catch (Throwable $e) {
+            return ['error' => $e->getMessage()];
+        }
+
+        if ($scope === 'new') {
+            $keys = [];
+            foreach ($newIocs as $value) {
+                $key = strtolower(trim((string)$value));
+                if ($key !== '') { $keys[$key] = true; }
+            }
+            if ($keys === []) {
+                return ['error' => 'La búsqueda no tiene novedades en esta ejecución.'];
+            }
+            $rows = array_values(array_filter($rows, static function (array $row) use ($keys): bool {
+                return isset($keys[strtolower(trim((string)($row['ioc'] ?? '')))]);
+            }));
+            if ($rows === []) {
+                return ['error' => 'Las novedades ya no están en la consulta actual.'];
+            }
+        }
+
+        $list = [];
+        $seen = [];
+        foreach ($rows as $row) {
+            $ioc = self::mapThreatFoxIoc(is_array($row) ? $row : []);
+            if ($ioc === null) { continue; }
+            $key = $ioc['type'] . '|' . strtolower($ioc['value']);
+            if (isset($seen[$key])) { continue; }
+            $seen[$key] = true;
+            $ioc['id'] = 0;
+            $list[] = $ioc;
+        }
+        if ($list === []) {
+            return ['error' => 'No se encontraron IOCs exportables en esa búsqueda.'];
+        }
+
+        $byType = [];
+        foreach ($list as $ioc) { $byType[$ioc['type']] = ($byType[$ioc['type']] ?? 0) + 1; }
+        $categories = [
+            'ip'     => ($byType['ipv4-addr'] ?? 0) + ($byType['ipv6-addr'] ?? 0),
+            'domain' => $byType['domain-name'] ?? 0,
+            'url'    => $byType['url'] ?? 0,
+            'hash'   => $byType['file'] ?? 0,
+            'email'  => ($byType['email-addr'] ?? 0) + ($byType['user-account'] ?? 0),
+        ];
+        $categories['other'] = max(0, count($list) - array_sum($categories));
+
+        return ['response' => [
+            'success' => true,
+            'iocs'    => $list,
+            'stats'   => [
+                'total' => count($rows), 'unique' => count($list),
+                'duplicates' => max(0, count($rows) - count($list)),
+                'by_type' => $byType, 'categories' => $categories,
+            ],
+            'source' => 'ti_tracker',
+            'search' => [
+                'id'          => (int)$search['id'],
+                'name'        => (string)$search['name'],
+                'source_name' => (string)$search['source_name'],
+                'threat_actor' => (string)$search['threat_actor'],
+                'extra_tags'  => (string)$search['extra_tags'],
+                'tlp'         => (string)$search['tlp'],
+                'valid_days'  => (int)$search['valid_days'],
+                'scope'       => $scope,
+            ],
+        ]];
+    }
+
+    /** Fila de ThreatFox → IOC del asistente (tipos válidos en sus desplegables). */
+    private static function mapThreatFoxIoc(array $row): ?array
+    {
+        $value = trim((string)($row['ioc'] ?? ''));
+        if ($value === '') { return null; }
+
+        $type = strtolower(trim((string)($row['ioc_type'] ?? '')));
+        $description = trim((string)($row['malware_printable'] ?? ''));
+        if ($description === '') { $description = trim((string)($row['malware'] ?? '')); }
+        if (($row['tags'] ?? '') !== '') {
+            $description = $description !== ''
+                ? $description . ' — ' . (string)$row['tags']
+                : (string)$row['tags'];
+        }
+        $reference = trim((string)($row['reference'] ?? ''));
+        if ($reference !== '' && filter_var($reference, FILTER_VALIDATE_URL)) {
+            $description = $description !== '' ? $description . ' — ' . $reference : $reference;
+        }
+
+        // ip:port: el asistente no tiene patrón network-traffic, se exporta la IP
+        // y el puerto viaja en la descripción.
+        if (preg_match('/^((?:\d{1,3}\.){3}\d{1,3}|[a-f0-9:]+):(\d{1,5})$/i', $value, $m)) {
+            $ipType = str_contains($m[1], ':') ? 'ipv6-addr' : 'ipv4-addr';
+            return [
+                'type' => $ipType, 'value' => $m[1],
+                'description' => ($description !== '' ? $description . ' · ' : '') . 'puerto ' . (int)$m[2],
+                'source' => 'ti_tracker',
+            ];
+        }
+
+        $mapped = null;
+        if (filter_var($value, FILTER_VALIDATE_IP)) {
+            $mapped = str_contains($value, ':') ? 'ipv6-addr' : 'ipv4-addr';
+        } elseif (filter_var($value, FILTER_VALIDATE_URL)) {
+            $mapped = 'url';
+        } elseif (filter_var($value, FILTER_VALIDATE_EMAIL)) {
+            $mapped = 'email-addr';
+        } elseif (preg_match('/^[a-f0-9]{32}$/i', $value)
+            || preg_match('/^[a-f0-9]{40}$/i', $value)
+            || preg_match('/^[a-f0-9]{64}$/i', $value)
+            || preg_match('/^[a-f0-9]{128}$/i', $value)) {
+            $mapped = 'file';
+        } elseif (in_array($type, ['domain', 'hostname', 'dns'], true)
+            || preg_match('/^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/i', $value)) {
+            $mapped = 'domain-name';
+        } elseif ($type === 'url') {
+            $mapped = 'url';
+        } elseif (str_contains($type, 'hash')) {
+            $mapped = 'file';
+        }
+
+        if ($mapped === null) { return null; }
+        return [
+            'type' => $mapped, 'value' => $value,
+            'description' => $description, 'source' => 'ti_tracker',
+        ];
+    }
+
     /** Genera los ficheros sin descargarlos: el navegador decide cuáler bajar. */
     public function generateEndpoint(array $params = []): void
     {
@@ -795,6 +958,7 @@ class Module_Export extends BaseModule
         $format = strtolower((string)($input['format'] ?? 'stix'));
         $iocs = is_array($input['iocs'] ?? null) ? $input['iocs'] : [];
         $config = is_array($input['config'] ?? null) ? $input['config'] : [];
+        $searchId = (int)($input['search_id'] ?? 0);
 
         if ($iocs === []) {
             json_response(['success' => false, 'error' => 'No hay IOCs para exportar.'], 400);
@@ -803,34 +967,56 @@ class Module_Export extends BaseModule
 
         switch ($format) {
             case 'stix':
-                json_response($this->buildStixResult($iocs, $config));
-                return;
+                $result = $this->buildStixResult($iocs, $config);
+                break;
             case 'misp':
-                json_response($this->buildMispResult($iocs, $config));
-                return;
+                $result = $this->buildMispResult($iocs, $config);
+                break;
             case 'csv':
-                json_response([
+                $result = [
                     'success' => true, 'format' => 'csv', 'count' => count($iocs),
                     'files' => ['all' => [
                         'content' => $this->buildCsvContent($iocs),
                         'filename' => 'iocs_' . date('Y-m-d') . '.csv',
                         'mime' => 'text/csv',
                     ]],
-                ]);
-                return;
+                ];
+                break;
             case 'txt':
-                json_response([
+                $result = [
                     'success' => true, 'format' => 'txt', 'count' => count($iocs),
                     'files' => ['all' => [
                         'content' => $this->buildTxtContent($iocs),
                         'filename' => 'iocs_' . date('Y-m-d') . '.txt',
                         'mime' => 'text/plain',
                     ]],
-                ]);
-                return;
+                ];
+                break;
             default:
                 json_response(['success' => false, 'error' => 'Formato no válido.'], 400);
+                return;
         }
+
+        // Trazabilidad: si la exportación viene de Seguimiento TI, se registra
+        // en el historial de la búsqueda igual que el endpoint antiguo.
+        if ($searchId > 0 && !empty($result['success'])) {
+            try {
+                $filename = (string)($result['filename'] ?? '');
+                if ($filename === '' && is_array($result['files'] ?? null)) {
+                    foreach ($result['files'] as $file) {
+                        $filename = (string)($file['filename'] ?? '');
+                        if ($filename !== '') { break; }
+                    }
+                }
+                (new TiTrackerStore())->logExport(
+                    $searchId, $format, (int)($result['count'] ?? 0), $filename
+                );
+            } catch (Throwable $e) {
+                // La auditoría no debe impedir la descarga.
+            }
+        }
+
+        json_response($result);
     }
 
     /** Guarda correcciones de tipo/descripción sobre los IOCs de Unit 42. */

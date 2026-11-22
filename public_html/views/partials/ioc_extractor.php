@@ -41,6 +41,7 @@
                         class="w-full max-w-sm px-2.5 py-1.5 rounded-lg border border-line-strong bg-input text-ink text-xs">
                     <option value="u42">Publicaciones de Unit 42</option>
                     <option value="tenant">IOCs del catálogo (tenant)</option>
+                    <option value="ti_tracker">Seguimiento TI TF (búsqueda guardada)</option>
                     <option value="text">Texto pegado</option>
                 </select>
 
@@ -57,6 +58,11 @@
 
                 <div id="iocz-src-tenant" class="hidden mt-3 text-xs text-ink-muted">
                     Se usarán los IOCs del tenant con los filtros que tenías aplicados en la pantalla de exportación.
+                </div>
+
+                <div id="iocz-src-ti_tracker" class="hidden mt-3 text-xs text-ink-muted">
+                    Se usarán los IOCs de la búsqueda guardada de Seguimiento TI TF y
+                    sus opciones de exportación (fuente, actor, TLP y validez).
                 </div>
 
                 <div id="iocz-src-text" class="hidden mt-3">

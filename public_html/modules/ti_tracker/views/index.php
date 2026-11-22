@@ -178,8 +178,9 @@ $describe = static function (array $f): string {
                             <?php foreach ($formatsForSearch as $format): ?>
                                 <button type="button" class="btn-tiny btn-outline btn"
                                         data-tt-export="<?= e($format) ?>"
+                                        data-tt-search="<?= $id ?>"
                                         data-tt-url="<?= e($base . '/export/' . $id) ?>"
-                                        title="Descargar <?= e($formats[$format] ?? strtoupper($format)) ?>">
+                                        title="Abrir el asistente para exportar <?= e($formats[$format] ?? strtoupper($format)) ?>">
                                     <?= e(strtoupper($format)) ?>
                                 </button>
                             <?php endforeach; ?>
@@ -218,27 +219,17 @@ $describe = static function (array $f): string {
         if (!button) { return; }
 
         var format = button.getAttribute('data-tt-export');
-        var url = button.getAttribute('data-tt-url');
-        button.disabled = true;
-        toast('Generando exportación ' + format.toUpperCase() + '…', 'info');
-
-        api('POST', url, { format: format })
-            .then(function (res) {
-                if (!res.success) {
-                    toast('Error: ' + (res.error || 'no se pudo generar la exportación'), 'error');
-                    return;
-                }
-                (res.files || []).forEach(function (file) {
-                    downloadFile(file.content, file.filename, file.mime);
-                });
-                toast('Descargados ' + (res.count || 0) + ' IOCs', 'success');
-            })
-            .catch(function (err) {
-                toast('Error al exportar: ' + (err && err.message ? err.message : 'conexión'), 'error');
-            })
-            .then(function () {
-                button.disabled = false;
-            });
+        var searchId = parseInt(button.getAttribute('data-tt-search') || '0', 10);
+        if (!searchId || typeof IOCExtractor === 'undefined') {
+            toast('El asistente de IOCs no está disponible.', 'error');
+            return;
+        }
+        IOCExtractor.open({
+            source: 'ti_tracker',
+            searchId: searchId,
+            format: format,
+            scope: 'all'
+        });
     });
 })();
 </script>

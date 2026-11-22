@@ -79,6 +79,7 @@ $formatsForSearch = array_values(array_intersect(array_keys($formats), (array)$s
     <?php foreach ($formatsForSearch as $format): ?>
         <button type="button" class="btn-outline btn"
                 data-tt-export="<?= e($format) ?>"
+                data-tt-search="<?= (int)$search['id'] ?>"
                 data-tt-url="<?= e($base . '/export/' . (int)$search['id']) ?>">
             <?= icon('download', 18) ?> <?= e(strtoupper($format)) ?>
         </button>
@@ -126,6 +127,19 @@ $formatsForSearch = array_values(array_intersect(array_keys($formats), (array)$s
     <div class="alert alert-success mt-4" role="status">
         <strong><?= $fmt($newCount) ?> IOCs nuevos</strong> desde la última ejecución de esta búsqueda.
         Puedes exportarlos a STIX, MISP o TXT con los botones de arriba.
+        <?php
+            $newIocsJson = json_encode(
+                array_values((array)($exec['result']['new_iocs'] ?? [])),
+                JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT
+            );
+        ?>
+        <button type="button" class="btn-outline btn btn-small ml-2"
+                data-tt-export="stix"
+                data-tt-search="<?= (int)$search['id'] ?>"
+                data-tt-scope="new"
+                data-tt-new='<?= e((string)$newIocsJson) ?>'>
+            <?= icon('new_releases', 16) ?> Exportar solo los <?= $fmt($newCount) ?> nuevos
+        </button>
     </div>
 <?php elseif ($total > 0): ?>
     <div class="alert alert-info mt-4" role="status">
@@ -403,27 +417,26 @@ $formatsForSearch = array_values(array_intersect(array_keys($formats), (array)$s
         if (!button) { return; }
 
         var format = button.getAttribute('data-tt-export');
-        var url = button.getAttribute('data-tt-url');
-        button.disabled = true;
-        toast('Generando exportación ' + format.toUpperCase() + '…', 'info');
+        var searchId = parseInt(button.getAttribute('data-tt-search') || '0', 10);
+        if (!searchId || typeof IOCExtractor === 'undefined') {
+            toast('El asistente de IOCs no está disponible.', 'error');
+            return;
+        }
 
-        api('POST', url, { format: format })
-            .then(function (res) {
-                if (!res.success) {
-                    toast('Error: ' + (res.error || 'no se pudo generar la exportación'), 'error');
-                    return;
-                }
-                (res.files || []).forEach(function (file) {
-                    downloadFile(file.content, file.filename, file.mime);
-                });
-                toast('Descargados ' + (res.count || 0) + ' IOCs', 'success');
-            })
-            .catch(function (err) {
-                toast('Error al exportar: ' + (err && err.message ? err.message : 'conexión'), 'error');
-            })
-            .then(function () {
-                button.disabled = false;
-            });
+        var opts = {
+            source: 'ti_tracker',
+            searchId: searchId,
+            format: format,
+            scope: button.getAttribute('data-tt-scope') || 'all'
+        };
+        if (opts.scope === 'new') {
+            try {
+                opts.newIocs = JSON.parse(button.getAttribute('data-tt-new') || '[]');
+            } catch (e) {
+                opts.newIocs = [];
+            }
+        }
+        IOCExtractor.open(opts);
     });
 })();
 </script>
