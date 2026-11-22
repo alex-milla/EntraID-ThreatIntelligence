@@ -58,6 +58,19 @@ final class ThreatfoxIngest
         $api = new ThreatfoxApi($key);
         $res = $api->getIocs($days);
         $status = (string)($res['query_status'] ?? 'unknown');
+
+        // En hosting compartido un lote de varios días puede cortarse a mitad
+        // (curl 18 / HTTP/2 reset). Si falla, se prueba con 1 día: al menos se
+        // sincronizan las últimas 24 h en vez de perder la ingesta completa.
+        if ($status !== ThreatfoxApi::STATUS_OK && $days > 1) {
+            $resOneDay = $api->getIocs(1);
+            if ((string)($resOneDay['query_status'] ?? 'unknown') === ThreatfoxApi::STATUS_OK) {
+                $res = $resOneDay;
+                $days = 1;
+                $status = ThreatfoxApi::STATUS_OK;
+            }
+        }
+
         if ($status !== ThreatfoxApi::STATUS_OK) {
             $detail = (string)($res['error'] ?? '');
             throw new RuntimeException(

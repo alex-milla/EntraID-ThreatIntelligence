@@ -22,8 +22,9 @@ final class ThreatfoxApi
     /** Estados conocidos de la API. */
     public const STATUS_OK = 'ok';
 
-    /** Peticiones que superan este tiempo se abandonan (segundos). */
-    private const TIMEOUT = 30;
+    /** Tiempo total por petición y tiempo de conexión (segundos). */
+    private const TIMEOUT = 60;
+    private const CONNECT_TIMEOUT = 15;
 
     /** Intentos por petición y backoff base (microsegundos). */
     private const RETRIES = 3;
@@ -83,70 +84,73 @@ final class ThreatfoxApi
         if ($this->authKey === '') {
             return $this->error('Falta la Auth-Key de abuse.ch.');
         }
-        if (!function_exists('curl_init')) {
-            return $this->error('La extensión curl de PHP no está disponible en este servidor.');
-        }
 
+        $json = json_encode($payload, JSON_UNESCAPED_SLASHES);
         $lastError = 'Error de red desconocido';
-        for ($attempt = 0; $attempt < self::RETRIES; $attempt++) {
-            $ch = curl_init($this->apiUrl());
-            if ($ch === false) {
-                return $this->error('No se pudo inicializar cURL.');
-            }
 
-            // Array original: es lo que ya funcionaba en hosting compartido.
-            // Las opciones avanzadas se aplican aparte, una a una y best-effort.
-            curl_setopt_array($ch, [
-                CURLOPT_POST           => true,
-                CURLOPT_POSTFIELDS     => json_encode($payload, JSON_UNESCAPED_SLASHES),
-                CURLOPT_HTTPHEADER     => [
-                    'Auth-Key: ' . $this->authKey,
-                    'Content-Type: application/json',
-                    'User-Agent: EntraID-ThreatIntelligence/ThreatFox',
-                ],
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_CONNECTTIMEOUT => self::TIMEOUT,
-                CURLOPT_TIMEOUT        => self::TIMEOUT,
-                CURLOPT_SSL_VERIFYPEER => true,
-            ]);
-            $this->applyOptionalCurlOptions($ch, $attempt);
+        // 1) cURL (con reintentos). Se pide compresión solo como cabecera HTTP:
+        //    así no dependemos de CURLOPT_ENCODING, que algunos hostings rechazan.
+        if (function_exists('curl_init')) {
+            for ($attempt = 0; $attempt < self::RETRIES; $attempt++) {
+                $ch = curl_init($this->apiUrl());
+                if ($ch === false) {
+                    $lastError = 'No se pudo inicializar cURL.';
+                    break;
+                }
 
-            $body = curl_exec($ch);
-            $errno = (int)curl_errno($ch);
-            $error = (string)curl_error($ch);
-            $status = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
-            curl_close($ch);
+                // Array original: es lo que ya funcionaba en hosting compartido.
+                curl_setopt_array($ch, [
+                    CURLOPT_POST           => true,
+                    CURLOPT_POSTFIELDS     => $json,
+                    CURLOPT_HTTPHEADER     => $this->headers(),
+                    CURLOPT_RETURNTRANSFER => true,
+                    CURLOPT_CONNECTTIMEOUT => self::CONNECT_TIMEOUT,
+                    CURLOPT_TIMEOUT        => self::TIMEOUT,
+                    CURLOPT_SSL_VERIFYPEER => true,
+                ]);
+                $this->applyOptionalCurlOptions($ch, $attempt);
 
-            if ($body === false) {
-                $lastError = 'Error de red (curl ' . $errno . '): ' . $error;
+                $body = curl_exec($ch);
+                $errno = (int)curl_errno($ch);
+                $error = (string)curl_error($ch);
+                $status = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+                curl_close($ch);
+
+                if ($body === false) {
+                    $lastError = 'Error de red (curl ' . $errno . '): ' . $error;
+                    // Un corte de transferencia (curl 18) no se arregla
+                    // repitiendo la misma petición: se va al fallback de stream.
+                    $partial = defined('CURLE_PARTIAL_FILE') ? CURLE_PARTIAL_FILE : 18;
+                    if ($errno === $partial) {
+                        break;
+                    }
+                } elseif ($status === 429 || $status >= 500) {
+                    $lastError = 'La API respondió HTTP ' . $status;
+                } else {
+                    $data = json_decode($this->decodeBody((string)$body), true);
+                    if (is_array($data)) {
+                        $data['data'] = is_array($data['data'] ?? null) ? $data['data'] : [];
+                        $data['query_status'] = (string)($data['query_status'] ?? 'unknown');
+                        return $data;
+                    }
+                    $lastError = 'Respuesta no válida de la API (HTTP ' . $status . ').';
+                }
+
                 if ($attempt + 1 < self::RETRIES) {
                     usleep(self::RETRY_DELAY_US * ($attempt + 1));
-                    continue;
                 }
-                return $this->error($lastError);
             }
-
-            // La API puede devolver 429 o 5xx transitorios: se reintenta igual.
-            if ($status === 429 || $status >= 500) {
-                $lastError = 'La API respondió HTTP ' . $status;
-                if ($attempt + 1 < self::RETRIES) {
-                    usleep(self::RETRY_DELAY_US * ($attempt + 1));
-                    continue;
-                }
-                return $this->error($lastError);
-            }
-
-            $data = json_decode((string)$body, true);
-            if (!is_array($data)) {
-                return $this->error('Respuesta no válida de la API (HTTP ' . $status . ').');
-            }
-
-            $data['data'] = is_array($data['data'] ?? null) ? $data['data'] : [];
-            $data['query_status'] = (string)($data['query_status'] ?? 'unknown');
-            return $data;
+        } else {
+            $lastError = 'La extensión curl de PHP no está disponible en este servidor.';
         }
 
-        return $this->error($lastError); // inalcanzable, pero sin retorno fatal
+        // 2) Fallback con el wrapper HTTP de PHP (HTTP/1.1 directo, sin libcurl).
+        $stream = $this->callViaStream($json);
+        if ($stream !== null) {
+            return $stream;
+        }
+
+        return $this->error($lastError);
     }
 
     /** IOCs recientes por first_seen (máximo 7 días). */
@@ -273,7 +277,7 @@ final class ThreatfoxApi
             curl_setopt_array($ch, [
                 CURLOPT_RETURNTRANSFER => true,
                 CURLOPT_FOLLOWLOCATION => true,
-                CURLOPT_CONNECTTIMEOUT => self::TIMEOUT,
+                CURLOPT_CONNECTTIMEOUT => self::CONNECT_TIMEOUT,
                 CURLOPT_TIMEOUT        => THREATFOX_EXPORT_TIMEOUT,
                 CURLOPT_SSL_VERIFYPEER => true,
             ]);
@@ -294,6 +298,76 @@ final class ThreatfoxApi
         }
 
         return false;
+    }
+
+    /** Cabeceras comunes. Se pide gzip para reducir el payload de get_iocs. */
+    private function headers(): array
+    {
+        return [
+            'Auth-Key: ' . $this->authKey,
+            'Content-Type: application/json',
+            'User-Agent: EntraID-ThreatIntelligence/ThreatFox',
+            'Accept-Encoding: gzip, deflate',
+            'Connection: close',
+        ];
+    }
+
+    /** Decodifica gzip/zlib si el servidor comprimió la respuesta. */
+    private function decodeBody(string $body): string
+    {
+        if (strlen($body) >= 2 && ord($body[0]) === 0x1f && ord($body[1]) === 0x8b) {
+            $decoded = @gzdecode($body);
+            return $decoded === false ? $body : $decoded;
+        }
+        if (strlen($body) >= 2 && ord($body[0]) === 0x78
+            && in_array(ord($body[1]), [0x01, 0x9c, 0xda], true)) {
+            $decoded = @gzuncompress($body);
+            return $decoded === false ? $body : $decoded;
+        }
+        return $body;
+    }
+
+    /**
+     * Segunda vía de transporte: el wrapper HTTP de PHP con HTTP/1.1 directo.
+     * No usa libcurl, así que esquiva los problemas de HTTP/2 y de extensiones
+     * recortadas en hosting compartido (mismo patrón que Unit42Feed).
+     */
+    private function callViaStream(string $json): ?array
+    {
+        $context = stream_context_create([
+            'http' => [
+                'method'           => 'POST',
+                'header'           => implode("\r\n", $this->headers()) . "\r\n",
+                'content'          => $json,
+                'timeout'          => self::TIMEOUT,
+                'protocol_version' => 1.1,
+                'ignore_errors'    => true,
+            ],
+            'ssl' => ['verify_peer' => true, 'verify_peer_name' => true],
+        ]);
+
+        $body = @file_get_contents($this->apiUrl(), false, $context);
+        if ($body === false) {
+            return null;
+        }
+
+        $status = 0;
+        foreach ($http_response_header ?? [] as $line) {
+            if (preg_match('#^HTTP/\S+\s+(\d{3})#', (string)$line, $matches)) {
+                $status = (int)$matches[1];
+            }
+        }
+        if ($status === 0 || $status === 429 || $status >= 500) {
+            return null;
+        }
+
+        $data = json_decode($this->decodeBody((string)$body), true);
+        if (!is_array($data)) {
+            return null;
+        }
+        $data['data'] = is_array($data['data'] ?? null) ? $data['data'] : [];
+        $data['query_status'] = (string)($data['query_status'] ?? 'unknown');
+        return $data;
     }
 
     /**

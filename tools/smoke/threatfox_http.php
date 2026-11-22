@@ -1,17 +1,19 @@
 <?php
 /**
- * threatfox_http.php — Guardias del transporte HTTP de ThreatFox (v0.4.28.18).
+ * threatfox_http.php — Guardias del transporte HTTP de ThreatFox (v0.4.28.20).
  *
  *   php tools/smoke/threatfox_http.php
  *
- * Comprueba por código fuente que el cliente fuerza HTTP/1.1 y reintenta ante
- * errores de red y respuestas 429/5xx, sin hacer peticiones reales.
+ * Comprueba por código fuente la compatibilidad del cliente (opciones cURL
+ * opcionales, compresión, fallback de stream y degradación a 1 día), sin hacer
+ * peticiones reales.
  */
 
 declare(strict_types=1);
 
 $root = dirname(__DIR__, 2);
 $src = (string)@file_get_contents($root . '/public_html/includes/threatfox_api.php');
+$ingest = (string)@file_get_contents($root . '/public_html/includes/threatfox_ingest.php');
 
 $fail = 0;
 $total = 0;
@@ -50,9 +52,9 @@ check('Opciones opcionales fuera del array validado',
     !str_contains($optionArrays, 'CURLOPT_HTTP_VERSION')
     && !str_contains($optionArrays, 'CURLOPT_FRESH_CONNECT')
     && !str_contains($optionArrays, 'CURLOPT_FORBID_REUSE'), $optionArrays);
-check('Array cURL original restaurado',
-    substr_count($src, 'CURLOPT_CONNECTTIMEOUT => self::TIMEOUT') >= 2
-    && substr_count($src, 'CURLOPT_SSL_VERIFYPEER => true') >= 2);
+check('Timeouts configurados', str_contains($src, 'TIMEOUT = 60')
+    && str_contains($src, 'CONNECT_TIMEOUT = 15')
+    && substr_count($src, 'CURLOPT_CONNECTTIMEOUT => self::CONNECT_TIMEOUT') >= 2);
 check('Reintento ante 429 y 5xx', str_contains($src, '$status === 429 || $status >= 500')
     && str_contains($src, '$http === 429 || $http >= 500'));
 check('Error incluye curl_errno', str_contains($src, "curl_errno(")
@@ -60,6 +62,21 @@ check('Error incluye curl_errno', str_contains($src, "curl_errno(")
 check('Contrato client_error intacto', str_contains($src, "'query_status' => 'client_error'"));
 check('Sin curl_error crudo en el mensaje final',
     !str_contains($src, "return \$this->error('Error de red: ' . \$err)"));
+
+// --- v0.4.28.20: payload comprimido, fallback y degradación -----------------
+check('Cabeceras: gzip y Connection close',
+    str_contains($src, "Accept-Encoding: gzip, deflate") && str_contains($src, "Connection: close"));
+check('Decodificación gzip/zlib', str_contains($src, 'function decodeBody')
+    && str_contains($src, 'gzdecode') && str_contains($src, 'gzuncompress'));
+check('Fallback de stream HTTP/1.1', str_contains($src, 'function callViaStream')
+    && str_contains($src, 'stream_context_create')
+    && str_contains($src, "'protocol_version' => 1.1")
+    && str_contains($src, 'file_get_contents'));
+check('Fallback se intenta tras cURL', str_contains($src, '$stream = $this->callViaStream($json)'));
+check('Corte de transferencia (curl 18) no se reintenta',
+    str_contains($src, 'CURLE_PARTIAL_FILE') && str_contains($src, 'if ($errno === $partial)'));
+check('Degradación a 1 día en la ingesta',
+    str_contains($ingest, '$days > 1') && str_contains($ingest, '$api->getIocs(1)'));
 
 echo PHP_EOL . ($fail === 0
     ? 'RESULTADO: OK (' . $total . ' comprobaciones)'
