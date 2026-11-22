@@ -94,7 +94,9 @@ final class ThreatfoxApi
                 return $this->error('No se pudo inicializar cURL.');
             }
 
-            $options = [
+            // Array original: es lo que ya funcionaba en hosting compartido.
+            // Las opciones avanzadas se aplican aparte, una a una y best-effort.
+            curl_setopt_array($ch, [
                 CURLOPT_POST           => true,
                 CURLOPT_POSTFIELDS     => json_encode($payload, JSON_UNESCAPED_SLASHES),
                 CURLOPT_HTTPHEADER     => [
@@ -103,8 +105,11 @@ final class ThreatfoxApi
                     'User-Agent: EntraID-ThreatIntelligence/ThreatFox',
                 ],
                 CURLOPT_RETURNTRANSFER => true,
-            ];
-            curl_setopt_array($ch, $this->baseCurlOptions($options, $attempt));
+                CURLOPT_CONNECTTIMEOUT => self::TIMEOUT,
+                CURLOPT_TIMEOUT        => self::TIMEOUT,
+                CURLOPT_SSL_VERIFYPEER => true,
+            ]);
+            $this->applyOptionalCurlOptions($ch, $attempt);
 
             $body = curl_exec($ch);
             $errno = (int)curl_errno($ch);
@@ -265,11 +270,14 @@ final class ThreatfoxApi
             if ($ch === false) {
                 return false;
             }
-            curl_setopt_array($ch, $this->baseCurlOptions([
+            curl_setopt_array($ch, [
                 CURLOPT_RETURNTRANSFER => true,
                 CURLOPT_FOLLOWLOCATION => true,
+                CURLOPT_CONNECTTIMEOUT => self::TIMEOUT,
                 CURLOPT_TIMEOUT        => THREATFOX_EXPORT_TIMEOUT,
-            ], $attempt));
+                CURLOPT_SSL_VERIFYPEER => true,
+            ]);
+            $this->applyOptionalCurlOptions($ch, $attempt);
 
             $body = curl_exec($ch);
             $http = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
@@ -289,25 +297,33 @@ final class ThreatfoxApi
     }
 
     /**
-     * Opciones base de cURL. Se fuerza HTTP/1.1 porque algunos hostings ven
-     * el stream HTTP/2 cerrado con INTERNAL_ERROR contra el endpoint de abuse.ch.
-     * En reintentos se descarta la conexión previa (FRESH_CONNECT/FORBID_REUSE).
+     * Opciones avanzadas, best-effort. Se aplican FUERA de curl_setopt_array():
+     * en hostings compartidos con libcurl antigua o recortada, curl_setopt_array()
+     * valida el array completo y falla con "must contain only valid cURL options".
+     * Si una constante no existe o la libcurl no la acepta, simplemente se omite.
      */
-    private function baseCurlOptions(array $extra, int $attempt): array
+    private function applyOptionalCurlOptions($ch, int $attempt): void
     {
-        $options = [
-            CURLOPT_CONNECTTIMEOUT => self::TIMEOUT,
-            CURLOPT_TIMEOUT        => self::TIMEOUT,
-            CURLOPT_SSL_VERIFYPEER => true,
-        ];
         if (defined('CURL_HTTP_VERSION_1_1')) {
-            $options[CURLOPT_HTTP_VERSION] = CURL_HTTP_VERSION_1_1;
+            $this->setOptionalCurlOption($ch, 'CURLOPT_HTTP_VERSION', constant('CURL_HTTP_VERSION_1_1'));
         }
         if ($attempt > 0) {
-            $options[CURLOPT_FRESH_CONNECT] = true;
-            $options[CURLOPT_FORBID_REUSE]  = true;
+            $this->setOptionalCurlOption($ch, 'CURLOPT_FRESH_CONNECT', true);
+            $this->setOptionalCurlOption($ch, 'CURLOPT_FORBID_REUSE', true);
         }
-        return array_merge($options, $extra);
+    }
+
+    /** Aplica una opción solo si la constante existe y la libcurl la acepta. */
+    private function setOptionalCurlOption($ch, string $name, $value): bool
+    {
+        if (!defined($name)) {
+            return false;
+        }
+        try {
+            return @curl_setopt($ch, constant($name), $value) === true;
+        } catch (Throwable $e) {
+            return false;
+        }
     }
 
     private function clampLimit(int $limit): int

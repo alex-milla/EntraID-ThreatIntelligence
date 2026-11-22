@@ -38,6 +38,21 @@ check('Bucle de reintento en call() y en el export',
     substr_count($src, '$attempt < self::RETRIES') >= 2);
 check('Conexión nueva en reintentos',
     str_contains($src, 'CURLOPT_FRESH_CONNECT') && str_contains($src, 'CURLOPT_FORBID_REUSE'));
+check('Helper de opciones opcional',
+    str_contains($src, 'function setOptionalCurlOption')
+    && str_contains($src, 'function applyOptionalCurlOptions')
+    && str_contains($src, 'catch (Throwable'));
+$optionArrays = '';
+if (preg_match_all('/curl_setopt_array\([^;]*?\]\);/s', $src, $matches)) {
+    $optionArrays = implode("\n", $matches[0]);
+}
+check('Opciones opcionales fuera del array validado',
+    !str_contains($optionArrays, 'CURLOPT_HTTP_VERSION')
+    && !str_contains($optionArrays, 'CURLOPT_FRESH_CONNECT')
+    && !str_contains($optionArrays, 'CURLOPT_FORBID_REUSE'), $optionArrays);
+check('Array cURL original restaurado',
+    substr_count($src, 'CURLOPT_CONNECTTIMEOUT => self::TIMEOUT') >= 2
+    && substr_count($src, 'CURLOPT_SSL_VERIFYPEER => true') >= 2);
 check('Reintento ante 429 y 5xx', str_contains($src, '$status === 429 || $status >= 500')
     && str_contains($src, '$http === 429 || $http >= 500'));
 check('Error incluye curl_errno', str_contains($src, "curl_errno(")
