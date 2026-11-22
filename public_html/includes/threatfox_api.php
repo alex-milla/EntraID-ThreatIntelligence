@@ -25,6 +25,10 @@ final class ThreatfoxApi
     /** Peticiones que superan este tiempo se abandonan (segundos). */
     private const TIMEOUT = 30;
 
+    /** Intentos por petición y backoff base (microsegundos). */
+    private const RETRIES = 3;
+    private const RETRY_DELAY_US = 500000;
+
     private string $authKey;
 
     public function __construct(string $authKey)
@@ -83,43 +87,61 @@ final class ThreatfoxApi
             return $this->error('La extensión curl de PHP no está disponible en este servidor.');
         }
 
-        $ch = curl_init($this->apiUrl());
-        if ($ch === false) {
-            return $this->error('No se pudo inicializar cURL.');
-        }
+        $lastError = 'Error de red desconocido';
+        for ($attempt = 0; $attempt < self::RETRIES; $attempt++) {
+            $ch = curl_init($this->apiUrl());
+            if ($ch === false) {
+                return $this->error('No se pudo inicializar cURL.');
+            }
 
-        curl_setopt_array($ch, [
-            CURLOPT_POST           => true,
-            CURLOPT_POSTFIELDS     => json_encode($payload, JSON_UNESCAPED_SLASHES),
-            CURLOPT_HTTPHEADER     => [
-                'Auth-Key: ' . $this->authKey,
-                'Content-Type: application/json',
-                'User-Agent: EntraID-ThreatIntelligence/ThreatFox',
-            ],
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_CONNECTTIMEOUT => self::TIMEOUT,
-            CURLOPT_TIMEOUT        => self::TIMEOUT,
-            CURLOPT_SSL_VERIFYPEER => true,
-        ]);
+            $options = [
+                CURLOPT_POST           => true,
+                CURLOPT_POSTFIELDS     => json_encode($payload, JSON_UNESCAPED_SLASHES),
+                CURLOPT_HTTPHEADER     => [
+                    'Auth-Key: ' . $this->authKey,
+                    'Content-Type: application/json',
+                    'User-Agent: EntraID-ThreatIntelligence/ThreatFox',
+                ],
+                CURLOPT_RETURNTRANSFER => true,
+            ];
+            curl_setopt_array($ch, $this->baseCurlOptions($options, $attempt));
 
-        $body = curl_exec($ch);
-        if ($body === false) {
-            $err = curl_error($ch);
+            $body = curl_exec($ch);
+            $errno = (int)curl_errno($ch);
+            $error = (string)curl_error($ch);
+            $status = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
             curl_close($ch);
-            return $this->error('Error de red: ' . $err);
+
+            if ($body === false) {
+                $lastError = 'Error de red (curl ' . $errno . '): ' . $error;
+                if ($attempt + 1 < self::RETRIES) {
+                    usleep(self::RETRY_DELAY_US * ($attempt + 1));
+                    continue;
+                }
+                return $this->error($lastError);
+            }
+
+            // La API puede devolver 429 o 5xx transitorios: se reintenta igual.
+            if ($status === 429 || $status >= 500) {
+                $lastError = 'La API respondió HTTP ' . $status;
+                if ($attempt + 1 < self::RETRIES) {
+                    usleep(self::RETRY_DELAY_US * ($attempt + 1));
+                    continue;
+                }
+                return $this->error($lastError);
+            }
+
+            $data = json_decode((string)$body, true);
+            if (!is_array($data)) {
+                return $this->error('Respuesta no válida de la API (HTTP ' . $status . ').');
+            }
+
+            $data['data'] = is_array($data['data'] ?? null) ? $data['data'] : [];
+            $data['query_status'] = (string)($data['query_status'] ?? 'unknown');
+            return $data;
         }
 
-        $status = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
-        curl_close($ch);
-
-        $data = json_decode((string)$body, true);
-        if (!is_array($data)) {
-            return $this->error('Respuesta no válida de la API (HTTP ' . $status . ').');
-        }
-
-        $data['data'] = is_array($data['data'] ?? null) ? $data['data'] : [];
-        $data['query_status'] = (string)($data['query_status'] ?? 'unknown');
-        return $data;
+        return $this->error($lastError); // inalcanzable, pero sin retorno fatal
     }
 
     /** IOCs recientes por first_seen (máximo 7 días). */
@@ -238,24 +260,54 @@ final class ThreatfoxApi
                 . rawurlencode($this->authKey) . '/full.csv.zip';
         }
 
-        $ch = curl_init($base);
-        if ($ch === false) {
-            return false;
-        }        curl_setopt_array($ch, [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_FOLLOWLOCATION => true,
-            CURLOPT_CONNECTTIMEOUT => self::TIMEOUT,
-            CURLOPT_TIMEOUT        => THREATFOX_EXPORT_TIMEOUT,
-            CURLOPT_SSL_VERIFYPEER => true,
-        ]);
-        $body = curl_exec($ch);
-        $http = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
-        curl_close($ch);
+        for ($attempt = 0; $attempt < self::RETRIES; $attempt++) {
+            $ch = curl_init($base);
+            if ($ch === false) {
+                return false;
+            }
+            curl_setopt_array($ch, $this->baseCurlOptions([
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_FOLLOWLOCATION => true,
+                CURLOPT_TIMEOUT        => THREATFOX_EXPORT_TIMEOUT,
+            ], $attempt));
 
-        if ($body === false || $http !== 200) {
+            $body = curl_exec($ch);
+            $http = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+            curl_close($ch);
+
+            if ($body !== false && $http === 200) {
+                return @file_put_contents($targetZip, $body) !== false;
+            }
+            if (($body === false || $http === 429 || $http >= 500) && $attempt + 1 < self::RETRIES) {
+                usleep(self::RETRY_DELAY_US * ($attempt + 1));
+                continue;
+            }
             return false;
         }
-        return @file_put_contents($targetZip, $body) !== false;
+
+        return false;
+    }
+
+    /**
+     * Opciones base de cURL. Se fuerza HTTP/1.1 porque algunos hostings ven
+     * el stream HTTP/2 cerrado con INTERNAL_ERROR contra el endpoint de abuse.ch.
+     * En reintentos se descarta la conexión previa (FRESH_CONNECT/FORBID_REUSE).
+     */
+    private function baseCurlOptions(array $extra, int $attempt): array
+    {
+        $options = [
+            CURLOPT_CONNECTTIMEOUT => self::TIMEOUT,
+            CURLOPT_TIMEOUT        => self::TIMEOUT,
+            CURLOPT_SSL_VERIFYPEER => true,
+        ];
+        if (defined('CURL_HTTP_VERSION_1_1')) {
+            $options[CURLOPT_HTTP_VERSION] = CURL_HTTP_VERSION_1_1;
+        }
+        if ($attempt > 0) {
+            $options[CURLOPT_FRESH_CONNECT] = true;
+            $options[CURLOPT_FORBID_REUSE]  = true;
+        }
+        return array_merge($options, $extra);
     }
 
     private function clampLimit(int $limit): int
