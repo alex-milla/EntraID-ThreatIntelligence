@@ -25,7 +25,7 @@ $tiSyncTenant = (int)($selectedTenant ?? 0);
     <p id="ti-bg-text" class="text-xs text-ink-soft mt-1.5"></p>
     <p class="text-[11px] text-ink-soft mt-1">Puedes seguir navegando o cerrar esta pestaña: el trabajo continúa en el servidor.</p>
 </div>
-<script>
+<script nonce="<?= defined('CSP_NONCE') ? e(CSP_NONCE) : '' ?>">
 function runTiSync() {
     var tenant = <?= $tiSyncTenant ?>;
     if (!tenant) { toast('Selecciona un tenant', 'warning'); return; }

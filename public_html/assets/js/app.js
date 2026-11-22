@@ -225,8 +225,18 @@
         question: 'help'
     };
 
+    // v0.4.28.15: uso de <dialog> nativo cuando está disponible. La capa
+    // oscura pasa a ser el propio <dialog> (showModal lo pone en la top layer):
+    // el navegador se encarga del foco, de Escape y de dejar el fondo inerte.
+    // Sin soporte se mantiene el <div> de siempre: misma API y mismo aspecto.
+    function nativeDialogSupported() {
+        var probe = document.createElement('dialog');
+        return typeof probe.showModal === 'function' && typeof probe.close === 'function';
+    }
+
     function buildDialog(kind, title) {
-        var overlay = document.createElement('div');
+        var native = nativeDialogSupported();
+        var overlay = document.createElement(native ? 'dialog' : 'div');
         overlay.className = 'tdl-modal-overlay';
 
         var card = document.createElement('div');
@@ -236,6 +246,7 @@
 
         var titleId = 'tdl-dialog-title-' + (++dialogSeq);
         card.setAttribute('aria-labelledby', titleId);
+        if (native) { overlay.setAttribute('aria-labelledby', titleId); }
 
         var head = document.createElement('div');
         head.className = 'tdl-modal-head';
@@ -258,23 +269,50 @@
         card.appendChild(actions);
         overlay.appendChild(card);
 
-        return { overlay: overlay, card: card, body: body, actions: actions };
+        return { overlay: overlay, card: card, body: body, actions: actions, native: native };
     }
 
     function mount(dialog, onKey, onOverlay) {
-        document.body.appendChild(dialog.overlay);
+        var root = dialog.overlay;
+        var native = !!dialog.native;
+        document.body.appendChild(root);
 
-        function keyHandler(e) { onKey(e); }
-        function clickHandler(e) {
-            if (e.target === dialog.overlay) { onOverlay(); }
+        // Con <dialog> nativo, Escape dispara 'cancel' (no contribuye al cierre
+        // dos veces). Enter sigue gestionándose aquí para confirm/prompt.
+        function keyHandler(e) {
+            if (native && e.key === 'Escape') { return; }
+            onKey(e);
         }
-        dialog.overlay.addEventListener('click', clickHandler);
+        function clickHandler(e) {
+            if (e.target === root) { onOverlay(); }
+        }
+        function cancelHandler(e) {
+            e.preventDefault(); // cierra siempre desde finish(), una sola vez
+            onKey({ key: 'Escape' });
+        }
+        root.addEventListener('click', clickHandler);
         document.addEventListener('keydown', keyHandler);
+
+        if (native) {
+            root.addEventListener('cancel', cancelHandler);
+            try {
+                root.showModal();
+            } catch (err) {
+                // Entorno sin top layer (p. ej. DOM simulado): se pagan los
+                // listeners igual que en el camino clásico.
+                native = false;
+                root.removeEventListener('cancel', cancelHandler);
+            }
+        }
 
         return function unmount() {
             document.removeEventListener('keydown', keyHandler);
-            dialog.overlay.removeEventListener('click', clickHandler);
-            if (dialog.overlay.parentNode) { dialog.overlay.parentNode.removeChild(dialog.overlay); }
+            root.removeEventListener('click', clickHandler);
+            if (native) {
+                root.removeEventListener('cancel', cancelHandler);
+                if (root.open) { try { root.close(); } catch (err) { /* ya cerrado */ } }
+            }
+            if (root.parentNode) { root.parentNode.removeChild(root); }
         };
     }
 

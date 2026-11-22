@@ -651,4 +651,31 @@ button .material-icons {
     .doc-sheet details { display: none !important; }
 }
 
+/* ============================================================
+    5. MOVIMIENTO REDUCIDO (v0.4.28.15)
+    Modern Web Guidance: respetar prefers-reduced-motion.
+    ============================================================ */
+@media (prefers-reduced-motion: reduce) {
+    html.transition-theme,
+    html.transition-theme body,
+    html.transition-theme main,
+    html.transition-theme .card,
+    html.transition-theme .app-sidebar,
+    html.transition-theme .app-header,
+    html.transition-theme .page-footer,
+    html.transition-theme .btn,
+    html.transition-theme .icon-btn {
+        transition: none !important;
+    }
+
+    *,
+    ::before,
+    ::after {
+        animation-duration: .01ms !important;
+        animation-iteration-count: 1 !important;
+        scroll-behavior: auto !important;
+        transition-duration: .01ms !important;
+    }
+}
+
 

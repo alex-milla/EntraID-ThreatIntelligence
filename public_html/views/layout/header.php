@@ -32,7 +32,7 @@ $__assetVersion = defined('APP_VERSION') ? APP_VERSION : '1';
     <link rel="stylesheet" href="<?= asset_url('css/print.css') ?>?v=<?= $__assetVersion ?>" media="print">
 
     <!-- Tema inicial, antes del primer pintado -->
-    <script>
+    <script nonce="<?= defined('CSP_NONCE') ? e(CSP_NONCE) : '' ?>">
         (function () {
             try {
                 var stored = localStorage.getItem('theme') || 'auto';

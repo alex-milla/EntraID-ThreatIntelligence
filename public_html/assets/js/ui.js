@@ -212,7 +212,9 @@
             btn.setAttribute('aria-label', 'Volver arriba');
             btn.innerHTML = '<i class="material-icons icon-20" aria-hidden="true">arrow_upward</i>';
             btn.addEventListener('click', function () {
-                scroller.scrollTo({ top: 0, behavior: 'smooth' });
+                var reduce = window.matchMedia
+                    && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+                scroller.scrollTo({ top: 0, behavior: reduce ? 'auto' : 'smooth' });
             });
             document.body.appendChild(btn);
 

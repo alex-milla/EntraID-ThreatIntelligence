@@ -1255,6 +1255,24 @@
     display: none;
 }
 
+/* v0.4.28.15 — <dialog> nativo: se anulan los estilos UA (tamaño, borde y
+   margen) para que la capa siga siendo exactamente el overlay de siempre. */
+dialog.tdl-modal-overlay[open] {
+    display: flex;
+    width: 100%;
+    max-width: none;
+    height: 100%;
+    max-height: none;
+    margin: 0;
+    padding: 16px;
+    border: 0;
+    color: inherit;
+}
+
+dialog.tdl-modal-overlay::backdrop {
+    background: transparent;
+}
+
 .tdl-modal {
     width: min(440px, 100%);
     background: var(--surface);

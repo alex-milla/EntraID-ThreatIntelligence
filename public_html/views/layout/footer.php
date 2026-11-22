@@ -26,7 +26,7 @@
 <?php if (Auth::check()): ?>
 <script src="<?= asset_url('js/ioc-extractor.js') ?>?v=<?= e(APP_VERSION) ?>"></script>
 <?php endif; ?>
-<script>
+<script nonce="<?= defined('CSP_NONCE') ? e(CSP_NONCE) : '' ?>">
 /* Indicador global de sincronización (badge en el sidebar, todas las pantallas) */
 (function () {
     var badge = document.getElementById('ti-sync-badge');

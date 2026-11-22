@@ -12,6 +12,31 @@ if (!defined('ROOT_PATH')) {
 }
 
 // ============================================================
+// CSP — Modern Web Guidance (Fase 1, v0.4.28.15)
+// Nonce por petición para los <script> inline del layout y política en modo
+// REPORT-ONLY: nunca bloquea, solo informa. Las vistas de módulo se irán
+// migrando a nonce antes de publicar la cabecera restrictiva.
+// ============================================================
+if (!defined('CSP_NONCE')) {
+    try {
+        $cspNonce = base64_encode(random_bytes(16));
+    } catch (Throwable $e) {
+        $cspNonce = base64_encode(uniqid('csp', true));
+    }
+    define('CSP_NONCE', $cspNonce);
+    unset($cspNonce);
+}
+if (!headers_sent()) {
+    $cspReportOnly = "default-src 'self'; base-uri 'self'; object-src 'none'; "
+        . "frame-ancestors 'self'; "
+        . "script-src 'self' 'nonce-" . CSP_NONCE . "'; "
+        . "style-src 'self' 'unsafe-inline' 'nonce-" . CSP_NONCE . "'; "
+        . "img-src 'self' data: blob:; font-src 'self' data:; "
+        . "connect-src 'self'; form-action 'self'";
+    header('Content-Security-Policy-Report-Only: ' . $cspReportOnly);
+}
+
+// ============================================================
 // Autoloader de clases
 // ============================================================
 
