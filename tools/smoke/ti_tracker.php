@@ -106,8 +106,27 @@ try {
     check('Segunda ejecución: novedad identificada', ($second['new_iocs'] ?? []) === ['d.example']);
     check('Segunda ejecución: seguimiento = 4', $store->trackedCount($id) === 4);
 
+    /* Snapshot de la última ejecución: permite ver resultados sin reconsultar. */
+    $snapshot = $store->getLastResult($id);
+    check('Snapshot: existe tras ejecutar', is_array($snapshot));
+    check('Snapshot: filas de la última ejecución', (int)($snapshot['result']['rows'] ?? -1) === 3);
+    check('Snapshot: novedades de la última ejecución', (int)($snapshot['result']['new'] ?? -1) === 1);
+    check('Snapshot: IOCs nuevos guardados', ($snapshot['result']['new_iocs'] ?? []) === ['d.example']);
+    check(
+        'Snapshot: filas guardadas con sus campos',
+        count($snapshot['rows'] ?? []) === 3 && ($snapshot['rows'][0]['ioc'] ?? '') === 'a.example'
+    );
+    check('Snapshot: fuente guardada', ($snapshot['source'] ?? '') === 'db');
+    check('Snapshot: fecha de ejecución guardada', ($snapshot['run_at'] ?? '') !== '');
+
     $empty = $store->markRun($id, [], 'db');
     check('Ejecución vacía: sin novedades', (int)$empty['new'] === 0);
+    $snapshotAfterEmpty = $store->getLastResult($id);
+    check(
+        'Snapshot: se sobreescribe en cada ejecución',
+        (int)($snapshotAfterEmpty['result']['rows'] ?? -1) === 0
+            && ($snapshotAfterEmpty['rows'] ?? null) === []
+    );
 
     $history = $store->history($id, 10);
     check('Historial: tres ejecuciones', count($history) === 3);
@@ -126,6 +145,22 @@ try {
     $totals = $store->totals();
     check('Totales: seguimiento global', (int)$totals['tracked'] === 4);
     check('Totales: exportaciones', (int)$totals['exports'] === 1);
+
+    /* El snapshot guarda solo lo que muestra la vista, pero conserva el total. */
+    $many = [];
+    for ($i = 0; $i < TiTrackerStore::SNAPSHOT_ROWS + 2; $i++) {
+        $many[] = $row('bulk-' . $i . '.example');
+    }
+    $store->markRun($id, $many, 'db');
+    $capped = $store->getLastResult($id);
+    check(
+        'Snapshot: tope de filas mostradas',
+        count($capped['rows'] ?? []) === TiTrackerStore::SNAPSHOT_ROWS
+    );
+    check(
+        'Snapshot: recuento real conservado',
+        (int)($capped['result']['rows'] ?? -1) === TiTrackerStore::SNAPSHOT_ROWS + 2
+    );
 
     /* ============================================================
      * 4. Filtros y ventana de días
@@ -183,6 +218,7 @@ try {
     $store->deleteSearch($id);
     check('Borrado: sin búsquedas', $store->count() === 0);
     check('Borrado: sin seguimiento', $store->trackedCount() === 0);
+    check('Borrado: sin snapshot', $store->getLastResult($id) === null);
 
     foreach (['ti_tracker.sqlite', 'ti_tracker.sqlite-wal', 'ti_tracker.sqlite-shm'] as $file) {
         @unlink($tmpDir . DIRECTORY_SEPARATOR . $file);
@@ -211,7 +247,8 @@ check('Módulo: grupo de navegación Inteligencia', ($module?->getNavItem()['gro
 check('Módulo: etiqueta de menú «Seguimiento TI TF»', ($module?->getNavItem()['label'] ?? '') === 'Seguimiento TI TF');
 
 $patterns = array_map(static fn($r) => $r['pattern'], $module?->routes() ?? []);
-foreach (['', 'new', 'edit/{id}', 'save', 'delete/{id}', 'run/{id}', 'run-all', 'export/{id}'] as $pattern) {
+foreach (['', 'new', 'edit/{id}', 'save', 'delete/{id}', 'run/{id}', 'results/{id}',
+          'run-all', 'sync-all', 'export/{id}'] as $pattern) {
     check('Ruta registrada: /' . $pattern, in_array($pattern, $patterns, true));
 }
 
@@ -252,6 +289,14 @@ check(
 check('Panel: botones de exportación', str_contains($indexSource, 'data-tt-export'));
 check('Panel: confirmación de borrado', str_contains($indexSource, 'data-confirm-danger'));
 check('Panel: formulario CSRF', str_contains($indexSource, 'Csrf::field'));
+check(
+    'Panel: botón «Sincronizar y ejecutar todas»',
+    str_contains($indexSource, '/sync-all') && str_contains($indexSource, 'Sincronizar y ejecutar todas')
+);
+check(
+    'Panel: nombre clicable a resultados guardados',
+    str_contains($indexSource, '/results/') && str_contains($indexSource, "icon('visibility'")
+);
 
 $editSource = (string)@file_get_contents(MODULES_PATH . '/ti_tracker/views/edit.php');
 check('Formulario: formatos STIX/MISP/TXT', str_contains($editSource, 'formats[]'));
@@ -272,6 +317,19 @@ check(
         && str_contains($moduleSource, "'Tipo de amenaza'")
         && str_contains($moduleSource, "'Última vez'")
 );
+check(
+    'Resultados: modo lectura sin re-ejecutar',
+    str_contains($moduleSource, 'getLastResult') && str_contains($runSource, '$readonly')
+        && str_contains($runSource, 'Ejecutar ahora')
+);
+check(
+    'Sincronización: usa la ingesta de ThreatFox y exige admin',
+    str_contains($moduleSource, 'ThreatfoxIngest::run') && str_contains($moduleSource, 'Auth::requireAdmin')
+);
+check(
+    'Sincronización: comparte la ejecución de todas las búsquedas',
+    str_contains($moduleSource, 'runSearches()')
+);
 
 check('Cron: refresco del seguimiento', is_file(ROOT_PATH . '/cron/ti-tracker-run.php'));
 check(
@@ -290,6 +348,51 @@ check('Vista resultados: botón de solo novedades', str_contains($runView, 'data
 check('Vista listado: botones con id de búsqueda', str_contains($indexView, 'data-tt-search='));
 check('Compatibilidad: endpoint de exportación directo sigue registrado',
     in_array('export/{id}', $patterns, true));
+
+/* Render real de la vista en modo lectura: sin red y sin escribir actividad. */
+$renderSnapshot = [
+    'rows' => [[
+        'id' => 'render-id', 'ioc' => 'render.example', 'ioc_type' => 'domain',
+        'confidence_level' => 90, 'first_seen' => '2026-11-01 00:00:00 UTC',
+    ]],
+    'result' => [
+        'rows' => 1, 'new' => 1, 'new_iocs' => ['render.example'], 'tracked' => 1,
+    ],
+    'source' => 'db',
+    'run_at' => '2026-11-23 10:00:00 UTC',
+];
+$renderError = '';
+ob_start();
+try {
+    (static function () use ($renderSnapshot): void {
+        $module = ModuleManager::get('ti_tracker');
+        $search = [
+            'id' => 999, 'name' => 'Render',
+            'filters' => ['source' => 'db'], 'formats' => ['stix'],
+        ];
+        $exec = $renderSnapshot;
+        $rows = $renderSnapshot['rows'];
+        $details = [];
+        $displayLimit = TiTrackerStore::SNAPSHOT_ROWS;
+        $history = [];
+        $formats = TiTrackerStore::FORMATS;
+        $notice = null;
+        $readonly = true;
+        $runAt = $renderSnapshot['run_at'];
+        include MODULES_PATH . '/ti_tracker/views/run.php';
+    })();
+} catch (Throwable $e) {
+    $renderError = $e->getMessage();
+}
+$rendered = (string)ob_get_clean();
+check(
+    'Vista resultados: renderiza el snapshot en modo lectura',
+    $renderError === ''
+        && str_contains($rendered, 'Resultados de la última ejecución')
+        && str_contains($rendered, 'Ejecutar ahora')
+        && str_contains($rendered, 'render.example'),
+    $renderError
+);
 
 /* ============================================================
  * Resumen

@@ -19,10 +19,18 @@ $short = static fn(?string $date): string => $date === null || trim($date) === '
     ? '—'
     : substr(trim($date), 0, 16);
 
+/* Modo lectura: datos del snapshot de la última ejecución (sin red). */
+$exec = is_array($exec ?? null) ? $exec : [];
+$readonly = (bool)($readonly ?? false);
+$runAt = trim((string)($runAt ?? ''));
+
 $total = (int)($exec['result']['rows'] ?? 0);
 $newCount = (int)($exec['result']['new'] ?? 0);
 $tracked = (int)($exec['result']['tracked'] ?? 0);
 $source = ((string)($exec['source'] ?? 'db')) === 'api' ? 'API en vivo' : 'Base local';
+if ($readonly) {
+    $source .= ' (guardado)';
+}
 
 $newKeys = [];
 foreach ((array)($exec['result']['new_iocs'] ?? []) as $ioc) {
@@ -72,10 +80,34 @@ $formatsForSearch = array_values(array_intersect(array_keys($formats), (array)$s
     </div>
 <?php endif; ?>
 
+<?php if ($readonly): ?>
+    <div class="alert alert-info" role="status">
+        <?php if ($exec === []): ?>
+            Esta búsqueda todavía no tiene resultados guardados. Pulsa «Ejecutar ahora» para generarlos.
+        <?php else: ?>
+            Resultados de la última ejecución<?= $runAt !== '' ? ' (' . e($runAt) . ')' : '' ?>.
+            No se ha consultado la fuente: esta vista muestra lo guardado en esa ejecución.
+        <?php endif; ?>
+    </div>
+<?php endif; ?>
+
 <div class="page-header">
     <h1><?= e((string)$search['name']) ?></h1>
-    <p class="subtitle"><?= e($describe($search['filters'])) ?></p>
+    <p class="subtitle">
+        <?= e($describe($search['filters'])) ?>
+        <?php if ($readonly && $runAt !== ''): ?>
+            · Última ejecución: <?= e($runAt) ?>
+        <?php endif; ?>
+    </p>
     <span class="spacer"></span>
+    <?php if ($readonly): ?>
+        <form method="POST" action="<?= e($base . '/run/' . (int)$search['id']) ?>" class="inline">
+            <?= Csrf::field() ?>
+            <button type="submit" class="btn-outline btn" title="Volver a consultar y actualizar novedades">
+                <?= icon('play_arrow', 18) ?> Ejecutar ahora
+            </button>
+        </form>
+    <?php endif; ?>
     <?php foreach ($formatsForSearch as $format): ?>
         <button type="button" class="btn-outline btn"
                 data-tt-export="<?= e($format) ?>"
@@ -125,7 +157,8 @@ $formatsForSearch = array_values(array_intersect(array_keys($formats), (array)$s
 
 <?php if ($newCount > 0): ?>
     <div class="alert alert-success mt-4" role="status">
-        <strong><?= $fmt($newCount) ?> IOCs nuevos</strong> desde la última ejecución de esta búsqueda.
+        <strong><?= $fmt($newCount) ?> IOCs nuevos</strong>
+        <?= $readonly ? 'en esa ejecución' : 'desde la última ejecución de esta búsqueda' ?>.
         Puedes exportarlos a STIX, MISP o TXT con los botones de arriba.
         <?php
             $newIocsJson = json_encode(
@@ -143,7 +176,11 @@ $formatsForSearch = array_values(array_intersect(array_keys($formats), (array)$s
     </div>
 <?php elseif ($total > 0): ?>
     <div class="alert alert-info mt-4" role="status">
-        Sin novedades: los <?= $fmt($total) ?> IOCs de esta ejecución ya estaban en el seguimiento.
+        <?php if ($readonly): ?>
+            En esa ejecución los <?= $fmt($total) ?> IOCs ya estaban en el seguimiento.
+        <?php else: ?>
+            Sin novedades: los <?= $fmt($total) ?> IOCs de esta ejecución ya estaban en el seguimiento.
+        <?php endif; ?>
     </div>
 <?php endif; ?>
 
@@ -168,7 +205,11 @@ $formatsForSearch = array_values(array_intersect(array_keys($formats), (array)$s
             <?php if ($rows === []): ?>
                 <tr>
                     <td colspan="10" class="text-sm text-ink-muted">
-                        La búsqueda no devuelve IOCs ahora mismo. Revisa los filtros o espera a la próxima ingesta.
+                        <?php if ($readonly): ?>
+                            Todavía no hay resultados guardados para esta búsqueda. Pulsa «Ejecutar ahora» para generarlos.
+                        <?php else: ?>
+                            La búsqueda no devuelve IOCs ahora mismo. Revisa los filtros o espera a la próxima ingesta.
+                        <?php endif; ?>
                     </td>
                 </tr>
             <?php else: ?>

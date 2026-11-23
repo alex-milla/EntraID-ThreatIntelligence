@@ -9,6 +9,8 @@
  *  · tracked_iocs  IOCs ya vistos por cada búsqueda → la BBDD de seguimiento
  *                  que permite calcular novedades entre ejecuciones
  *  · activity      historial de ejecuciones y exportaciones
+ *  · last_results  snapshot de la última ejecución por búsqueda, para poder
+ *                  ver los resultados sin volver a consultar la fuente
  *
  * No duplica la base de IOCs de ThreatFox: solo recuerda qué ha visto cada
  * búsqueda. Esa es la memoria que se refresca con cada ejecución/cron.
@@ -24,6 +26,9 @@ final class TiTrackerStore
         'misp' => 'MISP',
         'txt'  => 'TXT',
     ];
+
+    /** Filas del snapshot que se guardan para la vista de resultados. */
+    public const SNAPSHOT_ROWS = 500;
 
     private PDO $pdo;
 
@@ -83,6 +88,19 @@ final class TiTrackerStore
             created_at TEXT NOT NULL
         )');
         $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_activity_search ON activity(search_id, kind)');
+
+        /* Snapshot de la última ejecución: se sobreescribe en cada markRun().
+           row_count guarda el total real (puede superar las filas mostradas). */
+        $this->pdo->exec('CREATE TABLE IF NOT EXISTS last_results (
+            search_id     INTEGER PRIMARY KEY,
+            run_at        TEXT NOT NULL,
+            source        TEXT NOT NULL,
+            row_count     INTEGER NOT NULL DEFAULT 0,
+            new_count     INTEGER NOT NULL DEFAULT 0,
+            tracked_count INTEGER NOT NULL DEFAULT 0,
+            new_iocs      TEXT NOT NULL DEFAULT \'[]\',
+            rows_json     TEXT NOT NULL DEFAULT \'[]\'
+        )');
     }
 
     /* =====================================================================
@@ -199,7 +217,7 @@ final class TiTrackerStore
     {
         $this->pdo->beginTransaction();
         try {
-            foreach (['activity', 'tracked_iocs', 'searches'] as $table) {
+            foreach (['activity', 'last_results', 'tracked_iocs', 'searches'] as $table) {
                 $st = $this->pdo->prepare('DELETE FROM ' . $table . ' WHERE ' . ($table === 'searches' ? 'id' : 'search_id') . ' = ?');
                 $st->execute([$id]);
             }
@@ -274,17 +292,80 @@ final class TiTrackerStore
             }
 
             $this->addActivity($searchId, 'run', $total, $new, $source);
+
+            $result = [
+                'rows'     => $total,
+                'new'      => $new,
+                'new_iocs' => $newIocs,
+                'tracked'  => count($existing) + $new,
+            ];
+            $this->saveLastResult($searchId, $rows, $result, $source);
+
             $this->pdo->commit();
         } catch (Throwable $e) {
             $this->pdo->rollBack();
             throw $e;
         }
 
+        return $result;
+    }
+
+    /**
+     * Snapshot de la ejecución, dentro de la transacción de markRun().
+     * Se sobreescribe en cada ejecución (manual, lote, cron o sincronización).
+     *
+     * @param array<int,array> $rows
+     * @param array{rows:int,new:int,new_iocs:array,tracked:int} $result
+     */
+    private function saveLastResult(int $searchId, array $rows, array $result, string $source): void
+    {
+        $shown = array_slice(array_values($rows), 0, self::SNAPSHOT_ROWS);
+        $st = $this->pdo->prepare(
+            'INSERT OR REPLACE INTO last_results
+                (search_id, run_at, source, row_count, new_count, tracked_count, new_iocs, rows_json)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+        );
+        $st->execute([
+            $searchId,
+            gmdate('Y-m-d H:i:s') . ' UTC',
+            $source,
+            (int)($result['rows'] ?? 0),
+            (int)($result['new'] ?? 0),
+            (int)($result['tracked'] ?? 0),
+            json_encode(array_values((array)($result['new_iocs'] ?? [])), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?: '[]',
+            json_encode($shown, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?: '[]',
+        ]);
+    }
+
+    /**
+     * Resultados de la última ejecución guardada, listos para la vista (sin red).
+     * La forma es la misma que devuelve TiTrackerRunner::execute().
+     *
+     * @return array{rows:array,result:array,source:string,run_at:string,row_count:int}|null
+     */
+    public function getLastResult(int $searchId): ?array
+    {
+        $st = $this->pdo->prepare('SELECT * FROM last_results WHERE search_id = ?');
+        $st->execute([$searchId]);
+        $row = $st->fetch();
+        if ($row === false) {
+            return null;
+        }
+
+        $rows = safe_json_decode((string)($row['rows_json'] ?? ''), []);
+        $newIocs = safe_json_decode((string)($row['new_iocs'] ?? ''), []);
+
         return [
-            'rows'     => $total,
-            'new'      => $new,
-            'new_iocs' => $newIocs,
-            'tracked'  => count($existing) + $new,
+            'rows'      => is_array($rows) ? $rows : [],
+            'result'    => [
+                'rows'     => (int)($row['row_count'] ?? 0),
+                'new'      => (int)($row['new_count'] ?? 0),
+                'new_iocs' => is_array($newIocs) ? $newIocs : [],
+                'tracked'  => (int)($row['tracked_count'] ?? 0),
+            ],
+            'source'    => (string)($row['source'] ?? 'db'),
+            'run_at'    => (string)($row['run_at'] ?? ''),
+            'row_count' => (int)($row['row_count'] ?? 0),
         ];
     }
 

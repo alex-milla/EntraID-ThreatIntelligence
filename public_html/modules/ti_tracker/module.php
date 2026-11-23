@@ -17,7 +17,9 @@
  *   POST /modules/ti_tracker/save           guardar (alta/edición)
  *   POST /modules/ti_tracker/delete/{id}    borrar búsqueda y su seguimiento
  *   POST /modules/ti_tracker/run/{id}       ejecutar y actualizar novedades
+ *   GET  /modules/ti_tracker/results/{id}   resultados de la última ejecución (sin red)
  *   POST /modules/ti_tracker/run-all        ejecutar todas las búsquedas locales
+ *   POST /modules/ti_tracker/sync-all       ingestar IOCs y ejecutar todas
  *   POST /modules/ti_tracker/export/{id}    descargar STIX/MISP/TXT
  */
 
@@ -82,7 +84,9 @@ class Module_TiTracker extends BaseModule
             ['method' => 'POST', 'pattern' => 'save',      'handler' => [$this, 'save']],
             ['method' => 'POST', 'pattern' => 'delete/{id}', 'handler' => [$this, 'delete']],
             ['method' => 'POST', 'pattern' => 'run/{id}',  'handler' => [$this, 'run']],
+            ['method' => 'GET',  'pattern' => 'results/{id}', 'handler' => [$this, 'results']],
             ['method' => 'POST', 'pattern' => 'run-all',   'handler' => [$this, 'runAll']],
+            ['method' => 'POST', 'pattern' => 'sync-all',  'handler' => [$this, 'syncAll']],
             ['method' => 'POST', 'pattern' => 'export/{id}', 'handler' => [$this, 'export']],
         ];
     }
@@ -106,6 +110,7 @@ class Module_TiTracker extends BaseModule
             'totals'   => $store->totals(),
             'formats'  => TiTrackerStore::FORMATS,
             'notice'   => flash('ti_tracker'),
+            'isAdmin'  => Auth::isAdmin(),
         ]);
     }
 
@@ -259,12 +264,66 @@ class Module_TiTracker extends BaseModule
             redirect(base_url('modules/ti_tracker'));
         }
 
-        $displayLimit = 500;
+        $displayLimit = TiTrackerStore::SNAPSHOT_ROWS;
         $displayRows = array_slice($exec['rows'], 0, $displayLimit);
 
-        /* Ficha completa de cada fila (mismos campos que IOCs ThreatFox). */
+        echo $this->page('run', [
+            'module'       => $this,
+            'search'       => $search,
+            'exec'         => $exec,
+            'rows'         => $displayRows,
+            'details'      => $this->buildDetails($displayRows),
+            'displayLimit' => $displayLimit,
+            'history'      => $store->history((int)$search['id'], 10),
+            'formats'      => TiTrackerStore::FORMATS,
+            'notice'       => flash('ti_tracker'),
+            'readonly'     => false,
+            'runAt'        => '',
+        ]);
+    }
+
+    /**
+     * Muestra el snapshot de la última ejecución sin consultar la fuente ni
+     * escribir actividad: es lo que abre el clic en el nombre de la búsqueda.
+     */
+    public function results(array $params = []): void
+    {
+        $store = $this->store();
+        $search = $store->getSearch((int)($params['id'] ?? 0));
+        if ($search === null) {
+            flash('ti_tracker', ['type' => 'error', 'text' => 'La búsqueda no existe.']);
+            redirect(base_url('modules/ti_tracker'));
+        }
+
+        $snapshot = $store->getLastResult((int)$search['id']);
+        $rows = $snapshot === null ? [] : (array)$snapshot['rows'];
+        $displayLimit = TiTrackerStore::SNAPSHOT_ROWS;
+
+        echo $this->page('run', [
+            'module'       => $this,
+            'search'       => $search,
+            'exec'         => $snapshot,
+            'rows'         => array_slice($rows, 0, $displayLimit),
+            'details'      => $this->buildDetails(array_slice($rows, 0, $displayLimit)),
+            'displayLimit' => $displayLimit,
+            'history'      => $store->history((int)$search['id'], 10),
+            'formats'      => TiTrackerStore::FORMATS,
+            'notice'       => flash('ti_tracker'),
+            'readonly'     => true,
+            'runAt'        => $snapshot === null ? '' : (string)$snapshot['run_at'],
+        ]);
+    }
+
+    /**
+     * Ficha completa de cada fila visible (mismos campos que IOCs ThreatFox).
+     *
+     * @param array<int,array> $rows
+     * @return array<string,array>
+     */
+    private function buildDetails(array $rows): array
+    {
         $details = [];
-        foreach ($displayRows as $index => $row) {
+        foreach ($rows as $index => $row) {
             $details['tt-detail-' . $index] = array_filter([
                 'IOC'               => (string)($row['ioc'] ?? ''),
                 'Tipo de IOC'       => (string)($row['ioc_type'] ?? ''),
@@ -282,27 +341,71 @@ class Module_TiTracker extends BaseModule
             ], static fn($value) => trim((string)$value) !== '');
         }
 
-        echo $this->page('run', [
-            'module'       => $this,
-            'search'       => $search,
-            'exec'         => $exec,
-            'rows'         => $displayRows,
-            'details'      => $details,
-            'displayLimit' => $displayLimit,
-            'history'      => $store->history((int)$search['id'], 10),
-            'formats'      => TiTrackerStore::FORMATS,
-            'notice'       => flash('ti_tracker'),
-        ]);
+        return $details;
     }
 
     /** Ejecuta todas las búsquedas locales de una vez (sin red). */
     public function runAll(array $params = []): void
     {
+        $stats = $this->runSearches();
+        flash('ti_tracker', ['type' => $stats['type'], 'text' => $stats['text']]);
+        redirect(base_url('modules/ti_tracker'));
+    }
+
+    /**
+     * Actualiza la base local de IOCs desde abuse.ch y ejecuta todas las
+     * búsquedas con los datos ya frescos. Reutiliza la ingesta del módulo
+     * IOCs ThreatFox (reintentos y degradación a 1 día incluidos).
+     */
+    public function syncAll(array $params = []): void
+    {
+        Auth::requireAdmin();
+
+        try {
+            $ingest = ThreatfoxIngest::run(THREATFOX_DEFAULT_DAYS);
+        } catch (Throwable $e) {
+            flash('ti_tracker', [
+                'type' => 'error',
+                'text' => 'No se pudo actualizar la base de IOCs: ' . $e->getMessage()
+                    . ' No se han ejecutado las búsquedas.',
+            ]);
+            redirect(base_url('modules/ti_tracker'));
+        }
+
+        $stats = $this->runSearches();
+        $text = sprintf(
+            'Base actualizada: %s IOCs recibidos, %s escritos (total %s). %s',
+            number_format((int)$ingest['received'], 0, ',', '.'),
+            number_format((int)$ingest['written'], 0, ',', '.'),
+            number_format((int)$ingest['total'], 0, ',', '.'),
+            $stats['text']
+        );
+
+        flash('ti_tracker', [
+            'type' => $stats['ran'] === 0 ? 'info' : $stats['type'],
+            'text' => $text,
+        ]);
+        redirect(base_url('modules/ti_tracker'));
+    }
+
+    /**
+     * Cuerpo compartido de runAll y syncAll: ejecuta las búsquedas guardadas
+     * contra la base local y devuelve el resumen para el aviso.
+     *
+     * @return array{text:string,type:string,ran:int,errors:int,skipped:int}
+     */
+    private function runSearches(): array
+    {
         $store = $this->store();
         $searches = $store->listSearches();
         if ($searches === []) {
-            flash('ti_tracker', ['type' => 'info', 'text' => 'No hay búsquedas guardadas que ejecutar.']);
-            redirect(base_url('modules/ti_tracker'));
+            return [
+                'text' => 'No hay búsquedas guardadas que ejecutar.',
+                'type' => 'info',
+                'ran' => 0,
+                'errors' => 0,
+                'skipped' => 0,
+            ];
         }
 
         $ran = 0;
@@ -333,11 +436,13 @@ class Module_TiTracker extends BaseModule
             $text .= sprintf(' %d con error.', $errors);
         }
 
-        flash('ti_tracker', [
-            'type' => $errors > 0 ? 'warning' : ($ran > 0 ? 'success' : 'info'),
+        return [
             'text' => $text,
-        ]);
-        redirect(base_url('modules/ti_tracker'));
+            'type' => $errors > 0 ? 'warning' : ($ran > 0 ? 'success' : 'info'),
+            'ran' => $ran,
+            'errors' => $errors,
+            'skipped' => $skipped,
+        ];
     }
 
     public function export(array $params = []): void

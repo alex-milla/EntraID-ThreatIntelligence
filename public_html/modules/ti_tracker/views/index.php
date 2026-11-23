@@ -7,6 +7,7 @@
  * @var array $totals
  * @var array $formats
  * @var array|null $notice
+ * @var bool $isAdmin
  */
 
 $base = base_url('modules/ti_tracker');
@@ -71,6 +72,15 @@ $describe = static function (array $f): string {
             <?= icon('play_circle', 18) ?> Ejecutar todas
         </button>
     </form>
+    <?php if (!empty($isAdmin)): ?>
+        <form method="POST" action="<?= e($base . '/sync-all') ?>" class="inline"
+              data-confirm="Se descargarán los IOCs nuevos de abuse.ch y se ejecutarán todas las búsquedas. Puede tardar unos segundos. ¿Continuar?">
+            <?= Csrf::field() ?>
+            <button type="submit" class="btn-outline btn" title="Actualizar la base de IOCs y ejecutar todas las búsquedas">
+                <?= icon('sync', 18) ?> Sincronizar y ejecutar todas
+            </button>
+        </form>
+    <?php endif; ?>
     <a class="btn" href="<?= e($base . '/new') ?>">
         <?= icon('add', 18) ?> Nueva búsqueda
     </a>
@@ -148,7 +158,13 @@ $describe = static function (array $f): string {
                     ?>
                     <tr>
                         <td>
-                            <strong><?= e((string)$search['name']) ?></strong>
+                            <strong>
+                                <a href="<?= e($base . '/results/' . $id) ?>"
+                                   class="text-brand-500 hover:underline"
+                                   title="Ver los resultados de la última ejecución (sin volver a consultar)">
+                                    <?= icon('visibility', 14) ?> <?= e((string)$search['name']) ?>
+                                </a>
+                            </strong>
                             <?php if (trim((string)$search['notes']) !== ''): ?>
                                 <div class="text-xs text-ink-muted"><?= e(truncate((string)$search['notes'], 90)) ?></div>
                             <?php endif; ?>
