@@ -190,6 +190,27 @@ try {
     check('Auditoría: lectura API registrada', ($history[0]['kind'] ?? '') === 'api_pull'
         && (int)$history[0]['rows'] === 4);
 
+    /* Fase 2: publicación y permisos de tokens (sin tocar la BD real). */
+    $store->setApiEnabled($id1, false);
+    check('Fase 2: despublicar lista', !$store->isApiEnabled($id1)
+        && count($store->listApiSearches()) === 1);
+    $store->setApiEnabled($id1, true);
+    check('Fase 2: republicar lista', $store->isApiEnabled($id1)
+        && count($store->listApiSearches()) === 2);
+
+    $permsAll = TiTrackerFeed::permissionsFromInput(['all_lists' => '1'], $published);
+    check('Fase 2: permiso todas las listas', ($permsAll['scope'] ?? '') === 'ti_tracker'
+        && !empty($permsAll['all_lists']) && ($permsAll['search_ids'] ?? null) === []);
+    $permsSome = TiTrackerFeed::permissionsFromInput([
+        'search_ids' => [(string)$id1, '99999'], 'allow_query_token' => '1',
+    ], $published);
+    check('Fase 2: permiso acotado y saneado', empty($permsSome['all_lists'])
+        && ($permsSome['search_ids'] ?? null) === [$id1]
+        && !empty($permsSome['allow_query_token']));
+    check('Fase 2: resumen de permisos',
+        str_contains(TiTrackerFeed::describePermissions($permsAll), 'Todas las listas')
+            && str_contains(TiTrackerFeed::describePermissions($permsSome), 'token en URL permitido'));
+
     foreach (['ti_tracker.sqlite', 'ti_tracker.sqlite-wal', 'ti_tracker.sqlite-shm'] as $file) {
         @unlink($tmpDir . DIRECTORY_SEPARATOR . $file);
     }
@@ -207,15 +228,59 @@ try {
  * ============================================================ */
 $apiSource = (string)@file_get_contents(ROOT_PATH . '/api/index.php');
 check('Ruta: grupo /api/ti-tf', str_contains($apiSource, "/api/ti-tf"));
-check('Ruta: /lists', str_contains($apiSource, "$r->get('lists'"));
-check('Ruta: /indicators y alias /feed', str_contains($apiSource, "$r->get('indicators'")
-    && str_contains($apiSource, "$r->get('feed'"));
+check('Ruta: /lists', str_contains($apiSource, "get('lists'"));
+check('Ruta: /indicators y alias /feed', str_contains($apiSource, "get('indicators'")
+    && str_contains($apiSource, "get('feed'"));
 check('Auth: X-API-Key y Basic', str_contains($apiSource, 'HTTP_X_API_KEY')
     && str_contains($apiSource, "'Basic '"));
 check('Auth: token por query-string solo si se autoriza',
     str_contains($apiSource, 'allowQueryToken'));
 check('Compatibilidad: rutas anteriores intactas', str_contains($apiSource, "/api/tenants")
     && str_contains($apiSource, "/api/modules") && str_contains($apiSource, 'function apiRequireAuth'));
+
+/* ============================================================
+ * 7. Panel de gestión (Fase 2)
+ * ============================================================ */
+$apiView = (string)@file_get_contents(MODULES_PATH . '/ti_tracker/views/api.php');
+check('Fase 2: vista del panel API', $apiView !== ''
+    && str_contains($apiView, 'Constructor de feed')
+    && str_contains($apiView, 'data-tf-copy')
+    && str_contains($apiView, 'tf-feed-list'));
+check('Fase 2: formularios de token', str_contains($apiView, '/api/token')
+    && str_contains($apiView, 'allow_query_token')
+    && str_contains($apiView, 'search_ids[]'));
+
+$module = ModuleManager::get('ti_tracker');
+$patterns = array_map(static fn($r) => $r['pattern'], $module?->routes() ?? []);
+foreach (['api', 'api/publish/{id}', 'api/token', 'api/token/delete/{id}'] as $pattern) {
+    check('Fase 2: ruta /' . $pattern, in_array($pattern, $patterns, true));
+}
+
+/* Render real del panel: sin errores y mostrando el token de un solo uso. */
+$apiRenderError = '';
+ob_start();
+try {
+    (static function (): void {
+        $module = ModuleManager::get('ti_tracker');
+        $published = [
+            ['id' => 7, 'name' => 'Lista de prueba', 'slug' => 'lista-de-prueba',
+             'tracked' => 3, 'last_run_at' => '2026-11-23 10:00:00 UTC'],
+        ];
+        $tokens = [];
+        $formats = TiTrackerFeed::FORMATS;
+        $scopes = TiTrackerFeed::SCOPES;
+        $types = TiTrackerFeed::TYPES;
+        $newToken = 'token_de_un_solo_uso';
+        $notice = null;
+        include MODULES_PATH . '/ti_tracker/views/api.php';
+    })();
+} catch (Throwable $e) {
+    $apiRenderError = $e->getMessage();
+}
+$apiRendered = (string)ob_get_clean();
+check('Fase 2: render del panel API', $apiRenderError === ''
+    && str_contains($apiRendered, 'token_de_un_solo_uso')
+    && str_contains($apiRendered, 'Constructor de feed'), $apiRenderError);
 
 echo "\n" . ($fail === 0 ? 'TODO OK' : 'FALLOS') . ": " . ($total - $fail) . "/{$total}\n";
 exit($fail === 0 ? 0 : 1);

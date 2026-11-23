@@ -55,6 +55,106 @@ final class TiTrackerFeed
         return is_array($perms) && !empty($perms['allow_query_token']);
     }
 
+    /** Permisos decodificados de un token (array vacío si no son válidos). */
+    public static function tokenPermissions($raw): array
+    {
+        $perms = safe_json_decode((string)$raw, []);
+
+        return is_array($perms) ? $perms : [];
+    }
+
+    /** Construye el permiso de un token TI TF a partir del formulario. */
+    public static function permissionsFromInput(array $input, array $published): array
+    {
+        $all = !empty($input['all_lists']);
+        $ids = [];
+        if (!$all) {
+            $valid = [];
+            foreach ($published as $search) {
+                $valid[(int)$search['id']] = true;
+            }
+            foreach ((array)($input['search_ids'] ?? []) as $value) {
+                $id = (int)$value;
+                if ($id > 0 && isset($valid[$id])) {
+                    $ids[] = $id;
+                }
+            }
+        }
+
+        return [
+            'scope'             => 'ti_tracker',
+            'all_lists'         => $all,
+            'search_ids'        => array_values(array_unique($ids)),
+            'allow_query_token' => !empty($input['allow_query_token']),
+        ];
+    }
+
+    /** Resumen legible de los permisos de un token. */
+    public static function describePermissions(array $perms): string
+    {
+        $bits = [!empty($perms['all_lists']) ? 'Todas las listas' : count((array)($perms['search_ids'] ?? [])) . ' lista(s)'];
+        if (!empty($perms['allow_query_token'])) {
+            $bits[] = 'token en URL permitido';
+        }
+
+        return implode(' · ', $bits);
+    }
+
+    /** Crea un token de API y devuelve el secreto en claro (solo se muestra una vez). */
+    public static function createToken(int $userId, string $name, array $permissions, ?int $expiresDays = null): string
+    {
+        $name = preg_replace('/[\x00-\x1F\x7F]+/u', ' ', $name) ?? '';
+        $name = trim((string)preg_replace('/\s+/u', ' ', $name));
+        $name = function_exists('mb_substr') ? mb_substr($name, 0, 80) : substr($name, 0, 80);
+        if ($name === '') {
+            $name = 'Token TI TF';
+        }
+
+        $raw = bin2hex(random_bytes(24));
+        $expiresAt = null;
+        if ($expiresDays !== null && $expiresDays > 0) {
+            $expiresAt = gmdate('Y-m-d H:i:s', time() + ($expiresDays * 86400));
+        }
+
+        $st = Database::getInstance()->prepare(
+            'INSERT INTO api_tokens (user_id, token_hash, name, permissions, expires_at)
+             VALUES (?, ?, ?, ?, ?)'
+        );
+        $st->execute([
+            $userId,
+            hash('sha256', $raw),
+            $name,
+            json_encode($permissions, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?: '[]',
+            $expiresAt,
+        ]);
+
+        return $raw;
+    }
+
+    /** Tokens existentes, con sus permisos decodificados y ámbito señalado. */
+    public static function listTokens(): array
+    {
+        $rows = Database::fetchAll(
+            'SELECT id, name, permissions, expires_at, last_used_at, created_at
+               FROM api_tokens ORDER BY id DESC'
+        );
+        foreach ($rows as &$row) {
+            $perms = self::tokenPermissions((string)($row['permissions'] ?? ''));
+            $row['permissions_data'] = $perms;
+            $row['ti_scope'] = (string)($perms['scope'] ?? '') === 'ti_tracker';
+            $row['summary'] = self::describePermissions($perms);
+        }
+        unset($row);
+
+        return $rows;
+    }
+
+    public static function revokeToken(int $id): void
+    {
+        $st = Database::getInstance()->prepare('DELETE FROM api_tokens WHERE id = ?');
+        $st->execute([$id]);
+    }
+
     /**
      * Resuelve las listas pedidas, siempre dentro de las autorizadas al token.
      * Acepta ids numéricos o slugs separados por comas; 'all' (o vacío) = todas.

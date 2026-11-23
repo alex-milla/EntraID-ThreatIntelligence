@@ -248,7 +248,8 @@ check('Módulo: etiqueta de menú «Seguimiento TI TF»', ($module?->getNavItem(
 
 $patterns = array_map(static fn($r) => $r['pattern'], $module?->routes() ?? []);
 foreach (['', 'new', 'edit/{id}', 'save', 'delete/{id}', 'run/{id}', 'results/{id}',
-          'run-all', 'sync-all', 'export/{id}'] as $pattern) {
+          'run-all', 'sync-all', 'api', 'api/publish/{id}', 'api/token',
+          'api/token/delete/{id}', 'export/{id}'] as $pattern) {
     check('Ruta registrada: /' . $pattern, in_array($pattern, $patterns, true));
 }
 
@@ -296,6 +297,14 @@ check(
 check(
     'Panel: nombre clicable a resultados guardados',
     str_contains($indexSource, '/results/') && str_contains($indexSource, "icon('visibility'")
+);
+check(
+    'Panel: interruptor de publicación API',
+    str_contains($indexSource, '/api/publish/') && str_contains($indexSource, '<th>API</th>')
+);
+check(
+    'Panel: acceso a «API / Feeds externos»',
+    str_contains($indexSource, '/api') && str_contains($indexSource, 'API / Feeds externos')
 );
 
 $editSource = (string)@file_get_contents(MODULES_PATH . '/ti_tracker/views/edit.php');

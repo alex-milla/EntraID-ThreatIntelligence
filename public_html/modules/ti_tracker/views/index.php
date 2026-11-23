@@ -81,6 +81,12 @@ $describe = static function (array $f): string {
             </button>
         </form>
     <?php endif; ?>
+    <?php if (!empty($isAdmin)): ?>
+        <a class="btn-outline btn" href="<?= e($base . '/api') ?>"
+           title="Listas publicadas, tokens y URLs de los feeds externos">
+            <?= icon('link', 18) ?> API / Feeds externos
+        </a>
+    <?php endif; ?>
     <a class="btn" href="<?= e($base . '/new') ?>">
         <?= icon('add', 18) ?> Nueva búsqueda
     </a>
@@ -145,6 +151,7 @@ $describe = static function (array $f): string {
                         <th class="col-secondary">Filtros</th>
                         <th>Seguimiento</th>
                         <th>Novedades</th>
+                        <th>API</th>
                         <th class="col-secondary">Última ejecución</th>
                         <th>Exportar</th>
                         <th class="text-right">Acciones</th>
@@ -182,6 +189,25 @@ $describe = static function (array $f): string {
                                 <span class="tag-chip good">+<?= $fmt($lastNew) ?></span>
                             <?php else: ?>
                                 <span class="tag-chip excluded">0</span>
+                            <?php endif; ?>
+                        </td>
+                        <td class="whitespace-nowrap">
+                            <?php $apiOn = !empty($search['api_enabled']); ?>
+                            <?php if (!empty($isAdmin)): ?>
+                                <form method="POST" action="<?= e($base . '/api/publish/' . $id) ?>" class="inline">
+                                    <?= Csrf::field() ?>
+                                    <input type="hidden" name="enabled" value="<?= $apiOn ? '0' : '1' ?>">
+                                    <button type="submit" class="btn-tiny btn-outline btn"
+                                            title="<?= $apiOn ? 'Retirar de la API' : 'Publicar en la API' ?>">
+                                        <span class="tag-chip <?= $apiOn ? 'good' : 'excluded' ?>">
+                                            <?= $apiOn ? 'Pública' : 'Privada' ?>
+                                        </span>
+                                    </button>
+                                </form>
+                            <?php else: ?>
+                                <span class="tag-chip <?= $apiOn ? 'good' : 'excluded' ?>">
+                                    <?= $apiOn ? 'Pública' : 'Privada' ?>
+                                </span>
                             <?php endif; ?>
                         </td>
                         <td class="col-secondary whitespace-nowrap text-xs">

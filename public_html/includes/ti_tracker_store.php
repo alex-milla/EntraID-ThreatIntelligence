@@ -182,6 +182,13 @@ final class TiTrackerStore
         return (int)$st->fetchColumn() === 1;
     }
 
+    /** Activa o desactiva la publicación de una búsqueda en la API. */
+    public function setApiEnabled(int $id, bool $enabled): void
+    {
+        $st = $this->pdo->prepare('UPDATE searches SET api_enabled = ?, updated_at = ? WHERE id = ?');
+        $st->execute([$enabled ? 1 : 0, gmdate('Y-m-d H:i:s') . ' UTC', $id]);
+    }
+
     /**
      * IOCs en seguimiento de una búsqueda (para scope=tracked del feed).
      *

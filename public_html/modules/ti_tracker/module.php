@@ -20,6 +20,10 @@
  *   GET  /modules/ti_tracker/results/{id}   resultados de la última ejecución (sin red)
  *   POST /modules/ti_tracker/run-all        ejecutar todas las búsquedas locales
  *   POST /modules/ti_tracker/sync-all       ingestar IOCs y ejecutar todas
+ *   GET  /modules/ti_tracker/api            panel de feeds externos y tokens
+ *   POST /modules/ti_tracker/api/publish/{id}  activar/desactivar lista en la API
+ *   POST /modules/ti_tracker/api/token      crear token de la API
+ *   POST /modules/ti_tracker/api/token/delete/{id}  revocar token
  *   POST /modules/ti_tracker/export/{id}    descargar STIX/MISP/TXT
  */
 
@@ -87,6 +91,10 @@ class Module_TiTracker extends BaseModule
             ['method' => 'GET',  'pattern' => 'results/{id}', 'handler' => [$this, 'results']],
             ['method' => 'POST', 'pattern' => 'run-all',   'handler' => [$this, 'runAll']],
             ['method' => 'POST', 'pattern' => 'sync-all',  'handler' => [$this, 'syncAll']],
+            ['method' => 'GET',  'pattern' => 'api',       'handler' => [$this, 'apiPanel']],
+            ['method' => 'POST', 'pattern' => 'api/publish/{id}', 'handler' => [$this, 'setPublished']],
+            ['method' => 'POST', 'pattern' => 'api/token', 'handler' => [$this, 'createToken']],
+            ['method' => 'POST', 'pattern' => 'api/token/delete/{id}', 'handler' => [$this, 'revokeToken']],
             ['method' => 'POST', 'pattern' => 'export/{id}', 'handler' => [$this, 'export']],
         ];
     }
@@ -443,6 +451,95 @@ class Module_TiTracker extends BaseModule
             'errors' => $errors,
             'skipped' => $skipped,
         ];
+    }
+
+    /** Panel de feeds externos: listas publicadas, tokens y constructor de URLs. */
+    public function apiPanel(array $params = []): void
+    {
+        Auth::requireAdmin();
+        $store = $this->store();
+        $newToken = trim((string)($_SESSION['ti_tf_new_token'] ?? ''));
+        unset($_SESSION['ti_tf_new_token']);
+
+        echo $this->page('api', [
+            'module'    => $this,
+            'published' => $store->listApiSearches(),
+            'tokens'    => TiTrackerFeed::listTokens(),
+            'formats'   => TiTrackerFeed::FORMATS,
+            'scopes'    => TiTrackerFeed::SCOPES,
+            'types'     => TiTrackerFeed::TYPES,
+            'newToken'  => $newToken,
+            'notice'    => flash('ti_tracker'),
+        ]);
+    }
+
+    /** Activa o desactiva una búsqueda en los feeds de la API. */
+    public function setPublished(array $params = []): void
+    {
+        Auth::requireAdmin();
+        $store = $this->store();
+        $id = (int)($params['id'] ?? 0);
+        $search = $store->getSearch($id);
+        if ($search === null) {
+            flash('ti_tracker', ['type' => 'error', 'text' => 'La búsqueda no existe.']);
+            redirect(base_url('modules/ti_tracker'));
+        }
+
+        $enabled = !empty($_POST['enabled']);
+        $store->setApiEnabled($id, $enabled);
+        flash('ti_tracker', [
+            'type' => 'success',
+            'text' => '«' . $search['name'] . '» ' . ($enabled ? 'publicada' : 'retirada') . ' de la API.',
+        ]);
+        redirect(base_url('modules/ti_tracker'));
+    }
+
+    /** Crea un token con permisos acotados a listas de Seguimiento TI TF. */
+    public function createToken(array $params = []): void
+    {
+        Auth::requireAdmin();
+        $store = $this->store();
+        $published = $store->listApiSearches();
+        $name = trim((string)($_POST['name'] ?? ''));
+        if ($name === '') {
+            flash('ti_tracker', ['type' => 'error', 'text' => 'Pon un nombre al token.']);
+            redirect(base_url('modules/ti_tracker/api'));
+        }
+
+        $permissions = TiTrackerFeed::permissionsFromInput($_POST, $published);
+        if (empty($permissions['all_lists']) && $permissions['search_ids'] === []) {
+            flash('ti_tracker', ['type' => 'error', 'text' => 'Elige al menos una lista o marca «Todas las listas».']);
+            redirect(base_url('modules/ti_tracker/api'));
+        }
+
+        $daysRaw = trim((string)($_POST['expires_days'] ?? ''));
+        $days = $daysRaw === '' ? null : max(1, min(3650, (int)$daysRaw));
+
+        try {
+            $raw = TiTrackerFeed::createToken((int)Auth::id(), $name, $permissions, $days);
+        } catch (Throwable $e) {
+            flash('ti_tracker', ['type' => 'error', 'text' => 'No se pudo crear el token: ' . $e->getMessage()]);
+            redirect(base_url('modules/ti_tracker/api'));
+        }
+
+        $_SESSION['ti_tf_new_token'] = $raw;
+        flash('ti_tracker', ['type' => 'success', 'text' => 'Token creado. Cópialo ahora: no se volverá a mostrar.']);
+        redirect(base_url('modules/ti_tracker/api'));
+    }
+
+    /** Revoca un token de la API. */
+    public function revokeToken(array $params = []): void
+    {
+        Auth::requireAdmin();
+        $id = (int)($params['id'] ?? 0);
+        if ($id <= 0) {
+            flash('ti_tracker', ['type' => 'error', 'text' => 'Token no válido.']);
+            redirect(base_url('modules/ti_tracker/api'));
+        }
+
+        TiTrackerFeed::revokeToken($id);
+        flash('ti_tracker', ['type' => 'success', 'text' => 'Token revocado.']);
+        redirect(base_url('modules/ti_tracker/api'));
     }
 
     public function export(array $params = []): void
