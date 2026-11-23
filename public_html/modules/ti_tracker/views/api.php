@@ -5,6 +5,7 @@
  * @var Module_TiTracker $module
  * @var array $published listas habilitadas para la API
  * @var array $tokens tokens existentes
+ * @var array $taxiiRequests últimas peticiones TAXII recibidas
  * @var array $formats
  * @var array $scopes
  * @var array $types
@@ -260,6 +261,52 @@ $feedOptions = [
             </button>
         </div>
     </form>
+</div>
+
+<div class="card mt-6">
+    <div class="card-head">
+        <h2>Diagnóstico TAXII (últimas peticiones)</h2>
+    </div>
+    <?php if ($taxiiRequests === []): ?>
+        <p class="text-sm text-ink-muted p-4 m-0">
+            Todavía no ha llegado ninguna petición a <code>/api/taxii2/*</code>.
+            Pulsa <strong>Add</strong> en Microsoft Sentinel y recarga esta página
+            para ver si la llamada llegó y qué respondió el servidor.
+        </p>
+    <?php else: ?>
+        <div class="overflow-x-auto">
+            <table class="data-table w-full">
+                <thead>
+                    <tr>
+                        <th>Fecha</th>
+                        <th>Origen</th>
+                        <th>Ruta</th>
+                        <th class="col-secondary">Accept</th>
+                        <th>Auth</th>
+                        <th>HTTP</th>
+                    </tr>
+                </thead>
+                <tbody>
+                <?php foreach ($taxiiRequests as $req): ?>
+                    <tr>
+                        <td class="whitespace-nowrap text-xs"><?= e($short((string)$req['created_at'])) ?></td>
+                        <td class="text-xs font-mono"><?= e((string)$req['ip']) ?></td>
+                        <td class="text-xs break-all"><?= e(truncate((string)$req['path'], 90)) ?></td>
+                        <td class="col-secondary text-xs text-ink-muted">
+                            <?= e(truncate((string)$req['accept'], 70)) ?>
+                        </td>
+                        <td>
+                            <span class="tag-chip <?= !empty($req['auth_ok']) ? 'good' : 'excluded' ?>">
+                                <?= !empty($req['auth_ok']) ? 'OK' : '401' ?>
+                            </span>
+                        </td>
+                        <td><?= (int)$req['status'] ?></td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+    <?php endif; ?>
 </div>
 
 <div class="card mt-6">

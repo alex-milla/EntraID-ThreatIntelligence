@@ -114,6 +114,18 @@ final class TiTrackerStore
             new_iocs      TEXT NOT NULL DEFAULT \'[]\',
             rows_json     TEXT NOT NULL DEFAULT \'[]\'
         )');
+
+        /* Diagnóstico de clientes TAXII externos (v0.4.29.5). */
+        $this->pdo->exec('CREATE TABLE IF NOT EXISTS taxii_requests (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL,
+            ip         TEXT NOT NULL DEFAULT \'\',
+            method     TEXT NOT NULL DEFAULT \'GET\',
+            path       TEXT NOT NULL DEFAULT \'\',
+            accept     TEXT NOT NULL DEFAULT \'\',
+            auth_ok    INTEGER NOT NULL DEFAULT 0,
+            status     INTEGER NOT NULL DEFAULT 0
+        )');
     }
 
     /* =====================================================================
@@ -214,6 +226,39 @@ final class TiTrackerStore
     public function logApiPull(int $searchId, int $rows): void
     {
         $this->addActivity($searchId, 'api_pull', $rows, 0, 'api');
+    }
+
+    /** Últimas peticiones TAXII recibidas (diagnóstico del conector). */
+    public function logTaxiiRequest(array $data): void
+    {
+        $st = $this->pdo->prepare(
+            'INSERT INTO taxii_requests (created_at, ip, method, path, accept, auth_ok, status)
+             VALUES (?, ?, ?, ?, ?, ?, ?)'
+        );
+        $st->execute([
+            gmdate('Y-m-d H:i:s') . ' UTC',
+            substr((string)($data['ip'] ?? ''), 0, 64),
+            substr((string)($data['method'] ?? 'GET'), 0, 12),
+            substr((string)($data['path'] ?? ''), 0, 255),
+            substr((string)($data['accept'] ?? ''), 0, 255),
+            !empty($data['auth_ok']) ? 1 : 0,
+            (int)($data['status'] ?? 0),
+        ]);
+
+        /* Tope suave: solo se conservan las últimas 100 entradas. */
+        $this->pdo->exec('DELETE FROM taxii_requests WHERE id NOT IN
+            (SELECT id FROM taxii_requests ORDER BY id DESC LIMIT 100)');
+    }
+
+    /** @return array<int,array> Últimas peticiones TAXII (más reciente primero). */
+    public function listTaxiiRequests(int $limit = 15): array
+    {
+        $st = $this->pdo->prepare(
+            'SELECT * FROM taxii_requests ORDER BY id DESC LIMIT ' . max(1, min(100, $limit))
+        );
+        $st->execute();
+
+        return $st->fetchAll();
     }
 
     public function getSearch(int $id): ?array

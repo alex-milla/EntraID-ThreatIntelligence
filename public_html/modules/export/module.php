@@ -257,6 +257,12 @@ class Module_Export extends BaseModule
         );
     }
 
+    /** Timestamp STIX con milisegundos (formato de los ejemplos de Microsoft). */
+    private static function stixTime(int $timestamp): string
+    {
+        return gmdate('Y-m-d\\TH:i:s', $timestamp) . '.000Z';
+    }
+
     /** @return array<int,array<string,mixed>> objetos indicator STIX 2.1 */
     public function buildStixIndicators(array $iocs, array $config = []): array
     {
@@ -273,13 +279,14 @@ class Module_Export extends BaseModule
         $actor = trim((string)($config['threat_actor'] ?? ''));
         $lang = (string)($config['lang'] ?? 'es');
 
-        $now = gmdate('Y-m-d\TH:i:s\Z');
-        $validUntil = gmdate('Y-m-d\TH:i:s\Z', time() + ($validDays * 86400));
-
         /* Modo TAXII (v0.4.29.2): ids estables y fechas del IOC. Por defecto
            se mantiene el comportamiento histórico (uuid y ahora aleatorios). */
         $deterministic = !empty($config['deterministic_ids']);
         $useIocTime = !empty($config['use_ioc_timestamps']);
+        $strict = !empty($config['strict_stix']);
+        $is20 = (string)($config['stix_version'] ?? '2.1') === '2.0';
+        $nowTs = time();
+        $validUntilTs = $nowTs + ($validDays * 86400);
 
         $indicators = [];
         foreach ($this->buildRows($iocs) as $ioc) {
@@ -287,12 +294,20 @@ class Module_Export extends BaseModule
             $pattern = $this->generateStixPattern($ioc['type'], $ioc['value']);
             if (!$pattern) { continue; }
 
-            $stamp = $now;
+            $stampTs = $nowTs;
             if ($useIocTime && trim((string)($ioc['fetched_at'] ?? '')) !== '') {
                 $parsed = strtotime((string)$ioc['fetched_at']);
                 if ($parsed !== false && $parsed > 0) {
-                    $stamp = gmdate('Y-m-d\TH:i:s\Z', $parsed);
+                    $stampTs = $parsed;
                 }
+            }
+
+            $outLabels = $labels;
+            if ($actor !== '' && $strict) {
+                $outLabels[] = 'threat-actor:' . $actor;
+            }
+            if ($is20) {
+                $outLabels = array_values(array_unique(array_merge($outLabels, [$indicatorType])));
             }
 
             $indicator = [
@@ -303,23 +318,30 @@ class Module_Export extends BaseModule
                 'pattern'             => $pattern,
                 'pattern_type'        => 'stix',
                 'pattern_version'     => '2.1',
-                'created'             => $stamp,
-                'modified'            => $stamp,
-                'valid_from'          => $stamp,
-                'valid_until'         => $validUntil,
+                'created'             => self::stixTime($stampTs),
+                'modified'            => self::stixTime($stampTs),
+                'valid_from'          => self::stixTime($stampTs),
+                'valid_until'         => self::stixTime($validUntilTs),
                 'name'                => $source . ' - ' . $ioc['value'],
                 'description'         => $ioc['description'],
                 'indicator_types'     => [$indicatorType],
                 'revoked'             => false,
-                'labels'              => $labels,
+                'labels'              => $outLabels,
                 'confidence'          => $confidence,
                 'lang'                => $lang,
                 'object_marking_refs' => [$markingRef],
                 'external_references' => [],
             ];
-            if ($actor !== '') {
+
+            /* STIX 2.0 no define spec_version/pattern_version/indicator_types;
+               la categoría viaja en labels y threat_actor_names no es estándar. */
+            if ($is20) {
+                unset($indicator['spec_version'], $indicator['pattern_version'], $indicator['indicator_types']);
+            }
+            if ($actor !== '' && !$strict) {
                 $indicator['threat_actor_names'] = [$actor];
             }
+
             $indicators[] = $indicator;
         }
         return $indicators;

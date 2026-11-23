@@ -217,14 +217,44 @@ try {
         'description' => 'prueba', 'fetched_at' => '2020-01-02 03:04:05 UTC',
     ]]);
     check('Fase 3: created/modified desde el momento en que se vio',
-        ($stamped[0]['created'] ?? '') === '2020-01-02T03:04:05Z'
+        ($stamped[0]['created'] ?? '') === '2020-01-02T03:04:05.000Z'
             && ($stamped[0]['modified'] ?? '') === ($stamped[0]['created'] ?? ''));
     $ms = TiTrackerFeed::render($tracked['iocs'], 'ms-sentinel');
     $msData = safe_json_decode($ms['content'], []);
     check('Fase 3: formato ms-sentinel', is_array($msData) && isset($msData[0]['displayName'])
         && isset($msData[0]['pattern']) && str_contains($ms['mime'], 'json'));
 
+    /* Fase 3.5: STIX estricto, TAXII 2.0 y Upload API. */
+    $upload = TiTrackerFeed::render($tracked['iocs'], 'ms-upload-stix');
+    $uploadData = safe_json_decode($upload['content'], []);
+    check('Fase 3.5: formato ms-upload-stix', ($uploadData['sourcesystem'] ?? '') === 'EntraID-TI-TF'
+        && is_array($uploadData['stixobjects'] ?? null));
+    check('Fase 3.5: STIX estricto (sin propiedades propietarias)',
+        !isset($taxiiA[0]['threat_actor_names'])
+            && str_ends_with((string)($taxiiA[0]['created'] ?? ''), '.000Z')
+            && ($taxiiA[0]['spec_version'] ?? '') === '2.1');
+    $bundle20 = TiTrackerFeed::taxii20Bundle($tracked['iocs']);
+    check('Fase 3.5: bundle STIX 2.0 para TAXII 2.0', ($bundle20['type'] ?? '') === 'bundle'
+        && ($bundle20['spec_version'] ?? '') === '2.0'
+        && !isset($bundle20['objects'][0]['spec_version'])
+        && !isset($bundle20['objects'][0]['indicator_types']));
+
+    $prevAccept = $_SERVER['HTTP_ACCEPT'] ?? null;
+    $_SERVER['HTTP_ACCEPT'] = 'application/vnd.oasis.taxii+json; version=2.0';
+    $is20 = TiTrackerFeed::isTaxii20();
+    $_SERVER['HTTP_ACCEPT'] = 'application/taxii+json;version=2.1';
+    $is21 = !TiTrackerFeed::isTaxii20();
+    if ($prevAccept === null) { unset($_SERVER['HTTP_ACCEPT']); } else { $_SERVER['HTTP_ACCEPT'] = $prevAccept; }
+    check('Fase 3.5: negociación TAXII 2.0/2.1', $is20 && $is21);
+
     $store->logApiPull($id1, 4);
+    $store->logTaxiiRequest([
+        'ip' => '127.0.0.1', 'method' => 'GET', 'path' => '/api/taxii2/ti-tf/collections/all/objects/',
+        'accept' => 'application/vnd.oasis.taxii+json; version=2.0', 'auth_ok' => true, 'status' => 200,
+    ]);
+    $reqs = $store->listTaxiiRequests(15);
+    check('Fase 3.5: bitácora TAXII', count($reqs) === 1
+        && !empty($reqs[0]['auth_ok']) && (int)$reqs[0]['status'] === 200);
     $history = $store->history($id1, 10);
     check('Auditoría: lectura API registrada', ($history[0]['kind'] ?? '') === 'api_pull'
         && (int)$history[0]['rows'] === 4);
@@ -285,7 +315,7 @@ check('Fase 3.3: detalle de colección para Sentinel',
 check('Fase 3.3: Basic Auth de Apache/PHP-FPM',
     str_contains($apiSource, 'REDIRECT_HTTP_AUTHORIZATION') && str_contains($apiSource, 'PHP_AUTH_PW'));
 check('Fase 3.3: media types y ventanas TAXII',
-    str_contains($apiSource, 'application/stix+json;version=2.1')
+    str_contains($apiSource, 'vnd.oasis.stix+json; version=2.0')
         && str_contains($apiSource, 'X-TAXII-Date-Added-First')
         && str_contains($apiSource, 'X-TAXII-Date-Added-Last'));
 check('Fase 3.4: negociación TAXII 2.0 / 2.1',
@@ -293,6 +323,9 @@ check('Fase 3.4: negociación TAXII 2.0 / 2.1',
         && str_contains($apiSource, 'vnd.oasis.taxii+json'));
 check('Fase 3.4: token también en Username',
     str_contains($apiSource, 'PHP_AUTH_USER') && str_contains($apiSource, 'resolveCollection'));
+check('Fase 3.5: bundle 2.0 y bitácora en la API',
+    str_contains($apiSource, 'taxii20Bundle') && str_contains($apiSource, 'apiTfTaxiiLog')
+        && str_contains($apiSource, 'logTaxiiRequest'));
 
 /* ============================================================
  * 7. Panel de gestión (Fase 2)
@@ -311,6 +344,9 @@ check('Fase 3.4: panel indica slug y Username/Password',
     str_contains($apiView, 'Rellena <strong>Username y Password con el token</strong>')
         && str_contains($apiView, 'slug')
         && str_contains($apiView, '<code>all</code>'));
+check('Fase 3.5: panel muestra el diagnóstico TAXII',
+    str_contains($apiView, 'Diagnóstico TAXII')
+        && str_contains($apiView, 'taxiiRequests'));
 check('Fase 2: formularios de token', str_contains($apiView, '/api/token')
     && str_contains($apiView, 'allow_query_token')
     && str_contains($apiView, 'search_ids[]'));
@@ -337,6 +373,7 @@ try {
         $types = TiTrackerFeed::TYPES;
         $newToken = 'token_de_un_solo_uso';
         $notice = null;
+        $taxiiRequests = [];
         include MODULES_PATH . '/ti_tracker/views/api.php';
     })();
 } catch (Throwable $e) {

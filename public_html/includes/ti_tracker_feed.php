@@ -15,7 +15,7 @@ declare(strict_types=1);
 
 final class TiTrackerFeed
 {
-    public const FORMATS = ['stix', 'misp', 'json', 'txt', 'csv', 'ms-sentinel'];
+    public const FORMATS = ['stix', 'misp', 'json', 'txt', 'csv', 'ms-sentinel', 'ms-upload-stix'];
     public const SCOPES  = ['tracked', 'last', 'new'];
     public const TYPES   = ['all', 'ip', 'domain', 'url', 'hash', 'email'];
 
@@ -431,8 +431,16 @@ final class TiTrackerFeed
         return isset($groups[$wanted]) && in_array($type, $groups[$wanted], true);
     }
 
-    /** Objetos STIX 2.1 listos para el envelope TAXII (ids estables y fechas reales). */
-    public static function taxiiObjects(array $iocs): array
+    /** ¿Negocia el cliente TAXII 2.0 (Accept/vnd.oasis)? */
+    public static function isTaxii20(): bool
+    {
+        $accept = strtolower((string)($_SERVER['HTTP_ACCEPT'] ?? ''));
+
+        return str_contains($accept, 'vnd.oasis.taxii+json') || str_contains($accept, 'vnd.oasis.stix+json');
+    }
+
+    /** Objetos STIX listos para TAXII: ids estables, fechas reales y esquema estricto. */
+    public static function taxiiObjects(array $iocs, string $version = '2.1'): array
     {
         $exporter = new Module_Export();
 
@@ -444,7 +452,20 @@ final class TiTrackerFeed
             'indicator_type'      => 'malicious-activity',
             'deterministic_ids'   => true,
             'use_ioc_timestamps'  => true,
+            'strict_stix'         => true,
+            'stix_version'        => $version,
         ]);
+    }
+
+    /** Bundle STIX 2.0 exigido por TAXII 2.0 en /collections/{id}/objects/. */
+    public static function taxii20Bundle(array $iocs): array
+    {
+        return [
+            'type'         => 'bundle',
+            'id'           => 'bundle--' . self::stableUuid('ti-tf-' . microtime(true) . random_int(1, 9999)),
+            'spec_version' => '2.0',
+            'objects'      => self::taxiiObjects($iocs, '2.0'),
+        ];
     }
 
     /**
@@ -509,6 +530,7 @@ final class TiTrackerFeed
                 /* Payload para uploadIndicators de Microsoft Sentinel / Defender. */
                 $stixConfig['deterministic_ids'] = true;
                 $stixConfig['use_ioc_timestamps'] = true;
+                $stixConfig['strict_stix'] = true;
                 $items = [];
                 foreach ($exporter->buildStixIndicators($iocs, $stixConfig) as $ind) {
                     $items[] = [
@@ -533,6 +555,21 @@ final class TiTrackerFeed
                     'content'  => json_encode($items, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE) ?: '[]',
                     'mime'     => 'application/json',
                     'filename' => 'ti_tf_ms_sentinel_' . $date . '.json',
+                ];
+            })(),
+            'ms-upload-stix' => (static function () use ($exporter, $iocs, $stixConfig, $date): array {
+                /* Nueva Upload API: threat-intelligence-stix-objects:upload. */
+                $stixConfig['deterministic_ids'] = true;
+                $stixConfig['use_ioc_timestamps'] = true;
+                $stixConfig['strict_stix'] = true;
+                $payload = [
+                    'sourcesystem' => 'EntraID-TI-TF',
+                    'stixobjects'  => $exporter->buildStixIndicators($iocs, $stixConfig),
+                ];
+                return [
+                    'content'  => json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE) ?: '{}',
+                    'mime'     => 'application/json',
+                    'filename' => 'ti_tf_ms_upload_stix_' . $date . '.json',
                 ];
             })(),
             default => [

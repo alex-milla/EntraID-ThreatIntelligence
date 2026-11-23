@@ -118,6 +118,7 @@ function apiTfAuth(): array
     }
 
     if ($row === null) {
+        apiTfTaxiiLog(false, 401);
         json_response(['error' => 'No autorizado'], 401);
     }
 
@@ -169,11 +170,30 @@ function apiTfTaxiiRoot(): string
 /** Media type TAXII negociado: 2.0 (vnd.oasis, estilo OTX) o 2.1. */
 function apiTfTaxiiMedia(): string
 {
-    $accept = strtolower((string)($_SERVER['HTTP_ACCEPT'] ?? ''));
-
-    return str_contains($accept, 'vnd.oasis.taxii+json')
+    return TiTrackerFeed::isTaxii20()
         ? 'application/vnd.oasis.taxii+json; version=2.0'
         : 'application/taxii+json;version=2.1';
+}
+
+/** Bitácora de llamadas TAXII (diagnóstico del conector de Sentinel). */
+function apiTfTaxiiLog(bool $authOk, int $status): void
+{
+    $uri = (string)($_SERVER['REQUEST_URI'] ?? '');
+    if (!str_contains($uri, '/taxii2')) {
+        return;
+    }
+    try {
+        (new TiTrackerStore())->logTaxiiRequest([
+            'ip'      => (string)($_SERVER['REMOTE_ADDR'] ?? ''),
+            'method'  => (string)($_SERVER['REQUEST_METHOD'] ?? 'GET'),
+            'path'    => (string)(parse_url($uri, PHP_URL_PATH) ?? ''),
+            'accept'  => (string)($_SERVER['HTTP_ACCEPT'] ?? ''),
+            'auth_ok' => $authOk,
+            'status'  => $status,
+        ]);
+    } catch (Throwable $e) {
+        /* El diagnóstico nunca debe impedir la respuesta TAXII. */
+    }
 }
 
 $router = new Router();
@@ -417,15 +437,18 @@ $router->group('/api/ti-tf', function (Router $r) {
 });
 
 // ============================================================
-// API: TAXII 2.1 de solo lectura para Microsoft Sentinel (v0.4.29.2/.3)
+// API: TAXII 2.0/2.1 de solo lectura para Microsoft Sentinel (v0.4.29.5)
 // ============================================================
 
 $router->group('/api/taxii2', function (Router $r) {
+    $is20 = TiTrackerFeed::isTaxii20();
     $mime = apiTfTaxiiMedia();
-    $stixMime = 'application/stix+json;version=2.1';
+    $objectMime = $is20 ? 'application/vnd.oasis.stix+json; version=2.0' : $mime;
+    $stixMime = $objectMime;
 
     $discovery = function () use ($mime) {
         apiTfAuth();
+        apiTfTaxiiLog(true, 200);
         apiTaxiiJson([
             'title'       => 'EntraID TI — Seguimiento TI TF',
             'description' => 'Feeds de indicadores de Seguimiento TI TF (solo lectura)',
@@ -434,15 +457,13 @@ $router->group('/api/taxii2', function (Router $r) {
         ], $mime);
     };
 
-    $apiRoot = function () use ($mime) {
+    $apiRoot = function () use ($mime, $is20) {
         apiTfAuth();
+        apiTfTaxiiLog(true, 200);
         apiTaxiiJson([
             'title'              => 'Seguimiento TI TF',
             'description'        => 'Listas de IOCs publicadas desde Seguimiento TI TF',
-            'versions'           => [
-                'application/taxii+json;version=2.1',
-                'application/vnd.oasis.taxii+json; version=2.0',
-            ],
+            'versions'           => $is20 ? ['taxii-2.0'] : ['application/taxii+json;version=2.1'],
             'max_content_length' => 10485760,
         ], $mime);
     };
@@ -456,7 +477,7 @@ $router->group('/api/taxii2', function (Router $r) {
                 'description' => 'Unión de todas las listas publicadas permitidas al token',
                 'can_read'    => true,
                 'can_write'   => false,
-                'media_types' => [$mime, $stixMime],
+                'media_types' => [$stixMime],
             ];
         }
 
@@ -466,12 +487,13 @@ $router->group('/api/taxii2', function (Router $r) {
             'description' => 'Lista ' . (string)($search['slug'] ?? '') . ' de Seguimiento TI TF',
             'can_read'    => true,
             'can_write'   => false,
-            'media_types' => [$mime, $stixMime],
+            'media_types' => [$stixMime],
         ];
     };
 
     $collections = function () use ($mime, $stixMime, $collectionData) {
         $auth = apiTfAuth();
+        apiTfTaxiiLog(true, 200);
         $allowedIds = $auth['token'] === null ? null : TiTrackerFeed::allowedIds($auth['token']);
         $store = new TiTrackerStore();
 
@@ -486,6 +508,7 @@ $router->group('/api/taxii2', function (Router $r) {
     /* El validador de alta de Sentinel pide el detalle de la colección. */
     $collection = function (array $params) use ($mime, $stixMime, $collectionData) {
         $auth = apiTfAuth();
+        apiTfTaxiiLog(true, 200);
         $allowedIds = $auth['token'] === null ? null : TiTrackerFeed::allowedIds($auth['token']);
         $resolved = TiTrackerFeed::resolveCollection(
             (string)($params['id'] ?? ''),
@@ -501,8 +524,9 @@ $router->group('/api/taxii2', function (Router $r) {
         apiTaxiiJson($found, $mime);
     };
 
-    $objects = function (array $params) use ($mime) {
+    $objects = function (array $params) use ($mime, $objectMime, $is20) {
         $auth = apiTfAuth();
+        apiTfTaxiiLog(true, 200);
         $allowedIds = $auth['token'] === null ? null : TiTrackerFeed::allowedIds($auth['token']);
         $store = new TiTrackerStore();
         $published = $store->listApiSearches($allowedIds);
@@ -521,6 +545,20 @@ $router->group('/api/taxii2', function (Router $r) {
             apiTaxiiJson(['error' => $e->getMessage()], $mime, 400);
         }
 
+        foreach ($feed['lists'] as $list) {
+            $store->logApiPull((int)$list['id'], (int)$list['count']);
+        }
+
+        /* TAXII 2.0 exige un Bundle STIX; TAXII 2.1 un envelope TAXII. */
+        if ($is20) {
+            $bundle = TiTrackerFeed::taxii20Bundle($feed['iocs']);
+            apiTfRaw(
+                json_encode($bundle, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE) ?: '{}',
+                $objectMime,
+                'ti_tf_stix20_bundle.json'
+            );
+        }
+
         $all = TiTrackerFeed::taxiiObjects($feed['iocs']);
         $limit = max(1, min(5000, (int)($_GET['limit'] ?? 5000)));
         $next = (string)($_GET['next'] ?? '');
@@ -532,10 +570,6 @@ $router->group('/api/taxii2', function (Router $r) {
         if ($more) {
             $response['next'] = (string)($offset + count($page));
         }
-        foreach ($feed['lists'] as $list) {
-            $store->logApiPull((int)$list['id'], (int)$list['count']);
-        }
-
         /* Ventanas TAXII: ayudan al conector a avanzar el cursor de added_after. */
         $headers = [];
         $dates = [];

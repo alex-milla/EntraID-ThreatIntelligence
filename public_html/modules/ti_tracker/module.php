@@ -465,6 +465,7 @@ class Module_TiTracker extends BaseModule
             'module'    => $this,
             'published' => $store->listApiSearches(),
             'tokens'    => TiTrackerFeed::listTokens(),
+            'taxiiRequests' => $store->listTaxiiRequests(15),
             'formats'   => TiTrackerFeed::FORMATS,
             'scopes'    => TiTrackerFeed::SCOPES,
             'types'     => TiTrackerFeed::TYPES,
