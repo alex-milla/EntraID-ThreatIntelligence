@@ -84,11 +84,24 @@ function apiTfAuth(): array
         $row = apiTfTokenRow(substr($header, 7));
     } elseif (str_starts_with($header, 'Basic ')) {
         $decoded = base64_decode(substr($header, 6), true);
-        $row = $decoded !== false && str_contains($decoded, ':')
-            ? apiTfTokenRow(substr($decoded, strpos($decoded, ':') + 1))
-            : null;
-    } elseif (!empty($_SERVER['PHP_AUTH_PW'])) {
-        $row = apiTfTokenRow((string)$_SERVER['PHP_AUTH_PW']);
+        $row = null;
+        if ($decoded !== false && str_contains($decoded, ':')) {
+            $sep = strpos($decoded, ':');
+            $user = substr($decoded, 0, $sep);
+            $pass = substr($decoded, $sep + 1);
+            $row = $pass !== '' ? apiTfTokenRow($pass) : null;
+            /* Tutoriales tipo OTX ponen la API Key en Username: aceptarla también. */
+            if ($row === null && $user !== '') {
+                $row = apiTfTokenRow($user);
+            }
+        }
+    } elseif (!empty($_SERVER['PHP_AUTH_PW']) || !empty($_SERVER['PHP_AUTH_USER'])) {
+        $pass = (string)($_SERVER['PHP_AUTH_PW'] ?? '');
+        $user = (string)($_SERVER['PHP_AUTH_USER'] ?? '');
+        $row = $pass !== '' ? apiTfTokenRow($pass) : null;
+        if ($row === null && $user !== '') {
+            $row = apiTfTokenRow($user);
+        }
     } else {
         $key = trim((string)($_SERVER['HTTP_X_API_KEY'] ?? ''));
         $row = $key !== '' ? apiTfTokenRow($key) : null;
@@ -151,6 +164,16 @@ function apiTfTaxiiRoot(): string
     }
 
     return $scheme . '://' . $host . $path;
+}
+
+/** Media type TAXII negociado: 2.0 (vnd.oasis, estilo OTX) o 2.1. */
+function apiTfTaxiiMedia(): string
+{
+    $accept = strtolower((string)($_SERVER['HTTP_ACCEPT'] ?? ''));
+
+    return str_contains($accept, 'vnd.oasis.taxii+json')
+        ? 'application/vnd.oasis.taxii+json; version=2.0'
+        : 'application/taxii+json;version=2.1';
 }
 
 $router = new Router();
@@ -398,7 +421,7 @@ $router->group('/api/ti-tf', function (Router $r) {
 // ============================================================
 
 $router->group('/api/taxii2', function (Router $r) {
-    $mime = 'application/taxii+json;version=2.1';
+    $mime = apiTfTaxiiMedia();
     $stixMime = 'application/stix+json;version=2.1';
 
     $discovery = function () use ($mime) {
@@ -416,7 +439,10 @@ $router->group('/api/taxii2', function (Router $r) {
         apiTaxiiJson([
             'title'              => 'Seguimiento TI TF',
             'description'        => 'Listas de IOCs publicadas desde Seguimiento TI TF',
-            'versions'           => [$mime],
+            'versions'           => [
+                'application/taxii+json;version=2.1',
+                'application/vnd.oasis.taxii+json; version=2.0',
+            ],
             'max_content_length' => 10485760,
         ], $mime);
     };
@@ -461,22 +487,16 @@ $router->group('/api/taxii2', function (Router $r) {
     $collection = function (array $params) use ($mime, $stixMime, $collectionData) {
         $auth = apiTfAuth();
         $allowedIds = $auth['token'] === null ? null : TiTrackerFeed::allowedIds($auth['token']);
-        $id = (string)($params['id'] ?? '');
-        $found = null;
-
-        if ($id === TiTrackerFeed::collectionId()) {
-            $found = $collectionData(null, $mime, $stixMime);
-        } else {
-            foreach ((new TiTrackerStore())->listApiSearches($allowedIds) as $search) {
-                if (TiTrackerFeed::collectionId((int)$search['id']) === $id) {
-                    $found = $collectionData($search, $mime, $stixMime);
-                    break;
-                }
-            }
-        }
-        if ($found === null) {
+        $resolved = TiTrackerFeed::resolveCollection(
+            (string)($params['id'] ?? ''),
+            (new TiTrackerStore())->listApiSearches($allowedIds)
+        );
+        if ($resolved === null) {
             apiTaxiiJson(['error' => 'Colección no encontrada o no permitida'], $mime, 404);
         }
+        $found = $resolved['all']
+            ? $collectionData(null, $mime, $stixMime)
+            : $collectionData($resolved['searches'][0], $mime, $stixMime);
 
         apiTaxiiJson($found, $mime);
     };
@@ -488,20 +508,11 @@ $router->group('/api/taxii2', function (Router $r) {
         $published = $store->listApiSearches($allowedIds);
         $collectionId = (string)($params['id'] ?? '');
 
-        $target = null;
-        if ($collectionId === TiTrackerFeed::collectionId()) {
-            $target = $published;
-        } else {
-            foreach ($published as $search) {
-                if (TiTrackerFeed::collectionId((int)$search['id']) === $collectionId) {
-                    $target = [$search];
-                    break;
-                }
-            }
-        }
-        if ($target === null) {
+        $resolved = TiTrackerFeed::resolveCollection($collectionId, $published);
+        if ($resolved === null) {
             apiTaxiiJson(['error' => 'Colección no encontrada o no permitida'], $mime, 404);
         }
+        $target = $resolved['searches'];
 
         try {
             $since = TiTrackerFeed::normalizeSince($_GET['added_after'] ?? '');

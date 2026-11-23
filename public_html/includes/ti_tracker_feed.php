@@ -229,6 +229,38 @@ final class TiTrackerFeed
         return $chosen;
     }
 
+    /**
+     * Resuelve un Collection ID TAXII de cualquier forma habitual:
+     *  - "all", "default" o el UUID global → todas las listas publicadas
+     *  - slug o nombre de la lista (sin distinción de mayúsculas)
+     *  - id numérico o UUID TAXII de la lista
+     *
+     * @param array<int,array> $published
+     * @return array{all:bool,searches:array<int,array>}|null
+     */
+    public static function resolveCollection(string $id, array $published): ?array
+    {
+        $key = strtolower(trim($id));
+        if ($key === '') {
+            return null;
+        }
+        if (in_array($key, ['all', 'default', 'ti_tf_all'], true) || $id === self::collectionId()) {
+            return ['all' => true, 'searches' => $published];
+        }
+
+        foreach ($published as $search) {
+            $searchId = (int)$search['id'];
+            $slug = strtolower((string)($search['slug'] ?? ''));
+            $name = strtolower((string)($search['name'] ?? ''));
+            if ($key === (string)$searchId || $key === $slug || $key === $name
+                || $id === self::collectionId($searchId)) {
+                return ['all' => false, 'searches' => [$search]];
+            }
+        }
+
+        return null;
+    }
+
     /** Catálogo de listas publicadas para GET /api/ti-tf/lists. */
     public static function catalog(?array $allowedIds, ?TiTrackerStore $store = null): array
     {

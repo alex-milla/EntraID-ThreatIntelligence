@@ -98,6 +98,9 @@ $feedOptions = [
                                     <?= icon('content_copy', 14) ?>
                                 </button>
                             </div>
+                            <div class="text-xs text-ink-muted mt-1">
+                                o el slug: <code><?= e((string)$search['slug']) ?></code>
+                            </div>
                         </td>
                         <td><?= $fmt((int)($search['tracked'] ?? 0)) ?></td>
                         <td class="col-secondary text-xs"><?= e($short($search['last_run_at'] ?? null)) ?></td>
@@ -116,8 +119,9 @@ $feedOptions = [
     <div class="p-4">
         <p class="text-sm text-ink-muted mt-0 mb-3">
             En <em>Data Connectors → Threat Intelligence – TAXII</em> pega estos
-            valores. El <strong>Username</strong> puede ser cualquier texto y el
-            <strong>Password</strong> es el token de la API.
+            valores. Rellena <strong>Username y Password con el token</strong>:
+            el botón <strong>Add</strong> de Azure no se habilita si Username
+            está vacío y Password tiene texto.
         </p>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
@@ -142,9 +146,11 @@ $feedOptions = [
             </div>
         </div>
         <p class="text-xs text-ink-muted mt-3 mb-0">
-            Para importar una sola lista, usa su <strong>Collection ID</strong>
-            de la tabla de arriba. El servidor es de solo lectura; el conector
-            avanza el cursor con <code>added_after</code> y no duplica IOCs.
+            Como <strong>Collection ID</strong> puedes poner <code>all</code>
+            (todas las listas), el <strong>slug</strong> de una lista
+            (p. ej. <code>gta6</code> o <code>github</code>), su nombre, su id
+            numérico o el UUID de la tabla de arriba. El servidor es de solo
+            lectura y el conector avanza el cursor con <code>added_after</code>.
         </p>
     </div>
 </div>

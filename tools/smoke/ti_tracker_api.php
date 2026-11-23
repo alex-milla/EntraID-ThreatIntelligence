@@ -131,6 +131,24 @@ try {
     check('Catálogo: metadatos de seguimiento', $catalogGithub !== null
         && (int)($catalogGithub['tracked'] ?? 0) === 4);
 
+    /* Fase 3.4: Collection ID admite slug, nombre, id y UUID (estilo OTX). */
+    $publishedNow = TiTrackerFeed::resolveSearches(null, '', $store);
+    $bySlug = TiTrackerFeed::resolveCollection('github-iocs', $publishedNow);
+    check('Fase 3.4: Collection ID por slug', $bySlug !== null && empty($bySlug['all'])
+        && (int)($bySlug['searches'][0]['id'] ?? 0) === $id1);
+    check('Fase 3.4: Collection ID "all"',
+        (TiTrackerFeed::resolveCollection('all', $publishedNow)['all'] ?? false) === true);
+    check('Fase 3.4: Collection ID "default"',
+        (TiTrackerFeed::resolveCollection('default', $publishedNow)['all'] ?? false) === true);
+    check('Fase 3.4: Collection ID por nombre',
+        (int)(TiTrackerFeed::resolveCollection('GITHUB IOCS', $publishedNow)['searches'][0]['id'] ?? 0) === $id1);
+    check('Fase 3.4: Collection ID por id',
+        (int)(TiTrackerFeed::resolveCollection((string)$id1, $publishedNow)['searches'][0]['id'] ?? 0) === $id1);
+    check('Fase 3.4: Collection ID por UUID',
+        (int)(TiTrackerFeed::resolveCollection(TiTrackerFeed::collectionId($id1), $publishedNow)['searches'][0]['id'] ?? 0) === $id1);
+    check('Fase 3.4: Collection ID desconocido',
+        TiTrackerFeed::resolveCollection('no-existe', $publishedNow) === null);
+
     $tracked = TiTrackerFeed::collect(TiTrackerFeed::resolveSearches(null, (string)$id1, $store), 'tracked', null, 'all', $store);
     check('Feed tracked: 4 IOCs', count($tracked['iocs']) === 4);
     check('Feed tracked: metadatos de lista', ($tracked['iocs'][0]['list_slug'] ?? '') === 'github-iocs');
@@ -270,6 +288,11 @@ check('Fase 3.3: media types y ventanas TAXII',
     str_contains($apiSource, 'application/stix+json;version=2.1')
         && str_contains($apiSource, 'X-TAXII-Date-Added-First')
         && str_contains($apiSource, 'X-TAXII-Date-Added-Last'));
+check('Fase 3.4: negociación TAXII 2.0 / 2.1',
+    str_contains($apiSource, 'function apiTfTaxiiMedia')
+        && str_contains($apiSource, 'vnd.oasis.taxii+json'));
+check('Fase 3.4: token también en Username',
+    str_contains($apiSource, 'PHP_AUTH_USER') && str_contains($apiSource, 'resolveCollection'));
 
 /* ============================================================
  * 7. Panel de gestión (Fase 2)
@@ -284,6 +307,10 @@ check('Fase 3.3: datos de conexión Sentinel en el panel',
         && str_contains($apiView, 'tf-api-root')
         && str_contains($apiView, 'tf-all-collection')
         && str_contains($apiView, 'Collection ID (TAXII)'));
+check('Fase 3.4: panel indica slug y Username/Password',
+    str_contains($apiView, 'Rellena <strong>Username y Password con el token</strong>')
+        && str_contains($apiView, 'slug')
+        && str_contains($apiView, '<code>all</code>'));
 check('Fase 2: formularios de token', str_contains($apiView, '/api/token')
     && str_contains($apiView, 'allow_query_token')
     && str_contains($apiView, 'search_ids[]'));
