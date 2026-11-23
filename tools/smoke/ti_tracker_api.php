@@ -185,6 +185,27 @@ try {
     check('TXT: un IOC por línea', count(explode("\n", $txt['content'])) === 4);
     check('CSV: cabecera', str_starts_with(TiTrackerFeed::render($tracked['iocs'], 'csv')['content'], '#,Type,Value'));
 
+    /* Fase 3: TAXII 2.1 y formato Microsoft Sentinel. */
+    $uuidA = TiTrackerFeed::collectionId($id1);
+    check('Fase 3: UUID de colección estable', $uuidA === TiTrackerFeed::collectionId($id1)
+        && $uuidA !== TiTrackerFeed::collectionId());
+    $taxiiA = TiTrackerFeed::taxiiObjects($tracked['iocs']);
+    $taxiiB = TiTrackerFeed::taxiiObjects($tracked['iocs']);
+    check('Fase 3: ids STIX estables entre sondeos', count($taxiiA) === count($taxiiB)
+        && ($taxiiA[0]['id'] ?? '') === ($taxiiB[0]['id'] ?? '')
+        && str_starts_with((string)($taxiiA[0]['id'] ?? ''), 'indicator--'));
+    $stamped = TiTrackerFeed::taxiiObjects([[
+        'type' => 'domain-name', 'value' => 'stamp.example',
+        'description' => 'prueba', 'fetched_at' => '2020-01-02 03:04:05 UTC',
+    ]]);
+    check('Fase 3: created/modified desde el momento en que se vio',
+        ($stamped[0]['created'] ?? '') === '2020-01-02T03:04:05Z'
+            && ($stamped[0]['modified'] ?? '') === ($stamped[0]['created'] ?? ''));
+    $ms = TiTrackerFeed::render($tracked['iocs'], 'ms-sentinel');
+    $msData = safe_json_decode($ms['content'], []);
+    check('Fase 3: formato ms-sentinel', is_array($msData) && isset($msData[0]['displayName'])
+        && isset($msData[0]['pattern']) && str_contains($ms['mime'], 'json'));
+
     $store->logApiPull($id1, 4);
     $history = $store->history($id1, 10);
     check('Auditoría: lectura API registrada', ($history[0]['kind'] ?? '') === 'api_pull'
@@ -237,6 +258,10 @@ check('Auth: token por query-string solo si se autoriza',
     str_contains($apiSource, 'allowQueryToken'));
 check('Compatibilidad: rutas anteriores intactas', str_contains($apiSource, "/api/tenants")
     && str_contains($apiSource, "/api/modules") && str_contains($apiSource, 'function apiRequireAuth'));
+check('Fase 3: rutas TAXII', str_contains($apiSource, "/api/taxii2")
+    && str_contains($apiSource, "ti-tf/collections")
+    && str_contains($apiSource, 'added_after'));
+check('Fase 3: media type TAXII', str_contains($apiSource, 'application/taxii+json;version=2.1'));
 
 /* ============================================================
  * 7. Panel de gestión (Fase 2)

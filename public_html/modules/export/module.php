@@ -242,6 +242,21 @@ class Module_Export extends BaseModule
         }, $rows));
     }
 
+    /** UUID v4-shaped estable a partir de un valor (para feeds TAXII). */
+    private static function stableIndicatorId(string $value): string
+    {
+        $hash = sha1(strtolower(trim($value)));
+
+        return sprintf(
+            '%s-%s-4%s-8%s-%s',
+            substr($hash, 0, 8),
+            substr($hash, 8, 4),
+            substr($hash, 13, 3),
+            substr($hash, 18, 3),
+            substr($hash, 20, 12)
+        );
+    }
+
     /** @return array<int,array<string,mixed>> objetos indicator STIX 2.1 */
     public function buildStixIndicators(array $iocs, array $config = []): array
     {
@@ -261,22 +276,36 @@ class Module_Export extends BaseModule
         $now = gmdate('Y-m-d\TH:i:s\Z');
         $validUntil = gmdate('Y-m-d\TH:i:s\Z', time() + ($validDays * 86400));
 
+        /* Modo TAXII (v0.4.29.2): ids estables y fechas del IOC. Por defecto
+           se mantiene el comportamiento histórico (uuid y ahora aleatorios). */
+        $deterministic = !empty($config['deterministic_ids']);
+        $useIocTime = !empty($config['use_ioc_timestamps']);
+
         $indicators = [];
         foreach ($this->buildRows($iocs) as $ioc) {
             if ($ioc['type'] === '' || $ioc['value'] === '') { continue; }
             $pattern = $this->generateStixPattern($ioc['type'], $ioc['value']);
             if (!$pattern) { continue; }
 
+            $stamp = $now;
+            if ($useIocTime && trim((string)($ioc['fetched_at'] ?? '')) !== '') {
+                $parsed = strtotime((string)$ioc['fetched_at']);
+                if ($parsed !== false && $parsed > 0) {
+                    $stamp = gmdate('Y-m-d\TH:i:s\Z', $parsed);
+                }
+            }
+
             $indicator = [
                 'type'                => 'indicator',
-                'id'                  => 'indicator--' . generate_uuid(),
+                'id'                  => 'indicator--' . ($deterministic
+                    ? self::stableIndicatorId((string)$ioc['value']) : generate_uuid()),
                 'spec_version'        => '2.1',
                 'pattern'             => $pattern,
                 'pattern_type'        => 'stix',
                 'pattern_version'     => '2.1',
-                'created'             => $now,
-                'modified'            => $now,
-                'valid_from'          => $now,
+                'created'             => $stamp,
+                'modified'            => $stamp,
+                'valid_from'          => $stamp,
                 'valid_until'         => $validUntil,
                 'name'                => $source . ' - ' . $ioc['value'],
                 'description'         => $ioc['description'],

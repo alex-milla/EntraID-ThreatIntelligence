@@ -15,12 +15,33 @@ declare(strict_types=1);
 
 final class TiTrackerFeed
 {
-    public const FORMATS = ['stix', 'misp', 'json', 'txt', 'csv'];
+    public const FORMATS = ['stix', 'misp', 'json', 'txt', 'csv', 'ms-sentinel'];
     public const SCOPES  = ['tracked', 'last', 'new'];
     public const TYPES   = ['all', 'ip', 'domain', 'url', 'hash', 'email'];
 
     /** Tope de listas combinadas en una sola petición. */
     public const MAX_LISTS = 50;
+
+    /** UUID v4-shaped estable: id de colección TAXII derivado de la lista. */
+    public static function stableUuid(string $seed): string
+    {
+        $hash = sha1(strtolower(trim($seed)));
+
+        return sprintf(
+            '%s-%s-4%s-8%s-%s',
+            substr($hash, 0, 8),
+            substr($hash, 8, 4),
+            substr($hash, 13, 3),
+            substr($hash, 18, 3),
+            substr($hash, 20, 12)
+        );
+    }
+
+    /** Id TAXII de una búsqueda (o de la colección agregada «all»). */
+    public static function collectionId($searchId = null): string
+    {
+        return self::stableUuid($searchId === null ? 'ti-tf-all' : 'ti-tf-search-' . (int)$searchId);
+    }
 
     /**
      * Ids de búsquedas permitidos por el token.
@@ -288,6 +309,10 @@ final class TiTrackerFeed
                 $mapped['list_id']   = (int)$search['id'];
                 $mapped['list_name'] = (string)$search['name'];
                 $mapped['list_slug'] = (string)($search['slug'] ?? '');
+                /* Momento en que la lista vio el IOC: fecha STIX y added_after TAXII. */
+                $mapped['fetched_at'] = (string)(
+                    $row['found_at'] ?? $row['ingested_at'] ?? $row['last_run_at'] ?? $row['first_seen'] ?? ''
+                );
                 $iocs[] = $mapped;
                 $count++;
             }
@@ -332,6 +357,12 @@ final class TiTrackerFeed
         }
 
         $rows = (array)$snapshot['rows'];
+        foreach ($rows as &$row) {
+            if (is_array($row)) {
+                $row['found_at'] = (string)$snapshot['run_at'];
+            }
+        }
+        unset($row);
         if ($scope !== 'new') {
             return $rows;
         }
@@ -368,6 +399,22 @@ final class TiTrackerFeed
         return isset($groups[$wanted]) && in_array($type, $groups[$wanted], true);
     }
 
+    /** Objetos STIX 2.1 listos para el envelope TAXII (ids estables y fechas reales). */
+    public static function taxiiObjects(array $iocs): array
+    {
+        $exporter = new Module_Export();
+
+        return $exporter->buildStixIndicators($iocs, [
+            'format'              => 'merged',
+            'tlp'                 => 'green',
+            'valid_days'          => 365,
+            'source'              => 'EntraID TI - Seguimiento TI TF',
+            'indicator_type'      => 'malicious-activity',
+            'deterministic_ids'   => true,
+            'use_ioc_timestamps'  => true,
+        ]);
+    }
+
     /**
      * Serializa el conjunto en el formato pedido con los builders de Module_Export.
      *
@@ -388,6 +435,11 @@ final class TiTrackerFeed
             'source'          => 'EntraID TI - Seguimiento TI TF',
             'indicator_type'  => 'malicious-activity',
         ];
+        /* TAXII: ids estables y created/modified = momento en que se vio el IOC. */
+        if (!empty($config['taxii'])) {
+            $stixConfig['deterministic_ids'] = true;
+            $stixConfig['use_ioc_timestamps'] = true;
+        }
         $mispConfig = [
             'format'       => 'merged',
             'tlp'          => (string)($config['tlp'] ?? 'green'),
@@ -421,6 +473,36 @@ final class TiTrackerFeed
                 'mime'     => 'text/csv; charset=utf-8',
                 'filename' => 'ti_tf_iocs_' . $date . '.csv',
             ],
+            'ms-sentinel' => (static function () use ($exporter, $iocs, $stixConfig, $date): array {
+                /* Payload para uploadIndicators de Microsoft Sentinel / Defender. */
+                $stixConfig['deterministic_ids'] = true;
+                $stixConfig['use_ioc_timestamps'] = true;
+                $items = [];
+                foreach ($exporter->buildStixIndicators($iocs, $stixConfig) as $ind) {
+                    $items[] = [
+                        'displayName'        => (string)($ind['name'] ?? ''),
+                        'description'        => (string)($ind['description'] ?? ''),
+                        'indicatorTypes'     => (array)($ind['indicator_types'] ?? []),
+                        'pattern'            => (string)($ind['pattern'] ?? ''),
+                        'patternType'        => 'stix',
+                        'source'             => (string)$stixConfig['source'],
+                        'confidence'         => (int)($ind['confidence'] ?? 75),
+                        'severity'           => 'Informational',
+                        'labels'             => (array)($ind['labels'] ?? []),
+                        'validFrom'          => (string)($ind['valid_from'] ?? ''),
+                        'validUntil'         => (string)($ind['valid_until'] ?? ''),
+                        'tlpLevel'           => 'green',
+                        'threatTypes'        => [],
+                        'killChainPhases'    => [],
+                        'externalReferences' => (array)($ind['external_references'] ?? []),
+                    ];
+                }
+                return [
+                    'content'  => json_encode($items, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE) ?: '[]',
+                    'mime'     => 'application/json',
+                    'filename' => 'ti_tf_ms_sentinel_' . $date . '.json',
+                ];
+            })(),
             default => [
                 'content'  => json_encode($iocs, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE) ?: '[]',
                 'mime'     => 'application/json',
