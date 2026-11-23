@@ -302,6 +302,8 @@ $formatsForSearch = array_values(array_intersect(array_keys($formats), (array)$s
             <?php else: ?>
                 <?php foreach ($history as $item):
                     $isRun = (string)$item['kind'] === 'run';
+                    $kindLabel = $isRun ? 'Ejecución'
+                        : ((string)$item['kind'] === 'api_pull' ? 'Consulta API' : 'Exportación');
                     $detail = (string)($item['detail'] ?? '');
                     if (str_contains($detail, '|')) {
                         $detail = (string)str_replace('|', ' · ', $detail);
@@ -309,7 +311,7 @@ $formatsForSearch = array_values(array_intersect(array_keys($formats), (array)$s
                     ?>
                     <tr>
                         <td class="whitespace-nowrap text-xs"><?= e($short((string)$item['created_at'])) ?></td>
-                        <td><?= $isRun ? 'Ejecución' : 'Exportación' ?></td>
+                        <td><?= e($kindLabel) ?></td>
                         <td><?= $fmt((int)$item['rows']) ?></td>
                         <td>
                             <?php if ($isRun && (int)$item['new_rows'] > 0): ?>

@@ -45,6 +45,74 @@ function apiRequireAuth(): void
     json_response(['error' => 'No autorizado'], 401);
 }
 
+/* ============================================================
+ * API: Seguimiento TI TF — feeds externos (v0.4.29)
+ * Las rutas existentes conservan su autenticación original (sesión o Bearer).
+ * Estas nuevas aceptan además X-API-Key, Basic y, si el token lo autoriza,
+ * ?token= para EDLs de firewalls que no pueden enviar cabeceras propias.
+ * ============================================================ */
+
+function apiTfTokenRow(string $token): ?array
+{
+    $hash = hash('sha256', $token);
+    $row = Database::fetchOne(
+        "SELECT t.*, u.role FROM api_tokens t JOIN users u ON t.user_id = u.id
+         WHERE t.token_hash = ? AND (t.expires_at IS NULL OR t.expires_at > datetime('now'))",
+        [$hash]
+    );
+    if ($row !== null) {
+        Database::update("UPDATE api_tokens SET last_used_at = datetime('now') WHERE id = ?", [$row['id']]);
+    }
+
+    return $row;
+}
+
+function apiTfAuth(): array
+{
+    if (Auth::check()) {
+        return ['session' => true, 'token' => null];
+    }
+
+    $header = (string)($_SERVER['HTTP_AUTHORIZATION'] ?? '');
+    if (str_starts_with($header, 'Bearer ')) {
+        $row = apiTfTokenRow(substr($header, 7));
+    } elseif (str_starts_with($header, 'Basic ')) {
+        $decoded = base64_decode(substr($header, 6), true);
+        $row = $decoded !== false && str_contains($decoded, ':')
+            ? apiTfTokenRow(substr($decoded, strpos($decoded, ':') + 1))
+            : null;
+    } else {
+        $key = trim((string)($_SERVER['HTTP_X_API_KEY'] ?? ''));
+        $row = $key !== '' ? apiTfTokenRow($key) : null;
+    }
+
+    if ($row === null) {
+        $queryToken = trim((string)($_GET['token'] ?? ''));
+        if ($queryToken !== '') {
+            $candidate = apiTfTokenRow($queryToken);
+            if ($candidate !== null && TiTrackerFeed::allowQueryToken($candidate)) {
+                $row = $candidate;
+            }
+        }
+    }
+
+    if ($row === null) {
+        json_response(['error' => 'No autorizado'], 401);
+    }
+
+    return ['session' => false, 'token' => $row];
+}
+
+function apiTfRaw(string $content, string $mime, string $filename): void
+{
+    http_response_code(200);
+    header('Content-Type: ' . $mime);
+    header('Content-Disposition: inline; filename="' . basename($filename) . '"');
+    header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+    echo $content;
+    exit;
+}
+
 $router = new Router();
 
 // ============================================================
@@ -212,6 +280,77 @@ $router->get('/api/dashboard/stats', function () {
         ];
     }
     json_response(['tenants' => count($tenants), 'stats' => $stats]);
+});
+
+// ============================================================
+// API: Seguimiento TI TF (listas de IOCs para herramientas externas)
+// ============================================================
+
+$router->group('/api/ti-tf', function (Router $r) {
+    $r->get('lists', function () {
+        $auth = apiTfAuth();
+        $allowedIds = $auth['token'] === null ? null : TiTrackerFeed::allowedIds($auth['token']);
+
+        json_response([
+            'success' => true,
+            'lists'   => TiTrackerFeed::catalog($allowedIds),
+        ]);
+    });
+
+    $indicators = function () {
+        $auth = apiTfAuth();
+        $allowedIds = $auth['token'] === null ? null : TiTrackerFeed::allowedIds($auth['token']);
+
+        $format = strtolower(trim((string)($_GET['format'] ?? 'json')));
+        $scope  = strtolower(trim((string)($_GET['scope'] ?? 'tracked')));
+        $type   = strtolower(trim((string)($_GET['type'] ?? 'all')));
+        if (!in_array($format, TiTrackerFeed::FORMATS, true)) {
+            json_response(['error' => 'Formato no soportado. Usa ' . implode(', ', TiTrackerFeed::FORMATS)], 400);
+        }
+        try {
+            $since = TiTrackerFeed::normalizeSince($_GET['since'] ?? '');
+        } catch (Throwable $e) {
+            json_response(['error' => $e->getMessage()], 400);
+        }
+
+        try {
+            $searches = TiTrackerFeed::resolveSearches($allowedIds, $_GET['lists'] ?? '');
+            if ($searches === []) {
+                json_response(['error' => 'No hay listas disponibles con esos filtros o permisos.'], 404);
+            }
+            $feed = TiTrackerFeed::collect($searches, $scope, $since, $type);
+        } catch (Throwable $e) {
+            json_response(['error' => $e->getMessage()], 400);
+        }
+
+        $store = new TiTrackerStore();
+        foreach ($feed['lists'] as $list) {
+            $store->logApiPull((int)$list['id'], (int)$list['count']);
+        }
+
+        if ($format === 'json') {
+            json_response([
+                'success'   => true,
+                'scope'     => $scope,
+                'type'      => $type,
+                'since'     => $since,
+                'count'     => count($feed['iocs']),
+                'truncated' => $feed['truncated'],
+                'lists'     => $feed['lists'],
+                'iocs'      => $feed['iocs'],
+            ]);
+        }
+
+        $config = [
+            'tlp'        => 'green',
+            'valid_days' => 365,
+        ];
+        $output = TiTrackerFeed::render($feed['iocs'], $format, $config);
+        apiTfRaw($output['content'], $output['mime'], $output['filename']);
+    };
+
+    $r->get('indicators', $indicators);
+    $r->get('feed', $indicators);
 });
 
 $router->dispatch();

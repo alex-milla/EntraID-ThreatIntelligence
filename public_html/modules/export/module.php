@@ -950,6 +950,15 @@ class Module_Export extends BaseModule
         ];
     }
 
+    /**
+     * Fachada pública del mapeador para la API de Seguimiento TI TF (v0.4.29).
+     * Reutiliza exactamente la misma normalización que el asistente.
+     */
+    public static function mapIocRow(array $row): ?array
+    {
+        return self::mapThreatFoxIoc($row);
+    }
+
     /** Genera los ficheros sin descargarlos: el navegador decide cuáler bajar. */
     public function generateEndpoint(array $params = []): void
     {

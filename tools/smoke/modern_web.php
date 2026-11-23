@@ -162,7 +162,7 @@ check('Legacy: Enter respeta IME',
     && str_contains($read('public_html/modules/remediation/views/assistant.php'), 'e.keyCode !== 229'));
 
 // --- Versión -------------------------------------------------------------
-check('VERSION = 0.4.28.22', $version === '0.4.28.22', $version);
+check('VERSION = 0.4.29', $version === '0.4.29', $version);
 
 echo PHP_EOL . ($fail === 0
     ? 'RESULTADO: OK (' . $total . ' comprobaciones)'

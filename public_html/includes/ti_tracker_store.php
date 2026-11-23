@@ -67,6 +67,19 @@ final class TiTrackerStore
             updated_at     TEXT NOT NULL
         )');
 
+        /* Publicación API (v0.4.29): columnas aditivas e idempotentes. */
+        $searchCols = [];
+        foreach ($this->pdo->query('PRAGMA table_info(searches)') as $col) {
+            $searchCols[(string)$col['name']] = true;
+        }
+        if (!isset($searchCols['api_enabled'])) {
+            $this->pdo->exec('ALTER TABLE searches ADD COLUMN api_enabled INTEGER NOT NULL DEFAULT 1');
+        }
+        if (!isset($searchCols['slug'])) {
+            $this->pdo->exec("ALTER TABLE searches ADD COLUMN slug TEXT NOT NULL DEFAULT ''");
+        }
+        $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_searches_api ON searches(api_enabled)');
+
         $this->pdo->exec('CREATE TABLE IF NOT EXISTS tracked_iocs (
             search_id   INTEGER NOT NULL,
             ioc         TEXT NOT NULL,
@@ -134,6 +147,68 @@ final class TiTrackerStore
         return array_map([$this, 'hydrate'], $rows);
     }
 
+    /**
+     * Búsquedas publicadas en la API, opcionalmente restringidas por el token.
+     * Si $allowedIds es null no hay restricción; si es [] no se publica ninguna.
+     *
+     * @param array<int,int>|null $allowedIds
+     * @return array<int,array>
+     */
+    public function listApiSearches(?array $allowedIds = null): array
+    {
+        $sql = 'SELECT * FROM searches WHERE api_enabled = 1';
+        $args = [];
+        if ($allowedIds !== null) {
+            $ids = array_values(array_unique(array_filter(array_map('intval', $allowedIds), static fn(int $v): bool => $v > 0)));
+            if ($ids === []) {
+                return [];
+            }
+            $sql .= ' AND id IN (' . implode(',', array_fill(0, count($ids), '?')) . ')';
+            $args = $ids;
+        }
+        $sql .= ' ORDER BY name COLLATE NOCASE, id';
+        $st = $this->pdo->prepare($sql);
+        $st->execute($args);
+
+        return array_map([$this, 'hydrate'], $st->fetchAll());
+    }
+
+    /** ¿Está publicada en la API esta búsqueda? */
+    public function isApiEnabled(int $id): bool
+    {
+        $st = $this->pdo->prepare('SELECT api_enabled FROM searches WHERE id = ?');
+        $st->execute([$id]);
+
+        return (int)$st->fetchColumn() === 1;
+    }
+
+    /**
+     * IOCs en seguimiento de una búsqueda (para scope=tracked del feed).
+     *
+     * @return array<int,array>
+     */
+    public function trackedRows(int $searchId, ?string $since = null): array
+    {
+        $sql = 'SELECT ioc, ioc_id, first_seen, found_at, last_run_at
+                  FROM tracked_iocs WHERE search_id = ?';
+        $args = [$searchId];
+        if ($since !== null && $since !== '') {
+            $sql .= ' AND found_at >= ?';
+            $args[] = $since;
+        }
+        $sql .= ' ORDER BY found_at ASC, ioc ASC';
+        $st = $this->pdo->prepare($sql);
+        $st->execute($args);
+
+        return $st->fetchAll();
+    }
+
+    /** Registra una lectura externa de la API (sin novedades). */
+    public function logApiPull(int $searchId, int $rows): void
+    {
+        $this->addActivity($searchId, 'api_pull', $rows, 0, 'api');
+    }
+
     public function getSearch(int $id): ?array
     {
         $st = $this->pdo->prepare('SELECT * FROM searches WHERE id = ?');
@@ -151,8 +226,33 @@ final class TiTrackerStore
 
         $formats = array_map('trim', explode(',', (string)($row['formats'] ?? '')));
         $row['formats'] = array_values(array_filter($formats, static fn(string $f): bool => isset(self::FORMATS[$f])));
+        $row['api_enabled'] = (int)($row['api_enabled'] ?? 1);
+        $row['slug'] = (string)($row['slug'] ?? '');
 
         return $row;
+    }
+
+    /** Slug legible y estable para una búsqueda publicada en la API. */
+    public static function slugify(string $name): string
+    {
+        $slug = strtolower(trim((string)preg_replace('/[^A-Za-z0-9]+/', '-', $name)));
+        $slug = trim($slug, '-');
+
+        return $slug !== '' ? substr($slug, 0, 80) : 'busqueda';
+    }
+
+    private function slugTaken(string $slug, ?int $exceptId): bool
+    {
+        $sql = 'SELECT COUNT(*) FROM searches WHERE slug = ?';
+        $args = [$slug];
+        if ($exceptId !== null && $exceptId > 0) {
+            $sql .= ' AND id <> ?';
+            $args[] = $exceptId;
+        }
+        $st = $this->pdo->prepare($sql);
+        $st->execute($args);
+
+        return (int)$st->fetchColumn() > 0;
     }
 
     /**
@@ -160,7 +260,7 @@ final class TiTrackerStore
      *
      * @param array{name:string,notes:string,filters:array,formats:array,
      *              tlp:string,valid_days:int,source_name:string,
-     *              threat_actor:string,extra_tags:string} $data
+     *              threat_actor:string,extra_tags:string,api_enabled?:int|bool,slug?:string} $data
      */
     public function saveSearch(array $data, ?int $id = null): int
     {
@@ -173,6 +273,14 @@ final class TiTrackerStore
             $formats = 'stix';
         }
 
+        $baseSlug = trim((string)($data['slug'] ?? '')) !== ''
+            ? self::slugify((string)$data['slug'])
+            : self::slugify((string)$data['name']);
+        $slug = $baseSlug;
+        for ($suffix = 2; $this->slugTaken($slug, $id); $suffix++) {
+            $slug = $baseSlug . '-' . $suffix;
+        }
+
         $params = [
             ':name'         => (string)$data['name'],
             ':notes'        => (string)($data['notes'] ?? ''),
@@ -183,6 +291,12 @@ final class TiTrackerStore
             ':source_name'  => (string)$data['source_name'],
             ':threat_actor' => (string)($data['threat_actor'] ?? ''),
             ':extra_tags'   => (string)($data['extra_tags'] ?? ''),
+            /* Por defecto publicada: las búsquedas creadas desde la UI siguen
+               disponibles en la API sin que haya que tocar el formulario. */
+            ':api_enabled'  => array_key_exists('api_enabled', $data)
+                ? (!empty($data['api_enabled']) ? 1 : 0)
+                : 1,
+            ':slug'         => $slug,
             ':updated_at'   => $now,
         ];
 
@@ -191,7 +305,8 @@ final class TiTrackerStore
                 'UPDATE searches
                     SET name = :name, notes = :notes, filters = :filters, formats = :formats,
                         tlp = :tlp, valid_days = :valid_days, source_name = :source_name,
-                        threat_actor = :threat_actor, extra_tags = :extra_tags, updated_at = :updated_at
+                        threat_actor = :threat_actor, extra_tags = :extra_tags,
+                        api_enabled = :api_enabled, slug = :slug, updated_at = :updated_at
                   WHERE id = :id'
             );
             $st->execute($params + [':id' => $id]);
@@ -203,10 +318,10 @@ final class TiTrackerStore
         $st = $this->pdo->prepare(
             'INSERT INTO searches
                 (name, notes, filters, formats, tlp, valid_days, source_name,
-                 threat_actor, extra_tags, created_at, updated_at)
+                 threat_actor, extra_tags, api_enabled, slug, created_at, updated_at)
              VALUES
                 (:name, :notes, :filters, :formats, :tlp, :valid_days, :source_name,
-                 :threat_actor, :extra_tags, :created_at, :updated_at)'
+                 :threat_actor, :extra_tags, :api_enabled, :slug, :created_at, :updated_at)'
         );
         $st->execute($params);
 
