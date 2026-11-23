@@ -87,33 +87,47 @@ final class TiTrackerFeed
     /** Construye el permiso de un token TI TF a partir del formulario. */
     public static function permissionsFromInput(array $input, array $published): array
     {
-        $all = !empty($input['all_lists']);
+        $valid = [];
+        foreach ($published as $search) {
+            $valid[(int)$search['id']] = true;
+        }
         $ids = [];
-        if (!$all) {
-            $valid = [];
-            foreach ($published as $search) {
-                $valid[(int)$search['id']] = true;
-            }
-            foreach ((array)($input['search_ids'] ?? []) as $value) {
-                $id = (int)$value;
-                if ($id > 0 && isset($valid[$id])) {
-                    $ids[] = $id;
-                }
+        foreach ((array)($input['search_ids'] ?? []) as $value) {
+            $id = (int)$value;
+            if ($id > 0 && isset($valid[$id])) {
+                $ids[] = $id;
             }
         }
+        $ids = array_values(array_unique($ids));
+
+        /* Si se marcan listas concretas, ganan sobre «Todas las listas»:
+           evita el estado incoherente de all_lists=1 con search_ids llenos. */
+        $all = $ids === [] && !empty($input['all_lists']);
 
         return [
             'scope'             => 'ti_tracker',
             'all_lists'         => $all,
-            'search_ids'        => array_values(array_unique($ids)),
+            'search_ids'        => $ids,
             'allow_query_token' => !empty($input['allow_query_token']),
         ];
     }
 
-    /** Resumen legible de los permisos de un token. */
-    public static function describePermissions(array $perms): string
+    /** Resumen legible de los permisos de un token (con nombres si se pasan listas). */
+    public static function describePermissions(array $perms, array $published = []): string
     {
-        $bits = [!empty($perms['all_lists']) ? 'Todas las listas' : count((array)($perms['search_ids'] ?? [])) . ' lista(s)'];
+        if (!empty($perms['all_lists'])) {
+            $scope = 'Todas las listas';
+        } else {
+            $ids = array_map('intval', (array)($perms['search_ids'] ?? []));
+            $names = [];
+            foreach ($published as $search) {
+                if (in_array((int)$search['id'], $ids, true)) {
+                    $names[] = (string)$search['name'];
+                }
+            }
+            $scope = $names !== [] ? implode(', ', $names) : count($ids) . ' lista(s)';
+        }
+        $bits = [$scope];
         if (!empty($perms['allow_query_token'])) {
             $bits[] = 'token en URL permitido';
         }
@@ -152,6 +166,62 @@ final class TiTrackerFeed
         return $raw;
     }
 
+    /** Un token concreto con sus permisos decodificados. */
+    public static function getToken(int $id): ?array
+    {
+        $row = Database::fetchOne(
+            'SELECT id, user_id, name, permissions, expires_at, last_used_at, created_at
+               FROM api_tokens WHERE id = ?',
+            [$id]
+        );
+        if ($row === null) {
+            return null;
+        }
+        $row['permissions_data'] = self::tokenPermissions((string)($row['permissions'] ?? ''));
+
+        return $row;
+    }
+
+    /**
+     * Edita un token sin rotar el secreto: cambia solo nombre, permisos y
+     * caducidad. $expiresDays null conserva la caducidad actual; 0 la quita.
+     */
+    public static function updateToken(int $id, string $name, array $permissions, ?int $expiresDays = null): bool
+    {
+        if (self::getToken($id) === null) {
+            return false;
+        }
+        $name = preg_replace('/[\x00-\x1F\x7F]+/u', ' ', $name) ?? '';
+        $name = trim((string)preg_replace('/\s+/u', ' ', $name));
+        $name = function_exists('mb_substr') ? mb_substr($name, 0, 80) : substr($name, 0, 80);
+        if ($name === '') {
+            $name = 'Token TI TF';
+        }
+
+        $pdo = Database::getInstance();
+        if ($expiresDays === null) {
+            $st = $pdo->prepare('UPDATE api_tokens SET name = ?, permissions = ? WHERE id = ?');
+            $st->execute([
+                $name,
+                json_encode($permissions, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?: '[]',
+                $id,
+            ]);
+        } else {
+            $expiresAt = $expiresDays > 0
+                ? gmdate('Y-m-d H:i:s', time() + ($expiresDays * 86400))
+                : null;
+            $st = $pdo->prepare('UPDATE api_tokens SET name = ?, permissions = ?, expires_at = ? WHERE id = ?');
+            $st->execute([
+                $name,
+                json_encode($permissions, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?: '[]',
+                $expiresAt,
+                $id,
+            ]);
+        }
+
+        return true;
+    }
+
     /** Tokens existentes, con sus permisos decodificados y ámbito señalado. */
     public static function listTokens(): array
     {
@@ -159,11 +229,12 @@ final class TiTrackerFeed
             'SELECT id, name, permissions, expires_at, last_used_at, created_at
                FROM api_tokens ORDER BY id DESC'
         );
+        $published = (new TiTrackerStore())->listApiSearches();
         foreach ($rows as &$row) {
             $perms = self::tokenPermissions((string)($row['permissions'] ?? ''));
             $row['permissions_data'] = $perms;
             $row['ti_scope'] = (string)($perms['scope'] ?? '') === 'ti_tracker';
-            $row['summary'] = self::describePermissions($perms);
+            $row['summary'] = self::describePermissions($perms, $published);
         }
         unset($row);
 

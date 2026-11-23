@@ -10,6 +10,8 @@
  * @var array $scopes
  * @var array $types
  * @var string $newToken secreto recién creado (se muestra una sola vez)
+ * @var array $newTokenMeta listas/colección del token recién creado
+ * @var array|null $editingToken token que se está editando (o null)
  * @var array|null $notice
  */
 
@@ -53,12 +55,38 @@ $feedOptions = [
 <?php endif; ?>
 
 <?php if ($newToken !== ''): ?>
+    <?php
+        $metaLists = (string)($newTokenMeta['lists'] ?? 'all');
+        $metaCollection = (string)($newTokenMeta['collection'] ?? TiTrackerFeed::collectionId());
+        $feedUrlFull = rtrim($apiBase, '/') . '/indicators?lists=' . $metaLists . '&format=json&scope=tracked';
+        $taxiiUrlFull = rtrim($apiRootUrl, '/') . '/collections/' . $metaCollection . '/objects/';
+        $curlFeed = 'curl -s -H "Authorization: Bearer ' . $newToken . '" "' . $feedUrlFull . '"';
+        $curlTaxii = 'curl -s -u "sentinel:' . $newToken . '" -H "Accept: application/taxii+json;version=2.1" "' . $taxiiUrlFull . '"';
+    ?>
     <div class="alert alert-success" role="status">
-        <strong>Token creado.</strong> Cópialo ahora: por seguridad no se volverá a mostrar.
-        <div class="mt-2 flex flex-wrap items-center gap-2">
-            <code class="break-all" id="tf-new-token"><?= e($newToken) ?></code>
-            <button type="button" class="btn-tiny btn-outline btn" data-tf-copy="tf-new-token">
-                <?= icon('content_copy', 14) ?> Copiar
+        <strong>Token creado.</strong> Cópialo ahora: por seguridad ni el token ni estos
+        comandos con el token incrustado se volverán a mostrar.
+        <div class="mt-2">
+            <div class="text-xs text-ink-muted">Token</div>
+            <div class="flex flex-wrap items-center gap-2">
+                <code class="break-all" id="tf-new-token"><?= e($newToken) ?></code>
+                <button type="button" class="btn-tiny btn-outline btn" data-tf-copy="tf-new-token">
+                    <?= icon('content_copy', 14) ?> Copiar token
+                </button>
+            </div>
+        </div>
+        <div class="mt-3">
+            <div class="text-xs text-ink-muted">Probar el feed (curl de una línea)</div>
+            <code class="break-all" id="tf-new-curl-feed"><?= e($curlFeed) ?></code>
+            <button type="button" class="btn-tiny btn-outline btn ml-2" data-tf-copy="tf-new-curl-feed">
+                <?= icon('content_copy', 14) ?> Copiar curl feed
+            </button>
+        </div>
+        <div class="mt-2">
+            <div class="text-xs text-ink-muted">Probar TAXII en Microsoft Sentinel (curl de una línea)</div>
+            <code class="break-all" id="tf-new-curl-taxii"><?= e($curlTaxii) ?></code>
+            <button type="button" class="btn-tiny btn-outline btn ml-2" data-tf-copy="tf-new-curl-taxii">
+                <?= icon('content_copy', 14) ?> Copiar curl TAXII
             </button>
         </div>
     </div>
@@ -66,8 +94,51 @@ $feedOptions = [
 
 <div class="card mt-6">
     <div class="card-head">
-        <h2>Listas publicadas</h2>
+        <h2>Conexión Microsoft Sentinel (TAXII 2.1)</h2>
     </div>
+    <div class="p-4">
+        <p class="text-sm text-ink-muted mt-0 mb-3">
+            En <em>Data Connectors → Threat Intelligence – TAXII</em> pega estos
+            valores. Rellena <strong>Username y Password con el token</strong>:
+            el botón <strong>Add</strong> de Azure no se habilita si Username
+            está vacío y Password tiene texto.
+        </p>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+                <label for="tf-api-root">API root URL</label>
+                <div class="flex flex-wrap items-center gap-2">
+                    <input id="tf-api-root" class="flex-1 font-mono text-xs" readonly
+                           value="<?= e($apiRootUrl) ?>">
+                    <button type="button" class="btn-tiny btn-outline btn" data-tf-copy="tf-api-root">
+                        <?= icon('content_copy', 14) ?> Copiar
+                    </button>
+                </div>
+            </div>
+            <div>
+                <label for="tf-all-collection">Collection ID (todas las listas)</label>
+                <div class="flex flex-wrap items-center gap-2">
+                    <input id="tf-all-collection" class="flex-1 font-mono text-xs" readonly
+                           value="<?= e(TiTrackerFeed::collectionId()) ?>">
+                    <button type="button" class="btn-tiny btn-outline btn" data-tf-copy="tf-all-collection">
+                        <?= icon('content_copy', 14) ?> Copiar
+                    </button>
+                </div>
+            </div>
+        </div>
+        <p class="text-xs text-ink-muted mt-3 mb-0">
+            Como <strong>Collection ID</strong> puedes poner <code>all</code>
+            (todas las listas), el <strong>slug</strong> de una lista
+            (p. ej. <code>gta6</code> o <code>github</code>), su nombre, su id
+            numérico o el UUID de la tabla de abajo. El servidor es de solo
+            lectura y el conector avanza el cursor con <code>added_after</code>.
+        </p>
+    </div>
+</div>
+
+<details class="card mt-6">
+    <summary class="card-head" style="cursor:pointer">
+        Listas publicadas (<?= count($published) ?>) — clic para desplegar
+    </summary>
     <?php if ($published === []): ?>
         <p class="text-sm text-ink-muted p-4 m-0">
             No hay listas publicadas. Activa el interruptor <strong>API</strong>
@@ -111,50 +182,7 @@ $feedOptions = [
             </table>
         </div>
     <?php endif; ?>
-</div>
-
-<div class="card mt-6">
-    <div class="card-head">
-        <h2>Conexión Microsoft Sentinel (TAXII 2.1)</h2>
-    </div>
-    <div class="p-4">
-        <p class="text-sm text-ink-muted mt-0 mb-3">
-            En <em>Data Connectors → Threat Intelligence – TAXII</em> pega estos
-            valores. Rellena <strong>Username y Password con el token</strong>:
-            el botón <strong>Add</strong> de Azure no se habilita si Username
-            está vacío y Password tiene texto.
-        </p>
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-                <label for="tf-api-root">API root URL</label>
-                <div class="flex flex-wrap items-center gap-2">
-                    <input id="tf-api-root" class="flex-1 font-mono text-xs" readonly
-                           value="<?= e($apiRootUrl) ?>">
-                    <button type="button" class="btn-tiny btn-outline btn" data-tf-copy="tf-api-root">
-                        <?= icon('content_copy', 14) ?> Copiar
-                    </button>
-                </div>
-            </div>
-            <div>
-                <label for="tf-all-collection">Collection ID (todas las listas)</label>
-                <div class="flex flex-wrap items-center gap-2">
-                    <input id="tf-all-collection" class="flex-1 font-mono text-xs" readonly
-                           value="<?= e(TiTrackerFeed::collectionId()) ?>">
-                    <button type="button" class="btn-tiny btn-outline btn" data-tf-copy="tf-all-collection">
-                        <?= icon('content_copy', 14) ?> Copiar
-                    </button>
-                </div>
-            </div>
-        </div>
-        <p class="text-xs text-ink-muted mt-3 mb-0">
-            Como <strong>Collection ID</strong> puedes poner <code>all</code>
-            (todas las listas), el <strong>slug</strong> de una lista
-            (p. ej. <code>gta6</code> o <code>github</code>), su nombre, su id
-            numérico o el UUID de la tabla de arriba. El servidor es de solo
-            lectura y el conector avanza el cursor con <code>added_after</code>.
-        </p>
-    </div>
-</div>
+</details>
 
 <div class="card mt-6">
     <div class="card-head">
@@ -193,6 +221,8 @@ $feedOptions = [
                         <td class="col-secondary text-xs"><?= e($short((string)($token['expires_at'] ?? ''))) ?></td>
                         <td class="col-secondary text-xs"><?= e($short((string)($token['last_used_at'] ?? ''))) ?></td>
                         <td class="text-right whitespace-nowrap">
+                            <a class="btn-tiny btn-outline btn"
+                               href="<?= e($base . '/api?edit_token=' . (int)$token['id']) ?>">Editar</a>
                             <form method="POST" action="<?= e($base . '/api/token/delete/' . (int)$token['id']) ?>"
                                   class="inline"
                                   data-confirm="¿Revocar el token «<?= e((string)$token['name']) ?>»? Dejará de funcionar al instante."
@@ -208,6 +238,62 @@ $feedOptions = [
         </table>
     </div>
 </div>
+
+<?php if ($editingToken !== null): ?>
+    <?php
+        $ep = (array)($editingToken['permissions_data'] ?? []);
+        $eIds = array_map('intval', (array)($ep['search_ids'] ?? []));
+        $eAll = !empty($ep['all_lists']);
+    ?>
+    <div class="card mt-6">
+        <div class="card-head">
+            <h2>Editar token: <?= e((string)$editingToken['name']) ?></h2>
+        </div>
+        <form method="POST" action="<?= e($base . '/api/token/update/' . (int)$editingToken['id']) ?>" class="p-4">
+            <?= Csrf::field() ?>
+            <p class="text-xs text-ink-muted mt-0 mb-3">
+                El secreto no cambia: Sentinel y los firewalls seguirán usando el mismo token.
+            </p>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                    <label for="tf-edit-name">Nombre</label>
+                    <input id="tf-edit-name" name="name" required maxlength="80"
+                           value="<?= e((string)$editingToken['name']) ?>">
+                </div>
+                <div>
+                    <label for="tf-edit-days">Caducidad (días; vacío = conservar actual)</label>
+                    <input id="tf-edit-days" name="expires_days" type="number" min="0" max="3650"
+                           placeholder="Conservar <?= e($short((string)($editingToken['expires_at'] ?? ''))) ?>">
+                </div>
+            </div>
+            <div class="mt-4">
+                <label class="inline-flex items-center gap-2">
+                    <input type="checkbox" name="all_lists" value="1" class="tf-all-toggle" id="tf-edit-all-lists" <?= $eAll ? 'checked' : '' ?>>
+                    Todas las listas publicadas
+                </label>
+                <div class="flex flex-wrap gap-3 mt-2" id="tf-edit-list-checks">
+                    <?php foreach ($published as $search): ?>
+                        <label class="inline-flex items-center gap-1 text-sm">
+                            <input type="checkbox" class="tf-list-check" name="search_ids[]"
+                                   value="<?= (int)$search['id'] ?>" <?= in_array((int)$search['id'], $eIds, true) ? 'checked' : '' ?>>
+                            <?= e((string)$search['name']) ?>
+                        </label>
+                    <?php endforeach; ?>
+                </div>
+            </div>
+            <div class="mt-4">
+                <label class="inline-flex items-center gap-2">
+                    <input type="checkbox" name="allow_query_token" value="1" <?= !empty($ep['allow_query_token']) ? 'checked' : '' ?>>
+                    Permitir el token en la URL (<code>?token=</code>)
+                </label>
+            </div>
+            <div class="mt-4 flex flex-wrap items-center gap-2">
+                <button type="submit" class="btn"><?= icon('save', 18) ?> Guardar cambios</button>
+                <a class="btn-flat btn" href="<?= e($base . '/api') ?>">Cancelar</a>
+            </div>
+        </form>
+    </div>
+<?php endif; ?>
 
 <div class="card mt-6">
     <div class="card-head">
@@ -229,7 +315,7 @@ $feedOptions = [
 
         <div class="mt-4">
             <label class="inline-flex items-center gap-2">
-                <input type="checkbox" name="all_lists" value="1" id="tf-all-lists" checked>
+                <input type="checkbox" name="all_lists" value="1" class="tf-all-toggle" id="tf-all-lists" checked>
                 Todas las listas publicadas
             </label>
             <p class="text-xs text-ink-muted mt-1">
@@ -238,7 +324,7 @@ $feedOptions = [
             <div class="flex flex-wrap gap-3 mt-2" id="tf-list-checks">
                 <?php foreach ($published as $search): ?>
                     <label class="inline-flex items-center gap-1 text-sm">
-                        <input type="checkbox" name="search_ids[]" value="<?= (int)$search['id'] ?>">
+                        <input type="checkbox" class="tf-list-check" name="search_ids[]" value="<?= (int)$search['id'] ?>">
                         <?= e((string)$search['name']) ?>
                     </label>
                 <?php endforeach; ?>
@@ -426,14 +512,24 @@ $feedOptions = [
     });
     build();
 
-    var all = document.getElementById('tf-all-lists');
-    if (all) {
+    /* «Todas las listas» y la selección concreta son mutuamente excluyentes. */
+    document.querySelectorAll('.tf-all-toggle').forEach(function (all) {
+        var form = all.closest('form');
+        var checks = form ? form.querySelectorAll('.tf-list-check') : [];
         all.addEventListener('change', function () {
-            document.querySelectorAll('#tf-list-checks input').forEach(function (el) {
+            checks.forEach(function (el) {
                 if (all.checked) { el.checked = false; }
             });
         });
-    }
+        checks.forEach(function (el) {
+            el.addEventListener('change', function () {
+                if (el.checked) { all.checked = false; }
+                var any = false;
+                checks.forEach(function (c) { if (c.checked) { any = true; } });
+                if (!any) { all.checked = true; }
+            });
+        });
+    });
 
     document.addEventListener('click', function (event) {
         var copy = event.target.closest('[data-tf-copy]');

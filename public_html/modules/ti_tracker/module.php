@@ -23,6 +23,7 @@
  *   GET  /modules/ti_tracker/api            panel de feeds externos y tokens
  *   POST /modules/ti_tracker/api/publish/{id}  activar/desactivar lista en la API
  *   POST /modules/ti_tracker/api/token      crear token de la API
+ *   POST /modules/ti_tracker/api/token/update/{id}  editar token (sin rotar)
  *   POST /modules/ti_tracker/api/token/delete/{id}  revocar token
  *   POST /modules/ti_tracker/export/{id}    descargar STIX/MISP/TXT
  */
@@ -94,6 +95,7 @@ class Module_TiTracker extends BaseModule
             ['method' => 'GET',  'pattern' => 'api',       'handler' => [$this, 'apiPanel']],
             ['method' => 'POST', 'pattern' => 'api/publish/{id}', 'handler' => [$this, 'setPublished']],
             ['method' => 'POST', 'pattern' => 'api/token', 'handler' => [$this, 'createToken']],
+            ['method' => 'POST', 'pattern' => 'api/token/update/{id}', 'handler' => [$this, 'updateToken']],
             ['method' => 'POST', 'pattern' => 'api/token/delete/{id}', 'handler' => [$this, 'revokeToken']],
             ['method' => 'POST', 'pattern' => 'export/{id}', 'handler' => [$this, 'export']],
         ];
@@ -460,6 +462,10 @@ class Module_TiTracker extends BaseModule
         $store = $this->store();
         $newToken = trim((string)($_SESSION['ti_tf_new_token'] ?? ''));
         unset($_SESSION['ti_tf_new_token']);
+        $newTokenMeta = (array)($_SESSION['ti_tf_new_token_meta'] ?? []);
+        unset($_SESSION['ti_tf_new_token_meta']);
+        $editId = (int)($_GET['edit_token'] ?? 0);
+        $editingToken = $editId > 0 ? TiTrackerFeed::getToken($editId) : null;
 
         echo $this->page('api', [
             'module'    => $this,
@@ -470,6 +476,8 @@ class Module_TiTracker extends BaseModule
             'scopes'    => TiTrackerFeed::SCOPES,
             'types'     => TiTrackerFeed::TYPES,
             'newToken'  => $newToken,
+            'newTokenMeta' => $newTokenMeta,
+            'editingToken' => $editingToken,
             'notice'    => flash('ti_tracker'),
         ]);
     }
@@ -523,8 +531,59 @@ class Module_TiTracker extends BaseModule
             redirect(base_url('modules/ti_tracker/api'));
         }
 
+        $slugs = [];
+        foreach ($published as $search) {
+            if (in_array((int)$search['id'], (array)$permissions['search_ids'], true)) {
+                $slugs[] = (string)$search['slug'];
+            }
+        }
         $_SESSION['ti_tf_new_token'] = $raw;
+        $_SESSION['ti_tf_new_token_meta'] = [
+            'lists'      => !empty($permissions['all_lists']) ? 'all' : implode(',', $slugs),
+            'collection' => !empty($permissions['all_lists']) ? TiTrackerFeed::collectionId() : ($slugs[0] ?? 'all'),
+        ];
         flash('ti_tracker', ['type' => 'success', 'text' => 'Token creado. Cópialo ahora: no se volverá a mostrar.']);
+        redirect(base_url('modules/ti_tracker/api'));
+    }
+
+    /** Edita un token existente sin cambiar su secreto. */
+    public function updateToken(array $params = []): void
+    {
+        Auth::requireAdmin();
+        $id = (int)($params['id'] ?? 0);
+        $token = TiTrackerFeed::getToken($id);
+        if ($token === null || ($token['permissions_data']['scope'] ?? '') !== 'ti_tracker') {
+            flash('ti_tracker', ['type' => 'error', 'text' => 'Token no válido.']);
+            redirect(base_url('modules/ti_tracker/api'));
+        }
+
+        $name = trim((string)($_POST['name'] ?? ''));
+        if ($name === '') {
+            flash('ti_tracker', ['type' => 'error', 'text' => 'Pon un nombre al token.']);
+            redirect(base_url('modules/ti_tracker/api?edit_token=' . $id));
+        }
+
+        $published = $this->store()->listApiSearches();
+        $permissions = TiTrackerFeed::permissionsFromInput($_POST, $published);
+        if (empty($permissions['all_lists']) && $permissions['search_ids'] === []) {
+            flash('ti_tracker', ['type' => 'error', 'text' => 'Elige al menos una lista o marca «Todas las listas».']);
+            redirect(base_url('modules/ti_tracker/api?edit_token=' . $id));
+        }
+
+        $daysRaw = trim((string)($_POST['expires_days'] ?? ''));
+        $days = $daysRaw === '' ? null : max(0, min(3650, (int)$daysRaw));
+
+        try {
+            TiTrackerFeed::updateToken($id, $name, $permissions, $days);
+        } catch (Throwable $e) {
+            flash('ti_tracker', ['type' => 'error', 'text' => 'No se pudo guardar: ' . $e->getMessage()]);
+            redirect(base_url('modules/ti_tracker/api?edit_token=' . $id));
+        }
+
+        flash('ti_tracker', [
+            'type' => 'success',
+            'text' => 'Token «' . $name . '» actualizado. El secreto no ha cambiado.',
+        ]);
         redirect(base_url('modules/ti_tracker/api'));
     }
 

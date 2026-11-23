@@ -279,6 +279,13 @@ try {
     check('Fase 2: resumen de permisos',
         str_contains(TiTrackerFeed::describePermissions($permsAll), 'Todas las listas')
             && str_contains(TiTrackerFeed::describePermissions($permsSome), 'token en URL permitido'));
+    $mixed = TiTrackerFeed::permissionsFromInput([
+        'all_lists' => '1', 'search_ids' => [(string)$id1],
+    ], $published);
+    check('Fase 3.6: listas concretas ganan a «Todas»',
+        empty($mixed['all_lists']) && ($mixed['search_ids'] ?? null) === [$id1]);
+    check('Fase 3.6: resumen con nombres de listas',
+        str_contains(TiTrackerFeed::describePermissions($mixed, $published), 'Github IOCs'));
 
     foreach (['ti_tracker.sqlite', 'ti_tracker.sqlite-wal', 'ti_tracker.sqlite-shm'] as $file) {
         @unlink($tmpDir . DIRECTORY_SEPARATOR . $file);
@@ -347,15 +354,27 @@ check('Fase 3.4: panel indica slug y Username/Password',
 check('Fase 3.5: panel muestra el diagnóstico TAXII',
     str_contains($apiView, 'Diagnóstico TAXII')
         && str_contains($apiView, 'taxiiRequests'));
+check('Fase 3.6: Sentinel primero y listas minimizadas',
+    strpos($apiView, 'Conexión Microsoft Sentinel') < strpos($apiView, '<details class="card mt-6">')
+        && str_contains($apiView, 'Listas publicadas (<?= count($published) ?>)'));
+check('Fase 3.6: edición y checkboxes bidireccionales',
+    str_contains($apiView, 'api/token/update/')
+        && str_contains($apiView, 'tf-all-toggle')
+        && str_contains($apiView, 'tf-list-check')
+        && str_contains($apiView, 'if (!any) { all.checked = true; }'));
+check('Fase 3.6: curls de un solo uso en la vista',
+    str_contains($apiView, 'tf-new-curl-feed') && str_contains($apiView, 'tf-new-curl-taxii'));
 check('Fase 2: formularios de token', str_contains($apiView, '/api/token')
     && str_contains($apiView, 'allow_query_token')
     && str_contains($apiView, 'search_ids[]'));
 
 $module = ModuleManager::get('ti_tracker');
 $patterns = array_map(static fn($r) => $r['pattern'], $module?->routes() ?? []);
-foreach (['api', 'api/publish/{id}', 'api/token', 'api/token/delete/{id}'] as $pattern) {
+foreach (['api', 'api/publish/{id}', 'api/token', 'api/token/update/{id}', 'api/token/delete/{id}'] as $pattern) {
     check('Fase 2: ruta /' . $pattern, in_array($pattern, $patterns, true));
 }
+check('Fase 3.6: edición de tokens en el motor',
+    str_contains((string)@file_get_contents(INCLUDES_PATH . '/ti_tracker_feed.php'), 'function updateToken'));
 
 /* Render real del panel: sin errores y mostrando el token de un solo uso. */
 $apiRenderError = '';
@@ -372,6 +391,8 @@ try {
         $scopes = TiTrackerFeed::SCOPES;
         $types = TiTrackerFeed::TYPES;
         $newToken = 'token_de_un_solo_uso';
+        $newTokenMeta = ['lists' => 'github', 'collection' => TiTrackerFeed::collectionId(7)];
+        $editingToken = null;
         $notice = null;
         $taxiiRequests = [];
         include MODULES_PATH . '/ti_tracker/views/api.php';
@@ -384,6 +405,10 @@ check('Fase 2: render del panel API', $apiRenderError === ''
     && str_contains($apiRendered, 'token_de_un_solo_uso')
     && str_contains($apiRendered, 'Constructor de feed')
     && str_contains($apiRendered, 'tf-api-root'), $apiRenderError);
+check('Fase 3.6: curl de un solo uso en el render',
+    str_contains($apiRendered, 'tf-new-curl-feed')
+        && str_contains($apiRendered, 'tf-new-curl-taxii')
+        && str_contains($apiRendered, 'Authorization: Bearer token_de_un_solo_uso'), $apiRenderError);
 
 echo "\n" . ($fail === 0 ? 'TODO OK' : 'FALLOS') . ": " . ($total - $fail) . "/{$total}\n";
 exit($fail === 0 ? 0 : 1);
