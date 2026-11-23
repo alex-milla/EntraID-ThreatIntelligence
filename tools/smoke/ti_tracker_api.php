@@ -262,6 +262,14 @@ check('Fase 3: rutas TAXII', str_contains($apiSource, "/api/taxii2")
     && str_contains($apiSource, "ti-tf/collections")
     && str_contains($apiSource, 'added_after'));
 check('Fase 3: media type TAXII', str_contains($apiSource, 'application/taxii+json;version=2.1'));
+check('Fase 3.3: detalle de colección para Sentinel',
+    str_contains($apiSource, "'ti-tf/collections/{id}'") && str_contains($apiSource, "'collections/{id}'"));
+check('Fase 3.3: Basic Auth de Apache/PHP-FPM',
+    str_contains($apiSource, 'REDIRECT_HTTP_AUTHORIZATION') && str_contains($apiSource, 'PHP_AUTH_PW'));
+check('Fase 3.3: media types y ventanas TAXII',
+    str_contains($apiSource, 'application/stix+json;version=2.1')
+        && str_contains($apiSource, 'X-TAXII-Date-Added-First')
+        && str_contains($apiSource, 'X-TAXII-Date-Added-Last'));
 
 /* ============================================================
  * 7. Panel de gestión (Fase 2)
@@ -271,6 +279,11 @@ check('Fase 2: vista del panel API', $apiView !== ''
     && str_contains($apiView, 'Constructor de feed')
     && str_contains($apiView, 'data-tf-copy')
     && str_contains($apiView, 'tf-feed-list'));
+check('Fase 3.3: datos de conexión Sentinel en el panel',
+    str_contains($apiView, 'Conexión Microsoft Sentinel')
+        && str_contains($apiView, 'tf-api-root')
+        && str_contains($apiView, 'tf-all-collection')
+        && str_contains($apiView, 'Collection ID (TAXII)'));
 check('Fase 2: formularios de token', str_contains($apiView, '/api/token')
     && str_contains($apiView, 'allow_query_token')
     && str_contains($apiView, 'search_ids[]'));
@@ -305,7 +318,8 @@ try {
 $apiRendered = (string)ob_get_clean();
 check('Fase 2: render del panel API', $apiRenderError === ''
     && str_contains($apiRendered, 'token_de_un_solo_uso')
-    && str_contains($apiRendered, 'Constructor de feed'), $apiRenderError);
+    && str_contains($apiRendered, 'Constructor de feed')
+    && str_contains($apiRendered, 'tf-api-root'), $apiRenderError);
 
 echo "\n" . ($fail === 0 ? 'TODO OK' : 'FALLOS') . ": " . ($total - $fail) . "/{$total}\n";
 exit($fail === 0 ? 0 : 1);

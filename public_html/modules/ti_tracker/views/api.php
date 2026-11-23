@@ -14,6 +14,11 @@
 
 $base = base_url('modules/ti_tracker');
 $apiBase = base_url('api/ti-tf');
+$https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+    || strtolower((string)($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '')) === 'https';
+$host = (string)($_SERVER['HTTP_HOST'] ?? 'localhost');
+$apiRootUrl = $https ? 'https://' : 'http://';
+$apiRootUrl .= $host . rtrim((string)parse_url((string)base_url('api/taxii2/ti-tf'), PHP_URL_PATH), '/');
 $fmt = static fn(int|float $n): string => number_format((float)$n, 0, ',', '.');
 $short = static fn(?string $date): string => $date === null || trim($date) === ''
     ? '—'
@@ -74,6 +79,7 @@ $feedOptions = [
                     <tr>
                         <th>Búsqueda</th>
                         <th>Slug</th>
+                        <th>Collection ID (TAXII)</th>
                         <th>IOCs</th>
                         <th class="col-secondary">Última ejecución</th>
                     </tr>
@@ -83,6 +89,16 @@ $feedOptions = [
                     <tr>
                         <td><strong><?= e((string)$search['name']) ?></strong></td>
                         <td class="font-mono text-xs"><?= e((string)$search['slug']) ?></td>
+                        <td>
+                            <div class="flex flex-wrap items-center gap-2">
+                                <code class="text-xs" id="tf-col-<?= (int)$search['id'] ?>"><?= e(TiTrackerFeed::collectionId((int)$search['id'])) ?></code>
+                                <button type="button" class="btn-tiny btn-outline btn"
+                                        data-tf-copy="tf-col-<?= (int)$search['id'] ?>"
+                                        title="Copiar Collection ID para Sentinel">
+                                    <?= icon('content_copy', 14) ?>
+                                </button>
+                            </div>
+                        </td>
                         <td><?= $fmt((int)($search['tracked'] ?? 0)) ?></td>
                         <td class="col-secondary text-xs"><?= e($short($search['last_run_at'] ?? null)) ?></td>
                     </tr>
@@ -91,6 +107,46 @@ $feedOptions = [
             </table>
         </div>
     <?php endif; ?>
+</div>
+
+<div class="card mt-6">
+    <div class="card-head">
+        <h2>Conexión Microsoft Sentinel (TAXII 2.1)</h2>
+    </div>
+    <div class="p-4">
+        <p class="text-sm text-ink-muted mt-0 mb-3">
+            En <em>Data Connectors → Threat Intelligence – TAXII</em> pega estos
+            valores. El <strong>Username</strong> puede ser cualquier texto y el
+            <strong>Password</strong> es el token de la API.
+        </p>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+                <label for="tf-api-root">API root URL</label>
+                <div class="flex flex-wrap items-center gap-2">
+                    <input id="tf-api-root" class="flex-1 font-mono text-xs" readonly
+                           value="<?= e($apiRootUrl) ?>">
+                    <button type="button" class="btn-tiny btn-outline btn" data-tf-copy="tf-api-root">
+                        <?= icon('content_copy', 14) ?> Copiar
+                    </button>
+                </div>
+            </div>
+            <div>
+                <label for="tf-all-collection">Collection ID (todas las listas)</label>
+                <div class="flex flex-wrap items-center gap-2">
+                    <input id="tf-all-collection" class="flex-1 font-mono text-xs" readonly
+                           value="<?= e(TiTrackerFeed::collectionId()) ?>">
+                    <button type="button" class="btn-tiny btn-outline btn" data-tf-copy="tf-all-collection">
+                        <?= icon('content_copy', 14) ?> Copiar
+                    </button>
+                </div>
+            </div>
+        </div>
+        <p class="text-xs text-ink-muted mt-3 mb-0">
+            Para importar una sola lista, usa su <strong>Collection ID</strong>
+            de la tabla de arriba. El servidor es de solo lectura; el conector
+            avanza el cursor con <code>added_after</code> y no duplica IOCs.
+        </p>
+    </div>
 </div>
 
 <div class="card mt-6">

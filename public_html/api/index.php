@@ -73,7 +73,13 @@ function apiTfAuth(): array
         return ['session' => true, 'token' => null];
     }
 
+    /* Apache/PHP-FPM puede mover Basic a REDIRECT_HTTP_AUTHORIZATION o
+       destriparlo en PHP_AUTH_PW y borrar HTTP_AUTHORIZATION (hosting
+       compartido). El conector de Sentinel usa Basic: hay que aceptarlos. */
     $header = (string)($_SERVER['HTTP_AUTHORIZATION'] ?? '');
+    if ($header === '' && !empty($_SERVER['REDIRECT_HTTP_AUTHORIZATION'])) {
+        $header = (string)$_SERVER['REDIRECT_HTTP_AUTHORIZATION'];
+    }
     if (str_starts_with($header, 'Bearer ')) {
         $row = apiTfTokenRow(substr($header, 7));
     } elseif (str_starts_with($header, 'Basic ')) {
@@ -81,6 +87,8 @@ function apiTfAuth(): array
         $row = $decoded !== false && str_contains($decoded, ':')
             ? apiTfTokenRow(substr($decoded, strpos($decoded, ':') + 1))
             : null;
+    } elseif (!empty($_SERVER['PHP_AUTH_PW'])) {
+        $row = apiTfTokenRow((string)$_SERVER['PHP_AUTH_PW']);
     } else {
         $key = trim((string)($_SERVER['HTTP_X_API_KEY'] ?? ''));
         $row = $key !== '' ? apiTfTokenRow($key) : null;
@@ -114,11 +122,14 @@ function apiTfRaw(string $content, string $mime, string $filename): void
 }
 
 /** Respuesta JSON con el media type TAXII (json_response fuerza application/json). */
-function apiTaxiiJson(array $data, string $mime, int $status = 200): void
+function apiTaxiiJson(array $data, string $mime, int $status = 200, array $headers = []): void
 {
     http_response_code($status);
     header('Content-Type: ' . $mime);
     header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+    foreach ($headers as $name => $value) {
+        header($name . ': ' . $value);
+    }
     echo json_encode(
         $data,
         JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE
@@ -383,13 +394,14 @@ $router->group('/api/ti-tf', function (Router $r) {
 });
 
 // ============================================================
-// API: TAXII 2.1 de solo lectura para Microsoft Sentinel (v0.4.29.2)
+// API: TAXII 2.1 de solo lectura para Microsoft Sentinel (v0.4.29.2/.3)
 // ============================================================
 
 $router->group('/api/taxii2', function (Router $r) {
     $mime = 'application/taxii+json;version=2.1';
+    $stixMime = 'application/stix+json;version=2.1';
 
-    $r->get('', function () use ($mime) {
+    $discovery = function () use ($mime) {
         apiTfAuth();
         apiTaxiiJson([
             'title'       => 'EntraID TI — Seguimiento TI TF',
@@ -397,9 +409,9 @@ $router->group('/api/taxii2', function (Router $r) {
             'contact'     => 'Equipo de Seguridad',
             'api_roots'   => [apiTfTaxiiRoot() . '/taxii2/ti-tf/'],
         ], $mime);
-    });
+    };
 
-    $r->get('ti-tf', function () use ($mime) {
+    $apiRoot = function () use ($mime) {
         apiTfAuth();
         apiTaxiiJson([
             'title'              => 'Seguimiento TI TF',
@@ -407,34 +419,67 @@ $router->group('/api/taxii2', function (Router $r) {
             'versions'           => [$mime],
             'max_content_length' => 10485760,
         ], $mime);
-    });
+    };
 
-    $r->get('ti-tf/collections', function () use ($mime) {
+    /** Metadatos de una colección: null = la agregada «all». */
+    $collectionData = static function (?array $search, string $mime, string $stixMime): array {
+        if ($search === null) {
+            return [
+                'id'          => TiTrackerFeed::collectionId(),
+                'title'       => 'Todas las listas TI TF',
+                'description' => 'Unión de todas las listas publicadas permitidas al token',
+                'can_read'    => true,
+                'can_write'   => false,
+                'media_types' => [$mime, $stixMime],
+            ];
+        }
+
+        return [
+            'id'          => TiTrackerFeed::collectionId((int)$search['id']),
+            'title'       => (string)$search['name'],
+            'description' => 'Lista ' . (string)($search['slug'] ?? '') . ' de Seguimiento TI TF',
+            'can_read'    => true,
+            'can_write'   => false,
+            'media_types' => [$mime, $stixMime],
+        ];
+    };
+
+    $collections = function () use ($mime, $stixMime, $collectionData) {
         $auth = apiTfAuth();
         $allowedIds = $auth['token'] === null ? null : TiTrackerFeed::allowedIds($auth['token']);
         $store = new TiTrackerStore();
 
-        $collections = [[
-            'id'          => TiTrackerFeed::collectionId(),
-            'title'       => 'Todas las listas TI TF',
-            'description' => 'Unión de todas las listas publicadas permitidas al token',
-            'can_read'    => true,
-            'can_write'   => false,
-            'media_types' => [$mime],
-        ]];
+        $items = [$collectionData(null, $mime, $stixMime)];
         foreach ($store->listApiSearches($allowedIds) as $search) {
-            $collections[] = [
-                'id'          => TiTrackerFeed::collectionId((int)$search['id']),
-                'title'       => (string)$search['name'],
-                'description' => 'Lista ' . (string)($search['slug'] ?? '') . ' de Seguimiento TI TF',
-                'can_read'    => true,
-                'can_write'   => false,
-                'media_types' => [$mime],
-            ];
+            $items[] = $collectionData($search, $mime, $stixMime);
         }
 
-        apiTaxiiJson(['collections' => $collections], $mime);
-    });
+        apiTaxiiJson(['collections' => $items], $mime);
+    };
+
+    /* El validador de alta de Sentinel pide el detalle de la colección. */
+    $collection = function (array $params) use ($mime, $stixMime, $collectionData) {
+        $auth = apiTfAuth();
+        $allowedIds = $auth['token'] === null ? null : TiTrackerFeed::allowedIds($auth['token']);
+        $id = (string)($params['id'] ?? '');
+        $found = null;
+
+        if ($id === TiTrackerFeed::collectionId()) {
+            $found = $collectionData(null, $mime, $stixMime);
+        } else {
+            foreach ((new TiTrackerStore())->listApiSearches($allowedIds) as $search) {
+                if (TiTrackerFeed::collectionId((int)$search['id']) === $id) {
+                    $found = $collectionData($search, $mime, $stixMime);
+                    break;
+                }
+            }
+        }
+        if ($found === null) {
+            apiTaxiiJson(['error' => 'Colección no encontrada o no permitida'], $mime, 404);
+        }
+
+        apiTaxiiJson($found, $mime);
+    };
 
     $objects = function (array $params) use ($mime) {
         $auth = apiTfAuth();
@@ -480,11 +525,35 @@ $router->group('/api/taxii2', function (Router $r) {
             $store->logApiPull((int)$list['id'], (int)$list['count']);
         }
 
-        apiTaxiiJson($response, $mime);
+        /* Ventanas TAXII: ayudan al conector a avanzar el cursor de added_after. */
+        $headers = [];
+        $dates = [];
+        foreach ($page as $obj) {
+            $created = (string)($obj['created'] ?? '');
+            if ($created !== '') {
+                $dates[] = $created;
+            }
+        }
+        if ($dates !== []) {
+            sort($dates);
+            $headers['X-TAXII-Date-Added-First'] = $dates[0];
+            $headers['X-TAXII-Date-Added-Last'] = $dates[count($dates) - 1];
+        }
+
+        apiTaxiiJson($response, $mime, 200, $headers);
     };
 
+    /* Canónicas: API root URL = /api/taxii2/ti-tf */
+    $r->get('', $discovery);
+    $r->get('ti-tf', $apiRoot);
+    $r->get('ti-tf/collections', $collections);
+    $r->get('ti-tf/collections/{id}', $collection);
     $r->get('ti-tf/collections/{id}/objects', $objects);
-    $r->get('ti-tf/collections/{id}/objects/', $objects);
+
+    /* Alias: API root URL = /api/taxii2 (el conector solo pide /collections/…). */
+    $r->get('collections', $collections);
+    $r->get('collections/{id}', $collection);
+    $r->get('collections/{id}/objects', $objects);
 });
 
 $router->dispatch();
